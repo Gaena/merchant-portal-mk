@@ -1,0 +1,33 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:pbl;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      # Build and validate schema using Liquibase migrations on test startup.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+
+# PayByLink service configuration (test values)
+pbl:
+  base-url: https://pay.example.com/
+  security:
+    # Known token used by the integration tests.
+    api-token: pbl-secret-token
+    api-token-enabled: true
+  provider:
+    gateway-base-url: https://gateway.txpg.example.com/pay
+    # Blank: callback signature verification disabled for tests.
+    callback-secret: ""
+    stub: true
+    api-base-url: https://api.txpg.example.com/pay
+    create-order-path: /order
+    exec-tran-path: /api/order/{orderId}/exec-tran
+    get-order-path: /api/order/{orderId}

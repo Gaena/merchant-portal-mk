@@ -1,0 +1,67 @@
+spring:
+  application:
+    name: pbl
+  datasource:
+    url: jdbc:postgresql://localhost:5432/postgres
+    driver-class-name: org.postgresql.Driver
+    username: postgres
+    password: password
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+
+# PayByLink service configuration
+pbl:
+  # Public base URL used to build the customer-facing payment link.
+  base-url: http://localhost:8080/
+  security:
+    # Bearer token required by merchant-facing management endpoints (spec §4/§5).
+    # Leave blank to disable authentication (local development only). Externalize in production.
+    api-token: ${PBL_API_TOKEN:pbl-secret-token}
+    api-token-enabled: ${PBL_API_TOKEN_ENABLED:false}
+  provider:
+    # Base URL of the acquiring (TXPG) gateway payment page.
+    gateway-base-url: https://test.millikart.az:8083/
+
+    # E-commerce API Base URL
+    api-base-url: http://test.millikart.az:8000/
+    create-order-path: /order
+    exec-tran-path: /order/{orderId}/exec-tran
+    get-order-path: /order/{orderId}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      acquiring:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10000ms
+        permittedNumberOfCallsInHalfOpenState: 3
+  retry:
+    instances:
+      acquiring:
+        maxAttempts: 3
+        waitDuration: 500ms
+
+

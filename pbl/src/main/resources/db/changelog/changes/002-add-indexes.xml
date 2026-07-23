@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="002-add-indexes" author="millikart">
+        <createIndex tableName="payment_links" indexName="idx_payment_links_term_status">
+            <column name="terminal_id"/>
+            <column name="status"/>
+        </createIndex>
+
+        <createIndex tableName="payment_links" indexName="idx_payment_links_status_expires">
+            <column name="status"/>
+            <column name="expires_at"/>
+        </createIndex>
+
+        <createIndex tableName="transactions" indexName="idx_transactions_provider_order">
+            <column name="provider_order_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

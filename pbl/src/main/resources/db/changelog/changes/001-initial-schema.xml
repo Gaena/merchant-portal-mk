@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="1" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="terminals"/>
+            </not>
+        </preConditions>
+        <!-- Create terminals table -->
+        <createTable tableName="terminals">
+            <column name="id" type="integer">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="login" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="password" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="company_id" type="varchar(255)">
+                <constraints nullable="true"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="1-pbl-tables" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="payment_links"/>
+            </not>
+        </preConditions>
+        <!-- Create payment_links table -->
+        <createTable tableName="payment_links">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="bigint"/>
+            <column name="provider_reference" type="varchar(255)"/>
+            <column name="merchant_order_id" type="varchar(255)"/>
+            <column name="terminal_id" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="amount" type="numeric(19, 2)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="currency" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="description" type="varchar(255)"/>
+            <column name="customer_name" type="varchar(255)"/>
+            <column name="customer_email" type="varchar(255)"/>
+            <column name="customer_phone" type="varchar(255)"/>
+            <column name="payment_type" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="usage_type" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="max_payments" type="integer"/>
+            <column name="current_payments_count" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="metadata" type="json"/>
+            <column name="expires_at" type="timestamp"/>
+            <column name="created_at" type="timestamp"/>
+            <column name="updated_at" type="timestamp"/>
+        </createTable>
+
+        <!-- Create transactions table -->
+        <createTable tableName="transactions">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="link_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="merchant_rid" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="provider_order_id" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="provider_password" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="amount" type="numeric(19, 2)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="refunded_amount" type="numeric(19, 2)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="provider_response" type="json"/>
+            <column name="created_at" type="timestamp"/>
+            <column name="updated_at" type="timestamp"/>
+        </createTable>
+
+        <!-- Add foreign key constraints -->
+        <addForeignKeyConstraint baseTableName="payment_links" baseColumnNames="terminal_id"
+                                 constraintName="fk_payment_links_terminal"
+                                 referencedTableName="terminals" referencedColumnNames="id"/>
+
+        <addForeignKeyConstraint baseTableName="transactions" baseColumnNames="link_id"
+                                 constraintName="fk_transactions_link"
+                                 referencedTableName="payment_links" referencedColumnNames="id"/>
+    </changeSet>
+
+</databaseChangeLog>
