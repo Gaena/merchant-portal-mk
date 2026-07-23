@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="az.millikart.auth.AuthApplicationTests" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-07-22T21:00:30" hostname="IlyazS-KB.local" time="0.002">
+  <properties/>
+  <testcase name="contextLoads()" classname="az.millikart.auth.AuthApplicationTests" time="0.002"/>
+  <system-out><![CDATA[2026-07-23T01:00:30.140+04:00  INFO 70937 --- [    Test worker] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [az.millikart.auth.AuthApplicationTests]: AuthApplicationTests does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-07-23T01:00:30.141+04:00  INFO 70937 --- [    Test worker] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration az.millikart.auth.AuthApplication for test class az.millikart.auth.AuthApplicationTests
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+ :: Spring Boot ::                (v3.2.5)
+
+2026-07-23T01:00:30.153+04:00  INFO 70937 --- [    Test worker] az.millikart.auth.AuthApplicationTests   : Starting AuthApplicationTests using Java 21.0.4 with PID 70937 (started by salayevim in /Users/salayevim/IdeaProjects/mp/auth)
+2026-07-23T01:00:30.153+04:00  INFO 70937 --- [    Test worker] az.millikart.auth.AuthApplicationTests   : No active profile set, falling back to 1 default profile: "default"
+2026-07-23T01:00:30.274+04:00  INFO 70937 --- [    Test worker] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-23T01:00:30.278+04:00  INFO 70937 --- [    Test worker] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 4 ms. Found 2 JPA repository interfaces.
+2026-07-23T01:00:30.330+04:00  INFO 70937 --- [    Test worker] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Starting...
+2026-07-23T01:00:30.331+04:00  INFO 70937 --- [    Test worker] com.zaxxer.hikari.pool.HikariPool        : HikariPool-2 - Added connection conn10: url=jdbc:h2:mem:auth user=SA
+2026-07-23T01:00:30.331+04:00  INFO 70937 --- [    Test worker] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Start completed.
+2026-07-23T01:00:30.332+04:00  INFO 70937 --- [    Test worker] liquibase.database                       : Set default schema name to PUBLIC
+2026-07-23T01:00:30.375+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : Reading from PUBLIC.DATABASECHANGELOG
+2026-07-23T01:00:30.386+04:00  INFO 70937 --- [    Test worker] liquibase.lockservice                    : Successfully acquired change log lock
+2026-07-23T01:00:30.386+04:00  INFO 70937 --- [    Test worker] liquibase.command                        : Using deploymentId: 4754030386
+2026-07-23T01:00:30.386+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : Reading from PUBLIC.DATABASECHANGELOG
+2026-07-23T01:00:30.388+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : UPDATE SUMMARY
+2026-07-23T01:00:30.388+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Run:                          0
+2026-07-23T01:00:30.388+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Previously run:               2
+2026-07-23T01:00:30.388+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Filtered out:                 0
+2026-07-23T01:00:30.388+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : -------------------------------
+2026-07-23T01:00:30.388+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Total change sets:            2
+2026-07-23T01:00:30.388+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Update summary generated
+2026-07-23T01:00:30.389+04:00  INFO 70937 --- [    Test worker] liquibase.command                        : Update command completed successfully.
+Liquibase: Update has been successful. Rows affected: 0
+2026-07-23T01:00:30.389+04:00  INFO 70937 --- [    Test worker] liquibase.lockservice                    : Successfully released change log lock
+2026-07-23T01:00:30.389+04:00  INFO 70937 --- [    Test worker] liquibase.command                        : Command execution complete
+2026-07-23T01:00:30.416+04:00  INFO 70937 --- [    Test worker] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-23T01:00:30.417+04:00  INFO 70937 --- [    Test worker] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-07-23T01:00:30.419+04:00  INFO 70937 --- [    Test worker] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-23T01:00:30.448+04:00  INFO 70937 --- [    Test worker] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-23T01:00:30.449+04:00  INFO 70937 --- [    Test worker] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-23T01:00:30.554+04:00  WARN 70937 --- [    Test worker] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 603b9656-6cd7-4caf-b97a-05c62a3e4ca1
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-07-23T01:00:30.667+04:00  INFO 70937 --- [    Test worker] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 1 endpoint(s) beneath base path '/actuator'
+2026-07-23T01:00:30.686+04:00  INFO 70937 --- [    Test worker] o.s.s.web.DefaultSecurityFilterChain     : Will secure any request with [org.springframework.security.web.session.DisableEncodeUrlFilter@5e7918f7, org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter@5fbd5e9e, org.springframework.security.web.context.SecurityContextHolderFilter@2b96d5ea, org.springframework.security.web.header.HeaderWriterFilter@1bb3448d, org.springframework.security.web.authentication.logout.LogoutFilter@7a6dd9dd, az.millikart.common.security.JwtAuthFilter@5f6ef272, org.springframework.security.web.savedrequest.RequestCacheAwareFilter@36382eca, org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter@7f0c6305, org.springframework.security.web.authentication.AnonymousAuthenticationFilter@7e19d69b, org.springframework.security.web.access.ExceptionTranslationFilter@b0d8d4a, org.springframework.security.web.access.intercept.AuthorizationFilter@600e8be]
+2026-07-23T01:00:30.839+04:00  INFO 70937 --- [    Test worker] az.millikart.auth.AuthApplicationTests   : Started AuthApplicationTests in 0.697 seconds (process running for 6.629)
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

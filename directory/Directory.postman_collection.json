@@ -1,0 +1,394 @@
+{
+	"info": {
+		"_postman_id": "c3d4e5f6-a1b2-c3d4-e5f6-a1b2c3d4e5f6",
+		"name": "Directory Service",
+		"description": "A collection for the Directory Service microservice, managing companies, terminals, and tracking audit logs.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Companies",
+			"item": [
+				{
+					"name": "Create Company",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/companies",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"companies"
+							]
+						},
+						"description": "Creates a new company. Access restricted to SYSTEM_ADMIN."
+					},
+					"response": []
+				},
+				{
+					"name": "List Companies",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/companies",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"companies"
+							]
+						},
+						"description": "Retrieves the list of active companies. Access restricted to SYSTEM_ADMIN and AUDITOR."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Company by ID",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/companies/{{companyId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"companies",
+								"{{companyId}}"
+							]
+						},
+						"description": "Retrieves detailed information for a company. Accessible by SYSTEM_ADMIN or company members."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Company",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/companies/{{companyId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"companies",
+								"{{companyId}}"
+							]
+						},
+						"description": "Updates company details. Access restricted to SYSTEM_ADMIN."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Company",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/companies/{{companyId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"companies",
+								"{{companyId}}"
+							]
+						},
+						"description": "Soft deletes a company. Access restricted to SYSTEM_ADMIN."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Terminals",
+			"item": [
+				{
+					"name": "Create Terminal",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": 998877,\n  \"name\": \"Main Terminal 1\",\n  \"login\": \"term_login_01\",\n  \"password\": \"term_pass_01\",\n  \"companyId\": \"comp-01\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/terminals",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"terminals"
+							]
+						},
+						"description": "Creates a new terminal for a company."
+					},
+					"response": []
+				},
+				{
+					"name": "List Terminals",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/terminals",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"terminals"
+							]
+						},
+						"description": "Retrieves the list of terminals. SYSTEM_ADMIN retrieves all, company users retrieve terminals for their company."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Terminal by ID",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/terminals/{{terminalId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"terminals",
+								"{{terminalId}}"
+							]
+						},
+						"description": "Retrieves detailed information for a specific terminal."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Terminal",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Main Terminal 1 (Updated)\",\n  \"login\": \"updated_login\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/terminals/{{terminalId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"terminals",
+								"{{terminalId}}"
+							]
+						},
+						"description": "Updates terminal credentials or details."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Terminal",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/terminals/{{terminalId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"terminals",
+								"{{terminalId}}"
+							]
+						},
+						"description": "Deletes a terminal."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Audit Logs",
+			"item": [
+				{
+					"name": "List Audit Logs",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/audit-logs?entityType=COMPANY&entityId=comp-01",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"audit-logs"
+							],
+							"query": [
+								{
+									"key": "entityType",
+									"value": "COMPANY"
+								},
+								{
+									"key": "entityId",
+									"value": "comp-01"
+								}
+							]
+						},
+						"description": "Retrieves audit log entries ('Who/When/What') with optional entity filters."
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:8082",
+			"type": "string",
+			"description": "The base URL for the Directory Service."
+		},
+		{
+			"key": "authToken",
+			"value": "pbl-secret-token",
+			"type": "string",
+			"description": "The JWT token or fallback token for authentication."
+		},
+		{
+			"key": "companyId",
+			"value": "comp-01",
+			"type": "string",
+			"description": "Sample company ID."
+		},
+		{
+			"key": "terminalId",
+			"value": "998877",
+			"type": "string",
+			"description": "Sample terminal ID."
+		}
+	]
+}

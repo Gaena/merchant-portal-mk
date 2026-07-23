@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="2-auth-core" author="millikart">
+        <!-- Create companies table -->
+        <createTable tableName="companies">
+            <column name="id" type="varchar(255)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp"/>
+        </createTable>
+
+        <!-- Create users table -->
+        <createTable tableName="users">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="username" type="varchar(255)">
+                <constraints nullable="false" unique="true"/>
+            </column>
+            <column name="password_hash" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="full_name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="role" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="company_id" type="varchar(255)"/>
+            <column name="status" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp"/>
+        </createTable>
+
+        <!-- Add foreign key constraint from users to companies -->
+        <addForeignKeyConstraint baseTableName="users" baseColumnNames="company_id"
+                                 constraintName="fk_users_company"
+                                 referencedTableName="companies" referencedColumnNames="id"/>
+
+        <!-- Seed default SYSTEM_ADMIN user (admin@millikart.az / admin123) -->
+        <insert tableName="users">
+            <column name="id" value="00000000-0000-0000-0000-000000000000"/>
+            <column name="username" value="admin@millikart.az"/>
+            <!-- BCrypt hash of "admin123" -->
+            <column name="password_hash" value="$2a$10$C641UbM6EBi7lBaebQ4eo./gv2YJypc66lsKJzB2uM7q/Qoj1bSVO"/>
+            <column name="full_name" value="System Administrator"/>
+            <column name="role" value="SYSTEM_ADMIN"/>
+            <column name="status" value="ACTIVE"/>
+            <column name="created_at" valueComputed="current_timestamp"/>
+        </insert>
+    </changeSet>
+
+    <changeSet id="2-auth-terminal-fk" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="terminals"/>
+            <tableExists tableName="companies"/>
+        </preConditions>
+        <!-- Clean up any company_id references that do not exist in companies table before adding constraint -->
+        <sql>
+            UPDATE terminals SET company_id = NULL WHERE company_id IS NOT NULL AND company_id NOT IN (SELECT id FROM companies);
+        </sql>
+        <!-- Add foreign key from terminals to companies if terminals table is already created by pbl -->
+        <addForeignKeyConstraint baseTableName="terminals" baseColumnNames="company_id"
+                                 constraintName="fk_terminals_company"
+                                 referencedTableName="companies" referencedColumnNames="id"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Create companies table if it does not exist -->
+    <changeSet id="3-directory-companies" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="companies"/>
+            </not>
+        </preConditions>
+        <createTable tableName="companies">
+            <column name="id" type="varchar(255)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_by" type="varchar(255)"/>
+            <column name="created_at" type="timestamp"/>
+            <column name="updated_by" type="varchar(255)"/>
+            <column name="updated_at" type="timestamp"/>
+        </createTable>
+    </changeSet>
+
+    <!-- Ensure companies table has audit columns if created previously -->
+    <changeSet id="3-directory-companies-audit-columns" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="companies"/>
+            <not>
+                <columnExists tableName="companies" columnName="created_by"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="companies">
+            <column name="created_by" type="varchar(255)"/>
+            <column name="updated_by" type="varchar(255)"/>
+            <column name="updated_at" type="timestamp"/>
+        </addColumn>
+    </changeSet>
+
+    <!-- Create terminals table if it does not exist -->
+    <changeSet id="3-directory-terminals" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="terminals"/>
+            </not>
+        </preConditions>
+        <createTable tableName="terminals">
+            <column name="id" type="integer">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="login" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="password" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="company_id" type="varchar(255)"/>
+            <column name="created_by" type="varchar(255)"/>
+            <column name="created_at" type="timestamp"/>
+            <column name="updated_by" type="varchar(255)"/>
+            <column name="updated_at" type="timestamp"/>
+        </createTable>
+    </changeSet>
+
+    <!-- Ensure terminals table has audit columns if created previously -->
+    <changeSet id="3-directory-terminals-audit-columns" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="terminals"/>
+            <not>
+                <columnExists tableName="terminals" columnName="created_by"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="terminals">
+            <column name="created_by" type="varchar(255)"/>
+            <column name="created_at" type="timestamp"/>
+            <column name="updated_by" type="varchar(255)"/>
+            <column name="updated_at" type="timestamp"/>
+        </addColumn>
+    </changeSet>
+
+    <!-- Create audit_logs table for explicit audit history -->
+    <changeSet id="3-directory-audit-logs" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="audit_logs"/>
+            </not>
+        </preConditions>
+        <createTable tableName="audit_logs">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="entity_type" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="entity_id" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="action" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="performed_by" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="company_id" type="varchar(255)"/>
+            <column name="details" type="varchar(4000)"/>
+            <column name="created_at" type="timestamp"/>
+        </createTable>
+    </changeSet>
+
+</databaseChangeLog>

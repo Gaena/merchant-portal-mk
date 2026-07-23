@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/auth/mp.auth.main.iml" filepath="$PROJECT_DIR$/.idea/modules/auth/mp.auth.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/common/mp.common.main.iml" filepath="$PROJECT_DIR$/.idea/modules/common/mp.common.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/directory/mp.directory.main.iml" filepath="$PROJECT_DIR$/.idea/modules/directory/mp.directory.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/pbl/mp.pbl.main.iml" filepath="$PROJECT_DIR$/.idea/modules/pbl/mp.pbl.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/pbl.main.iml" filepath="$PROJECT_DIR$/.idea/modules/pbl.main.iml" />
+    </modules>
+  </component>
+</project>
