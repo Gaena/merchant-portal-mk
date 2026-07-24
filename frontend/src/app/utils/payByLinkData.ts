@@ -1,6 +1,6 @@
 // Shared types and mock data for Pay by Link feature
 
-export type LinkStatus = 'active' | 'paid' | 'expired' | 'cancelled';
+export type LinkStatus = 'active' | 'paid' | 'completed' | 'expired' | 'cancelled' | 'canceled';
 export type LinkUsageType = 'single' | 'multiple';
 export type PaymentType = 'sms' | 'dms';
 export type DmsStatus = 'authorized' | 'finalized';
@@ -151,7 +151,7 @@ export const expiryPercent = (link: PaymentLink): number =>
      (link.expiresAt.getTime() - link.createdAt.getTime())) * 100
   ));
 
-export const statusConfig: Record<LinkStatus, {
+export const statusConfig: Record<string, {
   label: string;
   color: 'success' | 'info' | 'default' | 'error';
   bgColor: string;
@@ -159,6 +159,18 @@ export const statusConfig: Record<LinkStatus, {
 }> = {
   active:    { label: 'Active',    color: 'success', bgColor: 'rgba(46,125,50,0.1)',    textColor: '#2e7d32' },
   paid:      { label: 'Paid',      color: 'info',    bgColor: 'rgba(21,101,192,0.1)',   textColor: '#1565c0' },
+  completed: { label: 'Completed', color: 'info',    bgColor: 'rgba(21,101,192,0.1)',   textColor: '#1565c0' },
   expired:   { label: 'Expired',   color: 'default', bgColor: 'rgba(0,0,0,0.06)',       textColor: '#546e7a' },
   cancelled: { label: 'Cancelled', color: 'error',   bgColor: 'rgba(198,40,40,0.1)',    textColor: '#c62828' },
+  canceled:  { label: 'Canceled',  color: 'error',   bgColor: 'rgba(198,40,40,0.1)',    textColor: '#c62828' },
+};
+
+export const getStatusConfig = (status?: string) => {
+  const st = (status || '').toLowerCase();
+  return statusConfig[st] || {
+    label: status || 'Unknown',
+    color: 'default',
+    bgColor: 'rgba(0,0,0,0.06)',
+    textColor: '#546e7a',
+  };
 };

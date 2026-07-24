@@ -33,7 +33,7 @@ export interface Terminal {
 
 export type PaymentType = 'SMS' | 'DMS';
 export type UsageType = 'SINGLE' | 'MULTIPLE';
-export type PaymentLinkStatus = 'CREATED' | 'ACTIVE' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+export type PaymentLinkStatus = 'CREATED' | 'ACTIVE' | 'PAID' | 'EXPIRED' | 'CANCELLED' | 'CANCELED';
 
 export interface PaymentLink {
   id: string;

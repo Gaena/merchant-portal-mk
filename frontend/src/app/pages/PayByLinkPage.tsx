@@ -74,11 +74,22 @@ import type {
 
 // ─── Local status config with icons ──────────────────────────────────────────
 
-const statusConfig: Record<LinkStatus, { label: string; color: 'success' | 'info' | 'default' | 'error'; icon: React.ReactNode }> = {
+const statusConfig: Record<string, { label: string; color: 'success' | 'info' | 'default' | 'error'; icon: React.ReactNode }> = {
   active: { label: 'Active', color: 'success', icon: <CheckCircleIcon sx={{ fontSize: 14 }} /> },
   paid: { label: 'Paid', color: 'info', icon: <CheckCircleIcon sx={{ fontSize: 14 }} /> },
+  completed: { label: 'Completed', color: 'info', icon: <CheckCircleIcon sx={{ fontSize: 14 }} /> },
   expired: { label: 'Expired', color: 'default', icon: <ExpiredIcon sx={{ fontSize: 14 }} /> },
   cancelled: { label: 'Cancelled', color: 'error', icon: <CancelIcon sx={{ fontSize: 14 }} /> },
+  canceled: { label: 'Canceled', color: 'error', icon: <CancelIcon sx={{ fontSize: 14 }} /> },
+};
+
+const getStatusConfig = (status?: string) => {
+  const st = (status || '').toLowerCase();
+  return statusConfig[st] || {
+    label: status || 'Unknown',
+    color: 'default',
+    icon: <ExpiredIcon sx={{ fontSize: 14 }} />,
+  };
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -158,7 +169,7 @@ export const PayByLinkPage: React.FC = () => {
 
   const handleCancel = async (id: string) => {
     try {
-      await apiClient.patch(`/api/v1/payment-links/${id}`, { status: 'CANCELLED' });
+      await apiClient.patch(`/api/v1/payment-links/${id}`, { status: 'CANCELED' });
       setLinks(prev => prev.map(l => l.id === id ? { ...l, status: 'cancelled' } : l));
       setSnackbar({ open: true, message: 'Payment link cancelled' });
     } catch {
@@ -442,7 +453,7 @@ export const PayByLinkPage: React.FC = () => {
             </TableHead>
             <TableBody>
               {paginated.map(link => {
-                const cfg = statusConfig[link.status];
+                const cfg = getStatusConfig(link.status);
                 const expiryProgress = link.status === 'active'
                   ? Math.max(0, Math.min(100, ((link.expiresAt.getTime() - Date.now()) / (link.expiresAt.getTime() - link.createdAt.getTime())) * 100))
                   : null;

@@ -59,6 +59,7 @@ import {
   formatTimeLeft,
   expiryPercent,
   statusConfig,
+  getStatusConfig,
 } from '../utils/payByLinkData';
 import type {
   PaymentLink,
@@ -439,7 +440,7 @@ export const PayByLinkDetailPage: React.FC = () => {
     );
   }
 
-  const cfg = statusConfig[link.status];
+  const cfg = getStatusConfig(link.status);
   const timeline = buildTimeline(link);
   const expPct = link.status === 'active' ? expiryPercent(link) : null;
   const isActive = link.status === 'active';
@@ -452,7 +453,7 @@ export const PayByLinkDetailPage: React.FC = () => {
   const handleCancel = async () => {
     if (!link) return;
     try {
-      await apiClient.patch(`/api/v1/payment-links/${link.id}`, { status: 'CANCELLED' });
+      await apiClient.patch(`/api/v1/payment-links/${link.id}`, { status: 'CANCELED' });
       setLink(prev => prev ? { ...prev, status: 'cancelled' } : prev);
       setCancelDialogOpen(false);
       setSnackbar('Payment link cancelled successfully');
