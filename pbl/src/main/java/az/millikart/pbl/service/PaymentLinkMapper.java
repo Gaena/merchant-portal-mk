@@ -61,6 +61,14 @@ public class PaymentLinkMapper {
                 link.getStatus(),
                 link.getAmount(),
                 link.getCurrency(),
+                link.getDescription(),
+                link.getCustomerName(),
+                link.getCustomerEmail(),
+                link.getCustomerPhone(),
+                link.getPaymentType(),
+                link.getUsageType(),
+                link.getMaxPayments(),
+                link.getExpiresAt(),
                 link.getCreatedAt()
         );
     }

@@ -23,7 +23,7 @@
 <tr>
 <td>
 <div class="infoBox" id="tests">
-<div class="counter">3</div>
+<div class="counter">5</div>
 <p>tests</p>
 </div>
 </td>
@@ -41,7 +41,7 @@
 </td>
 <td>
 <div class="infoBox" id="duration">
-<div class="counter">1.592s</div>
+<div class="counter">2.101s</div>
 <p>duration</p>
 </div>
 </td>
@@ -66,9 +66,6 @@
 <li>
 <a href="#tab1">Standard output</a>
 </li>
-<li>
-<a href="#tab2">Standard error</a>
-</li>
 </ul>
 <div id="tab0" class="tab">
 <h2>Tests</h2>
@@ -81,18 +78,28 @@
 </tr>
 </thead>
 <tr>
+<td class="success">testAccountLockout_After6FailedAttempts()</td>
+<td class="success">0.606s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
 <td class="success">testLogin_InvalidCredentials()</td>
-<td class="success">0.166s</td>
+<td class="success">0.167s</td>
+<td class="success">passed</td>
+</tr>
+<tr>
+<td class="success">testLogin_InvalidEmailFormat()</td>
+<td class="success">0.097s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">testLogin_Success()</td>
-<td class="success">0.747s</td>
+<td class="success">0.443s</td>
 <td class="success">passed</td>
 </tr>
 <tr>
 <td class="success">testUserCRUD_Success()</td>
-<td class="success">0.679s</td>
+<td class="success">0.788s</td>
 <td class="success">passed</td>
 </tr>
 </table>
@@ -100,8 +107,8 @@
 <div id="tab1" class="tab">
 <h2>Standard output</h2>
 <span class="code">
-<pre>01:00:24.724 [Test worker] INFO org.springframework.test.context.support.AnnotationConfigContextLoaderUtils -- Could not detect default configuration classes for test class [az.millikart.auth.AuthIntegrationTest]: AuthIntegrationTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
-01:00:24.783 [Test worker] INFO org.springframework.boot.test.context.SpringBootTestContextBootstrapper -- Found @SpringBootConfiguration az.millikart.auth.AuthApplication for test class az.millikart.auth.AuthIntegrationTest
+<pre>2026-07-23 22:28:57.333 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.t.c.s.AnnotationConfigContextLoaderUtils?[0;39m - Could not detect default configuration classes for test class [az.millikart.auth.AuthIntegrationTest]: AuthIntegrationTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-07-23 22:28:57.337 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.b.t.c.SpringBootTestContextBootstrapper?[0;39m - Found @SpringBootConfiguration az.millikart.auth.AuthApplication for test class az.millikart.auth.AuthIntegrationTest
 
   .   ____          _            __ _ _
  /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
@@ -111,68 +118,83 @@
  =========|_|==============|___/=/_/_/_/
  :: Spring Boot ::                (v3.2.5)
 
-2026-07-23T01:00:25.003+04:00  INFO 70937 --- [    Test worker] az.millikart.auth.AuthIntegrationTest    : Starting AuthIntegrationTest using Java 21.0.4 with PID 70937 (started by salayevim in /Users/salayevim/IdeaProjects/mp/auth)
-2026-07-23T01:00:25.004+04:00  INFO 70937 --- [    Test worker] az.millikart.auth.AuthIntegrationTest    : No active profile set, falling back to 1 default profile: &quot;default&quot;
-2026-07-23T01:00:25.548+04:00  INFO 70937 --- [    Test worker] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
-2026-07-23T01:00:25.573+04:00  INFO 70937 --- [    Test worker] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 21 ms. Found 2 JPA repository interfaces.
-2026-07-23T01:00:25.969+04:00  INFO 70937 --- [    Test worker] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
-2026-07-23T01:00:26.072+04:00  INFO 70937 --- [    Test worker] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection conn0: url=jdbc:h2:mem:auth user=SA
-2026-07-23T01:00:26.073+04:00  INFO 70937 --- [    Test worker] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
-2026-07-23T01:00:26.105+04:00  INFO 70937 --- [    Test worker] liquibase.database                       : Set default schema name to PUBLIC
-2026-07-23T01:00:26.357+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : Creating database history table with name: PUBLIC.DATABASECHANGELOG
-2026-07-23T01:00:26.422+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : Reading from PUBLIC.DATABASECHANGELOG
-2026-07-23T01:00:26.495+04:00  INFO 70937 --- [    Test worker] liquibase.lockservice                    : Successfully acquired change log lock
-2026-07-23T01:00:26.495+04:00  INFO 70937 --- [    Test worker] liquibase.command                        : Using deploymentId: 4754026495
-2026-07-23T01:00:26.496+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : Reading from PUBLIC.DATABASECHANGELOG
-Running Changeset: db/changelog/changes/002-user-directory-schema.xml::2-auth-core::millikart
-2026-07-23T01:00:26.521+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : Table companies created
-2026-07-23T01:00:26.526+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : Table users created
-2026-07-23T01:00:26.529+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : Foreign key constraint added to users (company_id)
-2026-07-23T01:00:26.530+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : New row inserted into users
-2026-07-23T01:00:26.531+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : ChangeSet db/changelog/changes/002-user-directory-schema.xml::2-auth-core::millikart ran successfully in 13ms
-Running Changeset: db/changelog/changes/002-user-directory-schema.xml::2-auth-terminal-fk::millikart
-2026-07-23T01:00:26.545+04:00  INFO 70937 --- [    Test worker] liquibase.changelog                      : Marking ChangeSet: &quot;db/changelog/changes/002-user-directory-schema.xml::2-auth-terminal-fk::millikart&quot; as ran despite precondition failure due to onFail='MARK_RAN': 
-          db/changelog/db.changelog-master.xml : Table PUBLIC.terminals does not exist
+2026-07-23 22:28:57.350 [Test worker] [system] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.AuthIntegrationTest?[0;39m - Starting AuthIntegrationTest using Java 21.0.4 with PID 97765 (started by salayevim in /Users/salayevim/IdeaProjects/mp/auth)
+2026-07-23 22:28:57.350 [Test worker] [system] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.AuthIntegrationTest?[0;39m - No active profile set, falling back to 1 default profile: &quot;default&quot;
+2026-07-23 22:28:57.488 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.d.r.c.RepositoryConfigurationDelegate?[0;39m - Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-23 22:28:57.493 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.d.r.c.RepositoryConfigurationDelegate?[0;39m - Finished Spring Data repository scanning in 5 ms. Found 2 JPA repository interfaces.
+2026-07-23 22:28:57.546 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mcom.zaxxer.hikari.HikariDataSource?[0;39m - HikariPool-2 - Starting...
+2026-07-23 22:28:57.547 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mcom.zaxxer.hikari.pool.HikariPool?[0;39m - HikariPool-2 - Added connection conn10: url=jdbc:h2:mem:auth user=SA
+2026-07-23 22:28:57.547 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mcom.zaxxer.hikari.HikariDataSource?[0;39m - HikariPool-2 - Start completed.
+2026-07-23 22:28:57.548 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.database?[0;39m - Set default schema name to PUBLIC
+2026-07-23 22:28:57.605 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.changelog?[0;39m - Reading from PUBLIC.DATABASECHANGELOG
+2026-07-23 22:28:57.617 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.lockservice?[0;39m - Successfully acquired change log lock
+2026-07-23 22:28:57.617 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.command?[0;39m - Using deploymentId: 4831337617
+2026-07-23 22:28:57.617 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.changelog?[0;39m - Reading from PUBLIC.DATABASECHANGELOG
+2026-07-23 22:28:57.619 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - UPDATE SUMMARY
+2026-07-23 22:28:57.619 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Run:                          0
+2026-07-23 22:28:57.619 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Previously run:               3
+2026-07-23 22:28:57.619 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Filtered out:                 0
+2026-07-23 22:28:57.619 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - -------------------------------
+2026-07-23 22:28:57.619 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Total change sets:            3
+2026-07-23 22:28:57.619 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Update summary generated
+2026-07-23 22:28:57.619 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.command?[0;39m - Update command completed successfully.
+Liquibase: Update has been successful. Rows affected: 0
+2026-07-23 22:28:57.620 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.lockservice?[0;39m - Successfully released change log lock
+2026-07-23 22:28:57.620 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.command?[0;39m - Command execution complete
+2026-07-23 22:28:57.633 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.h.jpa.internal.util.LogHelper?[0;39m - HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-23 22:28:57.634 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.h.c.i.RegionFactoryInitiator?[0;39m - HHH000026: Second-level cache disabled
+2026-07-23 22:28:57.636 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.o.j.p.SpringPersistenceUnitInfo?[0;39m - No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-23 22:28:57.666 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.h.e.t.j.p.i.JtaPlatformInitiator?[0;39m - HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-23 22:28:57.667 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.o.j.LocalContainerEntityManagerFactoryBean?[0;39m - Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-23 22:28:57.759 [Test worker] [system] ?[31mWARN ?[0;39m ?[36mo.s.b.a.s.s.UserDetailsServiceAutoConfiguration?[0;39m - 
 
-2026-07-23T01:00:26.548+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : UPDATE SUMMARY
-2026-07-23T01:00:26.548+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Run:                          2
-2026-07-23T01:00:26.548+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Previously run:               0
-2026-07-23T01:00:26.548+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Filtered out:                 0
-2026-07-23T01:00:26.548+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : -------------------------------
-2026-07-23T01:00:26.549+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Total change sets:            2
-2026-07-23T01:00:26.549+04:00  INFO 70937 --- [    Test worker] liquibase.util                           : Update summary generated
-2026-07-23T01:00:26.550+04:00  INFO 70937 --- [    Test worker] liquibase.command                        : Update command completed successfully.
-Liquibase: Update has been successful. Rows affected: 3
-2026-07-23T01:00:26.551+04:00  INFO 70937 --- [    Test worker] liquibase.lockservice                    : Successfully released change log lock
-2026-07-23T01:00:26.551+04:00  INFO 70937 --- [    Test worker] liquibase.command                        : Command execution complete
-2026-07-23T01:00:26.623+04:00  INFO 70937 --- [    Test worker] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
-2026-07-23T01:00:26.653+04:00  INFO 70937 --- [    Test worker] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.4.4.Final
-2026-07-23T01:00:26.673+04:00  INFO 70937 --- [    Test worker] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
-2026-07-23T01:00:26.789+04:00  INFO 70937 --- [    Test worker] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
-2026-07-23T01:00:27.242+04:00  INFO 70937 --- [    Test worker] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
-2026-07-23T01:00:27.256+04:00  INFO 70937 --- [    Test worker] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
-2026-07-23T01:00:27.635+04:00  WARN 70937 --- [    Test worker] .s.s.UserDetailsServiceAutoConfiguration : 
-
-Using generated security password: 9fca8a39-7cb2-447a-9530-f87c90ae25bf
+Using generated security password: 243ed7bf-d965-4479-9c5c-61954ef059fc
 
 This generated password is for development use only. Your security configuration must be updated before running your application in production.
 
-2026-07-23T01:00:28.017+04:00  INFO 70937 --- [    Test worker] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 1 endpoint(s) beneath base path '/actuator'
-2026-07-23T01:00:28.067+04:00  INFO 70937 --- [    Test worker] o.s.s.web.DefaultSecurityFilterChain     : Will secure any request with [org.springframework.security.web.session.DisableEncodeUrlFilter@74cca90, org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter@4fb5adb8, org.springframework.security.web.context.SecurityContextHolderFilter@148d7cfa, org.springframework.security.web.header.HeaderWriterFilter@34fcbc36, org.springframework.security.web.authentication.logout.LogoutFilter@173b1683, az.millikart.common.security.JwtAuthFilter@3ef85262, org.springframework.security.web.savedrequest.RequestCacheAwareFilter@32f6d000, org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter@67964236, org.springframework.security.web.authentication.AnonymousAuthenticationFilter@250268ef, org.springframework.security.web.access.ExceptionTranslationFilter@7be7236d, org.springframework.security.web.access.intercept.AuthorizationFilter@14ef94ec]
-2026-07-23T01:00:28.451+04:00  INFO 70937 --- [    Test worker] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
-2026-07-23T01:00:28.451+04:00  INFO 70937 --- [    Test worker] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
-2026-07-23T01:00:28.452+04:00  INFO 70937 --- [    Test worker] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 1 ms
-2026-07-23T01:00:28.492+04:00  INFO 70937 --- [    Test worker] az.millikart.auth.AuthIntegrationTest    : Started AuthIntegrationTest in 3.632 seconds (process running for 4.283)
-</pre>
-</span>
-</div>
-<div id="tab2" class="tab">
-<h2>Standard error</h2>
-<span class="code">
-<pre>WARNING: A Java agent has been loaded dynamically (/Users/salayevim/.gradle/caches/modules-2/files-2.1/net.bytebuddy/byte-buddy-agent/1.14.13/979ce25f7d3096a2e82214ba7dc972a05ce7a171/byte-buddy-agent-1.14.13.jar)
-WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
-WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
-WARNING: Dynamic loading of agents will be disallowed by default in a future release
+2026-07-23 22:28:57.876 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.b.a.e.web.EndpointLinksResolver?[0;39m - Exposing 1 endpoint(s) beneath base path '/actuator'
+2026-07-23 22:28:57.895 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.s.web.DefaultSecurityFilterChain?[0;39m - Will secure any request with [org.springframework.security.web.session.DisableEncodeUrlFilter@7a552fe4, org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter@23258315, org.springframework.security.web.context.SecurityContextHolderFilter@6b88ef84, org.springframework.security.web.header.HeaderWriterFilter@49d69469, org.springframework.security.web.authentication.logout.LogoutFilter@642bd75c, az.millikart.common.security.TraceIdFilter@8381203, az.millikart.common.security.JwtAuthFilter@61c6450f, org.springframework.security.web.savedrequest.RequestCacheAwareFilter@2d5c1ebf, org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter@780b26f0, org.springframework.security.web.authentication.AnonymousAuthenticationFilter@61cb973d, org.springframework.security.web.access.ExceptionTranslationFilter@789a8251, org.springframework.security.web.access.intercept.AuthorizationFilter@1db89221]
+2026-07-23 22:28:58.064 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.b.t.m.w.SpringBootMockServletContext?[0;39m - Initializing Spring TestDispatcherServlet ''
+2026-07-23 22:28:58.065 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.t.w.s.TestDispatcherServlet?[0;39m - Initializing Servlet ''
+2026-07-23 22:28:58.065 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.t.w.s.TestDispatcherServlet?[0;39m - Completed initialization in 0 ms
+2026-07-23 22:28:58.076 [Test worker] [system] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.AuthIntegrationTest?[0;39m - Started AuthIntegrationTest in 0.737 seconds (process running for 5.917)
+2026-07-23 22:28:58.274 [Test worker] [86cc765c] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:58.400 [Test worker] [86cc765c] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login successful for user ID: e90111b0-d4ea-46c4-9476-b9d992d1d982, role: SYSTEM_ADMIN, companyId: null
+2026-07-23 22:28:58.418 [Test worker] [0e4bc2e6] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:58.501 [Test worker] [0e4bc2e6] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login successful for user ID: e90111b0-d4ea-46c4-9476-b9d992d1d982, role: SYSTEM_ADMIN, companyId: null
+2026-07-23 22:28:58.531 [Test worker] [91972d6a] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:58.611 [Test worker] [91972d6a] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login successful for user ID: 019b6149-d696-47b9-b0bd-6d889e3648bb, role: SYSTEM_ADMIN, companyId: null
+2026-07-23 22:28:58.614 [Test worker] [c37b83d9] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:58.693 [Test worker] [c37b83d9] ?[31mWARN ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login failed: incorrect password for username admin@millikart.az. Failed attempts: 1/6
+2026-07-23 22:28:58.703 [Test worker] [8c309332] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:58.784 [Test worker] [8c309332] ?[31mWARN ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login failed: incorrect password for username admin@millikart.az. Failed attempts: 2/6
+2026-07-23 22:28:58.788 [Test worker] [5969c9d7] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:58.869 [Test worker] [5969c9d7] ?[31mWARN ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login failed: incorrect password for username admin@millikart.az. Failed attempts: 3/6
+2026-07-23 22:28:58.874 [Test worker] [8e81accd] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:58.954 [Test worker] [8e81accd] ?[31mWARN ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login failed: incorrect password for username admin@millikart.az. Failed attempts: 4/6
+2026-07-23 22:28:58.957 [Test worker] [213d82cd] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:59.037 [Test worker] [213d82cd] ?[31mWARN ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login failed: incorrect password for username admin@millikart.az. Failed attempts: 5/6
+2026-07-23 22:28:59.041 [Test worker] [8737c5c4] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:59.121 [Test worker] [8737c5c4] ?[31mWARN ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Account admin@millikart.az locked for 30 minutes due to 6 failed login attempts (PCI-DSS 8.3.4)
+2026-07-23 22:28:59.124 [Test worker] [8d36a01a] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:59.126 [Test worker] [8d36a01a] ?[31mWARN ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login blocked: user account admin@millikart.az is locked until 2026-07-23T18:58:59.121080Z
+2026-07-23 22:28:59.136 [Test worker] [b9642b7d] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:59.214 [Test worker] [b9642b7d] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login successful for user ID: c6eff375-eee7-438e-a251-e894451dcb17, role: SYSTEM_ADMIN, companyId: null
+2026-07-23 22:28:59.216 [Test worker] [9d79f0f7] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:59.293 [Test worker] [9d79f0f7] ?[31mWARN ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login failed: incorrect password for username admin@millikart.az. Failed attempts: 1/6
+2026-07-23 22:28:59.307 [Test worker] [0ab49b71] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:59.385 [Test worker] [0ab49b71] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login successful for user ID: 49e45dc9-93b8-49bc-818f-3b21650115c4, role: SYSTEM_ADMIN, companyId: null
+2026-07-23 22:28:59.402 [Test worker] [282b0b21] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: admin@millikart.az
+2026-07-23 22:28:59.486 [Test worker] [282b0b21] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login successful for user ID: addc82ad-eed1-47dd-8ffb-33bbda613713, role: SYSTEM_ADMIN, companyId: null
+2026-07-23 22:28:59.512 [Test worker] [d6cc8adb] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.UserService?[0;39m - Request to create user: username=head@comp01.com, role=COMPANY_HEAD, companyId=comp-01 by actor: admin@millikart.az
+2026-07-23 22:28:59.797 [Test worker] [d6cc8adb] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.UserService?[0;39m - User created successfully: id=79cca845-8c38-4349-b3cc-29c2e92b4260, username=head@comp01.com
+2026-07-23 22:28:59.803 [Test worker] [440c7fef] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: head@comp01.com
+2026-07-23 22:28:59.887 [Test worker] [440c7fef] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login successful for user ID: 79cca845-8c38-4349-b3cc-29c2e92b4260, role: COMPANY_HEAD, companyId: comp-01
+2026-07-23 22:28:59.891 [Test worker] [02c4d7d9] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.UserService?[0;39m - Request to create user: username=emp@comp01.com, role=COMPANY_EMPLOYEE, companyId=comp-01 by actor: head@comp01.com
+2026-07-23 22:28:59.974 [Test worker] [02c4d7d9] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.UserService?[0;39m - User created successfully: id=568e30fc-49eb-4411-ad83-85ee89fb194a, username=emp@comp01.com
+2026-07-23 22:28:59.979 [Test worker] [4b7dbd42] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.UserService?[0;39m - Request to create user: username=other@comp.com, role=COMPANY_EMPLOYEE, companyId=comp-different by actor: head@comp01.com
+2026-07-23 22:29:00.090 [Test worker] [92eaf8b3] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login attempt for email: head@comp01.com
+2026-07-23 22:29:00.170 [Test worker] [92eaf8b3] ?[34mINFO ?[0;39m ?[36ma.millikart.auth.service.AuthService?[0;39m - Login successful for user ID: 79cca845-8c38-4349-b3cc-29c2e92b4260, role: COMPANY_HEAD, companyId: comp-01
 </pre>
 </span>
 </div>
@@ -184,7 +206,7 @@ WARNING: Dynamic loading of agents will be disallowed by default in a future rel
 <input id="line-wrapping-toggle" type="checkbox" autocomplete="off"/>
 </label>
 </div>Generated by 
-<a href="http://www.gradle.org">Gradle 8.5</a> at Jul 23, 2026, 1:00:30 AM</p>
+<a href="http://www.gradle.org">Gradle 8.5</a> at Jul 23, 2026, 10:29:00 PM</p>
 </div>
 </div>
 </body>

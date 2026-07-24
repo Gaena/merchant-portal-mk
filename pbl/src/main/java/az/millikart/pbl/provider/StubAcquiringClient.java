@@ -6,6 +6,8 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -13,10 +15,13 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(name = "pbl.provider.stub", havingValue = "true")
 public class StubAcquiringClient implements AcquiringClient {
 
+    private static final Logger log = LoggerFactory.getLogger(StubAcquiringClient.class);
+
     @Override
     public EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID merchantRid, String hppRedirectUrl) {
         long orderId = (long) (Math.random() * 1000000000L);
         String hppUrl = "https://gateway.txpg.example.com/pay?rid=" + orderId;
+        log.info("[STUB PROVIDER] createEcomOrder for merchantRid: {}, amount: {}, generated orderId: {}", merchantRid, link.getAmount(), orderId);
         return new EcomCreateOrderResponse(
                 new EcomCreateOrderResponse.Order(hppUrl, orderId, "Preparing", "password123")
         );
@@ -24,6 +29,7 @@ public class StubAcquiringClient implements AcquiringClient {
 
     @Override
     public Map<String, Object> completeDms(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
+        log.info("[STUB PROVIDER] completeDms for providerOrderId: {}, amount: {}", providerOrderId, amount);
         Map<String, Object> response = new HashMap<>();
         response.put("status", "SUCCESS");
         response.put("providerOrderId", providerOrderId);
@@ -33,6 +39,7 @@ public class StubAcquiringClient implements AcquiringClient {
 
     @Override
     public Map<String, Object> refund(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
+        log.info("[STUB PROVIDER] refund for providerOrderId: {}, amount: {}", providerOrderId, amount);
         Map<String, Object> response = new HashMap<>();
         response.put("status", "REFUNDED");
         response.put("refundId", "REF-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase());
@@ -41,6 +48,7 @@ public class StubAcquiringClient implements AcquiringClient {
 
     @Override
     public Map<String, Object> getOrderStatus(String providerOrderId, String password, String login, String terminalPassword) {
+        log.info("[STUB PROVIDER] getOrderStatus for providerOrderId: {}", providerOrderId);
         Map<String, Object> response = new HashMap<>();
         response.put("status", "FullyPaid");
         response.put("id", providerOrderId);

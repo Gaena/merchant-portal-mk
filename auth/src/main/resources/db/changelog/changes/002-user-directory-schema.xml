@@ -77,4 +77,19 @@
                                  referencedTableName="companies" referencedColumnNames="id"/>
     </changeSet>
 
+    <changeSet id="2-auth-lockout-fields" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="users"/>
+            <not>
+                <columnExists tableName="users" columnName="failed_login_attempts"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="users">
+            <column name="failed_login_attempts" type="integer" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="lockout_until" type="timestamp"/>
+        </addColumn>
+    </changeSet>
+
 </databaseChangeLog>

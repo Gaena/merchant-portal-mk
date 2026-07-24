@@ -54,7 +54,9 @@ description: Рабочий процесс (Workflow) и контекст про
 - **Postman Коллекция**: [Pay-By-Link.postman_collection.json](file:///Users/salayevim/IdeaProjects/mp/pbl/Pay-By-Link.postman_collection.json), [NON-PSP Ecom.postman_collection.json](file:///Users/salayevim/IdeaProjects/mp/pbl/NON-PSP%20Ecom.postman_collection.json)
 - **Функционал**:
   - Создание, редактирование, просмотр, листинг ссылок на оплату (`payment_links`).
-  - Открытие платежной страницы (`GET /api/v1/payment-links/{id}/open`), генерация сессии в эквайринге MilliKart (TXPG).
+  - Открытие платежной страницы (`GET /api/v1/payment-links/{id}/open`), динамическая генерация сессий в эквайринге MilliKart (TXPG) без кэширования старого HPP URL (согласно требованиям Millikart).
+  - Фиксация IP-адреса и устройства/User-Agent покупателя в таблице `transactions` при каждом открытии ссылки.
+  - Запрос списка транзакций конкретной ссылки (`GET /api/v1/payment-links/{id}/transactions`).
   - Обработка редиректов и генерация онлайн-чека на Thymeleaf (`redirect.html`).
   - Отслеживание транзакций (`transactions`), завершение двухстадийных платежей DMS (`/complete`), проведение возвратов (`/refund`).
   - Интеграционные клиенты: `TxpgAcquiringClient` (боевой MilliKart) и `StubAcquiringClient` (заглушка для локальной отладки/тестирования).
@@ -87,7 +89,11 @@ JWT-токен подписывается симметричным ключом 
 | `COMPANY_HEAD` | Полное управление своей компанией (`companyId`): пользователи компании, терминалы, ссылки, DMS, возвраты. |
 | `COMPANY_MANAGER` | Управление терминалами своей компании, создание/изменение платежных ссылок, проведение DMS и возвратов. |
 | `COMPANY_EMPLOYEE` | Создание и просмотр платежных ссылок, проведение DMS. **Возвраты запрещены (403 Forbidden)**. |
-| `AUDITOR` | Просмотр (Read-Only) данных своей компании. **Любые записи/модификации запрещены (403 Forbidden)**. |
+| `AUDITOR` | Просмотр (Read-Only) данных всех компаний. **Любые записи/модификации запрещены (403 Forbidden)**. |
+
+> **Правила видимости логов аудита (`/api/v1/audit-logs`)**:
+> - `SYSTEM_ADMIN` и `AUDITOR`: видят все логи аудита всей системы.
+> - `COMPANY_HEAD` и `COMPANY_MANAGER`: видят логи аудита строго в рамках своей компании (`companyId`).
 
 ---
 

@@ -11,6 +11,8 @@ import az.millikart.directory.repository.CompanyRepository;
 import az.millikart.common.security.UserPrincipal;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class CompanyService {
+
+    private static final Logger log = LoggerFactory.getLogger(CompanyService.class);
 
     private final CompanyRepository companyRepository;
     private final AuditLogService auditLogService;
@@ -31,6 +35,8 @@ public class CompanyService {
     public CompanyResponse createCompany(CreateCompanyRequest request, UserPrincipal principal) {
         String actorUsername = UserPrincipal.getUsername(principal);
         String actorRole = UserPrincipal.getRole(principal);
+
+        log.info("Request to create company: id={}, name={} by actor: {}", request.id(), request.name(), actorUsername);
 
         if (!"SYSTEM_ADMIN".equals(actorRole)) {
             throw new InvalidStateException("Access denied: Only SYSTEM_ADMIN can create companies");

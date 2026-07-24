@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 @Controller
 @RequestMapping("/api/v1/payment-links")
 public class OpenLinkController {
@@ -30,13 +32,27 @@ public class OpenLinkController {
     }
 
     @GetMapping("/{id}/open")
-    public ResponseEntity<Void> open(@PathVariable UUID id) {
-        log.info("REST request to open payment link ID: {}", id);
-        String redirectUrl = openLinkService.openAndBuildRedirect(id);
+    public ResponseEntity<Void> open(@PathVariable UUID id, HttpServletRequest request) {
+        String clientIp = extractClientIp(request);
+        String userAgent = request.getHeader("User-Agent");
+        log.info("REST request to open payment link ID: {}, clientIp: {}, userAgent: {}", id, clientIp, userAgent);
+        String redirectUrl = openLinkService.openAndBuildRedirect(id, clientIp, userAgent);
         log.info("Redirecting customer to HPP URL: {}", redirectUrl);
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(redirectUrl))
                 .build();
+    }
+
+    private String extractClientIp(HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isBlank()) {
+            return xForwardedFor.split(",")[0].trim();
+        }
+        String xRealIp = request.getHeader("X-Real-IP");
+        if (xRealIp != null && !xRealIp.isBlank()) {
+            return xRealIp.trim();
+        }
+        return request.getRemoteAddr();
     }
 
     @GetMapping("/redirect/{tx}")
@@ -48,7 +64,7 @@ public class OpenLinkController {
                                Model model) {
         String finalOrderId = providerOrderId != null ? providerOrderId : providerOrderIdLower;
         log.info("Customer redirected back from provider. ID: {}, PASSWORD: {}, STATUS: {}, tx: {}", 
-                 finalOrderId, providerPassword, providerStatus, txUuid);
+                 finalOrderId, providerPassword != null ? "***" : "null", providerStatus, txUuid);
 
         // Fetch and update status in the background immediately
         if (finalOrderId != null) {

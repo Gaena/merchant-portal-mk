@@ -12,6 +12,8 @@ import az.millikart.common.exception.InvalidStateException;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +22,8 @@ import az.millikart.common.security.UserPrincipal;
 
 @Service
 public class UserService {
+
+    private static final Logger log = LoggerFactory.getLogger(UserService.class);
 
     private final UserRepository userRepository;
     private final CompanyRepository companyRepository;
@@ -35,23 +39,32 @@ public class UserService {
     public UserResponse createUser(CreateUserRequest request, UserPrincipal principal) {
         String actorRole = UserPrincipal.getRole(principal);
         String actorCompanyId = UserPrincipal.getCompanyId(principal);
+        String actorUsername = UserPrincipal.getUsername(principal);
+
+        String cleanEmail = request.username() != null ? request.username().trim().toLowerCase() : "";
+
+        log.info("Request to create user: username={}, role={}, companyId={} by actor: {}", 
+                cleanEmail, request.role(), request.companyId(), actorUsername);
+
         // Enforce RBAC
         validateCreatePermission(request, actorRole, actorCompanyId);
 
         // Check uniqueness
-        if (userRepository.findByUsername(request.username()).isPresent()) {
+        if (userRepository.findByUsername(cleanEmail).isPresent()) {
+            log.warn("User creation failed: username {} already exists", cleanEmail);
             throw new BusinessException("Username already exists");
         }
 
         // Validate Company exists if assigned
         if (request.companyId() != null && !request.companyId().isBlank()) {
             if (!companyRepository.existsById(request.companyId())) {
+                log.warn("User creation failed: companyId {} not found", request.companyId());
                 throw new BusinessException("Company not found");
             }
         }
 
         User user = User.builder()
-                .username(request.username())
+                .username(cleanEmail)
                 .passwordHash(passwordEncoder.encode(request.password()))
                 .fullName(request.fullName())
                 .role(request.role())
@@ -60,6 +73,7 @@ public class UserService {
                 .build();
 
         user = userRepository.save(user);
+        log.info("User created successfully: id={}, username={}", user.getId(), user.getUsername());
         return mapToResponse(user);
     }
 

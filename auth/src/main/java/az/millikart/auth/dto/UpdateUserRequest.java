@@ -1,11 +1,11 @@
 package az.millikart.auth.dto;
 
-import jakarta.validation.constraints.Size;
+import az.millikart.common.validation.ValidPassword;
 
 public record UpdateUserRequest(
         String fullName,
         String role,
-        @Size(min = 6, message = "Password must be at least 6 characters")
+        @ValidPassword
         String password,
         String status
 ) {

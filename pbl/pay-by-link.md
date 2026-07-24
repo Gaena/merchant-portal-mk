@@ -318,6 +318,17 @@ Retrieves a paginated list of links. Automatic company boundaries are enforced f
 
 ```json
 {
+  "amount": 100.00,
+  "reason": "Customer request"
+}
+```
+
+### 5.10. Get Payment Link Transactions
+
+-   **Method:** `GET /api/v1/payment-links/{id}/transactions`
+-   **Headers:**
+    -   `Authorization: Bearer <token>`
+-   **Description:** Returns all transaction attempts associated with the payment link (including `clientIp`, `userAgent`, and statuses `SUCCESS`, `PENDING`, `AUTHORIZED`, `FAILED`).
   "amount": 500.00,
   "reason": "Customer request"
 }

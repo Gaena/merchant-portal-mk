@@ -1,6 +1,7 @@
 package az.millikart.pbl.provider;
 
 import az.millikart.pbl.domain.PaymentLink;
+import az.millikart.pbl.domain.PaymentType;
 import az.millikart.pbl.provider.dto.EcomCreateOrderRequest;
 import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
@@ -34,8 +35,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
 
     public TxpgAcquiringClient(
             RestClient restClient,
-            @Value("${pbl.provider.api-base-url}") String apiBaseUrl,
-            @Value("${pbl.provider.gateway-base-url}") String gatewayBaseUrl,
+            @Value("${pbl.provider.api-base-url:https://test.millikart.az:8083}") String apiBaseUrl,
+            @Value("${pbl.provider.gateway-base-url:https://test.millikart.az:8083}") String gatewayBaseUrl,
             @Value("${pbl.provider.create-order-path:/order}") String createOrderPath,
             @Value("${pbl.provider.exec-tran-path:/api/order/{orderId}/exec-tran}") String execTranPath,
             @Value("${pbl.provider.get-order-path:/api/order/{orderId}}") String getOrderPath) {
@@ -55,13 +56,13 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 .path(createOrderPath)
                 .toUriString();
 
-        log.info("Sending order registration request to provider via RestClient. URL: {}, login: {}, merchantRid: {}", url, login, merchantRid);
+        String typeRid = (link.getPaymentType() == PaymentType.DMS) ? "Order_DMS" : "Order_SMS";
 
         EcomCreateOrderRequest.SubMerchant subMerchant = new EcomCreateOrderRequest.SubMerchant("https://millikart.az/");
 
         EcomCreateOrderRequest request = new EcomCreateOrderRequest(
                 new EcomCreateOrderRequest.Order(
-                        "Order_SMS", // Used for both SMS and DMS payments
+                        typeRid,
                         merchantRid.toString(),
                         link.getAmount(),
                         link.getCurrency(),
@@ -71,6 +72,10 @@ public class TxpgAcquiringClient implements AcquiringClient {
                         subMerchant
                 )
         );
+
+        log.info("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, MerchantRid: {}, Type: {}, Amount: {} {}", 
+                url, login, merchantRid, typeRid, link.getAmount(), link.getCurrency());
+        log.debug("PROVIDER REQ BODY [createEcomOrder]: {}", request);
 
         try {
             EcomCreateOrderResponse response = restClient.post()
@@ -83,14 +88,16 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(EcomCreateOrderResponse.class);
 
-            log.info("Order registration successful for merchantRid: {}", merchantRid);
+            log.info("PROVIDER RESP [createEcomOrder] <- SUCCESS for MerchantRid: {}, ProviderOrderId: {}", 
+                    merchantRid, response != null && response.order() != null ? response.order().id() : "N/A");
+            log.debug("PROVIDER RESP BODY [createEcomOrder]: {}", response);
             return response;
         } catch (org.springframework.web.client.HttpStatusCodeException e) {
-            log.error("Order registration failed. Status: {}, Response: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+            log.error("PROVIDER RESP [createEcomOrder] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
             String desc = extractErrorDescription(e.getResponseBodyAsString());
             throw new az.millikart.common.exception.BusinessException("Acquirer error: " + desc);
         } catch (Exception e) {
-            log.error("Order registration request failed.", e);
+            log.error("PROVIDER REQ [createEcomOrder] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
             throw new az.millikart.common.exception.BusinessException("Acquirer connection failed: " + e.getMessage());
         }
     }
@@ -106,12 +113,13 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 .buildAndExpand(providerOrderId)
                 .toUriString();
 
-        log.info("Sending DMS complete clearing request via RestClient. URL: {}, providerOrderId: {}", url, providerOrderId);
-
         Map<String, Object> tran = new HashMap<>();
         tran.put("phase", "Clearing");
         Map<String, Object> body = new HashMap<>();
         body.put("tran", tran);
+
+        log.info("PROVIDER REQ [completeDms] -> POST URL: {}, ProviderOrderId: {}, Login: {}, Amount: {}", url, providerOrderId, login, amount);
+        log.debug("PROVIDER REQ BODY [completeDms]: {}", body);
 
         try {
             Map<String, Object> response = restClient.post()
@@ -124,14 +132,17 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(Map.class);
 
-            log.info("DMS complete response received for providerOrderId: {}", providerOrderId);
+            log.info("PROVIDER RESP [completeDms] <- SUCCESS for ProviderOrderId: {}, Response: {}", providerOrderId, response);
+            checkAndThrowIfErrorCode(response, "completeDms");
             return response;
+        } catch (az.millikart.common.exception.BusinessException e) {
+            throw e;
         } catch (org.springframework.web.client.HttpStatusCodeException e) {
-            log.error("DMS complete failed. Status: {}, Response: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+            log.error("PROVIDER RESP [completeDms] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
             String desc = extractErrorDescription(e.getResponseBodyAsString());
             throw new az.millikart.common.exception.BusinessException("Acquirer error: " + desc);
         } catch (Exception e) {
-            log.error("DMS complete request failed.", e);
+            log.error("PROVIDER REQ [completeDms] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
             throw new az.millikart.common.exception.BusinessException("Clearing capture failed: " + e.getMessage());
         }
     }
@@ -147,14 +158,15 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 .buildAndExpand(providerOrderId)
                 .toUriString();
 
-        log.info("Sending refund request via RestClient. URL: {}, providerOrderId: {}, amount: {}", url, providerOrderId, amount);
-
         Map<String, Object> tran = new HashMap<>();
         tran.put("phase", "Single");
         tran.put("amount", amount.toString());
         tran.put("type", "Refund");
         Map<String, Object> body = new HashMap<>();
         body.put("tran", tran);
+
+        log.info("PROVIDER REQ [refund] -> POST URL: {}, ProviderOrderId: {}, Login: {}, Refund Amount: {}", url, providerOrderId, login, amount);
+        log.debug("PROVIDER REQ BODY [refund]: {}", body);
 
         try {
             Map<String, Object> response = restClient.post()
@@ -167,14 +179,17 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(Map.class);
 
-            log.info("Refund request successful for providerOrderId: {}", providerOrderId);
+            log.info("PROVIDER RESP [refund] <- SUCCESS for ProviderOrderId: {}, Response: {}", providerOrderId, response);
+            checkAndThrowIfErrorCode(response, "refund");
             return response;
+        } catch (az.millikart.common.exception.BusinessException e) {
+            throw e;
         } catch (org.springframework.web.client.HttpStatusCodeException e) {
-            log.error("Refund request failed. Status: {}, Response: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+            log.error("PROVIDER RESP [refund] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
             String desc = extractErrorDescription(e.getResponseBodyAsString());
             throw new az.millikart.common.exception.BusinessException("Acquirer error: " + desc);
         } catch (Exception e) {
-            log.error("Refund request failed.", e);
+            log.error("PROVIDER REQ [refund] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
             throw new az.millikart.common.exception.BusinessException("Refund failed: " + e.getMessage());
         }
     }
@@ -193,7 +208,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 .buildAndExpand(providerOrderId)
                 .toUriString();
 
-        log.info("Sending order status check request via RestClient. URL: {}, providerOrderId: {}", url, providerOrderId);
+        log.info("PROVIDER REQ [getOrderStatus] -> GET URL: {}, ProviderOrderId: {}, Login: {}", url, providerOrderId, login);
 
         try {
             Map<String, Object> body = restClient.get()
@@ -202,18 +217,32 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(Map.class);
 
-            log.debug("Order status details response received for providerOrderId: {}", providerOrderId);
+            log.info("PROVIDER RESP [getOrderStatus] <- SUCCESS for ProviderOrderId: {}, Response: {}", providerOrderId, body);
+            checkAndThrowIfErrorCode(body, "getOrderStatus");
             if (body != null && body.containsKey("order")) {
                 return (Map<String, Object>) body.get("order");
             }
             return body;
+        } catch (az.millikart.common.exception.BusinessException e) {
+            throw e;
         } catch (org.springframework.web.client.HttpStatusCodeException e) {
-            log.error("Order status check failed. Status: {}, Response: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+            log.error("PROVIDER RESP [getOrderStatus] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
             String desc = extractErrorDescription(e.getResponseBodyAsString());
             throw new az.millikart.common.exception.BusinessException("Acquirer error: " + desc);
         } catch (Exception e) {
-            log.error("Order status check request failed.", e);
+            log.error("PROVIDER REQ [getOrderStatus] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
             throw new az.millikart.common.exception.BusinessException("Order status check failed: " + e.getMessage());
+        }
+    }
+
+    private void checkAndThrowIfErrorCode(Map<String, Object> response, String action) {
+        if (response != null && response.containsKey("errorCode")) {
+            String errorCode = String.valueOf(response.get("errorCode"));
+            String errorDesc = response.containsKey("errorDescription") && response.get("errorDescription") != null
+                    ? String.valueOf(response.get("errorDescription"))
+                    : errorCode;
+            log.error("PROVIDER RESP [{}] <- REJECTED BY MILLIKART. ErrorCode: {}, Description: {}", action, errorCode, errorDesc);
+            throw new az.millikart.common.exception.BusinessException("Acquirer error: " + errorDesc);
         }
     }
 

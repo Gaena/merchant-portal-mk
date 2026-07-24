@@ -53,8 +53,8 @@ public class OpenLinkService {
         this.baseUrl = baseUrl;
     }
 
-    public String openAndBuildRedirect(UUID id) {
-        log.info("Opening payment link session for ID: {}", id);
+    public String openAndBuildRedirect(UUID id, String clientIp, String userAgent) {
+        log.info("Opening payment link session for ID: {}, clientIp: {}, userAgent: {}", id, clientIp, userAgent);
 
         // Phase 1: Validate Link status, expiry, and usage limits
         PaymentLink link = txTemplate.execute(status -> {
@@ -93,30 +93,17 @@ public class OpenLinkService {
             return l;
         });
 
-        // Phase 2: Check for existing active transactions and handle timeout
+        // Phase 2: Invalidate previous uncompleted PENDING attempts (Millikart single-open rule)
         Optional<Transaction> activeTxOpt = transactionRepository
                 .findFirstByLinkIdAndStatusInOrderByCreatedAtDesc(id, List.of(TransactionStatus.PENDING, TransactionStatus.AUTHORIZED));
 
         if (activeTxOpt.isPresent()) {
             Transaction activeTx = activeTxOpt.get();
-            // 10 minutes checkout session timeout
-            if (activeTx.getCreatedAt().isBefore(Instant.now().minusSeconds(600))) {
-                log.info("Active transaction {} for link {} timed out (older than 10 mins). Changing status to FAILED.", activeTx.getId(), id);
-                txTemplate.executeWithoutResult(status -> {
-                    activeTx.setStatus(TransactionStatus.FAILED);
-                    transactionRepository.save(activeTx);
-                });
-            } else {
-                // If it's a fresh/active transaction, reuse the HPP URL
-                log.info("Found fresh active transaction {} for link {}. Reusing existing redirect HPP URL.", activeTx.getId(), id);
-                Map<String, Object> resp = activeTx.getProviderResponse();
-                if (resp != null && resp.containsKey("hppUrl")) {
-                    String hppUrl = (String) resp.get("hppUrl");
-                    Object orderId = resp.get("id");
-                    Object password = resp.get("password");
-                    return hppUrl + "?id=" + orderId + "&password=" + password;
-                }
-            }
+            log.info("Found uncompleted transaction {} for link {}. Marking as FAILED to issue a fresh Millikart session.", activeTx.getId(), id);
+            txTemplate.executeWithoutResult(status -> {
+                activeTx.setStatus(TransactionStatus.FAILED);
+                transactionRepository.save(activeTx);
+            });
         }
 
         // Phase 3: Register a new order with the acquiring provider
@@ -127,7 +114,7 @@ public class OpenLinkService {
                     return new BusinessException("Terminal configuration is not configured");
                 });
 
-        log.info("Registering new order at provider for link: {}, terminal: {}, merchantRid: {}", id, terminal.getId(), merchantRid);
+        log.info("Registering fresh order at provider for link: {}, terminal: {}, merchantRid: {}, clientIp: {}", id, terminal.getId(), merchantRid, clientIp);
 
         // Append the transaction UUID (merchantRid) as a query parameter for tracking
         String hppRedirectUrl = UriComponentsBuilder.fromUriString(baseUrl)
@@ -143,9 +130,9 @@ public class OpenLinkService {
             throw new BusinessException("Failed to register order with provider");
         }
 
-        log.info("Order registered at provider. ProviderOrderId: {}, redirecting user to HPP.", response.order().id());
+        log.info("Fresh order registered at provider. ProviderOrderId: {}, redirecting user to HPP.", response.order().id());
 
-        // Phase 4: Persist the new Transaction in PENDING status
+        // Phase 4: Persist the new Transaction in PENDING status with client IP and User-Agent
         txTemplate.executeWithoutResult(status -> {
             Transaction transaction = Transaction.builder()
                     .link(link)
@@ -154,6 +141,8 @@ public class OpenLinkService {
                     .providerPassword(response.order().password())
                     .amount(link.getAmount())
                     .status(TransactionStatus.PENDING)
+                    .clientIp(clientIp)
+                    .userAgent(userAgent)
                     .providerResponse(Map.of(
                             "hppUrl", response.order().hppUrl(),
                             "id", response.order().id(),
@@ -162,7 +151,7 @@ public class OpenLinkService {
                     ))
                     .build();
             transactionRepository.save(transaction);
-            log.debug("Persisted new PENDING transaction: {} for merchantRid: {}", transaction.getId(), merchantRid);
+            log.debug("Persisted new PENDING transaction: {} for merchantRid: {}, clientIp: {}", transaction.getId(), merchantRid, clientIp);
         });
 
         return response.order().hppUrl() + "?id=" + response.order().id() + "&password=" + response.order().password();

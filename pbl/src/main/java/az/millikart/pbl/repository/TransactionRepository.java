@@ -13,4 +13,5 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     Optional<Transaction> findByProviderOrderId(String providerOrderId);
     long countByLinkIdAndStatus(UUID linkId, TransactionStatus status);
     Optional<Transaction> findFirstByLinkIdAndStatusInOrderByCreatedAtDesc(UUID linkId, Collection<TransactionStatus> statuses);
+    java.util.List<Transaction> findByLinkIdOrderByCreatedAtDesc(UUID linkId);
 }

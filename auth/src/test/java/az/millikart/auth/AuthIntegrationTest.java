@@ -107,11 +107,21 @@ public class AuthIntegrationTest {
     }
 
     @Test
+    public void testLogin_InvalidEmailFormat() throws Exception {
+        LoginRequest loginRequest = new LoginRequest("not-an-email-address", "HeadPassword123!");
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Username must be a valid email address")));
+    }
+
+    @Test
     public void testUserCRUD_Success() throws Exception {
         // 1. Create a Company Head user as SYSTEM_ADMIN
         CreateUserRequest createHead = new CreateUserRequest(
                 "head@comp01.com",
-                "headpassword",
+                "HeadPassword123!",
                 "Company Head User",
                 "COMPANY_HEAD",
                 "comp-01"
@@ -131,7 +141,7 @@ public class AuthIntegrationTest {
         UUID headId = UUID.fromString(headIdStr);
 
         // 2. Get Head user token via login
-        LoginRequest headLogin = new LoginRequest("head@comp01.com", "headpassword");
+        LoginRequest headLogin = new LoginRequest("head@comp01.com", "HeadPassword123!");
         MvcResult loginResult = mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(headLogin)))
@@ -143,7 +153,7 @@ public class AuthIntegrationTest {
         // 3. Create Employee user as COMPANY_HEAD for the same company (success)
         CreateUserRequest createEmp = new CreateUserRequest(
                 "emp@comp01.com",
-                "emppassword",
+                "EmployeePass123!",
                 "Employee User",
                 "COMPANY_EMPLOYEE",
                 "comp-01"
@@ -160,7 +170,7 @@ public class AuthIntegrationTest {
         // 4. Try to create user for a different/non-existent company as COMPANY_HEAD (fail)
         CreateUserRequest createOtherCompanyEmp = new CreateUserRequest(
                 "other@comp.com",
-                "password",
+                "EmployeePass123!",
                 "Other User",
                 "COMPANY_EMPLOYEE",
                 "comp-different"
@@ -179,7 +189,7 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$", hasSize(2)));
 
         // 6. Update user
-        UpdateUserRequest updateRequest = new UpdateUserRequest("Updated Name", null, "newsecurepassword", "ACTIVE");
+        UpdateUserRequest updateRequest = new UpdateUserRequest("Updated Name", null, "NewSecurePass123!", "ACTIVE");
         mockMvc.perform(patch("/api/v1/users/" + headId)
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -188,7 +198,7 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$.fullName", is("Updated Name")));
 
         // 7. Login with updated password
-        LoginRequest updatedLogin = new LoginRequest("head@comp01.com", "newsecurepassword");
+        LoginRequest updatedLogin = new LoginRequest("head@comp01.com", "NewSecurePass123!");
         mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(updatedLogin)))
@@ -203,5 +213,26 @@ public class AuthIntegrationTest {
         mockMvc.perform(get("/api/v1/users/" + headId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    public void testAccountLockout_After6FailedAttempts() throws Exception {
+        LoginRequest invalidLogin = new LoginRequest("admin@millikart.az", "WrongPass123!");
+
+        // 6 failed attempts
+        for (int i = 1; i <= 6; i++) {
+            mockMvc.perform(post("/api/v1/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(invalidLogin)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", is("Invalid username or password")));
+        }
+
+        // 7th attempt should be blocked due to PCI-DSS Account Lockout (30 mins)
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidLogin)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Account is locked due to multiple failed login attempts. Please try again later.")));
     }
 }

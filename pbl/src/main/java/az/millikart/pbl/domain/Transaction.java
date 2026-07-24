@@ -66,6 +66,12 @@ public class Transaction {
     @Column(name = "provider_response")
     private Map<String, Object> providerResponse;
 
+    @Column(name = "client_ip")
+    private String clientIp;
+
+    @Column(name = "user_agent")
+    private String userAgent;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

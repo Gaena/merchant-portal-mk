@@ -45,4 +45,13 @@ public class TransactionController {
     public TransactionResponse checkStatus(@PathVariable String providerOrderId) {
         return paymentLinkService.checkAndStatusUpdate(providerOrderId);
     }
+
+    @GetMapping
+    public az.millikart.pbl.dto.PagedResponse<TransactionResponse> list(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "20") int size,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size);
+        return paymentLinkService.listTransactions(pageable, principal);
+    }
 }

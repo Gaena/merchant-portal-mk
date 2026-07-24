@@ -26,6 +26,7 @@ import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
 import java.math.BigDecimal;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -248,9 +249,11 @@ public class PaymentLinkService {
         // Validate user's role and company access to this transaction's terminal
         validateAccess(link.getTerminalId(), userRole, companyId, List.of("SYSTEM_ADMIN", "COMPANY_HEAD", "COMPANY_MANAGER", "COMPANY_EMPLOYEE"));
 
-        if (transaction.getStatus() != TransactionStatus.AUTHORIZED) {
+        if (transaction.getStatus() != TransactionStatus.AUTHORIZED
+                && transaction.getStatus() != TransactionStatus.PENDING
+                && transaction.getStatus() != TransactionStatus.SUCCESS) {
             log.warn("Cannot complete DMS. Transaction {} is in status: {}", transactionId, transaction.getStatus());
-            throw new BusinessException("Transaction is not in AUTHORIZED status");
+            throw new BusinessException("Transaction is in status " + transaction.getStatus() + ". Only PENDING, AUTHORIZED or SUCCESS transactions can be completed.");
         }
 
         Terminal terminal = terminalRepository.findById(link.getTerminalId())
@@ -262,7 +265,22 @@ public class PaymentLinkService {
         log.info("Sending DMS Clearing capture request to provider for providerOrderId: {}, amount: {}", transaction.getProviderOrderId(), request.amount());
         
         // Call provider API to clear the transaction
-        acquiringClient.completeDms(transaction.getProviderOrderId(), transaction.getProviderPassword(), terminal.getLogin(), terminal.getPassword(), request.amount());
+        Map<String, Object> providerResp = acquiringClient.completeDms(
+                transaction.getProviderOrderId(),
+                transaction.getProviderPassword(),
+                terminal.getLogin(),
+                terminal.getPassword(),
+                request.amount()
+        );
+
+        if (providerResp != null) {
+            Map<String, Object> mergedResponse = new HashMap<>();
+            if (transaction.getProviderResponse() != null) {
+                mergedResponse.putAll(transaction.getProviderResponse());
+            }
+            mergedResponse.putAll(providerResp);
+            transaction.setProviderResponse(mergedResponse);
+        }
 
         transaction.setStatus(TransactionStatus.SUCCESS);
         transactionRepository.save(transaction);
@@ -342,31 +360,40 @@ public class PaymentLinkService {
     }
 
     @Transactional
-    public TransactionResponse checkAndStatusUpdate(String providerOrderId) {
-        log.info("Checking transaction status for providerOrderId: {}", providerOrderId);
-        Transaction tx = transactionRepository.findByProviderOrderId(providerOrderId)
-                .orElseThrow(() -> {
-                    log.warn("Transaction not found for providerOrderId: {}", providerOrderId);
-                    return new ResourceNotFoundException("Transaction not found: " + providerOrderId);
-                });
+    public TransactionResponse checkAndStatusUpdate(String identifier) {
+        log.info("Checking transaction status for identifier: {}", identifier);
+        Transaction tx = null;
+
+        try {
+            UUID uuid = UUID.fromString(identifier);
+            tx = transactionRepository.findById(uuid).orElse(null);
+        } catch (IllegalArgumentException ignored) {}
+
+        if (tx == null) {
+            tx = transactionRepository.findByProviderOrderId(identifier)
+                    .orElseThrow(() -> {
+                        log.warn("Transaction not found for identifier: {}", identifier);
+                        return new ResourceNotFoundException("Transaction not found: " + identifier);
+                    });
+        }
 
         if (tx.getStatus() == TransactionStatus.SUCCESS || tx.getStatus() == TransactionStatus.FAILED
                 || tx.getStatus() == TransactionStatus.REFUNDED || tx.getStatus() == TransactionStatus.PARTIALLY_REFUNDED) {
-            log.debug("Transaction {} already in terminal state: {}", providerOrderId, tx.getStatus());
+            log.debug("Transaction {} already in terminal state: {}", identifier, tx.getStatus());
             return mapToTransactionResponse(tx);
         }
 
         PaymentLink link = tx.getLink();
         Terminal terminal = terminalRepository.findById(link.getTerminalId())
                 .orElseThrow(() -> {
-                    log.error("Terminal {} configuration missing for transaction status check {}", link.getTerminalId(), providerOrderId);
+                    log.error("Terminal {} configuration missing for transaction status check {}", link.getTerminalId(), identifier);
                     return new BusinessException("Terminal configuration not found");
                 });
 
         Map<String, Object> orderDetails = acquiringClient.getOrderStatus(tx.getProviderOrderId(), tx.getProviderPassword(), terminal.getLogin(), terminal.getPassword());
         if (orderDetails != null) {
             String providerStatus = (String) orderDetails.get("status");
-            log.info("Provider order status check result: providerOrderId={}, providerStatus={}", providerOrderId, providerStatus);
+            log.info("Provider order status check result: identifier={}, providerStatus={}", identifier, providerStatus);
 
             if ("FullyPaid".equals(providerStatus) || "Cleared".equals(providerStatus)) {
                 tx.setStatus(TransactionStatus.SUCCESS);
@@ -395,18 +422,59 @@ public class PaymentLinkService {
         return mapToTransactionResponse(tx);
     }
 
+    @Transactional(readOnly = true)
+    public PagedResponse<TransactionResponse> listTransactions(Pageable pageable, UserPrincipal principal) {
+        Page<Transaction> page = transactionRepository.findAll(pageable);
+        List<TransactionResponse> content = page.getContent().stream()
+                .map(this::mapToTransactionResponse)
+                .toList();
+
+        return new PagedResponse<>(
+                content,
+                page.getTotalElements(),
+                page.getTotalPages(),
+                page.getSize(),
+                page.getNumber()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<TransactionResponse> getTransactionsByLinkId(UUID linkId, UserPrincipal principal) {
+        PaymentLink link = findLinkOrThrow(linkId);
+        validateAccess(link.getTerminalId(), principal.getRole(), principal.getCompanyId(), List.of("SYSTEM_ADMIN", "MERCHANT_ADMIN", "MERCHANT_USER"));
+        return transactionRepository.findByLinkIdOrderByCreatedAtDesc(linkId).stream()
+                .map(this::mapToTransactionResponse)
+                .toList();
+    }
+
     private TransactionResponse mapToTransactionResponse(Transaction tx) {
+        Map<String, Object> resp = tx.getProviderResponse();
+        String cardNumberMasked = resp != null && resp.get("cardNumberMasked") != null ? String.valueOf(resp.get("cardNumberMasked")) : null;
+        String rrn = resp != null && resp.get("rrn") != null ? String.valueOf(resp.get("rrn")) : null;
+        String approvalCode = resp != null && resp.get("approvalCode") != null ? String.valueOf(resp.get("approvalCode")) : null;
+
         return new TransactionResponse(
                 tx.getId(),
+                tx.getLink() != null ? tx.getLink().getId() : null,
                 tx.getStatus().name(),
                 tx.getAmount(),
-                tx.getLink().getCurrency(),
-                tx.getLink().getDescription(),
-                tx.getLink().getMerchantOrderId(),
+                tx.getRefundedAmount(),
+                tx.getLink() != null ? tx.getLink().getCurrency() : "AZN",
+                tx.getLink() != null ? tx.getLink().getDescription() : null,
+                tx.getLink() != null ? tx.getLink().getMerchantOrderId() : null,
+                tx.getLink() != null && tx.getLink().getPaymentType() != null ? tx.getLink().getPaymentType().name() : "SMS",
+                tx.getLink() != null ? tx.getLink().getTerminalId() : null,
+                tx.getMerchantRid() != null ? tx.getMerchantRid().toString() : null,
+                cardNumberMasked,
+                rrn,
+                approvalCode,
                 tx.getCreatedAt(),
-                tx.getLink().getCustomerName(),
-                tx.getLink().getCustomerEmail(),
-                tx.getLink().getCustomerPhone()
+                tx.getLink() != null ? tx.getLink().getCustomerName() : null,
+                tx.getLink() != null ? tx.getLink().getCustomerEmail() : null,
+                tx.getLink() != null ? tx.getLink().getCustomerPhone() : null,
+                tx.getClientIp(),
+                tx.getUserAgent(),
+                tx.getProviderOrderId()
         );
     }
 

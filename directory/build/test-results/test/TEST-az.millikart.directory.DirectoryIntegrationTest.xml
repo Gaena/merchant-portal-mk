@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="az.millikart.directory.DirectoryIntegrationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-07-22T21:00:37" hostname="IlyazS-KB.local" time="0.444">
+<testsuite name="az.millikart.directory.DirectoryIntegrationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-07-23T11:23:17" hostname="IlyazS-KB.local" time="0.468">
   <properties/>
-  <testcase name="testCompanyLifecycleAndAudit()" classname="az.millikart.directory.DirectoryIntegrationTest" time="0.397"/>
-  <testcase name="testTerminalLifecycleAndRBAC()" classname="az.millikart.directory.DirectoryIntegrationTest" time="0.047"/>
-  <system-out><![CDATA[2026-07-23T01:00:36.412+04:00  INFO 70947 --- [    Test worker] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [az.millikart.directory.DirectoryIntegrationTest]: DirectoryIntegrationTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
-2026-07-23T01:00:36.416+04:00  INFO 70947 --- [    Test worker] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration az.millikart.directory.DirectoryApplication for test class az.millikart.directory.DirectoryIntegrationTest
+  <testcase name="testCompanyLifecycleAndAudit()" classname="az.millikart.directory.DirectoryIntegrationTest" time="0.413"/>
+  <testcase name="testTerminalLifecycleAndRBAC()" classname="az.millikart.directory.DirectoryIntegrationTest" time="0.054"/>
+  <system-out><![CDATA[2026-07-23 15:23:16.515 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.t.c.s.AnnotationConfigContextLoaderUtils?[0;39m - Could not detect default configuration classes for test class [az.millikart.directory.DirectoryIntegrationTest]: DirectoryIntegrationTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-07-23 15:23:16.519 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.b.t.c.SpringBootTestContextBootstrapper?[0;39m - Found @SpringBootConfiguration az.millikart.directory.DirectoryApplication for test class az.millikart.directory.DirectoryIntegrationTest
 
   .   ____          _            __ _ _
  /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
@@ -14,46 +14,51 @@
  =========|_|==============|___/=/_/_/_/
  :: Spring Boot ::                (v3.2.5)
 
-2026-07-23T01:00:36.427+04:00  INFO 70947 --- [    Test worker] a.m.directory.DirectoryIntegrationTest   : Starting DirectoryIntegrationTest using Java 21.0.4 with PID 70947 (started by salayevim in /Users/salayevim/IdeaProjects/mp/directory)
-2026-07-23T01:00:36.427+04:00  INFO 70947 --- [    Test worker] a.m.directory.DirectoryIntegrationTest   : No active profile set, falling back to 1 default profile: "default"
-2026-07-23T01:00:36.567+04:00  INFO 70947 --- [    Test worker] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
-2026-07-23T01:00:36.572+04:00  INFO 70947 --- [    Test worker] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 4 ms. Found 3 JPA repository interfaces.
-2026-07-23T01:00:36.624+04:00  INFO 70947 --- [    Test worker] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Starting...
-2026-07-23T01:00:36.625+04:00  INFO 70947 --- [    Test worker] com.zaxxer.hikari.pool.HikariPool        : HikariPool-2 - Added connection conn10: url=jdbc:h2:mem:directory user=SA
-2026-07-23T01:00:36.625+04:00  INFO 70947 --- [    Test worker] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Start completed.
-2026-07-23T01:00:36.626+04:00  INFO 70947 --- [    Test worker] liquibase.database                       : Set default schema name to PUBLIC
-2026-07-23T01:00:36.677+04:00  INFO 70947 --- [    Test worker] liquibase.changelog                      : Reading from PUBLIC.DATABASECHANGELOG
-2026-07-23T01:00:36.692+04:00  INFO 70947 --- [    Test worker] liquibase.lockservice                    : Successfully acquired change log lock
-2026-07-23T01:00:36.692+04:00  INFO 70947 --- [    Test worker] liquibase.command                        : Using deploymentId: 4754036692
-2026-07-23T01:00:36.692+04:00  INFO 70947 --- [    Test worker] liquibase.changelog                      : Reading from PUBLIC.DATABASECHANGELOG
-2026-07-23T01:00:36.694+04:00  INFO 70947 --- [    Test worker] liquibase.util                           : UPDATE SUMMARY
-2026-07-23T01:00:36.694+04:00  INFO 70947 --- [    Test worker] liquibase.util                           : Run:                          0
-2026-07-23T01:00:36.694+04:00  INFO 70947 --- [    Test worker] liquibase.util                           : Previously run:               5
-2026-07-23T01:00:36.694+04:00  INFO 70947 --- [    Test worker] liquibase.util                           : Filtered out:                 0
-2026-07-23T01:00:36.694+04:00  INFO 70947 --- [    Test worker] liquibase.util                           : -------------------------------
-2026-07-23T01:00:36.695+04:00  INFO 70947 --- [    Test worker] liquibase.util                           : Total change sets:            5
-2026-07-23T01:00:36.695+04:00  INFO 70947 --- [    Test worker] liquibase.util                           : Update summary generated
-2026-07-23T01:00:36.695+04:00  INFO 70947 --- [    Test worker] liquibase.command                        : Update command completed successfully.
+2026-07-23 15:23:16.531 [Test worker] [system] ?[34mINFO ?[0;39m ?[36ma.m.d.DirectoryIntegrationTest?[0;39m - Starting DirectoryIntegrationTest using Java 21.0.4 with PID 93774 (started by salayevim in /Users/salayevim/IdeaProjects/mp/directory)
+2026-07-23 15:23:16.531 [Test worker] [system] ?[34mINFO ?[0;39m ?[36ma.m.d.DirectoryIntegrationTest?[0;39m - No active profile set, falling back to 1 default profile: "default"
+2026-07-23 15:23:16.666 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.d.r.c.RepositoryConfigurationDelegate?[0;39m - Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-07-23 15:23:16.671 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.d.r.c.RepositoryConfigurationDelegate?[0;39m - Finished Spring Data repository scanning in 4 ms. Found 3 JPA repository interfaces.
+2026-07-23 15:23:16.724 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mcom.zaxxer.hikari.HikariDataSource?[0;39m - HikariPool-2 - Starting...
+2026-07-23 15:23:16.725 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mcom.zaxxer.hikari.pool.HikariPool?[0;39m - HikariPool-2 - Added connection conn10: url=jdbc:h2:mem:directory user=SA
+2026-07-23 15:23:16.725 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mcom.zaxxer.hikari.HikariDataSource?[0;39m - HikariPool-2 - Start completed.
+2026-07-23 15:23:16.725 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.database?[0;39m - Set default schema name to PUBLIC
+2026-07-23 15:23:16.798 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.changelog?[0;39m - Reading from PUBLIC.DATABASECHANGELOG
+2026-07-23 15:23:16.807 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.lockservice?[0;39m - Successfully acquired change log lock
+2026-07-23 15:23:16.807 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.command?[0;39m - Using deploymentId: 4805796807
+2026-07-23 15:23:16.808 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.changelog?[0;39m - Reading from PUBLIC.DATABASECHANGELOG
+2026-07-23 15:23:16.810 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - UPDATE SUMMARY
+2026-07-23 15:23:16.810 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Run:                          0
+2026-07-23 15:23:16.810 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Previously run:               5
+2026-07-23 15:23:16.810 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Filtered out:                 0
+2026-07-23 15:23:16.810 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - -------------------------------
+2026-07-23 15:23:16.810 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Total change sets:            5
+2026-07-23 15:23:16.810 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.util?[0;39m - Update summary generated
+2026-07-23 15:23:16.810 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.command?[0;39m - Update command completed successfully.
 Liquibase: Update has been successful. Rows affected: 0
-2026-07-23T01:00:36.695+04:00  INFO 70947 --- [    Test worker] liquibase.lockservice                    : Successfully released change log lock
-2026-07-23T01:00:36.695+04:00  INFO 70947 --- [    Test worker] liquibase.command                        : Command execution complete
-2026-07-23T01:00:36.712+04:00  INFO 70947 --- [    Test worker] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
-2026-07-23T01:00:36.714+04:00  INFO 70947 --- [    Test worker] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
-2026-07-23T01:00:36.715+04:00  INFO 70947 --- [    Test worker] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
-2026-07-23T01:00:36.753+04:00  INFO 70947 --- [    Test worker] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
-2026-07-23T01:00:36.754+04:00  INFO 70947 --- [    Test worker] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
-2026-07-23T01:00:36.851+04:00  WARN 70947 --- [    Test worker] .s.s.UserDetailsServiceAutoConfiguration : 
+2026-07-23 15:23:16.811 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.lockservice?[0;39m - Successfully released change log lock
+2026-07-23 15:23:16.811 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mliquibase.command?[0;39m - Command execution complete
+2026-07-23 15:23:16.828 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.h.jpa.internal.util.LogHelper?[0;39m - HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-07-23 15:23:16.829 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.h.c.i.RegionFactoryInitiator?[0;39m - HHH000026: Second-level cache disabled
+2026-07-23 15:23:16.831 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.o.j.p.SpringPersistenceUnitInfo?[0;39m - No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-07-23 15:23:16.879 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.h.e.t.j.p.i.JtaPlatformInitiator?[0;39m - HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-07-23 15:23:16.880 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.o.j.LocalContainerEntityManagerFactoryBean?[0;39m - Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-07-23 15:23:16.999 [Test worker] [system] ?[31mWARN ?[0;39m ?[36mo.s.b.a.s.s.UserDetailsServiceAutoConfiguration?[0;39m - 
 
-Using generated security password: 62e8cdde-96c7-4a38-8b00-46cc8d5f54fa
+Using generated security password: 9cd5ffa4-c21b-4297-93c3-5c39ecb7feab
 
 This generated password is for development use only. Your security configuration must be updated before running your application in production.
 
-2026-07-23T01:00:36.966+04:00  INFO 70947 --- [    Test worker] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 1 endpoint(s) beneath base path '/actuator'
-2026-07-23T01:00:36.986+04:00  INFO 70947 --- [    Test worker] o.s.s.web.DefaultSecurityFilterChain     : Will secure any request with [org.springframework.security.web.session.DisableEncodeUrlFilter@3e660ff5, org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter@5d22a04d, org.springframework.security.web.context.SecurityContextHolderFilter@663a2b13, org.springframework.security.web.header.HeaderWriterFilter@50ebbf73, org.springframework.security.web.authentication.logout.LogoutFilter@7b29b052, az.millikart.common.security.JwtAuthFilter@4fe7962, org.springframework.security.web.savedrequest.RequestCacheAwareFilter@72d0cbc9, org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter@338a9b84, org.springframework.security.web.authentication.AnonymousAuthenticationFilter@4e32e1f9, org.springframework.security.web.access.ExceptionTranslationFilter@2cbad233, org.springframework.security.web.access.intercept.AuthorizationFilter@51cd77b]
-2026-07-23T01:00:37.141+04:00  INFO 70947 --- [    Test worker] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
-2026-07-23T01:00:37.141+04:00  INFO 70947 --- [    Test worker] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
-2026-07-23T01:00:37.141+04:00  INFO 70947 --- [    Test worker] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
-2026-07-23T01:00:37.152+04:00  INFO 70947 --- [    Test worker] a.m.directory.DirectoryIntegrationTest   : Started DirectoryIntegrationTest in 0.735 seconds (process running for 5.352)
+2026-07-23 15:23:17.123 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.b.a.e.web.EndpointLinksResolver?[0;39m - Exposing 1 endpoint(s) beneath base path '/actuator'
+2026-07-23 15:23:17.141 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.s.web.DefaultSecurityFilterChain?[0;39m - Will secure any request with [org.springframework.security.web.session.DisableEncodeUrlFilter@74f6090c, org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter@6834f33a, org.springframework.security.web.context.SecurityContextHolderFilter@7acf609d, org.springframework.security.web.header.HeaderWriterFilter@3993c2be, org.springframework.security.web.authentication.logout.LogoutFilter@22644f14, az.millikart.common.security.TraceIdFilter@2455c95c, az.millikart.common.security.JwtAuthFilter@640f1966, org.springframework.security.web.savedrequest.RequestCacheAwareFilter@6e0fe9cd, org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter@589c37ef, org.springframework.security.web.authentication.AnonymousAuthenticationFilter@716a2c04, org.springframework.security.web.access.ExceptionTranslationFilter@87babea, org.springframework.security.web.access.intercept.AuthorizationFilter@6d0e2a12]
+2026-07-23 15:23:17.307 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.b.t.m.w.SpringBootMockServletContext?[0;39m - Initializing Spring TestDispatcherServlet ''
+2026-07-23 15:23:17.307 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.t.w.s.TestDispatcherServlet?[0;39m - Initializing Servlet ''
+2026-07-23 15:23:17.307 [Test worker] [system] ?[34mINFO ?[0;39m ?[36mo.s.t.w.s.TestDispatcherServlet?[0;39m - Completed initialization in 0 ms
+2026-07-23 15:23:17.319 [Test worker] [system] ?[34mINFO ?[0;39m ?[36ma.m.d.DirectoryIntegrationTest?[0;39m - Started DirectoryIntegrationTest in 0.798 seconds (process running for 5.627)
+2026-07-23 15:23:17.496 [Test worker] [034691de] ?[34mINFO ?[0;39m ?[36ma.m.directory.service.CompanyService?[0;39m - Request to create company: id=comp-01, name=MilliKart LLC by actor: admin@millikart.az
+2026-07-23 15:23:17.694 [Test worker] [4591c0dc] ?[34mINFO ?[0;39m ?[36ma.m.directory.service.CompanyService?[0;39m - Request to create company: id=comp-02, name=Other LLC by actor: head@comp1.com
+2026-07-23 15:23:17.747 [Test worker] [6e7cc7f6] ?[34mINFO ?[0;39m ?[36ma.m.directory.service.CompanyService?[0;39m - Request to create company: id=comp-01, name=MilliKart LLC by actor: admin@millikart.az
+2026-07-23 15:23:17.759 [Test worker] [366ff362] ?[34mINFO ?[0;39m ?[36ma.m.d.service.TerminalService?[0;39m - Request to create terminal: id=998877, name=Main Terminal, companyId=comp-01 by actor: head@comp1.com
+2026-07-23 15:23:17.770 [Test worker] [2d5ce6a5] ?[34mINFO ?[0;39m ?[36ma.m.d.service.TerminalService?[0;39m - Request to create terminal: id=998878, name=Unauthorized Terminal, companyId=comp-01 by actor: head@comp2.com
 ]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

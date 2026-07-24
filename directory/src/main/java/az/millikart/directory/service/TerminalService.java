@@ -11,6 +11,8 @@ import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.common.security.UserPrincipal;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class TerminalService {
+
+    private static final Logger log = LoggerFactory.getLogger(TerminalService.class);
 
     private final TerminalRepository terminalRepository;
     private final CompanyRepository companyRepository;
@@ -36,6 +40,9 @@ public class TerminalService {
         String actorUsername = UserPrincipal.getUsername(principal);
         String actorRole = UserPrincipal.getRole(principal);
         String actorCompanyId = UserPrincipal.getCompanyId(principal);
+
+        log.info("Request to create terminal: id={}, name={}, companyId={} by actor: {}", 
+                request.id(), request.name(), request.companyId(), actorUsername);
 
         validateWriteAccessToCompany(request.companyId(), actorRole, actorCompanyId);
 

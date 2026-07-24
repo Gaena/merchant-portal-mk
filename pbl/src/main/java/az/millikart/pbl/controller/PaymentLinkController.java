@@ -67,4 +67,11 @@ public class PaymentLinkController {
         Pageable pageable = PageRequest.of(page, size);
         return paymentLinkService.list(terminal, status, pageable, principal);
     }
+
+    @GetMapping("/{id}/transactions")
+    public java.util.List<az.millikart.pbl.dto.TransactionResponse> getTransactions(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return paymentLinkService.getTransactionsByLinkId(id, principal);
+    }
 }

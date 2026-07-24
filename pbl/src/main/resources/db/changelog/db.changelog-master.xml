@@ -7,5 +7,6 @@
 
     <include file="changes/001-initial-schema.xml" relativeToChangelogFile="true"/>
     <include file="changes/002-add-indexes.xml" relativeToChangelogFile="true"/>
+    <include file="changes/003-add-client-ip-and-user-agent.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
