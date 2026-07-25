@@ -48,6 +48,8 @@ import type { Transaction, TransactionStatus } from '../types/transaction';
 import { formatCurrency, formatDateTime, getPaymentMethodLabel, getStatusLabel } from '../utils/mockData';
 import { getStatusColorScheme } from '../utils/statusColors';
 
+import { useLanguage } from '../context/LanguageContext';
+
 interface TransactionDetailPageProps {
   transactions: Transaction[];
 }
@@ -76,6 +78,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const { tObj } = useLanguage();
   const stateTx = location.state?.transaction as Transaction | undefined;
 
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
@@ -249,7 +252,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
           onClick={() => navigate('/transactions')}
           variant="outlined"
         >
-          Back
+          {tObj.common.back}
         </Button>
         <Button
           startIcon={<RefreshIcon />}
@@ -258,7 +261,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
           variant="outlined"
           size="small"
         >
-          {checkingStatus ? 'Checking Gateway...' : 'Check Gateway Status'}
+          {checkingStatus ? tObj.common.loading : tObj.common.refresh}
         </Button>
       </Box>
 
@@ -267,7 +270,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <Box>
             <Typography variant="h4" sx={{ fontWeight: 700 }}>
-              Transaction Details
+              {tObj.transactions.detail.title}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
               {transaction.id}

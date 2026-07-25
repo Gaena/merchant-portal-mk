@@ -10,6 +10,7 @@ import { RouterProvider } from 'react-router';
 import type { Transaction, TransactionFilters } from './types/transaction';
 import { createRouter } from './routes';
 import { AuthProvider } from './context/AuthContext';
+import { LanguageProvider } from './context/LanguageContext';
 import { apiClient } from './api/client';
 
 // Create Material Design theme
@@ -212,12 +213,14 @@ function App() {
   }
 
   return (
-    <AuthProvider>
-      <FilteredThemeProvider>
-        <CssBaseline />
-        <RouterProvider router={router} />
-      </FilteredThemeProvider>
-    </AuthProvider>
+    <LanguageProvider>
+      <AuthProvider>
+        <FilteredThemeProvider>
+          <CssBaseline />
+          <RouterProvider router={router} />
+        </FilteredThemeProvider>
+      </AuthProvider>
+    </LanguageProvider>
   );
 }
 

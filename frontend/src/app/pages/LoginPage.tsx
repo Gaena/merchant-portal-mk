@@ -28,9 +28,12 @@ import {
   PhoneAndroid as PhoneIcon
 } from '@mui/icons-material';
 
+import { useLanguage } from '../context/LanguageContext';
+
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
+  const { tObj } = useLanguage();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -187,7 +190,7 @@ export const LoginPage: React.FC = () => {
             <LockIcon sx={{ fontSize: 40, color: 'white' }} />
           </Box>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 1, color: 'text.primary' }}>
-            Welcome Back
+            {tObj.header.title}
           </Typography>
           <Typography variant="body1" color="text.secondary">
             Sign in to access your dashboard

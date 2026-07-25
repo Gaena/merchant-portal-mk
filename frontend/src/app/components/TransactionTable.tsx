@@ -26,6 +26,8 @@ import { formatCurrency, formatDateTime, getPaymentMethodLabel } from '../utils/
 import { getStatusColorScheme } from '../utils/statusColors';
 import { useNavigate } from 'react-router';
 
+import { useLanguage } from '../context/LanguageContext';
+
 interface TransactionTableProps {
   transactions: Transaction[];
   page: number;
@@ -113,7 +115,7 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
 
   if (transactions.length === 0) {
     return (
-      <Paper elevation={2} sx={{ p: 4, textAlign: 'center' }}>
+      <Paper elevation={0} sx={{ p: 4, textAlign: 'center', border: '1px solid', borderColor: 'divider' }}>
         <Typography variant="h6" color="text.secondary">
           No transactions found
         </Typography>
@@ -136,7 +138,7 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                   direction={orderBy === 'timestamp' ? order : 'asc'}
                   onClick={() => createSortHandler('timestamp')}
                 >
-                  Date & Time
+                  {tObj.transactions.columns.date}
                 </TableSortLabel>
               </TableCell>
               <TableCell>
@@ -145,17 +147,17 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                   direction={orderBy === 'id' ? order : 'asc'}
                   onClick={() => createSortHandler('id')}
                 >
-                  Transaction ID
+                  {tObj.transactions.columns.id}
                 </TableSortLabel>
               </TableCell>
-              <TableCell>Card</TableCell>
+              <TableCell>{tObj.transactions.columns.customer}</TableCell>
               <TableCell align="right">
                 <TableSortLabel
                   active={orderBy === 'amount'}
                   direction={orderBy === 'amount' ? order : 'asc'}
                   onClick={() => createSortHandler('amount')}
                 >
-                  Amount
+                  {tObj.transactions.columns.amount}
                 </TableSortLabel>
               </TableCell>
               <TableCell>
@@ -164,7 +166,7 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                   direction={orderBy === 'status' ? order : 'asc'}
                   onClick={() => createSortHandler('status')}
                 >
-                  Status
+                  {tObj.transactions.columns.status}
                 </TableSortLabel>
               </TableCell>
               <TableCell>Payment Method</TableCell>

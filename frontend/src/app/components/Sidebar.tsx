@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import {
   Drawer,
   List,
@@ -55,23 +56,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const { tObj } = useLanguage();
   const isAdmin = user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
 
   const navItems: NavItem[] = [
-    { label: 'Home Page', path: '/', icon: <HomeIcon /> },
-    { label: 'Pay by Link', path: '/pay-by-link', icon: <LinkIcon /> },
+    { label: tObj.nav.home, path: '/', icon: <HomeIcon /> },
+    { label: tObj.nav.payByLink, path: '/pay-by-link', icon: <LinkIcon /> },
     { 
-      label: 'Transaction List', 
+      label: tObj.nav.transactions, 
       icon: <ReceiptIcon />,
       children: [
-        { label: 'E-commerce', path: '/transactions/ecommerce', icon: <EcommerceIcon /> },
+        { label: tObj.nav.ecommerce, path: '/transactions/ecommerce', icon: <EcommerceIcon /> },
       ]
     },
-    { label: 'Terminals', path: '/terminals', icon: <POSIcon /> },
-    ...(isAdmin ? [{ label: 'Companies', path: '/companies', icon: <BusinessIcon /> }] : []),
-    { label: 'Users', path: '/users', icon: <GroupIcon /> },
-    { label: 'Audit Logs', path: '/audit-logs', icon: <HistoryIcon /> },
-    { label: 'Settings', path: '/settings', icon: <SettingsIcon /> }
+    { label: tObj.nav.terminals, path: '/terminals', icon: <POSIcon /> },
+    ...(isAdmin ? [{ label: tObj.nav.companies, path: '/companies', icon: <BusinessIcon /> }] : []),
+    { label: tObj.nav.users, path: '/users', icon: <GroupIcon /> },
+    { label: tObj.nav.auditLogs, path: '/audit-logs', icon: <HistoryIcon /> },
+    { label: tObj.nav.settings, path: '/settings', icon: <SettingsIcon /> }
   ];
 
   const [expandedItems, setExpandedItems] = useState<string[]>(['Transaction List']);

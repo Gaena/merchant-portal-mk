@@ -28,6 +28,8 @@ interface TransactionListPageProps {
   onRefresh: () => void;
 }
 
+import { useLanguage } from '../context/LanguageContext';
+
 export const TransactionListPage: React.FC<TransactionListPageProps> = ({
   transactions,
   filters,
@@ -37,6 +39,7 @@ export const TransactionListPage: React.FC<TransactionListPageProps> = ({
   newTransactionCount,
   onRefresh
 }) => {
+  const { tObj } = useLanguage();
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [orderBy, setOrderBy] = useState<keyof Transaction>('timestamp');
@@ -125,10 +128,10 @@ export const TransactionListPage: React.FC<TransactionListPageProps> = ({
       {/* Page Header */}
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" gutterBottom>
-          Transaction List
+          {tObj.transactions.title}
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Monitor and manage all payment transactions in real-time
+          {tObj.transactions.subtitle}
         </Typography>
       </Box>
 
@@ -151,14 +154,14 @@ export const TransactionListPage: React.FC<TransactionListPageProps> = ({
           onClick={handleExport}
           disabled={isExporting || sortedTransactions.length === 0}
         >
-          {isExporting ? 'Exporting...' : 'Export to Excel'}
+          {isExporting ? tObj.common.loading : tObj.common.export}
         </Button>
         <Button
           variant="outlined"
           startIcon={<RefreshIcon />}
           onClick={onRefresh}
         >
-          Refresh
+          {tObj.common.refresh}
         </Button>
       </Box>
 

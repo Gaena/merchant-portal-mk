@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
+import type { Language } from '../i18n/translations';
 import {
   Box,
   Typography,
@@ -63,6 +65,7 @@ import {
 
 export const SettingsPage: React.FC = () => {
   const { user } = useAuth();
+  const { language, setLanguage, tObj } = useLanguage();
   const isAdmin = user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
   const [currentTab, setCurrentTab] = useState<string>('account');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -123,7 +126,7 @@ export const SettingsPage: React.FC = () => {
   // Display settings state
   const [displaySettings, setDisplaySettings] = useState({
     theme: 'light',
-    language: 'en',
+    language: language,
     dateFormat: 'DD.MM.YYYY',
     timeFormat: '24h',
     timezone: 'Asia/Baku',
@@ -132,6 +135,10 @@ export const SettingsPage: React.FC = () => {
     compactView: false,
     showTimestamps: true,
   });
+
+  useEffect(() => {
+    setDisplaySettings(prev => ({ ...prev, language }));
+  }, [language]);
 
   // Company ID state
   const [companyId, setCompanyId] = useState<string | null>(null);
@@ -1079,14 +1086,17 @@ export const SettingsPage: React.FC = () => {
               <TextField
                 select
                 fullWidth
-                label="Language"
+                label={tObj.settings.display.language}
                 value={displaySettings.language}
-                onChange={(e) => setDisplaySettings({ ...displaySettings, language: e.target.value })}
+                onChange={(e) => {
+                  const newLang = e.target.value as Language;
+                  setDisplaySettings({ ...displaySettings, language: newLang });
+                  setLanguage(newLang);
+                }}
               >
-                <MenuItem value="en">English</MenuItem>
-                <MenuItem value="az">Azerbaijani</MenuItem>
-                <MenuItem value="ru">Russian</MenuItem>
-                <MenuItem value="tr">Turkish</MenuItem>
+                <MenuItem value="en">English (English)</MenuItem>
+                <MenuItem value="az">Azərbaycan (Азербайджанский)</MenuItem>
+                <MenuItem value="ru">Русский (Russian)</MenuItem>
               </TextField>
             </Box>
 

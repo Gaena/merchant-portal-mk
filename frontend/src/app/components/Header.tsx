@@ -38,119 +38,14 @@ import {
   Info as InfoIcon,
   Link as LinkIcon,
   DoneAll as MarkAllReadIcon,
+  Language as LanguageIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router';
-
-// ─── Notification types ───────────────────────────────────────────────────────
-
-type NotifType = 'success' | 'failed' | 'settlement' | 'warning' | 'info' | 'paybylink';
-
-interface Notification {
-  id: string;
-  type: NotifType;
-  title: string;
-  body: string;
-  time: string;
-  read: boolean;
-  path?: string;
-}
-
-const initialNotifications: Notification[] = [
-  {
-    id: 'n1',
-    type: 'settlement',
-    title: 'Settlement Completed',
-    body: 'Batch SET-2024-0891 — ₼28,165.50 has been credited to your bank account.',
-    time: '2 min ago',
-    read: false,
-    path: '/reports',
-  },
-  {
-    id: 'n2',
-    type: 'success',
-    title: 'Large Transaction',
-    body: 'Transaction of ₼1,500.00 from Kamran Q. was processed successfully.',
-    time: '18 min ago',
-    read: false,
-    path: '/transactions/ecommerce',
-  },
-  {
-    id: 'n3',
-    type: 'paybylink',
-    title: 'Pay by Link Paid',
-    body: 'Link PL1003 was paid — ₼250.50 by Rauf Hasanov.',
-    time: '34 min ago',
-    read: false,
-    path: '/pay-by-link',
-  },
-  {
-    id: 'n4',
-    type: 'failed',
-    title: 'Failed Transactions Spike',
-    body: '14 failed transactions in the last 30 minutes — above normal threshold.',
-    time: '1 h ago',
-    read: false,
-    path: '/transactions/ecommerce',
-  },
-  {
-    id: 'n5',
-    type: 'warning',
-    title: 'Pay by Link Expiring Soon',
-    body: 'Link PL1007 for ₼890.00 (Nigar G.) expires in 45 minutes.',
-    time: '1 h ago',
-    read: true,
-    path: '/pay-by-link',
-  },
-  {
-    id: 'n6',
-    type: 'info',
-    title: 'Weekly Report Ready',
-    body: 'Your weekly revenue summary for 09–15 Jun 2025 is ready to download.',
-    time: '3 h ago',
-    read: true,
-    path: '/reports',
-  },
-  {
-    id: 'n7',
-    type: 'success',
-    title: 'Settlement Scheduled',
-    body: 'Next payout of ~₼26,400 is scheduled for 23 Jun 2025.',
-    time: '5 h ago',
-    read: true,
-    path: '/reports',
-  },
-  {
-    id: 'n8',
-    type: 'info',
-    title: 'API Key Expiring',
-    body: 'Your production API key expires in 7 days. Rotate it in Settings.',
-    time: '1 day ago',
-    read: true,
-    path: '/settings',
-  },
-];
-
-const notifIconMap: Record<NotifType, React.ReactNode> = {
-  success: <SuccessIcon sx={{ color: '#2e7d32' }} />,
-  failed: <FailIcon sx={{ color: '#c62828' }} />,
-  settlement: <SettlementIcon sx={{ color: '#1565c0' }} />,
-  warning: <WarningIcon sx={{ color: '#e65100' }} />,
-  info: <InfoIcon sx={{ color: '#546e7a' }} />,
-  paybylink: <LinkIcon sx={{ color: '#7b1fa2' }} />,
-};
-
-const notifBgMap: Record<NotifType, string> = {
-  success: 'rgba(46,125,50,0.1)',
-  failed: 'rgba(198,40,40,0.1)',
-  settlement: 'rgba(21,101,192,0.1)',
-  warning: 'rgba(230,81,0,0.1)',
-  info: 'rgba(84,110,122,0.1)',
-  paybylink: 'rgba(123,31,162,0.1)',
-};
+import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
+import type { Language } from '../i18n/translations';
 
 // ─── Header component ─────────────────────────────────────────────────────────
-
-import { useAuth } from '../context/AuthContext';
 
 interface HeaderProps {
   newTransactionCount: number;
@@ -161,6 +56,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick, onDesktopDrawerToggle }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { language, setLanguage, tObj } = useLanguage();
 
   const displayName = user?.fullName || user?.email?.split('@')[0] || 'Merchant';
   const displayEmail = user?.email || 'N/A';
@@ -171,24 +67,13 @@ export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
 
-  // Notifications
-  const [notifications, setNotifications] = useState<Notification[]>(initialNotifications);
-  const [notifAnchor, setNotifAnchor] = useState<null | HTMLElement>(null);
-  const notifOpen = Boolean(notifAnchor);
-  const unreadCount = notifications.filter(n => !n.read).length;
+  // Language menu
+  const [langAnchor, setLangAnchor] = useState<null | HTMLElement>(null);
 
-  const handleMarkRead = (id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-  };
-
-  const handleMarkAllRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-  };
-
-  const handleNotifClick = (notif: Notification) => {
-    handleMarkRead(notif.id);
-    if (notif.path) navigate(notif.path);
-    setNotifAnchor(null);
+  const langLabels: Record<Language, { label: string; flag: string }> = {
+    en: { label: 'English', flag: '🇬🇧' },
+    az: { label: 'Azərbaycan', flag: '🇦🇿' },
+    ru: { label: 'Русский', flag: '🇷🇺' },
   };
 
   return (
@@ -205,31 +90,26 @@ export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick
 
         <AccountBalanceIcon sx={{ mr: 2, fontSize: 32 }} />
         <Typography variant="h6" component="div" sx={{ flexGrow: 0, mr: 3 }}>
-          Payment Portal
+          {tObj.header.title}
         </Typography>
-        <Chip
-          label="Merchant Dashboard"
-          size="small"
-          sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }}
-        />
 
         <Box sx={{ flexGrow: 1 }} />
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          {/* Notifications bell (Disabled: notification microservice not implemented) */}
-          {/* <Tooltip title="Notifications">
-            <IconButton
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Quick Language Selector */}
+          <Tooltip title={tObj.header.language}>
+            <Button
               color="inherit"
-              onClick={e => setNotifAnchor(e.currentTarget)}
+              onClick={e => setLangAnchor(e.currentTarget)}
+              startIcon={<LanguageIcon />}
+              sx={{ textTransform: 'none', fontWeight: 600, px: 1.5 }}
             >
-              <Badge badgeContent={unreadCount} color="error" max={9}>
-                <BellIcon />
-              </Badge>
-            </IconButton>
-          </Tooltip> */}
+              {langLabels[language]?.flag} {language.toUpperCase()}
+            </Button>
+          </Tooltip>
 
           {/* Account avatar */}
-          <Tooltip title="Account">
+          <Tooltip title={tObj.header.profile}>
             <IconButton sx={{ ml: 0.5 }} onClick={e => setAccountAnchor(e.currentTarget)}>
               <Avatar sx={{ width: 36, height: 36, bgcolor: 'secondary.main', fontWeight: 700 }}>{avatarLetter}</Avatar>
             </IconButton>
@@ -237,8 +117,36 @@ export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick
         </Box>
       </Toolbar>
 
-      {/* ── Notifications Popover (Disabled) ──────────────────────────────────── */}
-      {/* <Popover ... */}
+      {/* ── Language Menu ──────────────────────────────────────────────────── */}
+      <Menu
+        anchorEl={langAnchor}
+        open={Boolean(langAnchor)}
+        onClose={() => setLangAnchor(null)}
+        transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+        anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+        PaperProps={{
+          elevation: 3,
+          sx: { mt: 1.5, minWidth: 160 },
+        }}
+      >
+        {(['en', 'az', 'ru'] as Language[]).map((lang) => (
+          <MenuItem
+            key={lang}
+            selected={language === lang}
+            onClick={() => {
+              setLanguage(lang);
+              setLangAnchor(null);
+            }}
+          >
+            <Typography variant="body2" sx={{ mr: 1.5, fontSize: '1.2rem' }}>
+              {langLabels[lang].flag}
+            </Typography>
+            <Typography variant="body2" sx={{ fontWeight: language === lang ? 700 : 400 }}>
+              {langLabels[lang].label}
+            </Typography>
+          </MenuItem>
+        ))}
+      </Menu>
 
       {/* ── Account Menu ───────────────────────────────────────────────────── */}
       <Menu
@@ -261,22 +169,22 @@ export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick
         <Divider />
         <MenuItem onClick={() => { setLogoutDialogOpen(true); }}>
           <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>
-          Logout
+          {tObj.header.logout}
         </MenuItem>
       </Menu>
 
       {/* ── Logout Dialog ──────────────────────────────────────────────────── */}
       <Dialog open={logoutDialogOpen} onClose={() => setLogoutDialogOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Confirm Logout</DialogTitle>
+        <DialogTitle>{tObj.header.logout}?</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Are you sure you want to logout? You will be redirected to the login page.
+            {tObj.common.confirm} {tObj.header.logout.toLowerCase()}?
           </DialogContentText>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setLogoutDialogOpen(false)} variant="outlined">Cancel</Button>
+          <Button onClick={() => setLogoutDialogOpen(false)} variant="outlined">{tObj.common.cancel}</Button>
           <Button onClick={() => { setLogoutDialogOpen(false); logout(); navigate('/login'); }} variant="contained" autoFocus>
-            Logout
+            {tObj.header.logout}
           </Button>
         </DialogActions>
       </Dialog>

@@ -135,13 +135,13 @@ frontend/
 │   │   │   ├── TerminalsPage.tsx # Управление терминалами с выбором компании из выпадающего списка
 │   │   │   ├── UsersPage.tsx     # Управление пользователями (/users, CRUD, RBAC)
 │   │   │   ├── AuditLogsPage.tsx # Журнал аудита (/audit-logs, фильтрация по Entity/Actor)
-│   │   │   ├── SettingsPage.tsx  # Настройки аккаунта, Безопасность, Уведомления, API Keys
+│   │   │   ├── SettingsPage.tsx  # Настройки аккаунта, Безопасность, Уведомления, API Keys, Язык (Settings -> Display -> Language)
 │   │   │   └── HomePage.tsx      # Главный дашборд
 │   │   ├── types/
 │   │   │   ├── dto.ts            # DTO интерфейсы (CompanyDto, TerminalDto, UserDto, AuditLogDto)
 │   │   │   └── transaction.ts    # Типы транзакций и фильтров
 │   │   ├── routes.tsx            # Маршрутизатор с React.lazy, Suspense и ProtectedRoute
-│   │   └── App.tsx               # Корневой компонент с рефечем транзакций
+│   │   └── App.tsx               # Корневой компонент (окантован в LanguageProvider для поддержки EN, AZ, RU)
 │   └── index.css                 # Импорт Tailwind CSS
 ├── vite.config.ts                # Прокси для 8080/8081/8082 и алиас @
 └── package.json
@@ -158,4 +158,19 @@ cd /Users/salayevim/IdeaProjects/mp/frontend
 npm run build
 ```
 *(Результат должен быть **SUCCESS** без ошибок типизации TypeScript)*.
+
+---
+
+## 6. Мультиязычность и Интернационализация (i18n)
+
+Фронтенд полностью поддерживает 3 языка:
+- **English (`en`)** — язык по умолчанию
+- **Azərbaycan dili (`az`)**
+- **Русский язык (`ru`)**
+
+### Архитектура:
+1. **`src/app/i18n/translations.ts`**: Содержит полные словари переводов для всех страниц (`common`, `nav`, `header`, `home`, `settings`, `payByLink`, `payByLinkDetail`, `transactions`, `terminals`, `companies`, `users`, `auditLogs`).
+2. **`src/app/context/LanguageContext.tsx`**: Предоставляет хук `useLanguage()`, возвращающий `{ language, setLanguage, tObj }`. Состояние сохраняется в `localStorage` под ключом `mp_app_language`.
+3. **Переключение языка**: Выполняется через **Settings → Display → Appearance → Language** или быструю кнопку с флагами в верхней панели `Header.tsx`.
+
 

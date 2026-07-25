@@ -48,6 +48,7 @@ import {
   LineChart,
   Line,
 } from 'recharts';
+import { useLanguage } from '../context/LanguageContext';
 
 interface HomePageProps {
   transactions?: any[];
@@ -55,6 +56,7 @@ interface HomePageProps {
 
 export const HomePage: React.FC<HomePageProps> = ({ transactions: propsTransactions }) => {
   const navigate = useNavigate();
+  const { tObj } = useLanguage();
   const [transactions, setTransactions] = useState<any[]>(propsTransactions || []);
   const [paymentLinks, setPaymentLinks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -312,10 +314,10 @@ export const HomePage: React.FC<HomePageProps> = ({ transactions: propsTransacti
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.5 }}>
-            Dashboard Overview
+            {tObj.home.title}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Live analytics and transaction metrics powered by backend microservices
+            {tObj.home.subtitle}
           </Typography>
         </Box>
         {loading && <CircularProgress size={28} />}

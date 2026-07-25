@@ -23,10 +23,12 @@ import {
   Refresh as RefreshIcon
 } from '@mui/icons-material';
 import { apiClient } from '../api/client';
+import { useLanguage } from '../context/LanguageContext';
 
 import type { AuditLogDto } from '../types/dto';
 
 export const AuditLogsPage: React.FC = () => {
+  const { tObj } = useLanguage();
   const [auditLogsList, setAuditLogsList] = useState<AuditLogDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -70,14 +72,14 @@ export const AuditLogsPage: React.FC = () => {
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <HistoryIcon color="primary" fontSize="large" />
-            Audit Logs
+            {tObj.auditLogs.title}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Track security events, entity mutations, and administrative activities across the system
+            {tObj.auditLogs.subtitle}
           </Typography>
         </Box>
         <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchAuditLogs}>
-          Refresh
+          {tObj.common.refresh}
         </Button>
       </Box>
 
@@ -85,7 +87,7 @@ export const AuditLogsPage: React.FC = () => {
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         <TextField
           size="small"
-          placeholder="Search actor, action, entity ID or details..."
+          placeholder={tObj.auditLogs.searchPlaceholder}
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           sx={{ minWidth: 320 }}
@@ -100,17 +102,17 @@ export const AuditLogsPage: React.FC = () => {
         <TextField
           select
           size="small"
-          label="Entity Type"
+          label={tObj.auditLogs.filterEntity}
           value={entityTypeFilter}
           onChange={e => setEntityTypeFilter(e.target.value)}
           sx={{ minWidth: 200 }}
         >
-          <MenuItem value="all">All Entity Types</MenuItem>
-          <MenuItem value="COMPANY">Company</MenuItem>
-          <MenuItem value="TERMINAL">Terminal</MenuItem>
-          <MenuItem value="USER">User</MenuItem>
-          <MenuItem value="PAYMENT_LINK">Payment Link</MenuItem>
-          <MenuItem value="TRANSACTION">Transaction</MenuItem>
+          <MenuItem value="all">{tObj.common.all}</MenuItem>
+          <MenuItem value="COMPANY">{tObj.companies.title}</MenuItem>
+          <MenuItem value="TERMINAL">{tObj.terminals.title}</MenuItem>
+          <MenuItem value="USER">{tObj.users.title}</MenuItem>
+          <MenuItem value="PAYMENT_LINK">{tObj.payByLink.title}</MenuItem>
+          <MenuItem value="TRANSACTION">{tObj.transactions.title}</MenuItem>
         </TextField>
       </Paper>
 
@@ -124,12 +126,12 @@ export const AuditLogsPage: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'action.hover' }}>
-                <TableCell sx={{ fontWeight: 700 }}>Timestamp</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Action</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Performed By</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Entity Type</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.auditLogs.timestamp}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.auditLogs.action}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.auditLogs.user}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.auditLogs.resource}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Entity ID</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Details</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.common.details}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>

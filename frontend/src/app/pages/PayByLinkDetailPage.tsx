@@ -383,12 +383,16 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export const PayByLinkDetailPage: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const location = useLocation();
+import { useLanguage } from '../context/LanguageContext';
 
-  const [link, setLink] = useState<PaymentLink | null>(location.state?.link ?? null);
+export const PayByLinkDetailPage: React.FC = () => {
+  const navigate = useNavigate();
+  const { id } = useParams<{ id: string }>();
+  const location = useLocation();
+  const { tObj } = useLanguage();
+  const stateLink = location.state?.link as PaymentLink | undefined;
+
+  const [link, setLink] = useState<PaymentLink | null>(stateLink || null);
 
   useEffect(() => {
     if (id) {

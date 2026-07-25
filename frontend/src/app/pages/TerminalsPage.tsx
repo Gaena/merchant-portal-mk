@@ -33,9 +33,11 @@ import {
   Business as BusinessIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
+import { useLanguage } from '../context/LanguageContext';
 import type { TerminalDto, CompanyDto } from '../types/dto';
 
 export const TerminalsPage: React.FC = () => {
+  const { tObj } = useLanguage();
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -185,18 +187,18 @@ export const TerminalsPage: React.FC = () => {
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <POSIcon color="primary" fontSize="large" /> Acquiring Terminals
+            <POSIcon color="primary" fontSize="large" /> {tObj.terminals.title}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Manage payment gateway terminals and assign them to merchant companies
+            {tObj.terminals.subtitle}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.5}>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchTerminals}>
-            Refresh
+            {tObj.common.refresh}
           </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreate}>
-            Add Terminal
+            {tObj.terminals.addTerminal}
           </Button>
         </Stack>
       </Box>
@@ -211,7 +213,7 @@ export const TerminalsPage: React.FC = () => {
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider' }}>
         <TextField
           size="small"
-          placeholder="Search terminals by ID, name, login, or company..."
+          placeholder={tObj.terminals.searchPlaceholder}
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           sx={{ minWidth: 320, width: { xs: '100%', sm: 420 } }}
@@ -231,12 +233,12 @@ export const TerminalsPage: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                <TableCell sx={{ fontWeight: 700 }}>Terminal ID</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Terminal Name</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Login</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Assigned Company</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Created At</TableCell>
-                <TableCell sx={{ fontWeight: 700 }} align="center">Actions</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.terminalId}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.name}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.login}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.company}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }} align="center">{tObj.common.actions}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>

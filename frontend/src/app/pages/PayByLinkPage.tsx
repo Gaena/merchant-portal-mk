@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import { apiClient } from '../api/client';
+import { useLanguage } from '../context/LanguageContext';
 import {
   Box,
   Paper,
@@ -83,19 +84,22 @@ const statusConfig: Record<string, { label: string; color: 'success' | 'info' | 
   canceled: { label: 'Canceled', color: 'error', icon: <CancelIcon sx={{ fontSize: 14 }} /> },
 };
 
-const getStatusConfig = (status?: string) => {
+const getStatusConfig = (status?: string, tObj?: any) => {
   const st = (status || '').toLowerCase();
-  return statusConfig[st] || {
-    label: status || 'Unknown',
-    color: 'default',
-    icon: <ExpiredIcon sx={{ fontSize: 14 }} />,
-  };
+  const s = tObj?.payByLink?.statuses;
+  if (st === 'active') return { label: s?.active || 'Active', color: 'success' as const, icon: <CheckCircleIcon sx={{ fontSize: 14 }} /> };
+  if (st === 'paid') return { label: s?.paid || 'Paid', color: 'info' as const, icon: <CheckCircleIcon sx={{ fontSize: 14 }} /> };
+  if (st === 'completed') return { label: s?.completed || 'Completed', color: 'info' as const, icon: <CheckCircleIcon sx={{ fontSize: 14 }} /> };
+  if (st === 'expired') return { label: s?.expired || 'Expired', color: 'default' as const, icon: <ExpiredIcon sx={{ fontSize: 14 }} /> };
+  if (st === 'canceled' || st === 'cancelled') return { label: s?.canceled || 'Canceled', color: 'error' as const, icon: <CancelIcon sx={{ fontSize: 14 }} /> };
+  return { label: status || 'Unknown', color: 'default' as const, icon: <ExpiredIcon sx={{ fontSize: 14 }} /> };
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export const PayByLinkPage: React.FC = () => {
   const navigate = useNavigate();
+  const { tObj } = useLanguage();
   const [links, setLinks] = useState<PaymentLink[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -320,10 +324,10 @@ export const PayByLinkPage: React.FC = () => {
       <Box sx={{ mb: 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600, mb: 0.5 }}>
-            Pay by Link
+            {tObj.payByLink.title}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Generate secure payment links and share them with customers via any channel
+            {tObj.payByLink.subtitle}
           </Typography>
         </Box>
         <Button
@@ -333,7 +337,7 @@ export const PayByLinkPage: React.FC = () => {
           onClick={() => setCreateOpen(true)}
           sx={{ fontWeight: 600 }}
         >
-          Create Payment Link
+          {tObj.payByLink.createButton}
         </Button>
       </Box>
 
@@ -440,20 +444,20 @@ export const PayByLinkPage: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                <TableCell sx={{ fontWeight: 600 }}>Link</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Customer</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Description</TableCell>
-                <TableCell sx={{ fontWeight: 600 }} align="right">Amount</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Usage</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Expires</TableCell>
-                <TableCell sx={{ fontWeight: 600 }} align="center">Actions</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.linkId}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.customer}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.descriptionLabel.replace(' *', '')}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }} align="right">{tObj.payByLink.table.amount}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.type}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.status}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.usage}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.expires}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }} align="center">{tObj.payByLink.table.actions}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {paginated.map(link => {
-                const cfg = getStatusConfig(link.status);
+                const cfg = getStatusConfig(link.status, tObj);
                 const expiryProgress = link.status === 'active'
                   ? Math.max(0, Math.min(100, ((link.expiresAt.getTime() - Date.now()) / (link.expiresAt.getTime() - link.createdAt.getTime())) * 100))
                   : null;

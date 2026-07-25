@@ -27,6 +27,8 @@ interface EcommerceTransactionListPageProps {
   onRefresh: () => void;
 }
 
+import { useLanguage } from '../context/LanguageContext';
+
 export const EcommerceTransactionListPage: React.FC<EcommerceTransactionListPageProps> = ({
   transactions,
   filters,
@@ -36,6 +38,7 @@ export const EcommerceTransactionListPage: React.FC<EcommerceTransactionListPage
   newTransactionCount,
   onRefresh
 }) => {
+  const { tObj } = useLanguage();
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [orderBy, setOrderBy] = useState<keyof Transaction>('timestamp');
@@ -128,10 +131,10 @@ export const EcommerceTransactionListPage: React.FC<EcommerceTransactionListPage
       {/* Page Header */}
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" gutterBottom>
-          E-commerce Transactions
+          {tObj.transactions.ecommerceTitle}
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Online payment transactions from your e-commerce channels
+          {tObj.transactions.subtitle}
         </Typography>
       </Box>
 

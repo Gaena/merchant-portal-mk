@@ -21,7 +21,8 @@ import {
   Stack,
   Alert,
   InputAdornment,
-  CircularProgress
+  CircularProgress,
+  Tooltip
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -32,11 +33,13 @@ import {
 } from '@mui/icons-material';
 import { apiClient } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 
 import type { UserDto, CompanyDto } from '../types/dto';
 
 export const UsersPage: React.FC = () => {
   const { user: currentUser } = useAuth();
+  const { tObj } = useLanguage();
   const [usersList, setUsersList] = useState<UserDto[]>([]);
   const [companiesList, setCompaniesList] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,18 +150,18 @@ export const UsersPage: React.FC = () => {
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <GroupIcon color="primary" fontSize="large" />
-            User Management
+            {tObj.users.title}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Manage team members, roles, and platform permissions across your organization
+            {tObj.users.subtitle}
           </Typography>
         </Box>
         <Stack direction="row" spacing={2}>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchUsers}>
-            Refresh
+            {tObj.common.refresh}
           </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setUserDialogOpen(true)}>
-            Add User
+            {tObj.users.addUser}
           </Button>
         </Stack>
       </Box>
@@ -167,7 +170,7 @@ export const UsersPage: React.FC = () => {
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         <TextField
           size="small"
-          placeholder="Search by username, name, or company..."
+          placeholder={tObj.users.searchPlaceholder}
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           sx={{ minWidth: 320 }}
@@ -182,17 +185,17 @@ export const UsersPage: React.FC = () => {
         <TextField
           select
           size="small"
-          label="Role"
+          label={tObj.users.role}
           value={roleFilter}
           onChange={e => setRoleFilter(e.target.value)}
           sx={{ minWidth: 200 }}
         >
-          <MenuItem value="all">All Roles</MenuItem>
-          <MenuItem value="COMPANY_HEAD">Company Head</MenuItem>
-          <MenuItem value="COMPANY_MANAGER">Company Manager</MenuItem>
-          <MenuItem value="COMPANY_EMPLOYEE">Company Employee</MenuItem>
-          <MenuItem value="AUDITOR">Auditor</MenuItem>
-          <MenuItem value="SYSTEM_ADMIN">System Admin</MenuItem>
+          <MenuItem value="all">{tObj.common.all}</MenuItem>
+          <MenuItem value="COMPANY_HEAD">{tObj.users.roles.companyHead}</MenuItem>
+          <MenuItem value="COMPANY_MANAGER">{tObj.users.roles.companyManager}</MenuItem>
+          <MenuItem value="COMPANY_EMPLOYEE">{tObj.users.roles.companyEmployee}</MenuItem>
+          <MenuItem value="AUDITOR">{tObj.users.roles.auditor}</MenuItem>
+          <MenuItem value="SYSTEM_ADMIN">{tObj.users.roles.systemAdmin}</MenuItem>
         </TextField>
       </Paper>
 
@@ -206,12 +209,12 @@ export const UsersPage: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'action.hover' }}>
-                <TableCell sx={{ fontWeight: 700 }}>Username / Email</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Full Name</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Role</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Company ID</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                <TableCell sx={{ fontWeight: 700 }} align="center">Actions</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.users.username}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.users.name}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.users.role}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.users.company}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.users.status}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }} align="center">{tObj.common.actions}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -220,32 +223,21 @@ export const UsersPage: React.FC = () => {
                   <TableCell sx={{ fontWeight: 600 }}>{u.username}</TableCell>
                   <TableCell>{u.fullName || '—'}</TableCell>
                   <TableCell>
-                    <Chip
-                      label={u.role || 'COMPANY_HEAD'}
-                      size="small"
-                      color={u.role === 'SYSTEM_ADMIN' ? 'primary' : 'default'}
-                    />
+                    <Chip label={u.role || 'USER'} color="primary" size="small" variant="outlined" />
                   </TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                    {u.companyId || '—'}
-                  </TableCell>
+                  <TableCell>{getCompanyName(u.companyId) || '—'}</TableCell>
                   <TableCell>
-                    <Chip label={u.status || 'ACTIVE'} size="small" color="success" variant="outlined" />
+                    <Chip label={tObj.common.active} color="success" size="small" />
                   </TableCell>
                   <TableCell align="center">
-                    <IconButton color="error" size="small" onClick={() => handleDeleteUser(u.id)}>
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
+                    <Tooltip title={tObj.common.delete}>
+                      <IconButton color="error" size="small" onClick={() => handleDeleteUser(u.id)}>
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </TableCell>
                 </TableRow>
               ))}
-              {filteredUsers.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
-                    <Typography color="text.secondary">No users found.</Typography>
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
         )}
@@ -253,12 +245,12 @@ export const UsersPage: React.FC = () => {
 
       {/* Create User Dialog */}
       <Dialog open={userDialogOpen} onClose={() => setUserDialogOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>Add New User</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.users.createDialogTitle}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             {userError && <Alert severity="error">{userError}</Alert>}
             <TextField
-              label="Username (Email)"
+              label={tObj.users.username}
               type="email"
               value={userForm.username}
               onChange={e => setUserForm(f => ({ ...f, username: e.target.value }))}
@@ -267,7 +259,7 @@ export const UsersPage: React.FC = () => {
               required
             />
             <TextField
-              label="Password"
+              label={tObj.users.password}
               type="password"
               value={userForm.password}
               onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))}
@@ -276,7 +268,7 @@ export const UsersPage: React.FC = () => {
               required
             />
             <TextField
-              label="Full Name"
+              label={tObj.users.name}
               value={userForm.fullName}
               onChange={e => setUserForm(f => ({ ...f, fullName: e.target.value }))}
               placeholder="John Doe"
@@ -285,21 +277,21 @@ export const UsersPage: React.FC = () => {
             />
             <TextField
               select
-              label="Role"
+              label={tObj.users.role}
               value={userForm.role}
               onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))}
               fullWidth
             >
-              <MenuItem value="COMPANY_HEAD">Company Head (Руководитель компании)</MenuItem>
-              <MenuItem value="COMPANY_MANAGER">Company Manager (Менеджер компании)</MenuItem>
-              <MenuItem value="COMPANY_EMPLOYEE">Company Employee (Сотрудник компании)</MenuItem>
-              <MenuItem value="AUDITOR">Auditor (Аудитор)</MenuItem>
-              <MenuItem value="SYSTEM_ADMIN">System Admin (Системный администратор)</MenuItem>
+              <MenuItem value="COMPANY_HEAD">{tObj.users.roles.companyHead}</MenuItem>
+              <MenuItem value="COMPANY_MANAGER">{tObj.users.roles.companyManager}</MenuItem>
+              <MenuItem value="COMPANY_EMPLOYEE">{tObj.users.roles.companyEmployee}</MenuItem>
+              <MenuItem value="AUDITOR">{tObj.users.roles.auditor}</MenuItem>
+              <MenuItem value="SYSTEM_ADMIN">{tObj.users.roles.systemAdmin}</MenuItem>
             </TextField>
             {companiesList.length > 0 && (
               <TextField
                 select
-                label="Company"
+                label={tObj.users.company}
                 value={userForm.companyId}
                 onChange={e => setUserForm(f => ({ ...f, companyId: e.target.value }))}
                 fullWidth
@@ -314,8 +306,8 @@ export const UsersPage: React.FC = () => {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setUserDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateUser}>Create User</Button>
+          <Button onClick={() => setUserDialogOpen(false)}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={handleCreateUser}>{tObj.common.create}</Button>
         </DialogActions>
       </Dialog>
     </Box>

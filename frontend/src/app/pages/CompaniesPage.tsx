@@ -35,10 +35,12 @@ import {
   Search as SearchIcon,
 } from '@mui/icons-material';
 
+import { useLanguage } from '../context/LanguageContext';
 import type { CompanyDto } from '../types/dto';
 
 export const CompaniesPage: React.FC = () => {
   const { user } = useAuth();
+  const { tObj } = useLanguage();
   const isAdmin = user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
 
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
@@ -133,18 +135,18 @@ export const CompaniesPage: React.FC = () => {
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <BusinessIcon color="primary" fontSize="large" /> System Companies
+            <BusinessIcon color="primary" fontSize="large" /> {tObj.companies.title}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Manage all merchant companies in the directory and toggle their operational status
+            {tObj.companies.subtitle}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.5}>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchCompanies}>
-            Refresh
+            {tObj.common.refresh}
           </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateOpen(true)}>
-            Add Company
+            {tObj.companies.addCompany}
           </Button>
         </Stack>
       </Box>
@@ -159,7 +161,7 @@ export const CompaniesPage: React.FC = () => {
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider' }}>
         <TextField
           size="small"
-          placeholder="Search companies by name or ID..."
+          placeholder={tObj.companies.searchPlaceholder}
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           sx={{ minWidth: 320, width: { xs: '100%', sm: 400 } }}
@@ -179,12 +181,12 @@ export const CompaniesPage: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                <TableCell sx={{ fontWeight: 700 }}>Company ID</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Company Name</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Enable / Disable</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Created At</TableCell>
-                <TableCell sx={{ fontWeight: 700 }} align="center">Actions</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.companyId}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.name}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.status}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.common.actions}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }} align="center">{tObj.common.actions}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -199,14 +201,14 @@ export const CompaniesPage: React.FC = () => {
                     <TableCell>
                       <Chip
                         icon={isActive ? <CheckCircleIcon fontSize="small" /> : <BlockIcon fontSize="small" />}
-                        label={isActive ? 'ACTIVE' : 'INACTIVE'}
+                        label={isActive ? tObj.common.active : tObj.common.inactive}
                         color={isActive ? 'success' : 'default'}
                         size="small"
                         sx={{ fontWeight: 600 }}
                       />
                     </TableCell>
                     <TableCell>
-                      <Tooltip title={isActive ? 'Disable Company' : 'Enable Company'}>
+                      <Tooltip title={isActive ? tObj.common.inactive : tObj.common.active}>
                         <Switch
                           checked={isActive}
                           onChange={() => handleToggleStatus(comp)}
@@ -218,7 +220,7 @@ export const CompaniesPage: React.FC = () => {
                       {comp.createdAt ? new Date(comp.createdAt).toLocaleString() : 'N/A'}
                     </TableCell>
                     <TableCell align="center">
-                      <Tooltip title="Delete Company">
+                      <Tooltip title={tObj.common.delete}>
                         <IconButton color="error" size="small" onClick={() => handleDelete(comp.id)}>
                           <DeleteIcon fontSize="small" />
                         </IconButton>
@@ -242,20 +244,19 @@ export const CompaniesPage: React.FC = () => {
 
       {/* Create Dialog */}
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>Add New Merchant Company</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.companies.createDialogTitle}</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{error}</Alert>}
-          <Stack spacing= {2.5} sx={{ mt: 1 }}>
+          <Stack spacing={2.5} sx={{ mt: 1 }}>
             <TextField
-              label="Company ID (Unique String)"
+              label={tObj.companies.companyId}
               value={form.id}
               onChange={e => setForm(f => ({ ...f, id: e.target.value }))}
               placeholder="e.g. comp_001"
               fullWidth
-              helperText="Unique identifier for the merchant company"
             />
             <TextField
-              label="Company Name"
+              label={tObj.companies.name}
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               placeholder="e.g. Acme Supermarket LLC"
@@ -264,8 +265,8 @@ export const CompaniesPage: React.FC = () => {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
-          <Button onClick={() => setCreateOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreate}>Create Company</Button>
+          <Button onClick={() => setCreateOpen(false)}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={handleCreate}>{tObj.common.create}</Button>
         </DialogActions>
       </Dialog>
     </Box>
