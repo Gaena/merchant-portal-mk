@@ -204,7 +204,7 @@ public class DashboardSummaryTest {
         for (JsonNode day : daily) {
             if (day.get("transactionCount").asLong() == 0) {
                 empty++;
-                Assertions.assertEquals(BigDecimal.ZERO.compareTo(new BigDecimal(day.get("netAmount").asText())), 0,
+                Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(new BigDecimal(day.get("netAmount").asText())),
                         "a day without payments is zero, not missing");
             }
         }

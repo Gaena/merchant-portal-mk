@@ -316,7 +316,7 @@ class PblAuditIntegrationTest {
                 .filter(record -> action.equals(record.getAction()))
                 .toList();
         assertThat(records).as("expected exactly one %s record, got %s", action, records.size()).hasSize(1);
-        return records.get(0);
+        return records.getFirst();
     }
 
     private void restoreAuditTable() {

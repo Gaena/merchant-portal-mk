@@ -12,6 +12,8 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
+
+import lombok.Getter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -37,6 +39,9 @@ public class JwtProvider {
             Never commit it: put it in the environment only, see .env.example.""";
 
     private final Key signingKey;
+    // Выставлено наружу, чтобы expiresIn в ответе логина выводился из того же значения, которым
+    // подписан токен, а не из константы, которая разъедется с конфигурацией.
+    @Getter
     private final long expirationMs;
 
     public JwtProvider(
@@ -78,12 +83,6 @@ public class JwtProvider {
             // SHA-256 обязателен по спецификации JDK; если его нет — сломана сама платформа.
             throw new IllegalStateException("SHA-256 is not available in this JVM", e);
         }
-    }
-
-    // Выставлено наружу, чтобы expiresIn в ответе логина выводился из того же значения, которым
-    // подписан токен, а не из константы, которая разъедется с конфигурацией.
-    public long getExpirationMs() {
-        return expirationMs;
     }
 
     public String generateToken(String userId, String username, String role, String companyId) {

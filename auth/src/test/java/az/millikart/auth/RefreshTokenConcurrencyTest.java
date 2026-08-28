@@ -134,8 +134,8 @@ class RefreshTokenConcurrencyTest {
 
         List<RefreshToken> rows = refreshTokenRepository.findAllByUserId(userId);
         assertEquals(1, rows.size(), "no successor may be minted for a family revoked mid-refresh");
-        assertTrue(rows.get(0).isRevoked(), "the logout's revocation must not be overwritten by the refresh");
-        assertFalse(rows.get(0).isRotated(), "a refused refresh must not retire the token either");
+        assertTrue(rows.getFirst().isRevoked(), "the logout's revocation must not be overwritten by the refresh");
+        assertFalse(rows.getFirst().isRotated(), "a refused refresh must not retire the token either");
     }
 
     @Test
@@ -182,7 +182,7 @@ class RefreshTokenConcurrencyTest {
     @DisplayName("markRotated refuses a token that has been revoked — the conditional UPDATE the race protection stands on")
     void markRotated_onRevokedToken_updatesNothing() {
         String token = authService.login(new LoginRequest(EMAIL, PASSWORD), CLIENT_IP).refreshToken();
-        RefreshToken stored = refreshTokenRepository.findAllByUserId(userId).get(0);
+        RefreshToken stored = refreshTokenRepository.findAllByUserId(userId).getFirst();
 
         assertTrue(refreshTokenService.markRotated(stored.getId(), Instant.now()), "a live token can be rotated");
         Instant firstRotation = refreshTokenRepository.findById(stored.getId()).orElseThrow().getRotatedAt();

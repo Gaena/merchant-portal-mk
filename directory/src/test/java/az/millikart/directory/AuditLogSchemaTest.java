@@ -60,7 +60,7 @@ public class AuditLogSchemaTest {
         assertThat(orderingByIndex.get("idx_audit_logs_company_created").get(1))
                 .as("created_at must be descending in the company index")
                 .isEqualTo("D");
-        assertThat(orderingByIndex.get("idx_audit_logs_created").get(0))
+        assertThat(orderingByIndex.get("idx_audit_logs_created").getFirst())
                 .as("created_at must be descending in the administrator index")
                 .isEqualTo("D");
     }

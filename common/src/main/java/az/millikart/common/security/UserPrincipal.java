@@ -3,16 +3,24 @@ package az.millikart.common.security;
 import java.security.Principal;
 import java.util.Collection;
 import java.util.Collections;
+
+import lombok.Getter;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 public class UserPrincipal implements UserDetails, Principal {
 
+    @Getter
     private final String userId;
     private final String username;
+    // Роль ровно как пришла в токене — только для логов и сообщений, не для решений о доступе.
+    @Getter
     private final String rawRole;
+    // null означает, что токен принёс нераспознанное значение: вызывающий обязан отказать (P0-4).
+    @Getter
     private final Role role;
+    @Getter
     private final String companyId;
     private final Collection<? extends GrantedAuthority> authorities;
 
@@ -28,24 +36,6 @@ public class UserPrincipal implements UserDetails, Principal {
         } else {
             this.authorities = Collections.emptyList();
         }
-    }
-
-    public String getUserId() {
-        return userId;
-    }
-
-    // Роль ровно как пришла в токене — только для логов и сообщений, не для решений о доступе.
-    public String getRawRole() {
-        return rawRole;
-    }
-
-    // null означает, что токен принёс нераспознанное значение: вызывающий обязан отказать (P0-4).
-    public Role getRole() {
-        return role;
-    }
-
-    public String getCompanyId() {
-        return companyId;
     }
 
     @Override

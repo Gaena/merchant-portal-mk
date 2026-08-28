@@ -27,17 +27,19 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
                     + "See .env.example and deployment_guide.md, \"Первый запуск и ротация ключа\".";
 
     private static final String DB_PASSWORD_ACTION =
-            "Export the database password before starting the service:\n"
-                    + "\texport DB_PASSWORD='<password of the PostgreSQL user>'\n"
-                    + "DB_URL and DB_USERNAME have defaults for local runs; the password has none on purpose.\n"
-                    + "See .env.example.";
+            """
+                    Export the database password before starting the service:
+                    \texport DB_PASSWORD='<password of the PostgreSQL user>'
+                    DB_URL and DB_USERNAME have defaults for local runs; the password has none on purpose.
+                    See .env.example.""";
 
     private static final String PBL_API_TOKEN_ACTION =
-            "Either leave the static fallback token off (recommended):\n"
-                    + "\texport PBL_API_TOKEN_ENABLED=false\n"
-                    + "or give it a value:\n"
-                    + "\texport PBL_API_TOKEN=\"$(openssl rand -base64 32)\"\n"
-                    + "See .env.example.";
+            """
+                    Either leave the static fallback token off (recommended):
+                    \texport PBL_API_TOKEN_ENABLED=false
+                    or give it a value:
+                    \texport PBL_API_TOKEN="$(openssl rand -base64 32)"
+                    See .env.example.""";
 
     private static final String PBL_BASE_URL_ACTION =
             "Export the public address of the pbl service — the one the payer's browser opens and the "
@@ -47,16 +49,18 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
                     + "See .env.example and deployment_guide.md, section 8.3.";
 
     private static final String PBL_PROVIDER_GATEWAY_BASE_URL_ACTION =
-            "Export the address of the acquiring (TXPG) gateway that hosts the payment page:\n"
-                    + "\texport PBL_PROVIDER_GATEWAY_BASE_URL='https://<gateway host>:<port>/'\n"
-                    + "The value comes from MilliKart and differs between the test stand and production.\n"
-                    + "See .env.example and deployment_guide.md, section 8.3.";
+            """
+                    Export the address of the acquiring (TXPG) gateway that hosts the payment page:
+                    \texport PBL_PROVIDER_GATEWAY_BASE_URL='https://<gateway host>:<port>/'
+                    The value comes from MilliKart and differs between the test stand and production.
+                    See .env.example and deployment_guide.md, section 8.3.""";
 
     private static final String PBL_PROVIDER_API_BASE_URL_ACTION =
-            "Export the address of the acquirer's e-commerce API (order status, capture, refund):\n"
-                    + "\texport PBL_PROVIDER_API_BASE_URL='https://<api host>:<port>/'\n"
-                    + "The value comes from MilliKart and differs between the test stand and production.\n"
-                    + "See .env.example and deployment_guide.md, section 8.3.";
+            """
+                    Export the address of the acquirer's e-commerce API (order status, capture, refund):
+                    \texport PBL_PROVIDER_API_BASE_URL='https://<api host>:<port>/'
+                    The value comes from MilliKart and differs between the test stand and production.
+                    See .env.example and deployment_guide.md, section 8.3.""";
 
     private static final Map<String, String> ACTIONS_BY_VARIABLE = new LinkedHashMap<>();
 

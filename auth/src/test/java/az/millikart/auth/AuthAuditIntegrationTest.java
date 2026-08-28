@@ -271,8 +271,8 @@ public class AuthAuditIntegrationTest {
                 .hasSize(1);
         // entityId несёт логин, как у всех AUTH-записей (P3-2); исчерпавший попытки адрес
         // не теряется — он в колонке client_ip, где и был всегда.
-        assertThat(rateLimitRecords.get(0).getEntityId()).isEqualTo("nobody@nowhere.com");
-        assertThat(rateLimitRecords.get(0).getClientIp()).isEqualTo(attacker);
+        assertThat(rateLimitRecords.getFirst().getEntityId()).isEqualTo("nobody@nowhere.com");
+        assertThat(rateLimitRecords.getFirst().getClientIp()).isEqualTo(attacker);
 
         // Сами отказы тоже не журналируются: пишутся лишь попытки, дошедшие до проверки пароля,
         // а они кончаются на лимите.
@@ -347,7 +347,7 @@ public class AuthAuditIntegrationTest {
                 .filter(record -> action.equals(record.getAction()))
                 .toList();
         assertThat(records).as("expected exactly one %s record, got %s", action, records.size()).hasSize(1);
-        return records.get(0);
+        return records.getFirst();
     }
 
     private List<String> everyDetail() {

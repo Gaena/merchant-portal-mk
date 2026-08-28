@@ -140,7 +140,7 @@ public class AuditLogIntegrationTest {
 
         List<AuditLog> records = auditLogs.findAll();
         assertThat(records).hasSize(1);
-        AuditLog record = records.get(0);
+        AuditLog record = records.getFirst();
         assertThat(record.getEntityType()).isEqualTo("COMPANY");
         assertThat(record.getEntityId()).isEqualTo("comp-01");
         assertThat(record.getAction()).isEqualTo("CREATE");
@@ -249,7 +249,7 @@ public class AuditLogIntegrationTest {
 
         List<AuditLog> records = auditLogs.findAll();
         assertThat(records).hasSize(1);
-        AuditLog record = records.get(0);
+        AuditLog record = records.getFirst();
         assertThat(record.getOutcome()).isEqualTo(AuditOutcome.DENIED);
         assertThat(record.getEntityType()).isEqualTo("COMPANY");
         assertThat(record.getEntityId()).isEqualTo("comp-01");
@@ -270,10 +270,10 @@ public class AuditLogIntegrationTest {
 
         List<AuditLog> records = auditLogs.findAll();
         assertThat(records).hasSize(1);
-        assertThat(records.get(0).getOutcome()).isEqualTo(AuditOutcome.DENIED);
-        assertThat(records.get(0).getEntityType()).isEqualTo("AUDIT_LOG");
-        assertThat(records.get(0).getAction()).isEqualTo("LIST");
-        assertThat(records.get(0).getPerformedBy()).isEqualTo("employee@comp1.com");
+        assertThat(records.getFirst().getOutcome()).isEqualTo(AuditOutcome.DENIED);
+        assertThat(records.getFirst().getEntityType()).isEqualTo("AUDIT_LOG");
+        assertThat(records.getFirst().getAction()).isEqualTo("LIST");
+        assertThat(records.getFirst().getPerformedBy()).isEqualTo("employee@comp1.com");
     }
 
     @Test
@@ -347,8 +347,8 @@ public class AuditLogIntegrationTest {
 
         List<AuditLog> records = auditLogs.findAll();
         assertThat(records).hasSize(1);
-        assertThat(records.get(0).getEntityType()).isEqualTo("SOMETHING_ELSE");
-        assertThat(records.get(0).getAction()).isEqualTo("FROB");
+        assertThat(records.getFirst().getEntityType()).isEqualTo("SOMETHING_ELSE");
+        assertThat(records.getFirst().getAction()).isEqualTo("FROB");
 
         assertThat(serviceLogAppender.list)
                 .as("both the unknown entityType and the unknown action must be reported")

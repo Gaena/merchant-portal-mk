@@ -38,6 +38,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -46,6 +47,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -567,6 +569,7 @@ class PaymentLinkIntegrationTest {
 
             Transaction pending = transactionRepository.findAll().getFirst();
             String password = pending.getProviderPassword();
+            Assertions.assertNotNull(location);
             Assertions.assertTrue(location.contains("password=" + password), "the payer's redirect needs the password: " + location);
 
             List<String> offending = logEvents.list.stream()

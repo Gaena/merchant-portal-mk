@@ -74,7 +74,7 @@ class UrlConfigurationCheckTest {
 
         List<ILoggingEvent> warnings = warnings();
         Assertions.assertEquals(1, warnings.size(), () -> "expected exactly one WARN, got: " + warnings);
-        String message = warnings.get(0).getFormattedMessage();
+        String message = warnings.getFirst().getFormattedMessage();
         Assertions.assertTrue(message.contains(insecureGateway), "the WARN must name the address: " + message);
         Assertions.assertTrue(message.contains("PBL_PROVIDER_GATEWAY_BASE_URL"),
                 "the WARN must name the environment variable: " + message);
@@ -111,7 +111,7 @@ class UrlConfigurationCheckTest {
 
         List<ILoggingEvent> warnings = warnings();
         Assertions.assertEquals(1, warnings.size(), () -> "expected exactly one WARN, got: " + warnings);
-        String message = warnings.get(0).getFormattedMessage();
+        String message = warnings.getFirst().getFormattedMessage();
         Assertions.assertTrue(message.contains(insecureBase), "the WARN must name the address: " + message);
         Assertions.assertTrue(message.contains("PBL_BASE_URL"), "the WARN must name the variable: " + message);
     }

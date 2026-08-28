@@ -130,16 +130,18 @@ public class UrlConfigurationCheck {
         if (isHttps(uri)) {
             return;
         }
-        log.warn("\n{}\n"
-                        + "  WARNING: the acquirer address is not HTTPS\n"
-                        + "  {} = {}\n"
-                        + "  Role: {}.\n"
-                        + "  Every request to this address carries Basic authentication with the terminal login and\n"
-                        + "  password in the clear, and the order data with it. Anyone on the network path can read\n"
-                        + "  and replay them. The service starts anyway: HTTPS is provided by the acquirer's stand,\n"
-                        + "  not by this service. Ask MilliKart for an HTTPS endpoint and point {}\n"
-                        + "  at it — nothing else needs to change.\n"
-                        + "{}",
+        log.warn("""
+                        
+                        {}
+                          WARNING: the acquirer address is not HTTPS
+                          {} = {}
+                          Role: {}.
+                          Every request to this address carries Basic authentication with the terminal login and
+                          password in the clear, and the order data with it. Anyone on the network path can read
+                          and replay them. The service starts anyway: HTTPS is provided by the acquirer's stand,
+                          not by this service. Ask MilliKart for an HTTPS endpoint and point {}
+                          at it — nothing else needs to change.
+                        {}""",
                 FRAME, variable, uri, role, variable, FRAME);
     }
 
@@ -153,16 +155,18 @@ public class UrlConfigurationCheck {
             // Локальный запуск: предупреждение на каждом старте разработчика — только шум.
             return;
         }
-        log.warn("\n{}\n"
-                        + "  WARNING: the public address of this service is not HTTPS\n"
-                        + "  {} = {}\n"
-                        + "  This is the address the payer's browser opens and the address the acquirer returns the\n"
-                        + "  payer to after paying (hppRedirectUrl). Over plain HTTP the payer's session and the\n"
-                        + "  payment reference in the return redirect are readable on the way, and the acquirer\n"
-                        + "  may refuse a non-HTTPS return address altogether. In production put the service behind\n"
-                        + "  HTTPS (deployment_guide.md, section 12) and set {} to the https:// address.\n"
-                        + "  Only http://localhost, http://127.0.0.1 and http://[::1] are exempt from this warning.\n"
-                        + "{}",
+        log.warn("""
+                        
+                        {}
+                          WARNING: the public address of this service is not HTTPS
+                          {} = {}
+                          This is the address the payer's browser opens and the address the acquirer returns the
+                          payer to after paying (hppRedirectUrl). Over plain HTTP the payer's session and the
+                          payment reference in the return redirect are readable on the way, and the acquirer
+                          may refuse a non-HTTPS return address altogether. In production put the service behind
+                          HTTPS (deployment_guide.md, section 12) and set {} to the https:// address.
+                          Only http://localhost, http://127.0.0.1 and http://[::1] are exempt from this warning.
+                        {}""",
                 FRAME, BASE_URL_VARIABLE, uri, BASE_URL_VARIABLE, FRAME);
     }
 }

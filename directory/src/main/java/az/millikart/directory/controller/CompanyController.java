@@ -54,7 +54,7 @@ public class CompanyController {
             @AuthenticationPrincipal UserPrincipal principal) {
         Pageable pageable = PageRequest.of(
                 Math.max(page, 0),
-                Math.min(Math.max(size, 1), MAX_PAGE_SIZE));
+                Math.clamp(size, 1, MAX_PAGE_SIZE));
         return companyService.listCompanies(pageable, principal, SearchTerms.normalize(search));
     }
 

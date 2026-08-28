@@ -58,10 +58,10 @@ public class SecurityConfig {
                 .cors(AbstractHttpConfigurer::disable)
                 // Между запросами не хранится ничего, личность несёт токен. Без этого Spring
                 // Security кладёт «исходный запрос» каждого отказа в новую HTTP-сессию, и
-                // неаутентифицированное сканирование выделяет по сессии на запрос.
+                // не аутентифицированное сканирование выделяет по сессии на запрос.
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> {
-                    // ERROR-диспатчи — внутренние forward на /error, а не запросы клиента:
+                    // ERROR-диспачи — внутренние forward на /error, а не запросы клиента:
                     // повторная авторизация подменила бы настоящую ошибку ничего не значащим 401.
                     // Клиент, запросивший /error напрямую, — REQUEST-диспатч, и токен ему нужен.
                     auth.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll();

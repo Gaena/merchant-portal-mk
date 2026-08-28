@@ -29,7 +29,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
                    OR lower(u.full_name) LIKE :search ESCAPE '!'
                    OR lower(u.company_id) LIKE :search ESCAPE '!'
                    OR lower(c.name) LIKE :search ESCAPE '!')
-            ORDER BY u.username ASC, u.id ASC
+            ORDER BY u.username , u.id
             """,
             countQuery = """
             SELECT count(*) FROM users u

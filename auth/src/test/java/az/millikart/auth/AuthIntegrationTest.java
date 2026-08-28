@@ -1,19 +1,5 @@
 package az.millikart.auth;
 
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.not;
-import static org.hamcrest.Matchers.notNullValue;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
 import az.millikart.auth.domain.Company;
 import az.millikart.auth.domain.User;
 import az.millikart.auth.dto.CreateUserRequest;
@@ -23,12 +9,9 @@ import az.millikart.auth.repository.CompanyRepository;
 import az.millikart.auth.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.UUID;
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -40,6 +23,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.UUID;
+
+import static org.hamcrest.Matchers.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest
 @AutoConfigureMockMvc

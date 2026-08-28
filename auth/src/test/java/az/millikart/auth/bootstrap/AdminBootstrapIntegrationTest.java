@@ -51,7 +51,7 @@ public class AdminBootstrapIntegrationTest {
         List<User> users = userRepository.findAll();
 
         assertEquals(1, users.size(), "the changeset must not seed users of its own");
-        User admin = users.get(0);
+        User admin = users.getFirst();
         assertEquals(ADMIN_USERNAME, admin.getUsername());
         assertEquals("SYSTEM_ADMIN", admin.getRole());
         assertEquals("ACTIVE", admin.getStatus());

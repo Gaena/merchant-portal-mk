@@ -12,7 +12,11 @@ import static org.mockito.Mockito.when;
 
 import az.millikart.auth.domain.User;
 import az.millikart.auth.repository.UserRepository;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,7 +35,7 @@ class AdminBootstrapRunnerTest {
 
     private UserRepository userRepository;
     private PasswordEncoder passwordEncoder;
-    private final java.util.List<Object> publishedEvents = new java.util.ArrayList<>();
+    private final List<Object> publishedEvents = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -44,7 +48,8 @@ class AdminBootstrapRunnerTest {
         // хватает собирающего publisher; саму запись покрывает интеграционный тест, где есть
         // слушатель и база.
         return new AdminBootstrapRunner(userRepository, passwordEncoder,
-                event -> publishedEvents.add(event), username, password);
+                publishedEvents::add, username, password
+        );
     }
 
     @Test

@@ -41,6 +41,7 @@ class ManagementPortIntegrationTest {
         ResponseEntity<String> response = get(managementPort, "/actuator/health");
 
         Assertions.assertEquals(HttpStatus.OK, response.getStatusCode());
+        Assertions.assertNotNull(response.getBody());
         Assertions.assertTrue(response.getBody().contains("\"status\":\"UP\""), response.getBody());
         // show-details: always оставлен включённым именно потому, что порт слушает только loopback.
         Assertions.assertTrue(response.getBody().contains("components"), response.getBody());
@@ -69,6 +70,7 @@ class ManagementPortIntegrationTest {
         ResponseEntity<String> response = get(serverPort, "/some/unmapped/path");
 
         Assertions.assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+        Assertions.assertNotNull(response.getBody());
         Assertions.assertTrue(response.getBody().contains("\"status\":401"), response.getBody());
     }
 

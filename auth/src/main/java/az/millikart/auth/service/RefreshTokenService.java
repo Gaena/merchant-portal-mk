@@ -12,6 +12,8 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
+
+import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,7 +34,9 @@ public class RefreshTokenService {
 
     private final RefreshTokenRepository repository;
     private final SecureRandom random = new SecureRandom();
+    @Getter
     private final Duration ttl;
+    @Getter
     private final Duration rotationGrace;
 
     public RefreshTokenService(RefreshTokenRepository repository,
@@ -52,14 +56,6 @@ public class RefreshTokenService {
     // То, что уходит клиенту: сам токен (в базе его нет никогда) и момент, когда он перестанет
     // работать.
     public record IssuedRefreshToken(String token, Instant expiresAt) {
-    }
-
-    public Duration getTtl() {
-        return ttl;
-    }
-
-    public Duration getRotationGrace() {
-        return rotationGrace;
     }
 
     // Вход передаёт свежий UUID и этим начинает семейство; refresh передаёт семейство ротируемого

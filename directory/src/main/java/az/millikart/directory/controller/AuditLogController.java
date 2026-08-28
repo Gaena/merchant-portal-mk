@@ -51,7 +51,7 @@ public class AuditLogController {
             @AuthenticationPrincipal UserPrincipal principal) {
         Pageable pageable = PageRequest.of(
                 Math.max(page, 0),
-                Math.min(Math.max(size, 1), MAX_PAGE_SIZE));
+                Math.clamp(size, 1, MAX_PAGE_SIZE));
         return auditLogQueryService.listAuditLogs(entityType, entityId,
                 SearchTerms.normalize(search), parseOutcome(outcome),
                 parseInstant(from, false), parseInstant(to, true),

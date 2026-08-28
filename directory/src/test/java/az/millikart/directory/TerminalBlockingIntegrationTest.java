@@ -1,21 +1,9 @@
 package az.millikart.directory;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.hamcrest.Matchers.is;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.reset;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import az.millikart.common.security.JwtProvider;
-import az.millikart.common.security.UserPrincipal;
 import az.millikart.common.audit.AuditLog;
 import az.millikart.common.audit.AuditOutcome;
+import az.millikart.common.security.JwtProvider;
+import az.millikart.common.security.UserPrincipal;
 import az.millikart.directory.domain.TerminalStatus;
 import az.millikart.directory.dto.CreateCompanyRequest;
 import az.millikart.directory.dto.CreateTerminalRequest;
@@ -25,12 +13,6 @@ import az.millikart.directory.repository.PaymentLinkStatusRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.directory.service.TerminalService;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.sql.Connection;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.UUID;
-import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,8 +25,26 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.is;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 // P2-8 (Р-37, Р-39, Р-40): блокировка терминала вместо удаления и что она делает с его платёжными
-// ссылками. Таблица payment_links принадлежит pbl и в H2 этого модуля не заводится, поэтому её
+// ссылками. Таблица payment_links принадлежит pbl, и в H2 этого модуля не заводится, поэтому её
 // создаёт настоящий changelog pbl через SharedDatabaseSchema: так же выглядит прод (одна общая
 // база), и только так нативные update-ы проверяются против реальной таблицы.
 @SpringBootTest
@@ -303,7 +303,7 @@ public class TerminalBlockingIntegrationTest {
                 .filter(record -> action.equals(record.getAction()))
                 .toList();
         assertThat(records).as("expected exactly one %s record", action).hasSize(1);
-        return records.get(0);
+        return records.getFirst();
     }
 
     // Вставка через SQL: PaymentLink намеренно не является сущностью этого модуля.

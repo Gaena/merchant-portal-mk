@@ -9,21 +9,21 @@ import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
 import az.millikart.pbl.provider.dto.MoneyOperationResult;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 // Единственный AcquiringClient. Стаб под флагом pbl.provider.stub убран (20.08.2026): флаг мог
 // выбрать не тот клиент или ни одного; локальный прогон идёт на стенд MilliKart через

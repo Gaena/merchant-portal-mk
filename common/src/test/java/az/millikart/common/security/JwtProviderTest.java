@@ -61,7 +61,7 @@ class JwtProviderTest {
     @DisplayName("exactly 32 bytes is accepted: the boundary is inclusive")
     void constructor_secretOfExactlyMinimumLength_isAccepted() {
         String thirtyTwoBytes = "01234567890123456789012345678901";
-        assertNotNull(new JwtProvider(thirtyTwoBytes, EXPIRATION_MS));
+        new JwtProvider(thirtyTwoBytes, EXPIRATION_MS);
     }
 
     // Смысл всей задачи: ключ, лежащий в git-истории, публичен и не должен больше ничего
