@@ -2,10 +2,11 @@ spring:
   application:
     name: pbl
   datasource:
-    url: jdbc:postgresql://localhost:5432/postgres
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/postgres}
     driver-class-name: org.postgresql.Driver
-    username: postgres
-    password: password
+    username: ${DB_USERNAME:postgres}
+    # No default on purpose: the service must not start with a guessable database password.
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -18,36 +19,103 @@ spring:
 
 # PayByLink service configuration
 pbl:
-  # Public base URL used to build the customer-facing payment link.
-  base-url: http://localhost:8080/
+  dashboard:
+    # Time zone the dashboard cuts days and hours in (P3-7). Not UTC: the portal is Azerbaijani,
+    # and in UTC every payment after 20:00 local lands on the next day, so the merchant's "today"
+    # would not be the merchant's day. DST is handled correctly — the day of a bucket is resolved
+    # per instant, not from one offset held for the whole window. The one assumption is that the
+    # zone's offset is a whole number of hours (see DashboardService.foldBuckets).
+    zone: ${PBL_DASHBOARD_ZONE:Asia/Baku}
+  # Public base URL of this service, as the payer's browser and the acquirer see it.
+  # No default on purpose: this value is handed to the acquirer as hppRedirectUrl
+  # (OpenLinkService), so a default would silently send production payers to localhost.
+  # Validated on startup by UrlConfigurationCheck (absolute http/https URL).
+  base-url: ${PBL_BASE_URL}
   security:
-    # Bearer token required by merchant-facing management endpoints (spec §4/§5).
-    # Leave blank to disable authentication (local development only). Externalize in production.
-    api-token: ${PBL_API_TOKEN:pbl-secret-token}
+    # Static bearer token that authenticates as SYSTEM_ADMIN without a password (JwtAuthFilter).
+    # Empty by default and disabled by default: a built-in value would be a publicly known backdoor.
+    # Turning the flag on without setting PBL_API_TOKEN fails startup — see JwtAuthFilter.
+    api-token: ${PBL_API_TOKEN:}
     api-token-enabled: ${PBL_API_TOKEN_ENABLED:false}
+    # Must be byte-for-byte the same value as in auth and directory. No default on purpose.
+    jwt:
+      secret: ${JWT_SECRET}
+      # Kept in step with auth (P1-13: 15 minutes). This service only verifies tokens — the
+      # lifetime is stamped into the token by auth at issue time — so the value here matters only
+      # for JwtProvider's own default; it is declared to keep the three configurations identical.
+      expiration-ms: ${JWT_EXPIRATION_MS:900000} # 15 minutes
+  link:
+    # How long a link lives when the merchant did not ask for a lifetime of its own. Matches the
+    # countdown the merchant portal has always drawn on the link card, so nothing changes visually —
+    # the timer now describes a link that really does expire (P1-9).
+    default-ttl: ${PBL_LINK_DEFAULT_TTL:PT24H}
+    # Ceiling: an expiry further than this from the link's CREATION time is refused, on create and
+    # on every later PATCH. Counting it from creation rather than from "now" is what stops a chain
+    # of PATCHes from walking the expiry forward forever.
+    max-ttl: ${PBL_LINK_MAX_TTL:P90D}
+  reconciliation:
+    # Background sweep that settles transactions the payer never came back from. The acquirer has
+    # no asynchronous callback, so polling is the only way a PENDING transaction ever finishes.
+    enabled: ${PBL_RECONCILIATION_ENABLED:true}
+    cron: "${PBL_RECONCILIATION_CRON:0 */2 * * * *}"
+    # Younger transactions are left alone: the payer return page has just polled them.
+    min-age: ${PBL_RECONCILIATION_MIN_AGE:PT2M}
+    # Past this age a still-unpaid order is treated as abandoned by the payer.
+    max-age: ${PBL_RECONCILIATION_MAX_AGE:PT24H}
+    # Past this age the sweep stops polling a PENDING row altogether (P1-8a). Rows the acquirer
+    # reports with an unknown or externally-settled status are never timed out into FAILED, so
+    # without this bound they would fill every batch forever. Such rows need a human; their count
+    # is logged on every run.
+    give-up-age: ${PBL_RECONCILIATION_GIVE_UP_AGE:P7D}
+    batch-size: ${PBL_RECONCILIATION_BATCH_SIZE:50}
   provider:
-    # Base URL of the acquiring (TXPG) gateway payment page.
-    gateway-base-url: https://test.millikart.az:8083/
+    # No defaults on purpose: falling back to the test stand in production means payments
+    # are routed to the test acquirer — nothing settles, but the portal shows "paid".
+    # gateway-base-url: the acquiring (TXPG) gateway that hosts the payment page (createEcomOrder).
+    # api-base-url: the e-commerce API (exec-tran, order status). Basic auth with the terminal
+    # login and password travels over this one — UrlConfigurationCheck warns when it is not HTTPS.
+    gateway-base-url: ${PBL_PROVIDER_GATEWAY_BASE_URL}
+    api-base-url: ${PBL_PROVIDER_API_BASE_URL}
+    # Protocol constants, not per-environment addresses — defaults stay. Quoted because a bare
+    # `{` starts a flow mapping in YAML.
+    create-order-path: "${PBL_PROVIDER_CREATE_ORDER_PATH:/order}"
+    exec-tran-path: "${PBL_PROVIDER_EXEC_TRAN_PATH:/order/{orderId}/exec-tran}"
+    get-order-path: "${PBL_PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
 
-    # E-commerce API Base URL
-    api-base-url: http://test.millikart.az:8000/
-    create-order-path: /order
-    exec-tran-path: /order/{orderId}/exec-tran
-    get-order-path: /order/{orderId}
+mp:
+  # Whose X-Real-IP / X-Forwarded-For we believe when recording transactions.client_ip (P2-10).
+  # Our nginx sits on the same machine and reaches the service over loopback; a request from
+  # anywhere else has its forwarding headers ignored. Empty value = never believe them. See ClientIp.
+  trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
 
 management:
+  server:
+    # Actuator lives on its own port bound to the loopback interface, so it is physically
+    # unreachable from outside the machine — it is not protected by a token, and the liveness
+    # probes that call it have none to present. Ports: auth 9081, directory 9082, pbl 9080.
+    # pbl serves the public payer pages on 8080, which makes this separation matter most here.
+    port: ${MANAGEMENT_PORT:9080}
+    address: 127.0.0.1
   endpoints:
     web:
       exposure:
         include: health,info,metrics
   endpoint:
     health:
+      # Safe to keep because of the address binding above: database connectivity, free disk space
+      # and versions are visible from this machine only, and nothing on the public port serves them.
       show-details: always
 
 springdoc:
+  # Off in normal operation: /v3/api-docs is a complete map of the API. Turned on with
+  # SWAGGER_ENABLED=true for acceptance testing (technical_handover.md lists Swagger as delivered
+  # documentation), then turned back off — see deployment_guide.md. While off, springdoc registers
+  # no handlers and SecurityConfig adds no matchers for these paths.
   api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /v3/api-docs
   swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /swagger-ui.html
 
 resilience4j:

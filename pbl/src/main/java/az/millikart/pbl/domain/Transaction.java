@@ -58,6 +58,13 @@ public class Transaction {
     @Builder.Default
     private BigDecimal refundedAmount = BigDecimal.ZERO;
 
+    // Сколько реально списано с карты: частичное списание делает это меньше amount, а amount
+    // остаётся авторизованной суммой — записью о том, сколько держали. @Builder.Default намеренно
+    // нет: null значит «списания не было» — нормальное состояние любого SMS-платежа, и потолок
+    // возврата читает его именно так (PaymentLinkService.refundableBase).
+    @Column(name = "captured_amount")
+    private BigDecimal capturedAmount;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private TransactionStatus status;

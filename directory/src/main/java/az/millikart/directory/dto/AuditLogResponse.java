@@ -1,5 +1,6 @@
 package az.millikart.directory.dto;
 
+import az.millikart.common.audit.AuditOutcome;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -11,6 +12,8 @@ public record AuditLogResponse(
         String performedBy,
         String companyId,
         String details,
+        String clientIp,
+        AuditOutcome outcome,
         Instant createdAt
 ) {
 }

@@ -9,6 +9,10 @@ public record TransactionResponse(
         UUID paymentLinkId,
         String status,
         BigDecimal amount,
+        // Сколько эквайер реально склирил при списании DMS; null для SMS-платежей и для холдов,
+        // которые не списывали. После частичного списания меньше amount и служит потолком, по
+        // которому меряется каждый возврат этой транзакции.
+        BigDecimal capturedAmount,
         BigDecimal refundedAmount,
         String currency,
         String description,
@@ -25,6 +29,10 @@ public record TransactionResponse(
         String customerPhone,
         String clientIp,
         String userAgent,
-        String providerOrderId
+        String providerOrderId,
+        // Причина отказа словами эквайера: custAttrs DeclineDescription, иначе
+        // PmoDeclineDescription, иначе PmoResultCode (контракт §5.8.7). Заполнен только у FAILED,
+        // чей финальный опрос статуса принёс причину; иначе null.
+        String failureReason
 ) {
 }

@@ -12,7 +12,7 @@ export function exportTransactionsToExcel(transactions: Transaction[], filename:
     'Amount': txn.amount,
     'Currency': txn.currency,
     'Formatted Amount': formatCurrency(txn.amount, txn.currency),
-    'Status': getStatusLabel(txn.status),
+    'Status': getStatusLabel(txn.status, txn.statusRaw),
     'Payment Method': getPaymentMethodLabel(txn.paymentMethod),
     'Description': txn.description,
     'Merchant Reference': txn.merchantReference || 'N/A',

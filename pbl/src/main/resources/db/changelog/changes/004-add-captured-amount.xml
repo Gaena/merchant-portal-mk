@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      P0-8: the amount actually taken off the card, kept apart from `amount` (the authorized one),
+      because a partial capture makes the two differ and the refund ceiling must follow the captured
+      amount. Nullable on purpose: an SMS payment has no capture stage at all, so the column stays
+      empty there and the ceiling falls back to `amount`.
+    -->
+    <changeSet id="004-add-captured-amount" author="millikart">
+        <!-- Guards a database restored without its DATABASECHANGELOG, where the column is already there. -->
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="transactions" columnName="captured_amount"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="transactions">
+            <column name="captured_amount" type="numeric(19, 2)"/>
+        </addColumn>
+    </changeSet>
+</databaseChangeLog>

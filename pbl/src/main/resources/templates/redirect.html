@@ -79,16 +79,6 @@
             justify-content: center;
         }
 
-        .spinner {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            border: 3px solid rgba(99, 102, 241, 0.1);
-            border-top: 3px solid var(--accent-color);
-            border-radius: 50%;
-            animation: spin 1s cubic-bezier(0.5, 0.1, 0.4, 0.9) infinite;
-        }
-
         .pulse-ring {
             position: absolute;
             width: 100%;
@@ -97,6 +87,10 @@
             background-color: var(--accent-color);
             opacity: 0.1;
             animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        .pulse-ring-error {
+            background-color: var(--error-color);
         }
 
         .status-icon {
@@ -120,7 +114,6 @@
 
         /* Receipt view styling */
         .receipt {
-            display: none;
             background: var(--receipt-bg);
             border: 1px solid var(--border-color);
             border-radius: 24px;
@@ -268,11 +261,6 @@
             color: white;
         }
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
         @keyframes pulse {
             0%, 100% { transform: scale(1); opacity: 0.1; }
             50% { transform: scale(1.15); opacity: 0.2; }
@@ -312,164 +300,101 @@
 </head>
 <body>
 
+<!--
+  Rendered entirely on the server: the status is read once, when this page is built.
+  There is no polling and no client-side data loading here - do not reintroduce either.
+-->
 <div class="container">
-    <!-- Card 1: Processing Loader & Error view -->
-    <div class="card" id="statusCard">
-        <div class="status-icon-wrapper">
-            <div class="pulse-ring" id="pulseRing"></div>
-            <div class="spinner" id="spinner"></div>
-            <div class="status-icon" id="statusIcon">🔒</div>
-        </div>
-        <h1 id="statusTitle">Checking payment status</h1>
-        <p id="statusDesc">Please wait a moment while we verify your transaction details with the provider.</p>
-        <button class="btn btn-primary" style="display:none;" id="failBtn" onclick="closePage()">Close Page</button>
-    </div>
 
-    <!-- Card 2: Receipt View (Shown only on success/hold status) -->
-    <div class="receipt" id="receiptCard">
+    <!-- State 1: settled payment - the receipt -->
+    <div class="receipt" th:if="${receipt != null and (receipt.state == 'PAID' or receipt.state == 'AUTHORIZED')}">
         <div class="receipt-header">
-            <div class="receipt-logo">💳</div>
+            <div class="receipt-logo">&#128179;</div>
             <div class="receipt-title">Transaction Receipt</div>
-            <span class="receipt-status-badge" id="receiptBadge">PAID</span>
+            <span class="receipt-status-badge"
+                  th:classappend="${receipt.state == 'AUTHORIZED' ? 'status-hold' : 'status-paid'}"
+                  th:text="${receipt.state == 'AUTHORIZED' ? 'Authorized (Hold)' : 'Paid'}">Paid</span>
         </div>
 
         <div class="receipt-amount-section">
-            <div class="receipt-amount-label">Amount Paid</div>
-            <div class="receipt-amount-val" id="receiptAmount">0.00 AZN</div>
+            <div class="receipt-amount-label"
+                 th:text="${receipt.state == 'AUTHORIZED' ? 'Amount On Hold' : 'Amount Paid'}">Amount Paid</div>
+            <div class="receipt-amount-val"
+                 th:text="${#numbers.formatDecimal(receipt.amount, 1, 'NONE', 2, 'POINT') + ' ' + receipt.currency}">0.00 AZN</div>
         </div>
 
         <div class="receipt-row">
             <div class="receipt-label">Order Reference</div>
-            <div class="receipt-value" id="receiptOrderId">-</div>
+            <div class="receipt-value" th:text="${receipt.merchantOrderId} ?: '-'">-</div>
         </div>
         <div class="receipt-row">
             <div class="receipt-label">Transaction ID</div>
-            <div class="receipt-value" id="receiptTxId">-</div>
+            <div class="receipt-value" th:text="${receipt.transactionId}">-</div>
         </div>
         <div class="receipt-row">
-            <div class="receipt-label">Date & Time</div>
-            <div class="receipt-value" id="receiptDate">-</div>
+            <div class="receipt-label">Date &amp; Time</div>
+            <div class="receipt-value"
+                 th:text="${receipt.createdAt != null ? #temporals.format(receipt.createdAt, 'dd.MM.yyyy HH:mm') : '-'}">-</div>
         </div>
 
         <div class="receipt-divider"></div>
 
-        <div class="receipt-row" id="receiptDescRow">
+        <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.description)}">
             <div class="receipt-label">Description</div>
-            <div class="receipt-value" id="receiptDesc">-</div>
+            <div class="receipt-value" th:text="${receipt.description}">-</div>
         </div>
-        <div class="receipt-row" id="receiptCustomerRow">
+        <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerName)}">
             <div class="receipt-label">Customer</div>
-            <div class="receipt-value" id="receiptCustomerName">-</div>
+            <div class="receipt-value"
+                 th:text="${#strings.isEmpty(receipt.customerEmail)
+                           ? receipt.customerName
+                           : receipt.customerName + ' (' + receipt.customerEmail + ')'}">-</div>
         </div>
 
         <div class="actions-group">
             <button class="btn btn-secondary" onclick="window.print()">Print Receipt</button>
-            <button class="btn btn-primary" id="returnBtn" onclick="closePage()">Close Page</button>
+            <button class="btn btn-primary" onclick="window.close()">Close Page</button>
         </div>
     </div>
+
+    <!-- State 2: the bank declined the payment -->
+    <div class="card" th:if="${receipt != null and receipt.state == 'FAILED'}">
+        <div class="status-icon-wrapper">
+            <div class="pulse-ring pulse-ring-error"></div>
+            <div class="status-icon">&#10060;</div>
+        </div>
+        <h1>Payment failed</h1>
+        <p>The bank declined this payment, so the order was not paid. To try again, ask the
+            merchant for a new payment link.</p>
+        <button class="btn btn-primary" onclick="window.close()">Close Page</button>
+    </div>
+
+    <!-- State 3: no final answer from the bank yet - we do not wait for one here -->
+    <div class="card" th:if="${receipt != null and receipt.state == 'PENDING'}">
+        <div class="status-icon-wrapper">
+            <div class="pulse-ring"></div>
+            <div class="status-icon">&#8987;</div>
+        </div>
+        <h1>Your payment is being processed</h1>
+        <p>We have not received a final status from the bank yet, so we cannot confirm the payment
+            on this page. The merchant will send you a confirmation once the bank settles it.
+            You can safely close this page.</p>
+        <button class="btn btn-primary" onclick="window.close()">Close Page</button>
+    </div>
+
+    <!-- State 4: unknown or malformed reference - stays deliberately uninformative -->
+    <div class="card" th:if="${receipt == null}">
+        <div class="status-icon-wrapper">
+            <div class="pulse-ring"></div>
+            <div class="status-icon">&#128274;</div>
+        </div>
+        <h1>Payment information is unavailable</h1>
+        <p>We cannot show any payment details for this page. If you have just made a payment,
+            the merchant will confirm it directly.</p>
+        <button class="btn btn-primary" onclick="window.close()">Close Page</button>
+    </div>
+
 </div>
-
-<script th:inline="javascript">
-    const providerOrderId = [[${providerOrderId}]];
-    let pollCount = 0;
-    const maxPolls = 15;
-
-    async function checkStatus() {
-        pollCount++;
-        try {
-            const response = await fetch(`/api/v1/transactions/${providerOrderId}/status`);
-            if (!response.ok) {
-                throw new Error("Failed to check status");
-            }
-            const data = await response.json();
-
-            if (data.status === "SUCCESS" || data.status === "AUTHORIZED") {
-                showReceipt(data);
-            } else if (data.status === "FAILED") {
-                showError("Payment Failed", "The provider declined the payment. Please try again or use another payment method.");
-            } else {
-                if (pollCount >= maxPolls) {
-                    showError("Verification Timeout", "We did not receive a final status from the provider. Please check with your bank if funds were deducted.");
-                } else {
-                    setTimeout(checkStatus, 2000);
-                }
-            }
-        } catch (error) {
-            console.error("Status check failed:", error);
-            if (pollCount >= maxPolls) {
-                showError("Connection Error", "Could not verify payment status due to a connection issue.");
-            } else {
-                setTimeout(checkStatus, 2500);
-            }
-        }
-    }
-
-    function showReceipt(data) {
-        // Hide processing loader card
-        document.getElementById("statusCard").style.display = "none";
-
-        // Fill receipt data
-        const badge = document.getElementById("receiptBadge");
-        if (data.status === "AUTHORIZED") {
-            badge.innerText = "Authorized (Hold)";
-            badge.className = "receipt-status-badge status-hold";
-        } else {
-            badge.innerText = "Paid";
-            badge.className = "receipt-status-badge status-paid";
-        }
-
-        document.getElementById("receiptAmount").innerText = `${Number(data.amount).toFixed(2)} ${data.currency}`;
-        document.getElementById("receiptOrderId").innerText = data.merchantOrderId || "-";
-        document.getElementById("receiptTxId").innerText = data.id;
-
-        // Format Date
-        const dateStr = data.createdAt ? new Date(data.createdAt).toLocaleString() : new Date().toLocaleString();
-        document.getElementById("receiptDate").innerText = dateStr;
-
-        // Optional Description
-        if (data.description) {
-            document.getElementById("receiptDesc").innerText = data.description;
-            document.getElementById("receiptDescRow").style.display = "flex";
-        } else {
-            document.getElementById("receiptDescRow").style.display = "none";
-        }
-
-        // Optional Customer Name/Contact
-        if (data.customerName) {
-            let customerInfo = data.customerName;
-            if (data.customerEmail) customerInfo += ` (${data.customerEmail})`;
-            document.getElementById("receiptCustomerName").innerText = customerInfo;
-            document.getElementById("receiptCustomerRow").style.display = "flex";
-        } else {
-            document.getElementById("receiptCustomerRow").style.display = "none";
-        }
-
-        // Show receipt card
-        document.getElementById("receiptCard").style.display = "block";
-    }
-
-    function showError(title, message) {
-        document.getElementById("spinner").style.borderColor = "transparent";
-        document.getElementById("spinner").style.borderTopColor = "transparent";
-        document.getElementById("spinner").style.animation = "none";
-        document.getElementById("pulseRing").style.backgroundColor = "var(--error-color)";
-        document.getElementById("statusIcon").innerHTML = "❌";
-
-        document.getElementById("statusTitle").innerText = title;
-        document.getElementById("statusDesc").innerText = message;
-        document.getElementById("failBtn").style.display = "inline-flex";
-    }
-
-    function closePage() {
-        alert("You may now close this browser tab.");
-        window.close();
-    }
-
-    // Start polling
-    window.addEventListener("DOMContentLoaded", () => {
-        setTimeout(checkStatus, 1000);
-    });
-</script>
 
 </body>
 </html>

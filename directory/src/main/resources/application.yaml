@@ -5,10 +5,11 @@ spring:
   application:
     name: directory
   datasource:
-    url: jdbc:postgresql://localhost:5432/postgres
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/postgres}
     driver-class-name: org.postgresql.Driver
-    username: postgres
-    password: password
+    username: ${DB_USERNAME:postgres}
+    # No default on purpose: the service must not start with a guessable database password.
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -21,21 +22,41 @@ spring:
 
 pbl:
   security:
+    # Must be byte-for-byte the same value as in auth and pbl, otherwise tokens issued by auth
+    # fail verification here. No default on purpose.
     jwt:
-      secret: dGhpcy1pcy1hLXNlY3JldC1rZXktZm9yLWp3dC1zaWduaW5nLXBob3NwaGF0ZS1wYmw=
+      secret: ${JWT_SECRET}
+      # Kept in step with auth (P1-13: 15 minutes). This service only verifies tokens — the
+      # lifetime is stamped into the token by auth at issue time — so the value here matters only
+      # for JwtProvider's own default; it is declared to keep the three configurations identical.
+      expiration-ms: ${JWT_EXPIRATION_MS:900000} # 15 minutes
 
 management:
+  server:
+    # Actuator lives on its own port bound to the loopback interface, so it is physically
+    # unreachable from outside the machine — it is not protected by a token, and the liveness
+    # probes that call it have none to present. Ports: auth 9081, directory 9082, pbl 9080.
+    port: ${MANAGEMENT_PORT:9082}
+    address: 127.0.0.1
   endpoints:
     web:
       exposure:
         include: health,info,metrics
   endpoint:
     health:
+      # Safe to keep because of the address binding above: database connectivity, free disk space
+      # and versions are visible from this machine only, and nothing on the public port serves them.
       show-details: always
 
 springdoc:
+  # Off in normal operation: /v3/api-docs is a complete map of the API. Turned on with
+  # SWAGGER_ENABLED=true for acceptance testing (technical_handover.md lists Swagger as delivered
+  # documentation), then turned back off — see deployment_guide.md. While off, springdoc registers
+  # no handlers and SecurityConfig adds no matchers for these paths.
   api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /v3/api-docs
   swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /swagger-ui.html
 

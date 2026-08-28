@@ -17,10 +17,12 @@
     "jsx": "react-jsx",
 
     /* Linting */
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     },
+    /* TypeScript >= 7 включает strict по умолчанию. Здесь он выключен осознанно:
+       включение strict (strictNullChecks и т.д.) — отдельная задача. */
+    "strict": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "erasableSyntaxOnly": true,

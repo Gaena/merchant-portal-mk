@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- P2-3: the three indexes `transactions` actually needs. Until now it carried exactly one,
+         `idx_transactions_provider_order`, and everything else was a sequential scan of the
+         fastest-growing table in the system.
+
+         `link_id` is the foreign key to `payment_links`, and **PostgreSQL does not index foreign
+         keys automatically** — only the referenced primary key is indexed. Without an index on the
+         referencing side every lookup by `link_id` reads the whole table, and so does the check
+         PostgreSQL runs when a `payment_links` row is deleted or its key changes: it has to prove
+         no child row references it.
+
+         One index per changeset, each behind its own precondition, for the reason stated in 002:
+         a database restored from a dump without its DATABASECHANGELOG must skip what is already
+         there and still create what is missing. Changeset ids carry the module name — all three
+         services share one DATABASECHANGELOG table (problems.md).
+
+         Nothing beyond these three: every index slows down insertion, and a row is inserted here
+         on every payment attempt. -->
+
+    <!-- (link_id, status): countByLinkIdAndStatus, countByLinkIdAndStatusIn and
+         existsByLinkIdAndStatusIn — three to four of them on every link opened by a payer
+         (OpenLinkService), plus the DMS capture, the update path and the status poll. The leading
+         column alone also serves any query filtered by `link_id` only, and the foreign-key check
+         above. -->
+    <changeSet id="7-pbl-index-transactions-link-status" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="transactions" indexName="idx_transactions_link_status"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="transactions" indexName="idx_transactions_link_status"><column name="link_id"/><column name="status"/></createIndex>
+    </changeSet>
+
+    <!-- (link_id, created_at desc): findByLinkIdOrderByCreatedAtDesc — the attempts shown on a
+         link card — and findFirstByLinkIdAndStatusInOrderByCreatedAtDesc, which the status poll
+         and the refund path use to reach the newest attempt without sorting the whole table. -->
+    <changeSet id="7-pbl-index-transactions-link-created" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="transactions" indexName="idx_transactions_link_created"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="transactions" indexName="idx_transactions_link_created"><column name="link_id"/><column name="created_at" descending="true"/></createIndex>
+    </changeSet>
+
+    <!-- (status, created_at): findByStatusAndCreatedAtBetweenOrderByCreatedAtAsc and
+         countByStatusAndCreatedAtBefore — the background reconciliation sweep. It runs every two
+         minutes, around the clock, whether or not anybody paid, and without this index each run
+         reads the entire table to find a handful of PENDING rows. Ascending on purpose: the sweep
+         drains the backlog oldest first. -->
+    <changeSet id="7-pbl-index-transactions-status-created" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="transactions" indexName="idx_transactions_status_created"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="transactions" indexName="idx_transactions_status_created"><column name="status"/><column name="created_at"/></createIndex>
+    </changeSet>
+
+</databaseChangeLog>

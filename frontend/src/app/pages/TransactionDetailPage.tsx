@@ -10,11 +10,6 @@ import {
   Chip,
   Card,
   CardContent,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogContentText,
-  DialogActions,
   Alert,
   Stack,
   CircularProgress
@@ -29,9 +24,6 @@ import {
 } from '@mui/lab';
 import {
   ArrowBack as ArrowBackIcon,
-  CheckCircle as CheckCircleIcon,
-  HourglassEmpty as HourglassIcon,
-  Error as ErrorIcon,
   Cancel as CancelIcon,
   CreditCard as CreditCardIcon,
   Person as PersonIcon,
@@ -44,35 +36,18 @@ import {
   Security as SecurityIcon,
   Laptop as LaptopIcon,
 } from '@mui/icons-material';
-import type { Transaction, TransactionStatus } from '../types/transaction';
-import { formatCurrency, formatDateTime, getPaymentMethodLabel, getStatusLabel } from '../utils/mockData';
+import type { Transaction } from '../types/transaction';
+import { parsePaymentMethod, parseTransactionStatus } from '../types/transaction';
+import { formatCurrency, formatDateTime, getPaymentMethodLabel } from '../utils/mockData';
 import { getStatusColorScheme } from '../utils/statusColors';
 
 import { useLanguage } from '../context/LanguageContext';
+import { statusLabel } from '../i18n/translations';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 interface TransactionDetailPageProps {
   transactions: Transaction[];
 }
-
-const getStatusColor = (status: TransactionStatus): 'success' | 'warning' | 'error' | 'default' | 'info' => {
-  const colors: Record<TransactionStatus, 'success' | 'warning' | 'error' | 'default' | 'info'> = {
-    success: 'success',
-    pending: 'warning',
-    '3d-failed': 'error',
-    canceled: 'info'
-  };
-  return colors[status] || 'default';
-};
-
-const getStatusIcon = (status: TransactionStatus) => {
-  const icons: Record<TransactionStatus, React.ReactNode> = {
-    success: <CheckCircleIcon fontSize="small" />,
-    pending: <HourglassIcon fontSize="small" />,
-    '3d-failed': <ErrorIcon fontSize="small" />,
-    canceled: <CancelIcon fontSize="small" />
-  };
-  return icons[status];
-};
 
 export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ transactions }) => {
   const { id } = useParams<{ id: string }>();
@@ -82,8 +57,10 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
   const stateTx = location.state?.transaction as Transaction | undefined;
 
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelSuccess, setCancelSuccess] = useState(false);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
+  const [completeBusy, setCompleteBusy] = useState(false);
   const [completeSuccess, setCompleteSuccess] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
@@ -95,9 +72,12 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
   useEffect(() => {
     if (!stateTx && !transactions.find(t => t.id === id) && id) {
       setLoadingTx(true);
+      // Лёгкий список терминалов (Р-45): нужно только имя. Полная карточка постранична
+      // с P2-1, а заблокированные терминалы в `options` есть — платёж, прошедший через
+      // снятый с обслуживания терминал, должен сохранить его имя.
       Promise.allSettled([
         apiClient.get(`/api/v1/transactions/${id}`),
-        apiClient.get('/api/v1/terminals')
+        apiClient.get('/api/v1/terminals/options')
       ])
         .then(([resTx, resTerm]) => {
           let terminalMap: Record<number, string> = {};
@@ -121,8 +101,9 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
               amount: t.amount,
               refundedAmount: t.refundedAmount,
               currency: t.currency || 'AZN',
-              status: String(t.status || 'APPROVED').toUpperCase() as any,
-              paymentMethod: String(t.paymentType || 'SMS').toUpperCase() as any,
+              status: parseTransactionStatus(t.status),
+              statusRaw: t.status === null || t.status === undefined ? undefined : String(t.status),
+              paymentMethod: parsePaymentMethod(t.paymentType),
               description: t.description || t.merchantOrderId || 'Transaction',
               cardNumberMasked: t.cardNumberMasked,
               cardLast4: t.cardNumberMasked ? String(t.cardNumberMasked).slice(-4) : undefined,
@@ -154,6 +135,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
   const handleCancelTransaction = async () => {
     if (!transaction) return;
     setActionError(null);
+    setCancelBusy(true);
     try {
       await apiClient.post(`/api/v1/transactions/${transaction.id}/refund`, {
         amount: transaction.amount,
@@ -168,12 +150,15 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       const msg = err.response?.data?.message || 'Failed to refund transaction on server';
       setActionError(msg);
       setCancelDialogOpen(false);
+    } finally {
+      setCancelBusy(false);
     }
   };
 
   const handleCompleteTransaction = async () => {
     if (!transaction) return;
     setActionError(null);
+    setCompleteBusy(true);
     try {
       await apiClient.post(`/api/v1/transactions/${transaction.id}/complete`, {
         amount: Number(transaction.amount) || 0
@@ -184,6 +169,8 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       const msg = err.response?.data?.message || 'Failed to complete DMS transaction on server';
       setActionError(msg);
       setCompleteDialogOpen(false);
+    } finally {
+      setCompleteBusy(false);
     }
   };
 
@@ -230,6 +217,12 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       </Box>
     );
   }
+
+  // DMS-холд, который ещё можно захватить. Значения уже разобраны на границе, поэтому
+  // сравниваем напрямую — без `String(...).toUpperCase()` (P2-12).
+  const isCompletableDms =
+    transaction.paymentMethod === 'DMS' &&
+    (transaction.status === 'PENDING' || transaction.status === 'AUTHORIZED');
 
   return (
     <Box sx={{ p: 4 }}>
@@ -287,7 +280,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                 }} 
               />
             }
-            label={getStatusLabel(transaction.status)}
+            label={statusLabel(tObj, transaction.status, transaction.statusRaw)}
             sx={{ 
               fontSize: '0.95rem', 
               px: 1.5, 
@@ -649,7 +642,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                   Payer IP Address
                 </Typography>
                 <Chip
-                  label={transaction.clientIp || transaction.payerIp || '—'}
+                  label={transaction.clientIp || '—'}
                   size="small"
                   variant="outlined"
                   color="info"
@@ -679,7 +672,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       </Paper>
 
       {/* Cancelation Information - Show if canceled */}
-      {transaction.status === 'canceled' && transaction.canceledBy && (
+      {transaction.status === 'FAILED' && transaction.canceledBy && (
         <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: 'rgba(3, 169, 244, 0.08)', border: '1px solid', borderColor: 'rgba(3, 169, 244, 0.2)' }}>
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
             <CancelIcon sx={{ color: 'info.main', mt: 0.5 }} />
@@ -719,7 +712,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       )}
 
       {/* Transaction Actions - Only for e-commerce, not POS */}
-      {transaction.channel !== 'pos' && transaction.status !== 'canceled' && (
+      {transaction.channel !== 'pos' && transaction.status !== 'FAILED' && (
         <Paper elevation={2} sx={{ p: 3, mb: 3, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 3 }}>
             <Box sx={{ flex: 1 }}>
@@ -727,13 +720,13 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                 Transaction Actions
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {String(transaction.paymentMethod || '').toUpperCase() === 'DMS' && ['PENDING', 'AUTHORIZED'].includes(String(transaction.status || '').toUpperCase())
+                {isCompletableDms
                   ? 'This DMS transaction has funds authorized on the customer\'s card. Complete it to capture the funds, or cancel to release the hold.'
                   : 'Cancel this transaction and initiate a refund to the customer. The amount will be reversed within 3-5 business days.'}
               </Typography>
             </Box>
             <Stack direction="row" spacing={1.5}>
-              {String(transaction.paymentMethod || '').toUpperCase() === 'DMS' && ['PENDING', 'AUTHORIZED'].includes(String(transaction.status || '').toUpperCase()) && !completeSuccess && (
+              {isCompletableDms && !completeSuccess && (
                 <Button
                   variant="outlined"
                   color="success"
@@ -745,7 +738,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                     '&:hover': { bgcolor: 'success.light', color: 'success.dark' }
                   }}
                 >
-                  Complete
+                  {tObj.transactions.detail.completeAction}
                 </Button>
               )}
               {completeSuccess && (
@@ -767,7 +760,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                   '&:hover': { bgcolor: 'warning.light', color: 'warning.dark' }
                 }}
               >
-                Cancel & Refund
+                {tObj.transactions.detail.refundAction}
               </Button>
             </Stack>
           </Box>
@@ -829,7 +822,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                 <Box sx={{ flex: 1, pb: 2 }}>
                   <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: 0.5 }}>
                     <Typography variant="body1" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                      {getStatusLabel(entry.status)}
+                      {statusLabel(tObj, entry.status)}
                     </Typography>
                     <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
                       {formatDateTime(entry.timestamp)}
@@ -848,66 +841,47 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       </Paper>
 
       {/* Complete Dialog */}
-      <Dialog
+      <ConfirmDialog
         open={completeDialogOpen}
-        onClose={() => setCompleteDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
+        title={tObj.transactions.detail.completeTitle}
+        question={tObj.transactions.detail.captureExplains}
+        confirmLabel={tObj.transactions.detail.confirmCapture}
+        confirmColor="success"
+        confirmIcon={<CompleteIcon />}
+        busy={completeBusy}
+        onConfirm={handleCompleteTransaction}
+        onCancel={() => setCompleteDialogOpen(false)}
       >
-        <DialogTitle>Complete DMS Transaction</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            This will capture the authorized funds from the customer's card. The transaction will be marked as completed and funds transferred to your account.
-          </DialogContentText>
-          <Box sx={{ mt: 2, p: 2, bgcolor: 'success.light', borderRadius: 1 }}>
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              Transaction ID: {transaction.id}
-            </Typography>
-            <Typography variant="body2">
-              Amount to capture: {formatCurrency(transaction.amount, transaction.currency)}
-            </Typography>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCompleteDialogOpen(false)} variant="outlined">
-            Cancel
-          </Button>
-          <Button onClick={handleCompleteTransaction} variant="contained" color="success" startIcon={<CompleteIcon />}>
-            Confirm & Capture
-          </Button>
-        </DialogActions>
-      </Dialog>
+        <Box sx={{ mt: 2, p: 2, bgcolor: 'success.light', borderRadius: 1 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            {tObj.transactions.columns.id}: {transaction.id}
+          </Typography>
+          <Typography variant="body2">
+            {tObj.transactions.detail.captureAmount}: {formatCurrency(transaction.amount, transaction.currency)}
+          </Typography>
+        </Box>
+      </ConfirmDialog>
 
       {/* Cancel Dialog */}
-      <Dialog
+      <ConfirmDialog
         open={cancelDialogOpen}
-        onClose={() => setCancelDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
+        title={tObj.transactions.detail.refundTitle}
+        question={tObj.transactions.detail.refundQuestion}
+        cancelLabel={tObj.transactions.detail.keepTransaction}
+        confirmLabel={tObj.transactions.detail.confirmRefund}
+        busy={cancelBusy}
+        onConfirm={handleCancelTransaction}
+        onCancel={() => setCancelDialogOpen(false)}
       >
-        <DialogTitle>Cancel Transaction</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Are you sure you want to cancel this transaction? This action cannot be undone.
-          </DialogContentText>
-          <Box sx={{ mt: 2, p: 2, bgcolor: 'error.light', borderRadius: 1 }}>
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              Transaction ID: {transaction.id}
-            </Typography>
-            <Typography variant="body2">
-              Amount: {formatCurrency(transaction.amount, transaction.currency)}
-            </Typography>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCancelDialogOpen(false)} variant="outlined">
-            Keep Transaction
-          </Button>
-          <Button onClick={handleCancelTransaction} variant="contained" color="error">
-            Confirm Cancellation
-          </Button>
-        </DialogActions>
-      </Dialog>
+        <Box sx={{ mt: 2, p: 2, bgcolor: 'error.light', borderRadius: 1 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            {tObj.transactions.columns.id}: {transaction.id}
+          </Typography>
+          <Typography variant="body2">
+            {tObj.transactions.columns.amount}: {formatCurrency(transaction.amount, transaction.currency)}
+          </Typography>
+        </Box>
+      </ConfirmDialog>
     </Box>
   );
 };

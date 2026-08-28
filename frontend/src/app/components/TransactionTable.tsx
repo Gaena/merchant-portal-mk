@@ -13,20 +13,13 @@ import {
   Typography,
   TableSortLabel
 } from '@mui/material';
-import {
-  CheckCircle as CheckCircleIcon,
-  HourglassEmpty as HourglassIcon,
-  Error as ErrorIcon,
-  Replay as ReplayIcon,
-  Cancel as CancelIcon,
-  CreditCard as CreditCardIcon
-} from '@mui/icons-material';
-import type { Transaction, TransactionStatus } from '../types/transaction';
+import type { Transaction } from '../types/transaction';
 import { formatCurrency, formatDateTime, getPaymentMethodLabel } from '../utils/mockData';
 import { getStatusColorScheme } from '../utils/statusColors';
 import { useNavigate } from 'react-router';
 
 import { useLanguage } from '../context/LanguageContext';
+import { statusLabel } from '../i18n/translations';
 
 interface TransactionTableProps {
   transactions: Transaction[];
@@ -39,51 +32,6 @@ interface TransactionTableProps {
   onSort: (column: keyof Transaction) => void;
 }
 
-const getStatusColor = (status: TransactionStatus): 'success' | 'warning' | 'error' | 'default' | 'info' => {
-  if (!status) return 'default';
-  const upper = String(status).toUpperCase();
-  switch (upper) {
-    case 'APPROVED':
-    case 'SUCCESS':
-      return 'success';
-    case 'PENDING':
-      return 'warning';
-    case 'REFUNDED':
-    case 'PARTIALLY_REFUNDED':
-    case 'CANCELED':
-      return 'info';
-    case 'DECLINED':
-    case 'FAILED':
-    case '3D-FAILED':
-      return 'error';
-    default:
-      return 'default';
-  }
-};
-
-const getStatusIcon = (status: TransactionStatus) => {
-  if (!status) return <CheckCircleIcon fontSize="small" />;
-  const upper = String(status).toUpperCase();
-  switch (upper) {
-    case 'APPROVED':
-    case 'SUCCESS':
-      return <CheckCircleIcon fontSize="small" />;
-    case 'PENDING':
-      return <HourglassIcon fontSize="small" />;
-    case 'REFUNDED':
-    case 'PARTIALLY_REFUNDED':
-      return <ReplayIcon fontSize="small" />;
-    case 'CANCELED':
-      return <CancelIcon fontSize="small" />;
-    case 'DECLINED':
-    case 'FAILED':
-    case '3D-FAILED':
-      return <ErrorIcon fontSize="small" />;
-    default:
-      return <CheckCircleIcon fontSize="small" />;
-  }
-};
-
 export const TransactionTable: React.FC<TransactionTableProps> = ({
   transactions,
   page,
@@ -95,6 +43,7 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
   onSort
 }) => {
   const navigate = useNavigate();
+  const { tObj } = useLanguage();
 
   const handleChangePage = (_event: unknown, newPage: number) => {
     onPageChange(newPage);
@@ -235,7 +184,7 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                         }} 
                       />
                     }
-                    label={transaction.status.toUpperCase()}
+                    label={statusLabel(tObj, transaction.status, transaction.statusRaw)}
                     size="small"
                     sx={{ 
                       minWidth: 100,

@@ -5,10 +5,11 @@ spring:
   application:
     name: auth
   datasource:
-    url: jdbc:postgresql://localhost:5432/postgres
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/postgres}
     driver-class-name: org.postgresql.Driver
-    username: postgres
-    password: password
+    username: ${DB_USERNAME:postgres}
+    # No default on purpose: the service must not start with a guessable database password.
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -19,25 +20,77 @@ spring:
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.xml
 
+auth:
+  bootstrap:
+    # One-shot creation of the first SYSTEM_ADMIN from BOOTSTRAP_ADMIN_USERNAME / BOOTSTRAP_ADMIN_PASSWORD.
+    # Off by default: turn it on for a single start of a fresh installation, then turn it back off.
+    enabled: ${AUTH_BOOTSTRAP_ENABLED:false}
+  login:
+    rate-limit:
+      # Cap on FAILED login attempts per client address (P3-Auth). Only failures are counted and a
+      # successful login clears the address, so an office behind one NAT address cannot lock itself
+      # out while people are getting in. Counters live in memory (Р-27): a restart clears them.
+      enabled: ${LOGIN_RATE_LIMIT_ENABLED:true}
+      max-failures: ${LOGIN_RATE_LIMIT_MAX_FAILURES:10}
+      window: ${LOGIN_RATE_LIMIT_WINDOW:PT15M}
+  refresh:
+    # Lifetime of a refresh token (ISO-8601 duration). Each refresh rotates the token: the client
+    # gets a new one, the old one is retired, and the family lives on until logout, revocation,
+    # or until nobody refreshes for this long.
+    ttl: ${AUTH_REFRESH_TTL:P30D}
+    # Одно обновление из двух вкладок приходит дважды с одним токеном. В пределах окна
+    # это не кража, а гонка — второй запрос обслуживается, цепочка не гасится.
+    # Reuse of a retired token OUTSIDE this window is treated as theft and revokes the whole family.
+    rotation-grace: ${AUTH_REFRESH_ROTATION_GRACE:PT10S}
+    # Scheduled removal of expired rows. Expired tokens are already refused on lookup, so this is
+    # housekeeping only; the flag exists so the test profile can switch the scheduler off.
+    cleanup-enabled: ${AUTH_REFRESH_CLEANUP_ENABLED:true}
+    cleanup-cron: "${AUTH_REFRESH_CLEANUP_CRON:0 30 3 * * *}"
+
+mp:
+  # Whose X-Real-IP / X-Forwarded-For we believe. Our nginx sits on the same machine and reaches
+  # the service over loopback; a request from anywhere else has its forwarding headers ignored and
+  # is counted by its peer address. Empty value = never believe the headers. See ClientIp.
+  trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+
 pbl:
   security:
-    # Symmetric HMAC-SHA256 signing secret key (must match in pbl/directory configuration)
+    # Symmetric HMAC-SHA256 signing secret key (must match in pbl/directory configuration).
+    # No default on purpose: a default is exactly how the previous key ended up in the repository.
     jwt:
-      secret: dGhpcy1pcy1hLXNlY3JldC1rZXktZm9yLWp3dC1zaWduaW5nLXBob3NwaGF0ZS1wYmw=
-      expiration-ms: 86400000 # 24 Hours
+      secret: ${JWT_SECRET}
+      # Access-token lifetime. 15 minutes since P1-13: the frontend refreshes the token silently
+      # through POST /api/v1/auth/refresh, so this is now the upper bound on how long a logged-out,
+      # blocked or deleted user keeps access (the token is verified stateless, there is no blacklist).
+      # Do not raise it back to hours without a reason — that reopens the revocation gap.
+      expiration-ms: ${JWT_EXPIRATION_MS:900000} # 15 minutes
 
 management:
+  server:
+    # Actuator lives on its own port bound to the loopback interface, so it is physically
+    # unreachable from outside the machine — it is not protected by a token, and the liveness
+    # probes that call it have none to present. Ports: auth 9081, directory 9082, pbl 9080.
+    port: ${MANAGEMENT_PORT:9081}
+    address: 127.0.0.1
   endpoints:
     web:
       exposure:
         include: health,info,metrics
   endpoint:
     health:
+      # Safe to keep because of the address binding above: database connectivity, free disk space
+      # and versions are visible from this machine only, and nothing on the public port serves them.
       show-details: always
 
 springdoc:
+  # Off in normal operation: /v3/api-docs is a complete map of the API. Turned on with
+  # SWAGGER_ENABLED=true for acceptance testing (technical_handover.md lists Swagger as delivered
+  # documentation), then turned back off — see deployment_guide.md. While off, springdoc registers
+  # no handlers and SecurityConfig adds no matchers for these paths.
   api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /v3/api-docs
   swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /swagger-ui.html
 

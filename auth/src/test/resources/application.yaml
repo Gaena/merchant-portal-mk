@@ -14,9 +14,52 @@ spring:
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.xml
 
+auth:
+  login:
+    rate-limit:
+      # Production values, so the tests judge the limit that actually runs. Tests that need to trip
+      # it drive their own source address (setRemoteAddr) and so never spend the shared allowance
+      # of 127.0.0.1, which every other test logs in from.
+      enabled: true
+      max-failures: 10
+      window: PT15M
+  refresh:
+    # Same values as production, so the tests judge the configuration that actually runs.
+    # Scenarios that need a different grace window set it via @SpringBootTest(properties = ...).
+    ttl: P30D
+    rotation-grace: PT10S
+    # Off: the sweep would race the fixtures of the other tests. RefreshTokenIntegrationTest
+    # calls RefreshTokenService.deleteExpired() directly instead of waiting for a cron.
+    cleanup-enabled: false
+    cleanup-cron: "0 30 3 * * *"
+
+mp:
+  # Same as production. MockMvc reports 127.0.0.1 as the peer, so it counts as a trusted proxy here
+  # and the forwarding-header rules are exercised exactly as they are behind the real nginx.
+  trusted-proxies: 127.0.0.1,::1
+
 pbl:
   security:
-    api-token-enabled: true
+    # No test uses the static fallback token, and leaving it enabled would demand a real value.
+    api-token-enabled: false
     jwt:
-      secret: dGhpcy1pcy1hLXNlY3JldC1rZXktZm9yLWp3dC1zaWduaW5nLXBob3NwaGF0ZS1wYmw=
+      # Test-only key. Never used by a running service; kept identical across the three modules
+      # so a token minted in one test module would verify in another.
+      secret: test-only-jwt-secret-not-used-anywhere-else-0123456789
       expiration-ms: 3600000 # 1 Hour
+
+# Mirrors production (src/main/resources/application.yaml): actuator on its own port, swagger off.
+# The tests drive the main port through MockMvc, which never boots the management child context —
+# so /actuator/** answers 404 here, exactly as it does on the public port of a running service,
+# and no port is bound during the build. ManagementPortIntegrationTest overrides this with port 0
+# to check the management port itself on a real container.
+management:
+  server:
+    port: 9081
+    address: 127.0.0.1
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

@@ -2,14 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   ThemeProvider,
   createTheme,
-  CssBaseline,
-  Box,
-  CircularProgress
+  CssBaseline
 } from '@mui/material';
 import { RouterProvider } from 'react-router';
 import type { Transaction, TransactionFilters } from './types/transaction';
+import { parsePaymentMethod, parseTransactionStatus } from './types/transaction';
 import { createRouter } from './routes';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { LanguageProvider } from './context/LanguageContext';
 import { apiClient } from './api/client';
 
@@ -88,7 +87,13 @@ const FilteredThemeProvider = ({ children }: { children?: React.ReactNode; [key:
   return <ThemeProvider theme={theme}>{children}</ThemeProvider>;
 };
 
-function App() {
+/**
+ * Состояние транзакций и роутер. Живёт **под** `AuthProvider`: список запрашивается, когда
+ * есть сессия (после входа или восстановления), а не при первом рендере до логина — раньше
+ * запрос уходил без токена, получал 401 и список оставался пустым до ручного обновления.
+ */
+function AppShell() {
+  const { isAuthenticated } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [filters, setFilters] = useState<TransactionFilters>({
     dateFrom: new Date(Date.now() - 10 * 60 * 1000), // Last 10 minutes
@@ -106,15 +111,17 @@ function App() {
   });
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [newTransactionCount, setNewTransactionCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
 
-  const fetchTransactions = async (showLoading = false) => {
-    if (showLoading) setIsLoading(true);
+  const fetchTransactions = async () => {
     try {
-      // Parallel fetch transactions and terminals to get terminal names
+      // Parallel fetch transactions and terminals to get terminal names.
+      // Лёгкий список терминалов (Р-45): здесь нужны только имена, а полная карточка
+      // постранична с P2-1 — по ней имя терминала находилось бы только у первых двадцати.
+      // Заблокированные терминалы в ответе есть, и это важно: платёж, прошедший через
+      // терминал, который потом сняли с обслуживания, должен сохранить его имя.
       const [txRes, termRes] = await Promise.allSettled([
         apiClient.get('/api/v1/transactions', { params: { page: 0, size: 100 } }),
-        apiClient.get('/api/v1/terminals')
+        apiClient.get('/api/v1/terminals/options')
       ]);
 
       let terminalMap: Record<number, string> = {};
@@ -129,7 +136,7 @@ function App() {
       if (txRes.status === 'fulfilled') {
         const rawContent = Array.isArray(txRes.value.data) ? txRes.value.data : (txRes.value.data?.content || []);
         if (Array.isArray(rawContent)) {
-          const mapped = rawContent.map((t: any) => {
+          const mapped = rawContent.map((t: any): Transaction => {
             const name = t.terminalId ? terminalMap[t.terminalId] : undefined;
             const displayName = name || (t.terminalId ? `Terminal #${t.terminalId}` : '—');
             return {
@@ -142,8 +149,12 @@ function App() {
               amount: t.amount,
               refundedAmount: t.refundedAmount,
               currency: t.currency || 'AZN',
-              status: String(t.status || 'APPROVED').toUpperCase() as any,
-              paymentMethod: String(t.paymentType || 'SMS').toUpperCase() as any,
+              // Разбор — только через parse*: нераспознанное значение даёт null и показывается
+              // как есть. Прежнее `String(t.status || 'APPROVED') as any` превращало любой
+              // неизвестный статус в «успешный» и прятало расхождение от компилятора (P2-12).
+              status: parseTransactionStatus(t.status),
+              statusRaw: t.status === null || t.status === undefined ? undefined : String(t.status),
+              paymentMethod: parsePaymentMethod(t.paymentType),
               description: t.description || t.merchantOrderId || 'Transaction',
               cardNumberMasked: t.cardNumberMasked,
               cardLast4: t.cardNumberMasked ? String(t.cardNumberMasked).slice(-4) : undefined,
@@ -166,14 +177,17 @@ function App() {
       }
     } catch {
       setTransactions([]);
-    } finally {
-      setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchTransactions(true);
-  }, []);
+    if (isAuthenticated) {
+      fetchTransactions();
+    } else {
+      // Выход: чужие данные не должны пережить сессию до следующего входа.
+      setTransactions([]);
+    }
+  }, [isAuthenticated]);
 
   const handleRefresh = () => {
     setNewTransactionCount(0);
@@ -182,7 +196,7 @@ function App() {
       dateFrom: new Date(Date.now() - 10 * 60 * 1000),
       dateTo: new Date()
     }));
-    fetchTransactions(false);
+    fetchTransactions();
   };
 
   const handleToggleAutoRefresh = () => {
@@ -201,25 +215,19 @@ function App() {
     });
   }, [transactions, filters, autoRefresh, newTransactionCount]);
 
-  if (isLoading) {
-    return (
-      <FilteredThemeProvider>
-        <CssBaseline />
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-          <CircularProgress size={60} />
-        </Box>
-      </FilteredThemeProvider>
-    );
-  }
+  return <RouterProvider router={router} />;
+}
 
+function App() {
   return (
     <LanguageProvider>
-      <AuthProvider>
-        <FilteredThemeProvider>
-          <CssBaseline />
-          <RouterProvider router={router} />
-        </FilteredThemeProvider>
-      </AuthProvider>
+      <FilteredThemeProvider>
+        <CssBaseline />
+        {/* AuthProvider сам показывает загрузку, пока восстанавливает сессию через /refresh. */}
+        <AuthProvider>
+          <AppShell />
+        </AuthProvider>
+      </FilteredThemeProvider>
     </LanguageProvider>
   );
 }

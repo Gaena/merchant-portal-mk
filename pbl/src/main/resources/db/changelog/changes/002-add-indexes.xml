@@ -5,17 +5,45 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <changeSet id="002-add-indexes" author="millikart">
+    <!--
+      One index per changeset, each behind its own precondition. `payment_links` and `transactions`
+      belong to pbl alone, so there is no cross-service race here — the guard is for a database
+      restored from a dump without its DATABASECHANGELOG, where the objects exist but Liquibase has
+      no record of them. A single precondition over all three indexes would be wrong for the same
+      reason it is wrong in auth/002: a partially present set would mark the whole block as ran and
+      the missing indexes would never be created.
+    -->
+
+    <changeSet id="002-index-payment-links-term-status" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="payment_links" indexName="idx_payment_links_term_status"/>
+            </not>
+        </preConditions>
         <createIndex tableName="payment_links" indexName="idx_payment_links_term_status">
             <column name="terminal_id"/>
             <column name="status"/>
         </createIndex>
+    </changeSet>
 
+    <changeSet id="002-index-payment-links-status-expires" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="payment_links" indexName="idx_payment_links_status_expires"/>
+            </not>
+        </preConditions>
         <createIndex tableName="payment_links" indexName="idx_payment_links_status_expires">
             <column name="status"/>
             <column name="expires_at"/>
         </createIndex>
+    </changeSet>
 
+    <changeSet id="002-index-transactions-provider-order" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="transactions" indexName="idx_transactions_provider_order"/>
+            </not>
+        </preConditions>
         <createIndex tableName="transactions" indexName="idx_transactions_provider_order">
             <column name="provider_order_id"/>
         </createIndex>

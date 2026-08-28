@@ -2,6 +2,8 @@ package az.millikart.directory.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
@@ -37,6 +39,12 @@ public class Terminal {
 
     @Column(name = "company_id")
     private String companyId;
+
+    // Никогда не null: колонка not null default 'ACTIVE' (005-terminal-status.xml).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 16)
+    @Builder.Default
+    private TerminalStatus status = TerminalStatus.ACTIVE;
 
     @Column(name = "created_by")
     private String createdBy;

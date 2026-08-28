@@ -6,5 +6,7 @@
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
     <include file="changes/002-user-directory-schema.xml" relativeToChangelogFile="true"/>
+    <include file="changes/003-refresh-tokens.xml" relativeToChangelogFile="true"/>
+    <include file="changes/004-audit-logs.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

@@ -1,16 +1,71 @@
-export type TransactionStatus =
-  | 'APPROVED'
-  | 'PENDING'
-  | 'DECLINED'
-  | 'REFUNDED'
-  | 'PARTIALLY_REFUNDED'
-  | 'CANCELED'
-  | 'FAILED'
-  | 'success'
-  | 'pending'
-  | 'canceled'
-  | '3d-failed';
-export type PaymentMethod = 'SMS' | 'DMS' | 'sms' | 'dms' | 'mit' | 'cit';
+/**
+ * Статусы транзакции. Источник — backend-enum
+ * `pbl/src/main/java/az/millikart/pbl/domain/TransactionStatus.java`: ровно эти шесть значений
+ * и никаких других. В ответе они приходят как `tx.getStatus().name()`
+ * (`PaymentLinkService.mapToTransactionResponse`), то есть всегда в верхнем регистре.
+ *
+ * Новое значение на бэкенде → добавить сюда, иначе `parseTransactionStatus` вернёт `null`
+ * и статус покажется как неизвестный. Значений «на будущее» здесь быть не должно: пока их
+ * не было, `tsc` не мог поймать сравнение с несуществующим статусом (P2-12, Р-30).
+ */
+export const TRANSACTION_STATUSES = [
+  'PENDING',
+  'AUTHORIZED',
+  'SUCCESS',
+  'FAILED',
+  'PARTIALLY_REFUNDED',
+  'REFUNDED',
+] as const;
+
+export type TransactionStatus = (typeof TRANSACTION_STATUSES)[number];
+
+/**
+ * Разбор статуса на границе системы (ответы `/api/v1/transactions*`).
+ *
+ * Зеркало `parseRole` из `types/role.ts`: строгое сравнение, без приведения регистра и trim,
+ * никогда не бросает. Ключевое отличие от прежнего кода — **никакой подстановки по умолчанию**:
+ * раньше здесь стояло `String(t.status || 'APPROVED')`, и любое нераспознанное значение молча
+ * становилось «успешной» транзакцией. Незнакомое значение даёт `null`; вызывающий обязан
+ * показать его как есть, а не угадывать.
+ *
+ * Предупреждение в консоль — единственный побочный эффект: разбор идёт в одном месте, поэтому
+ * расхождение со словарём бэкенда видно сразу, с исходным значением.
+ */
+export const parseTransactionStatus = (raw: unknown): TransactionStatus | null => {
+  if (typeof raw !== 'string') {
+    if (raw !== null && raw !== undefined) {
+      console.warn('[transactions] статус не строка:', raw);
+    }
+    return null;
+  }
+  if ((TRANSACTION_STATUSES as readonly string[]).includes(raw)) {
+    return raw as TransactionStatus;
+  }
+  console.warn(`[transactions] неизвестный статус транзакции: "${raw}"`);
+  return null;
+};
+
+/**
+ * Тип обработки платежа. Источник — backend-enum
+ * `pbl/src/main/java/az/millikart/pbl/domain/PaymentType.java`: только `SMS` и `DMS`.
+ * `mit`/`cit` во фронтовом словаре не существовали на бэкенде никогда.
+ */
+export const PAYMENT_METHODS = ['SMS', 'DMS'] as const;
+
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/** Разбор `paymentType` из ответа. Правила те же, что у `parseTransactionStatus`. */
+export const parsePaymentMethod = (raw: unknown): PaymentMethod | null => {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  if ((PAYMENT_METHODS as readonly string[]).includes(raw)) {
+    return raw as PaymentMethod;
+  }
+  console.warn(`[transactions] неизвестный тип платежа: "${raw}"`);
+  return null;
+};
+
 export type TransactionChannel = 'ecommerce' | 'pos';
 export type POSPaymentType = 'chip' | 'contactless' | 'swipe' | 'manual';
 
@@ -30,12 +85,15 @@ export interface Transaction {
   amount: number;
   refundedAmount?: number;
   currency: string;
-  status: TransactionStatus;
-  paymentMethod: PaymentMethod;
+  /** Разобранный статус; `null` — бэкенд прислал значение вне словаря, см. `statusRaw`. */
+  status: TransactionStatus | null;
+  /** Исходное значение статуса. Показывается серым, когда `status === null`. */
+  statusRaw?: string;
+  paymentMethod: PaymentMethod | null;
   description: string;
   merchantReference?: string;
   cardLast4?: string;
-  cardNumberMasked?: String;
+  cardNumberMasked?: string;
   rrn?: string;
   approvalCode?: string;
   merchantRid?: string;

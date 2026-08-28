@@ -30,28 +30,35 @@ const colorSchemes = {
     light: '#ffebee',
     dark: '#c62828',
     contrastText: '#b71c1c'
+  },
+  /** Статус, которого нет в словаре бэкенда: серый, чтобы его нельзя было спутать с реальным. */
+  neutral: {
+    main: '#9e9e9e',
+    light: '#f5f5f5',
+    dark: '#616161',
+    contrastText: '#424242'
   }
 };
 
-export const getStatusColorScheme = (status: TransactionStatus) => {
-  if (!status) return colorSchemes.success;
-  const upper = String(status).toUpperCase();
-  switch (upper) {
-    case 'APPROVED':
+/**
+ * Цвет статуса. Аргумент уже разобран `parseTransactionStatus`, поэтому ни `toUpperCase`,
+ * ни ветки под чужие словари (`APPROVED`, `DECLINED`, `3D-FAILED`) здесь больше не нужны.
+ * `null` — статус вне словаря бэкенда: серый, а не «успешный» по умолчанию.
+ */
+export const getStatusColorScheme = (status: TransactionStatus | null | undefined) => {
+  switch (status) {
     case 'SUCCESS':
       return colorSchemes.success;
     case 'PENDING':
       return colorSchemes.warning;
+    case 'AUTHORIZED':
+      return colorSchemes.info;
     case 'REFUNDED':
     case 'PARTIALLY_REFUNDED':
       return colorSchemes.purple;
-    case 'CANCELED':
-      return colorSchemes.info;
-    case 'DECLINED':
     case 'FAILED':
-    case '3D-FAILED':
       return colorSchemes.error;
     default:
-      return colorSchemes.success;
+      return colorSchemes.neutral;
   }
 };

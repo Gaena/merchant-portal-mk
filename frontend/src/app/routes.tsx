@@ -1,8 +1,12 @@
 import React, { lazy, Suspense } from 'react';
-import { createBrowserRouter, Navigate } from 'react-router';
+import { createBrowserRouter } from 'react-router';
 import { Box, CircularProgress } from '@mui/material';
 import { MainLayout } from './layouts/MainLayout';
-import { useAuth } from './context/AuthContext';
+import { ProtectedRoute, PublicOnlyRoute, RoleRoute } from './auth/guards';
+import { ROUTE_ACCESS } from './auth/routeAccess';
+import { RouteErrorPage } from './pages/RouteErrorPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+import type { Transaction, TransactionFilters } from './types/transaction';
 
 const HomePage = lazy(() => import('./pages/HomePage').then(m => ({ default: m.HomePage })));
 const TransactionListPage = lazy(() => import('./pages/TransactionListPage').then(m => ({ default: m.TransactionListPage })));
@@ -23,26 +27,25 @@ const PageLoader = () => (
   </Box>
 );
 
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated } = useAuth();
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-  return <>{children}</>;
-};
+/**
+ * Пропсы, которые `App` прокидывает в лейаут и страницы транзакций. Состояние транзакций живёт
+ * в `App` (один список на все страницы), поэтому роутер собирается из него.
+ */
+export interface AppRouterProps {
+  transactions: Transaction[];
+  filters: TransactionFilters;
+  onFilterChange: (filters: TransactionFilters) => void;
+  autoRefresh: boolean;
+  onToggleAutoRefresh: () => void;
+  newTransactionCount: number;
+  onRefresh: () => void;
+}
 
-const PublicOnlyRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated } = useAuth();
-  if (isAuthenticated) {
-    return <Navigate to="/pay-by-link" replace />;
-  }
-  return <>{children}</>;
-};
-
-export const createRouter = (layoutProps: any) => {
+export const createRouter = (layoutProps: AppRouterProps) => {
   return createBrowserRouter([
     {
       path: '/login',
+      errorElement: <RouteErrorPage />,
       element: (
         <PublicOnlyRoute>
           <Suspense fallback={<PageLoader />}>
@@ -53,9 +56,11 @@ export const createRouter = (layoutProps: any) => {
     },
     {
       path: '/',
+      // Исключение при рендере любой вложенной страницы показывает страницу ошибки, а не белый экран.
+      errorElement: <RouteErrorPage />,
       element: (
         <ProtectedRoute>
-          <MainLayout {...layoutProps} />
+          <MainLayout newTransactionCount={layoutProps.newTransactionCount} />
         </ProtectedRoute>
       ),
       children: [
@@ -63,7 +68,7 @@ export const createRouter = (layoutProps: any) => {
           index: true,
           element: (
             <Suspense fallback={<PageLoader />}>
-              <HomePage transactions={layoutProps.transactions} />
+              <HomePage />
             </Suspense>
           )
         },
@@ -125,12 +130,16 @@ export const createRouter = (layoutProps: any) => {
             </Suspense>
           )
         },
+        // Ролевые guard'ы — UX, не безопасность: список ролей общий с сайдбаром (auth/routeAccess.ts),
+        // настоящая проверка прав на бэкенде.
         {
           path: 'companies',
           element: (
-            <Suspense fallback={<PageLoader />}>
-              <CompaniesPage />
-            </Suspense>
+            <RoleRoute allow={ROUTE_ACCESS['/companies']}>
+              <Suspense fallback={<PageLoader />}>
+                <CompaniesPage />
+              </Suspense>
+            </RoleRoute>
           )
         },
         {
@@ -144,17 +153,21 @@ export const createRouter = (layoutProps: any) => {
         {
           path: 'users',
           element: (
-            <Suspense fallback={<PageLoader />}>
-              <UsersPage />
-            </Suspense>
+            <RoleRoute allow={ROUTE_ACCESS['/users']}>
+              <Suspense fallback={<PageLoader />}>
+                <UsersPage />
+              </Suspense>
+            </RoleRoute>
           )
         },
         {
           path: 'audit-logs',
           element: (
-            <Suspense fallback={<PageLoader />}>
-              <AuditLogsPage />
-            </Suspense>
+            <RoleRoute allow={ROUTE_ACCESS['/audit-logs']}>
+              <Suspense fallback={<PageLoader />}>
+                <AuditLogsPage />
+              </Suspense>
+            </RoleRoute>
           )
         },
         {
@@ -164,6 +177,12 @@ export const createRouter = (layoutProps: any) => {
               <SettingsPage />
             </Suspense>
           )
+        },
+        // Несуществующий путь для вошедшего — 404 внутри лейаута; для не вошедшего
+        // ProtectedRoute выше уже увёл на /login.
+        {
+          path: '*',
+          element: <NotFoundPage />
         }
       ]
     }

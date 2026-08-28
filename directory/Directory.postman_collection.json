@@ -58,7 +58,7 @@
 							}
 						],
 						"url": {
-							"raw": "{{baseUrl}}/api/v1/companies",
+							"raw": "{{baseUrl}}/api/v1/companies?page=0&size=20",
 							"host": [
 								"{{baseUrl}}"
 							],
@@ -66,9 +66,25 @@
 								"api",
 								"v1",
 								"companies"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "0"
+								},
+								{
+									"key": "size",
+									"value": "20"
+								},
+								{
+									"key": "search",
+									"value": "milli",
+									"disabled": true,
+									"description": "P3-1: подстрока без учёта регистра по name и id; % и _ ищутся буквально; пустая строка = нет фильтра"
+								}
 							]
 						},
-						"description": "Retrieves the list of active companies. Access restricted to SYSTEM_ADMIN and AUDITOR."
+						"description": "Retrieves one page of companies (paginated since P2-1, 22.08.2026): the answer is a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by name, then id. Soft-deleted companies are excluded from both content and totalElements. SYSTEM_ADMIN and AUDITOR only."
 					},
 					"response": []
 				},
@@ -217,7 +233,7 @@
 							}
 						],
 						"url": {
-							"raw": "{{baseUrl}}/api/v1/terminals",
+							"raw": "{{baseUrl}}/api/v1/terminals?page=0&size=20",
 							"host": [
 								"{{baseUrl}}"
 							],
@@ -225,9 +241,51 @@
 								"api",
 								"v1",
 								"terminals"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "0"
+								},
+								{
+									"key": "size",
+									"value": "20"
+								},
+								{
+									"key": "search",
+									"value": "kassa",
+									"disabled": true,
+									"description": "P3-1: подстрока без учёта регистра по name, login, id (как тексту), companyId и названию компании; работает внутри ролевого скоупа"
+								}
 							]
 						},
-						"description": "Retrieves the list of terminals. SYSTEM_ADMIN retrieves all, company users retrieve terminals for their company."
+						"description": "Retrieves one page of terminals (paginated since P2-1, 22.08.2026): the answer is a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by name, then id. SYSTEM_ADMIN and AUDITOR see every terminal, company users only their own company's."
+					},
+					"response": []
+				},
+				{
+					"name": "Terminal Options (lightweight)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/terminals/options",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"terminals",
+								"options"
+							]
+						},
+						"description": "Lightweight terminal feed for selectors and name lookups (decision R-45, 22.08.2026). Returns a bare array of {id, name, status} — no pagination, and no terminal credentials: login and password are absent from the DTO, not masked. BLOCKED terminals ARE included on purpose: the link form takes only ACTIVE ones from the answer, while the transaction screen needs every terminal to keep naming the terminal an old payment went through. Access rules are the same as GET /api/v1/terminals."
 					},
 					"response": []
 				},
@@ -350,11 +408,37 @@
 							"query": [
 								{
 									"key": "entityType",
-									"value": "COMPANY"
+									"value": "COMPANY",
+									"description": "Необязателен и независим от entityId (P3-1); сравнение без учёта регистра"
 								},
 								{
 									"key": "entityId",
-									"value": "comp-01"
+									"value": "comp-01",
+									"description": "Необязателен и независим от entityType (P3-1); сравнение без учёта регистра"
+								},
+								{
+									"key": "search",
+									"value": "admin@millikart.az",
+									"disabled": true,
+									"description": "P3-1: подстрока без учёта регистра по performedBy, action, entityId и details; % и _ ищутся буквально"
+								},
+								{
+									"key": "outcome",
+									"value": "DENIED",
+									"disabled": true,
+									"description": "P3-1: SUCCESS / DENIED / UNRESOLVED; неизвестное значение = нет фильтра"
+								},
+								{
+									"key": "from",
+									"value": "2026-08-24",
+									"disabled": true,
+									"description": "P3-1: нижняя граница createdAt — ISO-instant или дата (весь день по UTC); мусор = нет фильтра"
+								},
+								{
+									"key": "to",
+									"value": "2026-08-24T23:59:59Z",
+									"disabled": true,
+									"description": "P3-1: верхняя граница createdAt — ISO-instant или дата (весь день по UTC)"
 								}
 							]
 						},
@@ -374,9 +458,9 @@
 		},
 		{
 			"key": "authToken",
-			"value": "pbl-secret-token",
+			"value": "",
 			"type": "string",
-			"description": "The JWT token or fallback token for authentication."
+			"description": "JWT from POST /api/v1/auth/login. The static fallback token is off by default and has no built-in value."
 		},
 		{
 			"key": "companyId",

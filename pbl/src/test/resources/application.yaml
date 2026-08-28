@@ -17,17 +17,55 @@ spring:
 
 # PayByLink service configuration (test values)
 pbl:
+  dashboard:
+    # Same value as production: the window and bucket tests assert Baku days, and a test-only zone
+    # would mean the suite checks a configuration nobody runs.
+    zone: Asia/Baku
   base-url: https://pay.example.com/
   security:
-    # Known token used by the integration tests.
-    api-token: pbl-secret-token
-    api-token-enabled: true
+    # No test uses the static fallback token, and leaving it enabled would demand a real value.
+    api-token-enabled: false
+    jwt:
+      # Test-only key, identical in auth/directory/pbl test configs. Never used by a running service.
+      secret: test-only-jwt-secret-not-used-anywhere-else-0123456789
+  link:
+    # Same values as production: the TTL tests assert against these, and a test-only lifetime would
+    # mean the suite checks a configuration nobody runs. Scenarios that need a different window set
+    # expiresAt explicitly instead.
+    default-ttl: PT24H
+    max-ttl: P90D
+  reconciliation:
+    # Off by default so the sweep never races the fixtures of the other integration tests.
+    # TransactionReconciliationIntegrationTest drives the service directly instead.
+    enabled: false
+    cron: "0 */2 * * * *"
+    min-age: PT2M
+    max-age: PT24H
+    give-up-age: P7D
+    batch-size: 50
   provider:
     gateway-base-url: https://gateway.txpg.example.com/pay
-    # Blank: callback signature verification disabled for tests.
-    callback-secret: ""
-    stub: true
     api-base-url: https://api.txpg.example.com/pay
     create-order-path: /order
     exec-tran-path: /api/order/{orderId}/exec-tran
     get-order-path: /api/order/{orderId}
+
+# Mirrors production (src/main/resources/application.yaml): actuator on its own port, swagger off.
+# The tests drive the main port through MockMvc, which never boots the management child context —
+# so /actuator/** answers 404 here, exactly as it does on the public port of a running service,
+# and no port is bound during the build. ManagementPortIntegrationTest overrides this with port 0
+# to check the management port itself on a real container.
+mp:
+  # Same as production: MockMvc reports 127.0.0.1 as the peer, so it counts as a trusted proxy.
+  trusted-proxies: 127.0.0.1,::1
+
+management:
+  server:
+    port: 9080
+    address: 127.0.0.1
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

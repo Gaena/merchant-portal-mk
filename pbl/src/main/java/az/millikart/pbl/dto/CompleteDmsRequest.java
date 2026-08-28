@@ -5,9 +5,6 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
 
-/**
- * Request payload for completing (capturing) a previously authorized DMS transaction.
- */
 public record CompleteDmsRequest(
 
         @NotNull(message = "amount is required")

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- P2-8 (Р-37): the twin of directory/005-terminal-status.xml — see the comment there for
+         why the same column is added by both services. `pbl` needs it because its own Terminal
+         entity carries `status` and refuses to open a link on a blocked terminal; without this
+         changeset a database where `pbl` started first would have no such column and `pbl` would
+         not come up at all. -->
+
+    <changeSet id="5-pbl-terminal-status" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="terminals" columnName="status"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="terminals">
+            <column name="status" type="varchar(16)" defaultValue="ACTIVE">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

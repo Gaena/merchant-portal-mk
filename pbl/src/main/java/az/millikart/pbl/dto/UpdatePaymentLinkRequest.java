@@ -8,10 +8,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Map;
 
-/**
- * Request payload for partially updating an existing payment link.
- * Only non-null fields are applied.
- */
+// Применяются только поля, пришедшие не-null.
 public record UpdatePaymentLinkRequest(
 
         @Positive(message = "amount must be positive")

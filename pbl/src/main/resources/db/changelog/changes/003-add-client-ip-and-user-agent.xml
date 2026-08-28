@@ -5,9 +5,27 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <changeSet id="003-add-client-ip-and-user-agent" author="mp-team">
+    <!-- One column per changeset with its own precondition: a database restored without its
+         DATABASECHANGELOG must skip what is already there and still add what is missing. -->
+
+    <changeSet id="003-add-client-ip" author="mp-team">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="transactions" columnName="client_ip"/>
+            </not>
+        </preConditions>
         <addColumn tableName="transactions">
             <column name="client_ip" type="VARCHAR(64)"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="003-add-user-agent" author="mp-team">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="transactions" columnName="user_agent"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="transactions">
             <column name="user_agent" type="VARCHAR(512)"/>
         </addColumn>
     </changeSet>

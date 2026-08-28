@@ -7,9 +7,6 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * Compact representation of a payment link used in list responses.
- */
 public record PaymentLinkSummaryResponse(
         UUID id,
         PaymentLinkStatus status,
@@ -23,6 +20,10 @@ public record PaymentLinkSummaryResponse(
         UsageType usageType,
         Integer maxPayments,
         Instant expiresAt,
+        // Время последней оплаты (P2-15) или null; то же значение и то же имя, что в
+        // PaymentLinkResponse. На страницу заполняется одним группирующим запросом на всю страницу,
+        // а не выборкой на строку (PaymentLinkService.list).
+        Instant lastPaidAt,
         Instant createdAt
 ) {
 }

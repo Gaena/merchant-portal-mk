@@ -16,6 +16,24 @@ spring:
 
 pbl:
   security:
-    api-token-enabled: true
+    # No test uses the static fallback token, and leaving it enabled would demand a real value.
+    api-token-enabled: false
     jwt:
-      secret: dGhpcy1pcy1hLXNlY3JldC1rZXktZm9yLWp3dC1zaWduaW5nLXBob3NwaGF0ZS1wYmw=
+      # Test-only key, identical in auth/directory/pbl test configs. Never used by a running service.
+      secret: test-only-jwt-secret-not-used-anywhere-else-0123456789
+
+# Mirrors production (src/main/resources/application.yaml): actuator on its own port, swagger off.
+# The tests drive the main port through MockMvc, which never boots the management child context —
+# so /actuator/** answers 404 here, exactly as it does on the public port of a running service,
+# and no port is bound during the build. ManagementPortIntegrationTest overrides this with port 0
+# to check the management port itself on a real container.
+management:
+  server:
+    port: 9082
+    address: 127.0.0.1
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

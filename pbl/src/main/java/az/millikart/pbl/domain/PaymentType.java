@@ -1,11 +1,8 @@
 package az.millikart.pbl.domain;
 
-/**
- * Type of payment processing supported by the acquiring gateway.
- */
 public enum PaymentType {
-    /** Single Message System - authorization and capture in a single step. */
+    // Single Message System: авторизация и списание одним шагом.
     SMS,
-    /** Dual Message System - authorization first, capture (complete) later. */
+    // Dual Message System: сначала авторизация, списание (complete) позже.
     DMS
 }

@@ -1,5 +1,9 @@
 package az.millikart.pbl.controller;
 
+import az.millikart.common.web.ClientIp;
+import az.millikart.common.web.TrustedProxies;
+import az.millikart.pbl.dto.PaymentReceiptView;
+import az.millikart.pbl.provider.ProviderPayloads;
 import az.millikart.pbl.service.OpenLinkService;
 import az.millikart.pbl.service.PaymentLinkService;
 import java.net.URI;
@@ -13,7 +17,6 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -25,57 +28,47 @@ public class OpenLinkController {
 
     private final OpenLinkService openLinkService;
     private final PaymentLinkService paymentLinkService;
+    private final TrustedProxies trustedProxies;
 
-    public OpenLinkController(OpenLinkService openLinkService, PaymentLinkService paymentLinkService) {
+    public OpenLinkController(OpenLinkService openLinkService,
+                              PaymentLinkService paymentLinkService,
+                              TrustedProxies trustedProxies) {
         this.openLinkService = openLinkService;
         this.paymentLinkService = paymentLinkService;
+        this.trustedProxies = trustedProxies;
     }
 
     @GetMapping("/{id}/open")
     public ResponseEntity<Void> open(@PathVariable UUID id, HttpServletRequest request) {
-        String clientIp = extractClientIp(request);
+        // P2-10: адрес уходит в transactions.client_ip, поэтому не должен быть тем, который выбрал
+        // плательщик. Заголовки пересылки читает только ClientIp — почему, написано у него.
+        String clientIp = ClientIp.resolve(request, trustedProxies.addresses());
         String userAgent = request.getHeader("User-Agent");
         log.info("REST request to open payment link ID: {}, clientIp: {}, userAgent: {}", id, clientIp, userAgent);
         String redirectUrl = openLinkService.openAndBuildRedirect(id, clientIp, userAgent);
-        log.info("Redirecting customer to HPP URL: {}", redirectUrl);
+        // P0-9: в query редиректа лежит пароль заказа — он и открывает платёжную страницу, поэтому
+        // логируется только адрес. Идентификатор заказа уже записан логом сервиса.
+        log.info("Redirecting customer to HPP URL: {}", ProviderPayloads.urlForLog(redirectUrl));
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(redirectUrl))
                 .build();
     }
 
-    private String extractClientIp(HttpServletRequest request) {
-        String xForwardedFor = request.getHeader("X-Forwarded-For");
-        if (xForwardedFor != null && !xForwardedFor.isBlank()) {
-            return xForwardedFor.split(",")[0].trim();
-        }
-        String xRealIp = request.getHeader("X-Real-IP");
-        if (xRealIp != null && !xRealIp.isBlank()) {
-            return xRealIp.trim();
-        }
-        return request.getRemoteAddr();
-    }
-
+    // Транзакция ищется только по tx — нашему случайному merchantRid из пути. Параметры запроса ID,
+    // PASSWORD и STATUS от провайдера подконтрольны атакующему и намеренно не объявлены: так они не
+    // попадают ни в этот метод, ни в логи.
     @GetMapping("/redirect/{tx}")
-    public String redirectPage(@PathVariable("tx") String txUuid,
-                               @RequestParam(value = "ID", required = false) String providerOrderId,
-                               @RequestParam(value = "id", required = false) String providerOrderIdLower,
-                               @RequestParam(value = "PASSWORD", required = false) String providerPassword,
-                               @RequestParam(value = "STATUS", required = false) String providerStatus,
-                               Model model) {
-        String finalOrderId = providerOrderId != null ? providerOrderId : providerOrderIdLower;
-        log.info("Customer redirected back from provider. ID: {}, PASSWORD: {}, STATUS: {}, tx: {}", 
-                 finalOrderId, providerPassword != null ? "***" : "null", providerStatus, txUuid);
-
-        // Fetch and update status in the background immediately
-        if (finalOrderId != null) {
-            try {
-                paymentLinkService.checkAndStatusUpdate(finalOrderId);
-            } catch (Exception e) {
-                log.error("Failed to automatically update transaction status during redirect callback for ID: " + finalOrderId, e);
-            }
+    public String redirectPage(@PathVariable("tx") String tx, Model model) {
+        PaymentReceiptView receipt = null;
+        try {
+            receipt = paymentLinkService.refreshByMerchantRid(UUID.fromString(tx)).orElse(null);
+        } catch (IllegalArgumentException e) {
+            log.warn("Payment return page requested with a malformed transaction reference");
         }
 
-        model.addAttribute("providerOrderId", finalOrderId);
+        // null рисует нейтральное «сведения недоступны»: неизвестная или битая ссылка не должна
+        // выдавать, существует транзакция или нет.
+        model.addAttribute("receipt", receipt);
         return "redirect";
     }
 }

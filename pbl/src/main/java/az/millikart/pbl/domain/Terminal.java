@@ -2,6 +2,8 @@ package az.millikart.pbl.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
@@ -34,4 +36,14 @@ public class Terminal {
 
     @Column(name = "company_id", nullable = true)
     private String companyId;
+
+    // Пустым не бывает: колонка not null default 'ACTIVE' (005-terminal-status.xml).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 16)
+    @Builder.Default
+    private TerminalStatus status = TerminalStatus.ACTIVE;
+
+    public boolean isBlocked() {
+        return status == TerminalStatus.BLOCKED;
+    }
 }

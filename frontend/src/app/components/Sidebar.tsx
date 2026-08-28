@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { canAccessPath } from '../auth/routeAccess';
 import { useLanguage } from '../context/LanguageContext';
 import {
   Drawer,
@@ -57,24 +58,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const location = useLocation();
   const { user } = useAuth();
   const { tObj } = useLanguage();
-  const isAdmin = user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
+
+  // Пункт меню не показывается, если маршрут недоступен роли. Список ролей — тот же, что у
+  // RoleRoute в routes.tsx (auth/routeAccess.ts): это UX, а не безопасность — права проверяет бэкенд.
+  const visible = (path: string) => canAccessPath(user?.role, path);
 
   const navItems: NavItem[] = [
     { label: tObj.nav.home, path: '/', icon: <HomeIcon /> },
     { label: tObj.nav.payByLink, path: '/pay-by-link', icon: <LinkIcon /> },
-    { 
-      label: tObj.nav.transactions, 
+    {
+      label: tObj.nav.transactions,
       icon: <ReceiptIcon />,
       children: [
         { label: tObj.nav.ecommerce, path: '/transactions/ecommerce', icon: <EcommerceIcon /> },
       ]
     },
     { label: tObj.nav.terminals, path: '/terminals', icon: <POSIcon /> },
-    ...(isAdmin ? [{ label: tObj.nav.companies, path: '/companies', icon: <BusinessIcon /> }] : []),
+    { label: tObj.nav.companies, path: '/companies', icon: <BusinessIcon /> },
     { label: tObj.nav.users, path: '/users', icon: <GroupIcon /> },
     { label: tObj.nav.auditLogs, path: '/audit-logs', icon: <HistoryIcon /> },
     { label: tObj.nav.settings, path: '/settings', icon: <SettingsIcon /> }
-  ];
+  ]
+    .map(item => item.children
+      ? { ...item, children: item.children.filter(child => !child.path || visible(child.path)) }
+      : item)
+    .filter(item => item.children ? item.children.length > 0 : (!item.path || visible(item.path)));
 
   const [expandedItems, setExpandedItems] = useState<string[]>(['Transaction List']);
 

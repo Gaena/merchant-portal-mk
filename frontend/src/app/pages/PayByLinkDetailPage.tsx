@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router';
 import { apiClient } from '../api/client';
 import {
@@ -16,11 +16,6 @@ import {
   Snackbar,
   LinearProgress,
   Avatar,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  DialogContentText,
   Table,
   TableBody,
   TableCell,
@@ -44,8 +39,6 @@ import {
   Replay as RepeatIcon,
   OpenInNew as OpenIcon,
   Receipt as ReceiptIcon,
-  CreditCard as CardIcon,
-  Security as SecurityIcon,
   Loop as UsageIcon,
   Done as DoneIcon,
   DoneAll as FinalizeIcon,
@@ -54,18 +47,18 @@ import {
   LockOpen as CaptureIcon,
 } from '@mui/icons-material';
 import {
-  generateLinks,
   formatDateTime,
   formatTimeLeft,
   expiryPercent,
-  statusConfig,
-  getStatusConfig,
+  getLinkStatusColors,
+  parseLinkStatus,
+  parseLinkUsageType,
+  parsePaymentType,
 } from '../utils/payByLinkData';
-import type {
-  PaymentLink,
-  LinkStatus,
-  DmsStatus,
-} from '../utils/payByLinkData';
+import type { PaymentLink } from '../utils/payByLinkData';
+import { parseTransactionStatus } from '../types/transaction';
+import { linkStatusLabel } from '../i18n/translations';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -123,26 +116,27 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
     });
   }
 
-  if (link.status === 'paid' && link.paidAt) {
+  // Условие — по наличию самой даты оплаты: статуса `paid` у бэкенда нет (Р-33), а `paidAt`
+  // приходит только вместе с реальными данными о платеже.
+  if (link.paidAt) {
+    // Данных о карте API не отдаёт, поэтому суффикс всегда пуст. Условие оставлено намеренно:
+    // подставлять сюда `Visa ···· 4242` нельзя (Р-48), а появится поле — строка заработает.
+    const card = link.cardNetwork && link.cardLast4
+      ? ` via ${link.cardNetwork} ···· ${link.cardLast4}`
+      : '';
     events.push({
       label: 'Payment Received',
       time: formatDateTime(link.paidAt),
       icon: <CheckCircleIcon sx={{ fontSize: 16 }} />,
       color: '#2e7d32',
-      detail: `₼${link.amount.toFixed(2)} via ${link.cardNetwork} ···· ${link.cardLast4}`,
+      detail: `₼${link.amount.toFixed(2)}${card}`,
     });
-    if (link.redirectUrl) {
-      events.push({
-        label: 'Customer Redirected',
-        time: formatDateTime(new Date(link.paidAt.getTime() + 3 * 1000)),
-        icon: <OpenIcon sx={{ fontSize: 16 }} />,
-        color: '#546e7a',
-        detail: link.redirectUrl,
-      });
-    }
+    // Событие «Customer Redirected» отсюда удалено вместе с P2-15 (Р-48). Времени у него не
+    // было: оно бралось как «оплата + 3 секунды». Придуманная отметка времени события в
+    // платёжном портале недопустима, а `redirectUrl` API не отдаёт вовсе.
   }
 
-  if (link.status === 'expired') {
+  if (link.status === 'EXPIRED') {
     events.push({
       label: 'Link Expired',
       time: formatDateTime(link.expiresAt),
@@ -152,10 +146,14 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
     });
   }
 
-  if (link.status === 'cancelled') {
+  // Проверка сравнивалась с написанием через две `l`, а маппинг клал одну — пометка
+  // об отменённой ссылке не показывалась никогда (P2-13).
+  if (link.status === 'CANCELED') {
     events.push({
       label: 'Link Cancelled',
-      time: formatDateTime(new Date(link.createdAt.getTime() + 30 * 60 * 1000)),
+      // Момента отмены бэкенд не отдаёт, и выдумывать его («создано + 30 минут», как было
+      // в мок-генераторе) нельзя: у события на ленте нет времени, пока его нет в API.
+      time: '—',
       icon: <CancelIcon sx={{ fontSize: 16 }} />,
       color: '#c62828',
       detail: 'Manually cancelled by merchant',
@@ -166,69 +164,16 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
 };
 
 // ─── Linked transactions ──────────────────────────────────────────────────────
-
-interface LinkedTxn {
-  id: string;
-  timestamp: Date;
-  type: string;       // SMS / DMS Auth / DMS Capture
-  amount: number;
-  cardNetwork: string;
-  cardLast4: string;
-  status: 'completed' | 'authorized' | 'captured' | 'failed' | 'refunded';
-}
-
-const txnStatusConfig = {
-  completed:  { label: 'Completed',  color: '#2e7d32', bgcolor: 'rgba(46,125,50,0.1)' },
-  authorized: { label: 'Authorized', color: '#e65100', bgcolor: 'rgba(230,81,0,0.1)' },
-  captured:   { label: 'Captured',   color: '#1565c0', bgcolor: 'rgba(21,101,192,0.1)' },
-  failed:     { label: 'Failed',     color: '#c62828', bgcolor: 'rgba(198,40,40,0.1)' },
-  refunded:   { label: 'Refunded',   color: '#546e7a', bgcolor: 'rgba(84,110,122,0.1)' },
-};
-
-const buildLinkedTxns = (link: PaymentLink): LinkedTxn[] => {
-  if (link.status !== 'paid') return [];
-
-  const base = link.paidAt ?? link.createdAt;
-  const card = `${link.cardNetwork ?? 'Visa'} ···· ${link.cardLast4 ?? '4242'}`;
-  const txns: LinkedTxn[] = [];
-
-  if (link.paymentType === 'sms') {
-    txns.push({
-      id: link.transactionId ?? `TXN-${link.shortCode}-001`,
-      timestamp: base,
-      type: 'SMS — Immediate Charge',
-      amount: link.amount,
-      cardNetwork: link.cardNetwork ?? 'Visa',
-      cardLast4: link.cardLast4 ?? '4242',
-      status: 'completed',
-    });
-  } else {
-    // DMS: authorization entry
-    txns.push({
-      id: `${link.transactionId ?? `TXN-${link.shortCode}`}-AUTH`,
-      timestamp: base,
-      type: 'DMS — Authorization',
-      amount: link.amount,
-      cardNetwork: link.cardNetwork ?? 'Visa',
-      cardLast4: link.cardLast4 ?? '4242',
-      status: 'authorized',
-    });
-    // DMS: capture entry (if finalized)
-    if (link.dmsStatus === 'finalized' && link.finalizedAt) {
-      txns.push({
-        id: `${link.transactionId ?? `TXN-${link.shortCode}`}-CAP`,
-        timestamp: link.finalizedAt,
-        type: 'DMS — Capture',
-        amount: link.amount,
-        cardNetwork: link.cardNetwork ?? 'Visa',
-        cardLast4: link.cardLast4 ?? '4242',
-        status: 'captured',
-      });
-    }
-  }
-
-  return txns;
-};
+//
+// Таблица показывает **только** ответ `GET /api/v1/payment-links/{id}/transactions` —
+// настоящие транзакции с настоящими идентификаторами.
+//
+// Здесь стоял генератор запасных строк: при наличии даты оплаты он сочинял транзакцию —
+// платёжную карту по умолчанию, идентификатор, собранный из короткого кода ссылки, и пары
+// SMS / DMS-Auth / DMS-Capture, выведенные из полей ссылки, а не из настоящих платежей.
+// Не был виден он только потому, что дата оплаты из API не приходила. P2-15 это поле
+// включает, поэтому генератор удалён **до** включения (Р-48): выдуманная транзакция на
+// карточке платежа — не «заглушка», а ложные данные об операции с деньгами.
 
 const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
   const navigate = useNavigate();
@@ -246,8 +191,7 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
     }
   }, [link.id]);
 
-  const fallbackTxns = buildLinkedTxns(link);
-  const displayTxns = transactions.length > 0 ? transactions : fallbackTxns;
+  const displayTxns = transactions;
 
   return (
     <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
@@ -281,14 +225,13 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
             </TableHead>
             <TableBody>
               {displayTxns.map((txn: any) => {
-                const isReal = !!txn.createdAt;
-                const status = isReal ? (txn.status || 'PENDING').toUpperCase() : String(txn.status).toUpperCase();
+                const status = String(txn.status ?? 'PENDING').toUpperCase();
                 const statusColors: Record<string, { label: string; color: any; bgcolor: string }> = {
                   SUCCESS: { label: 'SUCCESS', color: 'success', bgcolor: 'rgba(46,125,50,0.1)' },
-                  COMPLETED: { label: 'SUCCESS', color: 'success', bgcolor: 'rgba(46,125,50,0.1)' },
                   AUTHORIZED: { label: 'AUTHORIZED', color: 'warning', bgcolor: 'rgba(230,81,0,0.1)' },
                   PENDING: { label: 'PENDING', color: 'info', bgcolor: 'rgba(2,136,209,0.1)' },
                   FAILED: { label: 'FAILED', color: 'error', bgcolor: 'rgba(198,40,40,0.1)' },
+                  PARTIALLY_REFUNDED: { label: 'PARTIALLY REFUNDED', color: 'default', bgcolor: 'rgba(84,110,122,0.1)' },
                   REFUNDED: { label: 'REFUNDED', color: 'default', bgcolor: 'rgba(84,110,122,0.1)' },
                 };
                 const sc = statusColors[status] || { label: status, color: 'default', bgcolor: 'rgba(0,0,0,0.05)' };
@@ -298,9 +241,9 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                     key={txn.id}
                     hover
                     onClick={() => {
-                      const statusLower = (status === 'SUCCESS' || status === 'COMPLETED') ? 'success' :
-                                          status === 'AUTHORIZED' ? 'pending' :
-                                          status === 'FAILED' ? '3d-failed' : 'canceled';
+                      // Никакого обратного перевода в собственный словарь: статус уходит
+                      // на детальную страницу таким, каким его прислал бэкенд (P2-12).
+                      const parsedStatus = parseTransactionStatus(status);
                       const txObj = {
                         id: String(txn.id),
                         timestamp: new Date(txn.createdAt || txn.timestamp || Date.now()),
@@ -308,8 +251,9 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                         customerEmail: txn.customerEmail || link.customerEmail || 'N/A',
                         amount: Number(txn.amount ?? link.amount),
                         currency: txn.currency || link.currency || 'AZN',
-                        status: statusLower as any,
-                        paymentMethod: link.paymentType as any || 'sms',
+                        status: parsedStatus,
+                        statusRaw: status,
+                        paymentMethod: link.paymentType,
                         description: link.description || 'Payment Link Transaction',
                         merchantReference: txn.merchantOrderId || txn.providerOrderId || txn.provider_order_id || txn.id,
                         providerOrderId: txn.providerOrderId || txn.provider_order_id,
@@ -321,12 +265,12 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                         userAgent: txn.userAgent,
                         statusHistory: [
                           {
-                            status: 'pending' as const,
+                            status: 'PENDING' as const,
                             timestamp: new Date(txn.createdAt || txn.timestamp || Date.now()),
                             note: 'Payment attempt initiated by customer',
                           },
-                          ...(status === 'SUCCESS' || status === 'COMPLETED' ? [{
-                            status: 'success' as const,
+                          ...(parsedStatus === 'SUCCESS' ? [{
+                            status: 'SUCCESS' as const,
                             timestamp: new Date(txn.createdAt || txn.timestamp || Date.now()),
                             note: 'Payment successfully completed',
                           }] : [])
@@ -346,14 +290,18 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                         {formatDateTime(txn.createdAt ? new Date(txn.createdAt) : txn.timestamp)}
                       </Typography>
                     </TableCell>
+                    {/* Адрес и устройство плательщика бэкенд заполняет не всегда. Пусто — это
+                        «не записано»; подставлять сюда `127.0.0.1` и правдоподобный
+                        User-Agent, как было до P2-15, значит приписывать платежу
+                        обстоятельства, которых никто не наблюдал (Р-48). */}
                     <TableCell>
                       <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                        {txn.clientIp || '127.0.0.1'}
+                        {txn.clientIp || '—'}
                       </Typography>
                     </TableCell>
                     <TableCell>
                       <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 180, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {txn.userAgent || 'Macintosh; Intel Mac OS X'}
+                        {txn.userAgent || '—'}
                       </Typography>
                     </TableCell>
                     <TableCell align="right">
@@ -394,45 +342,56 @@ export const PayByLinkDetailPage: React.FC = () => {
 
   const [link, setLink] = useState<PaymentLink | null>(stateLink || null);
 
-  useEffect(() => {
-    if (id) {
-      apiClient.get(`/api/v1/payment-links/${id}`)
-        .then(res => {
-          const l = res.data;
-          if (l && l.id) {
-            const pt = String(l.paymentType || l.payment_type || 'sms').toLowerCase();
-            const ut = String(l.usageType || l.usage_type || 'single').toLowerCase();
-            setLink({
-              id: l.id,
-              shortCode: l.id.slice(0, 8).toUpperCase(),
-              url: `${window.location.origin}/api/v1/payment-links/${l.id}/open`,
-              status: (l.status || 'active').toLowerCase() as LinkStatus,
-              amount: l.amount,
-              currency: l.currency || 'AZN',
-              description: l.description || 'Payment Link',
-              customerName: l.customer?.fullName || l.customerName || 'N/A',
-              customerEmail: l.customer?.email || l.customerEmail || 'N/A',
-              customerPhone: l.customer?.phone || l.customerPhone || 'N/A',
-              usageType: (ut === 'multiple' ? 'multiple' : 'single') as any,
-              maxUses: l.maxPayments || 1,
-              usedCount: l.currentPaymentsCount || 0,
-              createdAt: new Date(l.createdAt),
-              expiresAt: l.expiresAt ? new Date(l.expiresAt) : new Date(Date.now() + 86400000),
-              paymentType: (pt === 'dms' ? 'dms' : 'sms') as any,
-            });
-          }
-        })
-        .catch(() => {});
-    }
+  const fetchLink = useCallback(() => {
+    if (!id) return;
+    apiClient.get(`/api/v1/payment-links/${id}`)
+      .then(res => {
+        const l = res.data;
+        if (l && l.id) {
+          setLink({
+            id: l.id,
+            shortCode: l.id.slice(0, 8).toUpperCase(),
+            url: `${window.location.origin}/api/v1/payment-links/${l.id}/open`,
+            status: parseLinkStatus(l.status),
+            statusRaw: l.status === null || l.status === undefined ? undefined : String(l.status),
+            amount: l.amount,
+            currency: l.currency || 'AZN',
+            description: l.description || 'Payment Link',
+            customerName: l.customer?.fullName || l.customerName || 'N/A',
+            customerEmail: l.customer?.email || l.customerEmail || 'N/A',
+            customerPhone: l.customer?.phone || l.customerPhone || 'N/A',
+            usageType: parseLinkUsageType(l.usageType),
+            maxUses: l.maxPayments || 1,
+            usedCount: l.currentPaymentsCount || 0,
+            // Сколько из платежей возвращено (P2-16, Р-50). Возврат использование не отменяет:
+            // usedCount при возврате не уменьшается, это отдельная цифра рядом с ним.
+            refundedCount: l.refundedPaymentsCount || 0,
+            createdAt: new Date(l.createdAt),
+            expiresAt: l.expiresAt ? new Date(l.expiresAt) : new Date(Date.now() + 86400000),
+            paymentType: parsePaymentType(l.paymentType),
+            // Дата последнего успешного платежа (P2-15) — то же поле и то же значение, что
+            // в списке. Пусто — платежей не было.
+            paidAt: l.lastPaidAt ? new Date(l.lastPaidAt) : undefined,
+          });
+        }
+      })
+      .catch(() => {});
   }, [id]);
 
-  const [snackbar, setSnackbar] = useState('');
-  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
-  const [finalizeDialogOpen, setFinalizeDialogOpen] = useState(false);
+  useEffect(() => {
+    fetchLink();
+  }, [fetchLink]);
 
+  const [snackbar, setSnackbar] = useState<{ text: string; error?: boolean } | null>(null);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [finalizeDialogOpen, setFinalizeDialogOpen] = useState(false);
+  const [finalizeBusy, setFinalizeBusy] = useState(false);
+
+  // Проверки по статусу ссылки здесь нет: `paid` бэкенд не присылает, а стадия DMS живёт
+  // в собственном поле (`dmsStatus`), не в статусе ссылки.
   const isDmsAuthorized =
-    link?.paymentType === 'dms' &&
-    link?.status === 'paid' &&
+    link?.paymentType === 'DMS' &&
     link?.dmsStatus === 'authorized';
 
   if (!link) {
@@ -444,32 +403,46 @@ export const PayByLinkDetailPage: React.FC = () => {
     );
   }
 
-  const cfg = getStatusConfig(link.status);
+  const statusColors = getLinkStatusColors(link.status);
+  const statusText = linkStatusLabel(tObj, link.status, link.statusRaw);
   const timeline = buildTimeline(link);
-  const expPct = link.status === 'active' ? expiryPercent(link) : null;
-  const isActive = link.status === 'active';
+  const expPct = link.status === 'ACTIVE' ? expiryPercent(link) : null;
+  const isActive = link.status === 'ACTIVE';
 
   const copy = (text: string, msg = 'Copied to clipboard') => {
     navigator.clipboard.writeText(text).catch(() => {});
-    setSnackbar(msg);
+    setSnackbar({ text: msg });
   };
 
+  /**
+   * Отмена ссылки (Р-34). Как и на списке, локальной правки состояния здесь нет: и при успехе,
+   * и при отказе карточка перечитывается с сервера, поэтому «отменена» на экране означает
+   * «отменена на бэкенде», а не «мы отправили запрос».
+   */
   const handleCancel = async () => {
     if (!link) return;
+    setCancelBusy(true);
     try {
       await apiClient.patch(`/api/v1/payment-links/${link.id}`, { status: 'CANCELED' });
-      setLink(prev => prev ? { ...prev, status: 'cancelled' } : prev);
-      setCancelDialogOpen(false);
-      setSnackbar('Payment link cancelled successfully');
+      setSnackbar({ text: tObj.payByLink.linkCancelledSuccess, error: false });
     } catch (err: any) {
-      const msg = err.response?.data?.message || 'Failed to cancel payment link on server';
-      setSnackbar(msg);
+      setSnackbar({
+        text: err.response?.data?.message || err.response?.data?.error || tObj.payByLink.linkCancelFailed,
+        error: true,
+      });
+    } finally {
+      // Диалог закрывается в обоих случаях: после отказа он спрашивал бы про отмену ссылки,
+      // которую бэкенд отменять отказался, а текст отказа виден в snackbar.
+      setCancelBusy(false);
+      setCancelDialogOpen(false);
+      fetchLink();
     }
   };
 
   const handleFinalize = async () => {
     if (!link) return;
     const txId = link.transactionId || link.id;
+    setFinalizeBusy(true);
     try {
       await apiClient.post(`/api/v1/transactions/${txId}/complete`, { amount: link.amount });
       setLink(prev => prev ? {
@@ -478,10 +451,14 @@ export const PayByLinkDetailPage: React.FC = () => {
         finalizedAt: new Date(),
       } : prev);
       setFinalizeDialogOpen(false);
-      setSnackbar('Payment finalized — funds captured successfully');
+      setSnackbar({ text: 'Payment finalized — funds captured successfully' });
     } catch (err: any) {
-      const msg = err.response?.data?.message || 'Failed to complete DMS transaction on server';
-      setSnackbar(msg);
+      setSnackbar({
+        text: err.response?.data?.message || 'Failed to complete DMS transaction on server',
+        error: true,
+      });
+    } finally {
+      setFinalizeBusy(false);
     }
   };
 
@@ -499,9 +476,9 @@ export const PayByLinkDetailPage: React.FC = () => {
                 {link.shortCode}
               </Typography>
               <Chip
-                label={cfg.label}
+                label={statusText}
                 size="small"
-                sx={{ fontWeight: 700, bgcolor: cfg.bgColor, color: cfg.textColor, fontSize: '0.75rem' }}
+                sx={{ fontWeight: 700, bgcolor: statusColors.bgColor, color: statusColors.textColor, fontSize: '0.75rem' }}
               />
             </Box>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
@@ -545,7 +522,7 @@ export const PayByLinkDetailPage: React.FC = () => {
               startIcon={<FinalizeIcon />}
               onClick={() => setFinalizeDialogOpen(true)}
             >
-              Finalize Payment
+              {tObj.payByLinkDetail.finalizeDMS}
             </Button>
           )}
           {isActive && (
@@ -555,7 +532,7 @@ export const PayByLinkDetailPage: React.FC = () => {
               startIcon={<CancelIcon />}
               onClick={() => setCancelDialogOpen(true)}
             >
-              Cancel Link
+              {tObj.payByLinkDetail.cancelLink}
             </Button>
           )}
         </Stack>
@@ -571,9 +548,9 @@ export const PayByLinkDetailPage: React.FC = () => {
             <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
               <Box sx={{
                 px: 3, py: 2.5,
-                background: link.status === 'paid'
+                background: link.status === 'COMPLETED'
                   ? 'linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%)'
-                  : link.status === 'active'
+                  : link.status === 'ACTIVE'
                   ? 'linear-gradient(135deg, #0d47a1 0%, #1976d2 100%)'
                   : 'linear-gradient(135deg, #37474f 0%, #546e7a 100%)',
                 color: 'white',
@@ -581,7 +558,7 @@ export const PayByLinkDetailPage: React.FC = () => {
               }}>
                 <Box>
                   <Typography variant="caption" sx={{ opacity: 0.8, textTransform: 'uppercase', letterSpacing: 1, fontSize: '0.7rem' }}>
-                    {link.status === 'paid' ? 'Amount Received' : 'Amount Requested'}
+                    {link.status === 'COMPLETED' ? 'Amount Received' : 'Amount Requested'}
                   </Typography>
                   <Typography variant="h3" sx={{ fontWeight: 800, mt: 0.25, lineHeight: 1 }}>
                     ₼{link.amount.toFixed(2)}
@@ -589,13 +566,13 @@ export const PayByLinkDetailPage: React.FC = () => {
                   <Typography variant="body2" sx={{ opacity: 0.85, mt: 0.75 }}>{link.description}</Typography>
                 </Box>
                 <Box sx={{ textAlign: 'right' }}>
-                  {link.status === 'paid' && link.paidAt && (
+                  {link.paidAt && (
                     <Box>
                       <Typography variant="caption" sx={{ opacity: 0.8 }}>Paid on</Typography>
                       <Typography variant="body1" sx={{ fontWeight: 700 }}>{formatDateTime(link.paidAt)}</Typography>
                     </Box>
                   )}
-                  {link.status === 'active' && (
+                  {link.status === 'ACTIVE' && (
                     <Box>
                       <Typography variant="caption" sx={{ opacity: 0.8 }}>Expires</Typography>
                       <Typography variant="body1" sx={{ fontWeight: 700 }}>{formatTimeLeft(link.expiresAt)}</Typography>
@@ -608,10 +585,10 @@ export const PayByLinkDetailPage: React.FC = () => {
                       )}
                     </Box>
                   )}
-                  {link.status === 'expired' && (
+                  {link.status === 'EXPIRED' && (
                     <Typography variant="body2" sx={{ opacity: 0.8 }}>Expired {formatDateTime(link.expiresAt)}</Typography>
                   )}
-                  {link.status === 'cancelled' && (
+                  {link.status === 'CANCELED' && (
                     <Typography variant="body2" sx={{ opacity: 0.8 }}>Manually cancelled</Typography>
                   )}
                 </Box>
@@ -643,8 +620,8 @@ export const PayByLinkDetailPage: React.FC = () => {
               </Box>
             </Paper>
 
-            {/* Payment details (paid only) */}
-            {link.status === 'paid' && (
+            {/* Payment details — показываются, когда пришла сама дата оплаты */}
+            {link.paidAt && (
               <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                   <ReceiptIcon color="action" fontSize="small" />
@@ -656,19 +633,25 @@ export const PayByLinkDetailPage: React.FC = () => {
                   value={
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
                       <Chip
-                        label={link.paymentType === 'dms' ? 'DMS' : 'SMS'}
+                        label={link.paymentType ?? '—'}
                         size="small"
                         variant="outlined"
-                        color={link.paymentType === 'dms' ? 'warning' : 'primary'}
+                        color={link.paymentType === 'DMS' ? 'warning' : link.paymentType === 'SMS' ? 'primary' : 'default'}
                         sx={{ fontWeight: 700, fontFamily: 'monospace' }}
                       />
                       <Typography variant="caption" color="text.secondary">
-                        {link.paymentType === 'dms' ? 'Authorize & Capture' : 'Immediate charge'}
+                        {link.paymentType === 'DMS' ? 'Authorize & Capture' : link.paymentType === 'SMS' ? 'Immediate charge' : '—'}
                       </Typography>
                     </Box>
                   }
                 />
-                {link.paymentType === 'dms' && (
+                {/* Стадия DMS показывается, только когда она **известна**. Раньше здесь стоял
+                    тернарник, у которого ветка «иначе» означала «Finalized — Captured»: поле
+                    `dmsStatus` маппинг из API не заполняет, поэтому с приходом даты оплаты
+                    (P2-15) каждая DMS-ссылка объявлялась бы captured — про холд, который на
+                    самом деле может висеть неснятым. Настоящая стадия видна по статусу
+                    транзакции в таблице связанных операций (`AUTHORIZED` / `SUCCESS`). */}
+                {link.paymentType === 'DMS' && link.dmsStatus && (
                   <>
                     <Divider sx={{ opacity: 0.5 }} />
                     <InfoRow
@@ -697,32 +680,14 @@ export const PayByLinkDetailPage: React.FC = () => {
                     )}
                   </>
                 )}
+                {/* Строк «Transaction ID», «Payment Method» (карта) и «Payer IP» здесь больше нет
+                    (P2-15, Р-48). Ни одно из трёх полей API по ссылке не отдаёт, и до включения
+                    даты оплаты весь блок просто не рисовался — а с ней он показал бы прочерк,
+                    `undefined ···· undefined` и пустую строку соответственно. Идентификаторы и
+                    карты настоящих платежей есть ниже, в таблице связанных операций, и берутся
+                    оттуда, откуда их присылает бэкенд. */}
                 <Divider sx={{ opacity: 0.5 }} />
-                <InfoRow label="Transaction ID" value={link.transactionId ?? '—'} mono />
-                <Divider sx={{ opacity: 0.5 }} />
-                <InfoRow
-                  label="Payment Method"
-                  value={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
-                      <CardIcon fontSize="small" color="action" />
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        {link.cardNetwork} ···· {link.cardLast4}
-                      </Typography>
-                    </Box>
-                  }
-                />
-                <Divider sx={{ opacity: 0.5 }} />
-                <InfoRow label="Paid At" value={link.paidAt ? formatDateTime(link.paidAt) : '—'} />
-                <Divider sx={{ opacity: 0.5 }} />
-                <InfoRow
-                  label="Payer IP"
-                  value={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
-                      <SecurityIcon fontSize="small" color="action" sx={{ fontSize: 14 }} />
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{link.payerIp}</Typography>
-                    </Box>
-                  }
-                />
+                <InfoRow label="Paid At" value={formatDateTime(link.paidAt)} />
                 <Divider sx={{ opacity: 0.5 }} />
                 <InfoRow label="Amount" value={`₼${link.amount.toFixed(2)} ${link.currency}`} />
               </Paper>
@@ -740,8 +705,8 @@ export const PayByLinkDetailPage: React.FC = () => {
                 value={
                   <Chip
                     size="small"
-                    label={link.paymentType === 'dms' ? 'DMS — Authorize & Capture' : 'SMS — Immediate Charge'}
-                    color={link.paymentType === 'dms' ? 'warning' : 'primary'}
+                    label={link.paymentType === 'DMS' ? 'DMS — Authorize & Capture' : link.paymentType === 'SMS' ? 'SMS — Immediate Charge' : '—'}
+                    color={link.paymentType === 'DMS' ? 'warning' : link.paymentType === 'SMS' ? 'primary' : 'default'}
                     variant="outlined"
                     sx={{ fontWeight: 600 }}
                   />
@@ -751,24 +716,34 @@ export const PayByLinkDetailPage: React.FC = () => {
               <InfoRow label="Usage Type" value={
                 <Chip
                   size="small"
-                  label={link.usageType === 'single' ? 'Single Use' : 'Multiple Uses'}
+                  label={link.usageType === 'SINGLE' ? 'Single Use' : link.usageType === 'MULTIPLE' ? 'Multiple Uses' : '—'}
                   variant="outlined"
                   sx={{ fontWeight: 600 }}
                 />
               } />
-              {link.usageType === 'multiple' && (
+              {link.usageType === 'MULTIPLE' && (
                 <>
                   <Divider sx={{ opacity: 0.5 }} />
                   <InfoRow
                     label="Usage"
                     value={
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, justifyContent: 'flex-end' }}>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{link.usedCount} / {link.maxUses}</Typography>
-                        <LinearProgress
-                          variant="determinate"
-                          value={(link.usedCount / link.maxUses) * 100}
-                          sx={{ width: 80, height: 6, borderRadius: 3 }}
-                        />
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, justifyContent: 'flex-end' }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>{link.usedCount} / {link.maxUses}</Typography>
+                          <LinearProgress
+                            variant="determinate"
+                            value={(link.usedCount / link.maxUses) * 100}
+                            sx={{ width: 80, height: 6, borderRadius: 3 }}
+                          />
+                        </Box>
+                        {/* Возврат не отменяет использование (P2-16, Р-49): usedCount выше
+                            не уменьшается, а сколько из платежей вернули — отдельной строкой,
+                            и только когда возвраты были (Р-50). */}
+                        {link.refundedCount > 0 && (
+                          <Typography variant="caption" color="text.secondary">
+                            {tObj.payByLinkDetail.summary.refundedOfUsed}: {link.refundedCount}
+                          </Typography>
+                        )}
                       </Box>
                     }
                   />
@@ -929,7 +904,7 @@ export const PayByLinkDetailPage: React.FC = () => {
                           variant="outlined"
                           size="small"
                           startIcon={<QrCodeIcon />}
-                          onClick={() => setSnackbar('QR code feature coming soon')}
+                          onClick={() => setSnackbar({ text: 'QR code feature coming soon' })}
                         >
                           Generate QR Code
                         </Button>
@@ -953,11 +928,11 @@ export const PayByLinkDetailPage: React.FC = () => {
               <Divider sx={{ mb: 2 }} />
 
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-                <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: cfg.textColor, flexShrink: 0 }} />
-                <Typography variant="body1" sx={{ fontWeight: 700, color: cfg.textColor }}>{cfg.label}</Typography>
+                <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: statusColors.textColor, flexShrink: 0 }} />
+                <Typography variant="body1" sx={{ fontWeight: 700, color: statusColors.textColor }}>{statusText}</Typography>
               </Box>
 
-              {link.status === 'active' && expPct !== null && (
+              {link.status === 'ACTIVE' && expPct !== null && (
                 <Box>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.75 }}>
                     <Typography variant="caption" color="text.secondary">Time remaining</Typography>
@@ -977,20 +952,23 @@ export const PayByLinkDetailPage: React.FC = () => {
                 </Box>
               )}
 
-              {link.status === 'paid' && link.paymentType === 'sms' && (
+              {link.paidAt && link.paymentType === 'SMS' && (
                 <Alert severity="success" icon={<DoneIcon fontSize="small" />} sx={{ mt: 1 }}>
-                  Payment received on {link.paidAt ? formatDateTime(link.paidAt) : '—'}
+                  Payment received on {formatDateTime(link.paidAt)}
                 </Alert>
               )}
-              {link.status === 'paid' && link.paymentType === 'dms' && link.dmsStatus === 'authorized' && (
+              {link.paymentType === 'DMS' && link.dmsStatus === 'authorized' && (
                 <Alert severity="warning" icon={<AuthorizedIcon fontSize="small" />} sx={{ mt: 1 }}>
                   <Typography variant="body2" sx={{ fontWeight: 700 }}>Funds Authorized</Typography>
                   <Typography variant="caption">
-                    ₼{link.amount.toFixed(2)} is reserved on the customer's card. Press <strong>Finalize Payment</strong> to capture the funds.
+                    {/* Подсказка называет кнопку её настоящей подписью (P3-5a): подпись
+                        теперь переводится, а зашитое «Finalize Payment» указывало бы на
+                        кнопку, которой на азербайджанском и русском экране нет. */}
+                    ₼{link.amount.toFixed(2)} is reserved on the customer's card. Press <strong>{tObj.payByLinkDetail.finalizeDMS}</strong> to capture the funds.
                   </Typography>
                 </Alert>
               )}
-              {link.status === 'paid' && link.paymentType === 'dms' && link.dmsStatus === 'finalized' && (
+              {link.paymentType === 'DMS' && link.dmsStatus === 'finalized' && (
                 <Alert severity="success" icon={<FinalizeIcon fontSize="small" />} sx={{ mt: 1 }}>
                   <Typography variant="body2" sx={{ fontWeight: 700 }}>Payment Finalized</Typography>
                   <Typography variant="caption">
@@ -999,13 +977,13 @@ export const PayByLinkDetailPage: React.FC = () => {
                 </Alert>
               )}
 
-              {link.status === 'expired' && (
+              {link.status === 'EXPIRED' && (
                 <Alert severity="warning" icon={<WarningIcon fontSize="small" />} sx={{ mt: 1 }}>
                   Expired without payment on {formatDateTime(link.expiresAt)}
                 </Alert>
               )}
 
-              {link.status === 'cancelled' && (
+              {link.status === 'CANCELED' && (
                 <Alert severity="error" icon={<CancelIcon fontSize="small" />} sx={{ mt: 1 }}>
                   This link was manually cancelled
                 </Alert>
@@ -1013,7 +991,7 @@ export const PayByLinkDetailPage: React.FC = () => {
             </Paper>
 
             {/* Quick actions */}
-            {(link.status === 'expired' || link.status === 'cancelled') && (
+            {(link.status === 'EXPIRED' || link.status === 'CANCELED') && (
               <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
                 <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1rem', mb: 2 }}>Quick Actions</Typography>
                 <Divider sx={{ mb: 2 }} />
@@ -1033,48 +1011,81 @@ export const PayByLinkDetailPage: React.FC = () => {
 
       </Grid>
 
-      {/* ── Finalize dialog ───────────────────────────────────────────────── */}
-      <Dialog open={finalizeDialogOpen} onClose={() => setFinalizeDialogOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>Finalize DMS Payment</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            This will capture <strong>₼{link.amount.toFixed(2)}</strong> that is currently authorized on the customer's card.
-            The funds will be transferred to your account. This action cannot be undone.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
-          <Button onClick={() => setFinalizeDialogOpen(false)} variant="outlined">Cancel</Button>
-          <Button onClick={handleFinalize} variant="contained" color="success" startIcon={<FinalizeIcon />}>
-            Finalize &amp; Capture
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* ── Finalize dialog ─────────────────────────────────────────────────
+          Сумма ушла из фразы в рамку рядом с коротким кодом (P3-5a): так подтверждение
+          списания холда выглядит одинаково здесь и на карточке транзакции, а текст
+          обходится без подстановки внутрь предложения. */}
+      <ConfirmDialog
+        open={finalizeDialogOpen}
+        maxWidth="xs"
+        title={tObj.payByLinkDetail.finalizeDMS}
+        question={tObj.transactions.detail.captureExplains}
+        confirmLabel={tObj.transactions.detail.confirmCapture}
+        confirmColor="success"
+        confirmIcon={<FinalizeIcon />}
+        busy={finalizeBusy}
+        onConfirm={handleFinalize}
+        onCancel={() => setFinalizeDialogOpen(false)}
+      >
+        <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+          <Typography variant="body2" color="text.secondary">
+            {tObj.payByLinkDetail.summary.shortCode}
+          </Typography>
+          <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: 'monospace' }}>
+            {link.shortCode}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            {tObj.transactions.detail.captureAmount}
+          </Typography>
+          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+            ₼{link.amount.toFixed(2)}
+          </Typography>
+        </Box>
+      </ConfirmDialog>
 
-      {/* ── Cancel dialog ─────────────────────────────────────────────────── */}
-      <Dialog open={cancelDialogOpen} onClose={() => setCancelDialogOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>Cancel Payment Link</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Are you sure you want to cancel <strong>{link.shortCode}</strong>? The link will stop working immediately and customers will no longer be able to pay through it.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
-          <Button onClick={() => setCancelDialogOpen(false)} variant="outlined">Keep Link</Button>
-          <Button onClick={handleCancel} variant="contained" color="error" startIcon={<CancelIcon />}>
-            Cancel Link
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* ── Cancel dialog ───────────────────────────────────────────────────
+          Слово в слово то же окно, что в списке (P3-5a). */}
+      <ConfirmDialog
+        open={cancelDialogOpen}
+        maxWidth="xs"
+        title={tObj.payByLink.cancelConfirmTitle}
+        question={tObj.payByLink.cancelConfirmText}
+        cancelLabel={tObj.payByLink.keepLink}
+        confirmLabel={tObj.payByLinkDetail.cancelLink}
+        confirmIcon={<CancelIcon />}
+        busy={cancelBusy}
+        onConfirm={handleCancel}
+        onCancel={() => setCancelDialogOpen(false)}
+      >
+        <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+          <Typography variant="body2" color="text.secondary">
+            {tObj.payByLinkDetail.summary.shortCode}
+          </Typography>
+          <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: 'monospace' }}>
+            {link.shortCode}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            {tObj.payByLink.table.amount}
+          </Typography>
+          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+            ₼{link.amount.toFixed(2)}
+          </Typography>
+        </Box>
+      </ConfirmDialog>
 
       {/* Snackbar */}
       <Snackbar
         open={!!snackbar}
-        autoHideDuration={3000}
-        onClose={() => setSnackbar('')}
+        autoHideDuration={snackbar?.error ? 10000 : 3000}
+        onClose={() => setSnackbar(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert severity="success" onClose={() => setSnackbar('')} sx={{ width: '100%' }}>
-          {snackbar}
+        <Alert
+          severity={snackbar?.error ? 'error' : 'success'}
+          onClose={() => setSnackbar(null)}
+          sx={{ width: '100%' }}
+        >
+          {snackbar?.text}
         </Alert>
       </Snackbar>
     </Box>

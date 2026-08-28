@@ -2,8 +2,11 @@
 <configuration>
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
 
+    <!-- clientIp is put in the MDC by ClientIpFilter and rendered as "-" outside a request
+         (schedulers, startup). Without it here the address is resolved for every request and
+         shown in none of the log lines that need it. -->
     <property name="CONSOLE_LOG_PATTERN"
-              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-system}] %highlight(%-5level) %cyan(%logger{36}) - %msg%n"/>
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-system}] [%X{clientIp:--}] %highlight(%-5level) %cyan(%logger{36}) - %msg%n"/>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>

@@ -18,7 +18,9 @@
 								"exec": [
 									"var jsonData = JSON.parse(responseBody);",
 									"pm.collectionVariables.set(\"authToken\", jsonData.token);",
-									"console.log(\"Set authToken to: \" + jsonData.token);"
+									"pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
+									"console.log(\"Set authToken to: \" + jsonData.token);",
+									"console.log(\"Set refreshToken to: \" + jsonData.refreshToken);"
 								],
 								"type": "text/javascript"
 							}
@@ -34,7 +36,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"username\": \"admin@millikart.az\",\n  \"password\": \"admin123\"\n}",
+							"raw": "{\n  \"username\": \"admin@millikart.az\",\n  \"password\": \"<BOOTSTRAP_ADMIN_PASSWORD>\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -53,7 +55,93 @@
 								"login"
 							]
 						},
-						"description": "Authenticates a user and returns a signed JWT token. The `test` script automatically saves the returned JWT token to the `authToken` collection variable for use in subsequent requests."
+						"description": "Authenticates a user and returns a signed JWT access token plus an opaque refresh token. The `test` script saves them to the `authToken` and `refreshToken` collection variables for use in subsequent requests. `expiresIn` (seconds) mirrors JWT_EXPIRATION_MS; `refreshExpiresIn` mirrors AUTH_REFRESH_TTL."
+					},
+					"response": []
+				},
+				{
+					"name": "Refresh",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/refresh",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"refresh"
+							]
+						},
+						"description": "Rotates the refresh token: returns a new access token and a NEW refresh token in the same family; the presented one is retired. Public — no Authorization header needed. Any refusal is 401 \"Invalid refresh token\" (unknown, expired, revoked, or reused after the 10 s grace window — the last one revokes the whole family and logs REFRESH_TOKEN_REUSE). Send it twice quickly to see the grace window (both succeed); wait >10 s and send the OLD token again to see reuse detection kill the family."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = JSON.parse(responseBody);",
+									"if (jsonData.token) {",
+									"  pm.collectionVariables.set(\"authToken\", jsonData.token);",
+									"  pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
+									"  console.log(\"Rotated: new authToken and refreshToken saved\");",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/logout",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"logout"
+							]
+						},
+						"description": "Ends the session: revokes the whole refresh-token family. Always 204, even for an unknown or empty token (the endpoint is deliberately not an oracle). NOTE: the access token stays valid until it expires (24 h by default) — there is no blacklist; full revocation arrives when the access-token lifetime is shortened after the frontend learns to refresh (P1-13)."
 					},
 					"response": []
 				}
@@ -150,7 +238,7 @@
 							}
 						],
 						"url": {
-							"raw": "{{baseUrl}}/api/v1/users",
+							"raw": "{{baseUrl}}/api/v1/users?page=0&size=20",
 							"host": [
 								"{{baseUrl}}"
 							],
@@ -158,9 +246,31 @@
 								"api",
 								"v1",
 								"users"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "0"
+								},
+								{
+									"key": "size",
+									"value": "20"
+								},
+								{
+									"key": "search",
+									"value": "acme",
+									"disabled": true,
+									"description": "P3-1: подстрока без учёта регистра по username, fullName, companyId и названию компании; % и _ ищутся буквально; пустая строка = нет фильтра"
+								},
+								{
+									"key": "role",
+									"value": "COMPANY_HEAD",
+									"disabled": true,
+									"description": "P3-1: точное значение роли (регистр не важен); неизвестная роль = нет фильтра, не 400"
+								}
 							]
 						},
-						"description": "Retrieves the list of active users. SYSTEM_ADMIN retrieves all users, while COMPANY_HEAD retrieves users within their own company."
+						"description": "Retrieves one page of users (paginated since P2-1, 22.08.2026): the answer is a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by username, then id. Soft-deleted accounts are excluded from both content and totalElements. SYSTEM_ADMIN sees everyone, COMPANY_HEAD only its own company."
 					},
 					"response": []
 				},
@@ -250,6 +360,11 @@
 			"value": "",
 			"type": "string",
 			"description": "The ID of a created user, automatically set by the 'Create User' request."
+		},
+		{
+			"key": "refreshToken",
+			"value": "",
+			"type": "string"
 		}
 	]
 }

@@ -5,8 +5,25 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <changeSet id="2-auth-core" author="millikart">
-        <!-- Create companies table -->
+    <!--
+      The three services share one database and one DATABASECHANGELOG, and `companies` is created
+      by whichever of `auth` and `directory` starts first. Therefore every changeset below guards
+      exactly ONE object with its own precondition.
+
+      One precondition over a multi-object changeset would be wrong: with `companies` already there
+      and `users` missing, the whole block would be marked as ran and `users` would never be
+      created — which `ddl-auto: validate` turns into a service that refuses to start.
+    -->
+
+    <!-- Create companies table. `directory` (003-directory-schema.xml) creates the same table with
+         extra audit columns under a mirror-image precondition, and then fills the audit columns in
+         on a table it found already created. Whoever starts first wins; the other one skips. -->
+    <changeSet id="2-auth-companies" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="companies"/>
+            </not>
+        </preConditions>
         <createTable tableName="companies">
             <column name="id" type="varchar(255)">
                 <constraints primaryKey="true" nullable="false"/>
@@ -19,8 +36,16 @@
             </column>
             <column name="created_at" type="timestamp"/>
         </createTable>
+    </changeSet>
 
-        <!-- Create users table -->
+    <!-- Create users table. Owned by `auth` alone, so no other service can race it here; the
+         precondition only covers a database restored without its DATABASECHANGELOG. -->
+    <changeSet id="2-auth-users" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="users"/>
+            </not>
+        </preConditions>
         <createTable tableName="users">
             <column name="id" type="uuid">
                 <constraints primaryKey="true" nullable="false"/>
@@ -43,35 +68,54 @@
             </column>
             <column name="created_at" type="timestamp"/>
         </createTable>
+    </changeSet>
 
-        <!-- Add foreign key constraint from users to companies -->
+    <!-- No admin is seeded here. A migration cannot hold a password that is both secret and
+         known to the operator, so the first SYSTEM_ADMIN is created by AdminBootstrapRunner
+         from BOOTSTRAP_ADMIN_USERNAME / BOOTSTRAP_ADMIN_PASSWORD on a single start with
+         AUTH_BOOTSTRAP_ENABLED=true. See deployment_guide.md, "Первый запуск и ротация ключа". -->
+
+    <!-- Add foreign key constraint from users to companies.
+         onFail="CONTINUE", not MARK_RAN: a skipped changeset must stay retryable. Both tables are
+         created above, so in practice only the "key is already there" branch can fail here (a
+         database restored without DATABASECHANGELOG) — and that branch must not leave a permanent
+         "done" record for work that was never performed. -->
+    <changeSet id="2-auth-users-company-fk" author="millikart">
+        <preConditions onFail="CONTINUE">
+            <tableExists tableName="users"/>
+            <tableExists tableName="companies"/>
+            <not>
+                <foreignKeyConstraintExists foreignKeyName="fk_users_company" foreignKeyTableName="users"/>
+            </not>
+        </preConditions>
         <addForeignKeyConstraint baseTableName="users" baseColumnNames="company_id"
                                  constraintName="fk_users_company"
                                  referencedTableName="companies" referencedColumnNames="id"/>
-
-        <!-- Seed default SYSTEM_ADMIN user (admin@millikart.az / admin123) -->
-        <insert tableName="users">
-            <column name="id" value="00000000-0000-0000-0000-000000000000"/>
-            <column name="username" value="admin@millikart.az"/>
-            <!-- BCrypt hash of "admin123" -->
-            <column name="password_hash" value="$2a$10$C641UbM6EBi7lBaebQ4eo./gv2YJypc66lsKJzB2uM7q/Qoj1bSVO"/>
-            <column name="full_name" value="System Administrator"/>
-            <column name="role" value="SYSTEM_ADMIN"/>
-            <column name="status" value="ACTIVE"/>
-            <column name="created_at" valueComputed="current_timestamp"/>
-        </insert>
     </changeSet>
 
+    <!--
+      Add foreign key from terminals to companies. `terminals` belongs to another service
+      (`directory` creates it, `pbl` creates it too if it got there first), so on the very first
+      start of `auth` the table can be absent.
+
+      onFail="CONTINUE" is load-bearing here — DO NOT "unify" it to MARK_RAN. MARK_RAN writes a
+      DATABASECHANGELOG row saying the changeset is done, and Liquibase would then skip it forever:
+      following our own recommended start order (`auth` first, before `pbl`/`directory` exist) would
+      silently mean fk_terminals_company is never created. CONTINUE writes no row, so the check is
+      repeated on the next start and the key appears as soon as `terminals` does.
+    -->
     <changeSet id="2-auth-terminal-fk" author="millikart">
-        <preConditions onFail="MARK_RAN">
+        <preConditions onFail="CONTINUE">
             <tableExists tableName="terminals"/>
             <tableExists tableName="companies"/>
+            <not>
+                <foreignKeyConstraintExists foreignKeyName="fk_terminals_company" foreignKeyTableName="terminals"/>
+            </not>
         </preConditions>
         <!-- Clean up any company_id references that do not exist in companies table before adding constraint -->
         <sql>
             UPDATE terminals SET company_id = NULL WHERE company_id IS NOT NULL AND company_id NOT IN (SELECT id FROM companies);
         </sql>
-        <!-- Add foreign key from terminals to companies if terminals table is already created by pbl -->
         <addForeignKeyConstraint baseTableName="terminals" baseColumnNames="company_id"
                                  constraintName="fk_terminals_company"
                                  referencedTableName="companies" referencedColumnNames="id"/>

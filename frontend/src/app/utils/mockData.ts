@@ -32,36 +32,39 @@ export function formatDateTime(date: Date): string {
   return `${day}.${month}.${year} ${hours}:${minutes}`;
 }
 
-export function getPaymentMethodLabel(method: PaymentMethod): string {
-  if (!method) return 'SMS';
-  const upper = String(method).toUpperCase();
-  if (upper === 'SMS') return 'SMS (Single)';
-  if (upper === 'DMS') return 'DMS (Two-Stage)';
-  return upper;
+/** `null` — `paymentType` вне словаря бэкенда; подставлять «SMS» по умолчанию нельзя. */
+export function getPaymentMethodLabel(method: PaymentMethod | null | undefined): string {
+  switch (method) {
+    case 'SMS':
+      return 'SMS (Single)';
+    case 'DMS':
+      return 'DMS (Two-Stage)';
+    default:
+      return '—';
+  }
 }
 
-export function getStatusLabel(status: TransactionStatus): string {
-  if (!status) return 'Pending';
-  const upper = String(status).toUpperCase();
-  switch (upper) {
-    case 'APPROVED':
+/**
+ * Английская подпись статуса — для выгрузки в Excel и прочего кода вне React.
+ * В интерфейсе подписи берутся из `i18n/translations.ts` (`transactions.statuses`).
+ * `raw` показывается, когда бэкенд прислал статус вне словаря (`status === null`).
+ */
+export function getStatusLabel(status: TransactionStatus | null | undefined, raw?: string): string {
+  switch (status) {
     case 'SUCCESS':
-      return 'Approved';
+      return 'Success';
     case 'PENDING':
       return 'Pending';
-    case 'DECLINED':
-      return 'Declined';
+    case 'AUTHORIZED':
+      return 'Authorized';
     case 'FAILED':
-    case '3D-FAILED':
       return 'Failed';
     case 'REFUNDED':
       return 'Refunded';
     case 'PARTIALLY_REFUNDED':
       return 'Partially Refunded';
-    case 'CANCELED':
-      return 'Canceled';
     default:
-      return String(status).charAt(0).toUpperCase() + String(status).slice(1);
+      return raw || 'Unknown';
   }
 }
 

@@ -22,8 +22,11 @@ import {
   ExpandLess as ExpandLessIcon
 } from '@mui/icons-material';
 import FilterListOutlinedIcon from '@mui/icons-material/FilterListOutlined';
-import type { TransactionFilters, TransactionStatus, PaymentMethod } from '../types/transaction';
-import { terminalRids } from '../utils/mockData';
+import type { TransactionFilters } from '../types/transaction';
+import { PAYMENT_METHODS, TRANSACTION_STATUSES } from '../types/transaction';
+import { getPaymentMethodLabel, terminalRids } from '../utils/mockData';
+import { getStatusColorScheme } from '../utils/statusColors';
+import { useLanguage } from '../context/LanguageContext';
 
 interface FilterPanelProps {
   filters: TransactionFilters;
@@ -38,6 +41,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
   totalTransactions,
   filteredTransactions
 }) => {
+  const { tObj } = useLanguage();
   const [localFilters, setLocalFilters] = useState<TransactionFilters>({
     ...filters,
     terminalRid: filters.terminalRid || []
@@ -256,30 +260,17 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
               }}
             >
               <MenuItem key="all" value="all">All Statuses</MenuItem>
-              <MenuItem key="success" value="success">
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: '#4caf50' }} />
-                  Success
-                </Box>
-              </MenuItem>
-              <MenuItem key="pending" value="pending">
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: '#ff9800' }} />
-                  Pending
-                </Box>
-              </MenuItem>
-              <MenuItem key="canceled" value="canceled">
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: '#2196f3' }} />
-                  Canceled
-                </Box>
-              </MenuItem>
-              <MenuItem key="3d-failed" value="3d-failed">
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: '#f44336' }} />
-                  3D-Failed
-                </Box>
-              </MenuItem>
+              {/* Ровно шесть статусов бэкенда. Раньше здесь были 'success' / 'pending' /
+                  'canceled' / '3d-failed' — ни одно не совпадало с приходящими значениями,
+                  и фильтр по статусу не находил ничего (P2-12). */}
+              {TRANSACTION_STATUSES.map((status) => (
+                <MenuItem key={status} value={status}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: getStatusColorScheme(status).main }} />
+                    {tObj.transactions.statuses[status]}
+                  </Box>
+                </MenuItem>
+              ))}
             </TextField>
             <TextField
               select
@@ -300,10 +291,11 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
               }}
             >
               <MenuItem key="all" value="all">All Methods</MenuItem>
-              <MenuItem key="sms" value="sms">SMS</MenuItem>
-              <MenuItem key="dms" value="dms">DMS</MenuItem>
-              <MenuItem key="mit" value="mit">MIT</MenuItem>
-              <MenuItem key="cit" value="cit">CIT</MenuItem>
+              {/* Бэкенд знает только SMS и DMS (`PaymentType`); mit/cit и нижний регистр
+                  были такой же выдумкой, как и статусы. */}
+              {PAYMENT_METHODS.map((method) => (
+                <MenuItem key={method} value={method}>{getPaymentMethodLabel(method)}</MenuItem>
+              ))}
             </TextField>
             <Box>
               <TextField

@@ -58,10 +58,12 @@ export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick
   const { user, logout } = useAuth();
   const { language, setLanguage, tObj } = useLanguage();
 
-  const displayName = user?.fullName || user?.email?.split('@')[0] || 'Merchant';
+  // Имени пользователя бэкенд в ответе логина не отдаёт (эндпоинта профиля нет) — показываем
+  // честный email, а не вычисленный из него «fullName». Роль без запасного значения: если её нет,
+  // сессии нет (session.ts отказывает во входе), поэтому здесь она всегда есть.
   const displayEmail = user?.email || 'N/A';
-  const avatarLetter = (user?.fullName || user?.email || 'M').charAt(0).toUpperCase();
-  const displayRole = user?.role || 'SYSTEM_ADMIN';
+  const avatarLetter = (user?.email || 'M').charAt(0).toUpperCase();
+  const displayRole = user?.role ?? '—';
 
   // Account menu
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
@@ -162,8 +164,7 @@ export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick
         }}
       >
         <Box sx={{ px: 2, py: 1.5 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>{displayName}</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem' }}>{displayEmail}</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, wordBreak: 'break-all' }}>{displayEmail}</Typography>
           <Chip label={displayRole} size="small" color="primary" sx={{ mt: 1, height: 20, fontSize: '0.65rem', fontWeight: 700 }} />
         </Box>
         <Divider />
@@ -183,7 +184,17 @@ export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setLogoutDialogOpen(false)} variant="outlined">{tObj.common.cancel}</Button>
-          <Button onClick={() => { setLogoutDialogOpen(false); logout(); navigate('/login'); }} variant="contained" autoFocus>
+          <Button
+            onClick={() => {
+              setLogoutDialogOpen(false);
+              // logout сбрасывает сессию сразу (ProtectedRoute уведёт на /login сам) и вдогонку
+              // гасит refresh-токен на сервере; ошибку сети он логирует и не пробрасывает.
+              void logout();
+              navigate('/login', { replace: true });
+            }}
+            variant="contained"
+            autoFocus
+          >
             {tObj.header.logout}
           </Button>
         </DialogActions>

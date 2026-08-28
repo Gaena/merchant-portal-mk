@@ -56,7 +56,7 @@
 								"payment-links"
 							]
 						},
-						"description": "Creates a new payment link. The `test` script for this request automatically saves the returned `id` to the `linkId` collection variable for use in other requests."
+						"description": "Creates a new payment link. The `test` script for this request automatically saves the returned `id` to the `linkId` collection variable for use in other requests.\n\nEvery link has a lifetime. `expiresAt` is optional here: left out, as in this body, the link expires after the configured default (`pbl.link.default-ttl`, 24 hours). Supplied, it must be an ISO-8601 instant in the future and no later than `pbl.link.max-ttl` (90 days) from the moment the link is created - either violation is a 400 naming the latest date allowed. The response carries the resulting `expiresAt` back."
 					},
 					"response": []
 				},
@@ -112,7 +112,7 @@
 								"{{linkId}}"
 							]
 						},
-						"description": "Partially updates an existing payment link. Only fields provided in the request will be modified."
+						"description": "Partially updates an existing payment link. Only fields provided in the request will be modified.\n\n`expiresAt` obeys the same bounds as on create, except that the 90-day ceiling is measured from the link's own `created_at`, not from the moment of this PATCH - otherwise a chain of updates could push the expiry forward forever."
 					},
 					"response": []
 				},
@@ -173,7 +173,7 @@
 								"open"
 							]
 						},
-						"description": "Customer-facing endpoint that validates the link and redirects to the acquiring gateway. Does not require authentication. In Postman, you must disable automatic redirect following in Settings to see the 302 response."
+						"description": "Customer-facing endpoint that validates the link and redirects to the acquiring gateway. Does not require authentication. In Postman, you must disable automatic redirect following in Settings to see the 302 response. The whole open runs in one transaction that locks the link row first (P1-5), so two simultaneous opens cannot register two orders at the acquirer: the duplicate click gets 409. A link that is already paid, or held by an AUTHORIZED payment awaiting capture, gets 403 (P1-6)."
 					},
 					"response": []
 				}
@@ -214,7 +214,7 @@
 								"complete"
 							]
 						},
-						"description": "Finalizes (captures) a previously authorized DMS transaction. You must first open a link to get a transactionId."
+						"description": "Finalizes (captures) a previously authorized DMS transaction. You must first open a link to get a transactionId.\n\nA partial capture is allowed: `amount` may be lower than the authorized amount, and the acquirer clears exactly that figure (`{\"tran\": {\"phase\": \"Clearing\", \"amount\": \"500.00\"}}`). It is stored in `captured_amount`, the transaction's `amount` keeps the authorized figure, and later refunds are capped by the captured amount. Returns 400 when `amount` is above the authorized amount or has more than two decimal places, and 400 when the transaction was already captured."
 					},
 					"response": []
 				},
@@ -250,18 +250,20 @@
 								"refund"
 							]
 						},
-						"description": "Initiates a refund for a successful transaction. You must first complete a DMS payment or have a successful SMS payment to get a transactionId."
+						"description": "Initiates a refund for a successful transaction. You must first complete a DMS payment or have a successful SMS payment to get a transactionId.\n\nThe ceiling is the captured amount, not the authorized one: `captured_amount` after a DMS capture, `amount` when there was no capture (every SMS payment). Refunding exactly that amount moves the transaction to REFUNDED; less leaves it PARTIALLY_REFUNDED. The response carries the acquirer's own identifiers from its exec-tran answer: `acquirerReference` (tran.match.ridByPmo — the processing-centre id, never null on 200: a refund without it is reported as 502, outcome unknown), `refundId` (tran.match.tranActionId, may be null) and `approvalCode` (may be null). Nothing is generated locally."
 					},
 					"response": []
 				},
 				{
-					"name": "Check Transaction Status (Redirect Page Check)",
+					"name": "Check Transaction Status",
 					"request": {
-						"auth": {
-							"type": "noauth"
-						},
 						"method": "GET",
-						"header": [],
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{apiToken}}"
+							}
+						],
 						"url": {
 							"raw": "{{baseUrl}}/api/v1/transactions/{{providerOrderId}}/status",
 							"host": [
@@ -275,7 +277,7 @@
 								"status"
 							]
 						},
-						"description": "Publicly accessible endpoint utilized by the landing Redirect Page to fetch and update payment transaction status from the provider."
+						"description": "Merchant-only endpoint: polls the provider for the current status of a transaction and persists the result. Requires a JWT and a read role on the company that owns the transaction's terminal. The payer's return page no longer calls this - it is rendered server-side."
 					},
 					"response": []
 				}
@@ -301,9 +303,9 @@
 		},
 		{
 			"key": "apiToken",
-			"value": "pbl-secret-token",
+			"value": "",
 			"type": "string",
-			"description": "The merchant's API token for authentication (JWT or test token fallback)."
+			"description": "JWT from POST /api/v1/auth/login. The static fallback token is off by default and has no built-in value."
 		},
 		{
 			"key": "linkId",

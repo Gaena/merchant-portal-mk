@@ -3,7 +3,7 @@ package az.millikart.pbl.controller;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.pbl.domain.PaymentLinkStatus;
 import az.millikart.pbl.dto.CreatePaymentLinkRequest;
-import az.millikart.pbl.dto.PagedResponse;
+import az.millikart.common.dto.PagedResponse;
 import az.millikart.pbl.dto.PaymentLinkResponse;
 import az.millikart.pbl.dto.PaymentLinkSummaryResponse;
 import az.millikart.pbl.dto.UpdatePaymentLinkRequest;
@@ -24,9 +24,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * REST endpoints for managing payment links.
- */
 @RestController
 @RequestMapping("/api/v1/payment-links")
 public class PaymentLinkController {

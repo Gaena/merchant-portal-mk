@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- P2-14: pbl writes the audit journal too, so it must be able to create the table.
+
+         `audit_logs` was born in directory/003-directory-schema.xml and grew columns and indexes
+         in directory/004-audit-log-ip-and-indexes.xml. The services share one database and start
+         in no fixed order (P1-2), so each writer needs a create-if-absent changeset of its own —
+         the same arrangement `terminals` has since P2-8.
+
+         This one creates the table in its **final** shape, columns and indexes included, so that a
+         database bootstrapped by pbl is identical to one bootstrapped by directory. When
+         directory runs afterwards, every one of its five changesets finds its own object already
+         present and marks itself as ran — which is exactly why 004 was split per column and per
+         index rather than written as one block. -->
+
+    <changeSet id="6-pbl-audit-logs" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="audit_logs"/>
+            </not>
+        </preConditions>
+        <createTable tableName="audit_logs">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="entity_type" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="entity_id" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="action" type="varchar(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="performed_by" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="company_id" type="varchar(255)"/>
+            <column name="details" type="varchar(4000)"/>
+            <!-- 45 characters: the longest textual IPv6 form (P2-6). -->
+            <column name="client_ip" type="varchar(45)"/>
+            <column name="outcome" type="varchar(16)" defaultValue="SUCCESS">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="6-pbl-audit-logs-index-company-created" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="idx_audit_logs_company_created" tableName="audit_logs"/>
+            </not>
+        </preConditions>
+        <createIndex indexName="idx_audit_logs_company_created" tableName="audit_logs"><column name="company_id"/><column name="created_at" descending="true"/></createIndex>
+    </changeSet>
+
+    <changeSet id="6-pbl-audit-logs-index-entity" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="idx_audit_logs_entity" tableName="audit_logs"/>
+            </not>
+        </preConditions>
+        <createIndex indexName="idx_audit_logs_entity" tableName="audit_logs"><column name="entity_type"/><column name="entity_id"/></createIndex>
+    </changeSet>
+
+    <changeSet id="6-pbl-audit-logs-index-created" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="idx_audit_logs_created" tableName="audit_logs"/>
+            </not>
+        </preConditions>
+        <createIndex indexName="idx_audit_logs_created" tableName="audit_logs"><column name="created_at" descending="true"/></createIndex>
+    </changeSet>
+
+</databaseChangeLog>

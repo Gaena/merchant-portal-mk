@@ -27,9 +27,6 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
-/**
- * Configuration and metadata for a generated payment link.
- */
 @Entity
 @Table(name = "payment_links")
 @Getter
@@ -44,16 +41,14 @@ public class PaymentLink {
     @Column(name = "id", updatable = false, nullable = false)
     private UUID id;
 
-    /** Optimistic-locking version, guards concurrent payment/count updates. */
     @Version
     @Column(name = "version")
     private Long version;
 
-    /** Reference ID from the provider (corresponds to {@code rid}). */
+    // Идентификатор ссылки на стороне эквайера, в его терминах — rid.
     @Column(name = "provider_reference")
     private String providerReference;
 
-    /** Reference ID from the merchant side. */
     @Column(name = "merchant_order_id")
     private String merchantOrderId;
 
@@ -63,7 +58,7 @@ public class PaymentLink {
     @Column(name = "amount", nullable = false)
     private BigDecimal amount;
 
-    /** ISO 4217 currency code (e.g., AZN). */
+    // Трёхбуквенный код валюты по ISO 4217, например AZN.
     @Column(name = "currency", nullable = false)
     private String currency;
 
@@ -87,11 +82,11 @@ public class PaymentLink {
     @Column(name = "usage_type", nullable = false)
     private UsageType usageType;
 
-    /** Allowed number of payments (for {@code MULTIPLE}). */
+    // Разрешённое число платежей; заполнен только при usageType = MULTIPLE.
     @Column(name = "max_payments")
     private Integer maxPayments;
 
-    /** Number of successful payments processed. */
+    // Сколько раз ссылкой воспользовались: состоявшиеся платежи, возвращённые тоже (P2-16, Р-49).
     @Column(name = "current_payments_count", nullable = false)
     private Integer currentPaymentsCount;
 
@@ -99,7 +94,6 @@ public class PaymentLink {
     @Column(name = "status", nullable = false)
     private PaymentLinkStatus status;
 
-    /** Custom metadata for the merchant. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "metadata")
     private Map<String, Object> metadata;

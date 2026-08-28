@@ -47,6 +47,12 @@ export default defineConfig({
         target: 'http://localhost:8082',
         changeOrigin: true,
       },
+      // Сводка главной (P3-7). Отдельный префикс, а не /api/v1/transactions/summary: рядом
+      // живёт GET /api/v1/transactions/{id}, и «summary» уехало бы в разбор UUID.
+      '/api/v1/dashboard': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
       '/api/v1/payment-links': {
         target: 'http://localhost:8080',
         changeOrigin: true,

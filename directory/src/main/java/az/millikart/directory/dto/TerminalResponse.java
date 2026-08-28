@@ -1,5 +1,6 @@
 package az.millikart.directory.dto;
 
+import az.millikart.directory.domain.TerminalStatus;
 import java.time.Instant;
 
 public record TerminalResponse(
@@ -8,6 +9,7 @@ public record TerminalResponse(
         String login,
         String password,
         String companyId,
+        TerminalStatus status,
         String createdBy,
         Instant createdAt,
         String updatedBy,

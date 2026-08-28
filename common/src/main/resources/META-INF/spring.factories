@@ -1,0 +1,3 @@
+# Reports a missing secret as an instruction instead of a placeholder stack trace.
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+az.millikart.common.security.MissingSecretFailureAnalyzer

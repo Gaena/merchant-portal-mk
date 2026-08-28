@@ -1,138 +1,150 @@
-// Shared types and mock data for Pay by Link feature
+/**
+ * Словари платёжной ссылки и форматтеры экранов Pay by Link.
+ *
+ * Значения — ровно те, что присылает бэкенд:
+ * `pbl/src/main/java/az/millikart/pbl/domain/PaymentLinkStatus.java`,
+ * `pbl/src/main/java/az/millikart/pbl/domain/UsageType.java`,
+ * `pbl/src/main/java/az/millikart/pbl/domain/PaymentType.java`.
+ * В ответе они сериализуются именами енумов (`PaymentLinkResponse`,
+ * `PaymentLinkSummaryResponse`), то есть всегда в верхнем регистре.
+ *
+ * Новое значение на бэкенде → добавить сюда, иначе разборщик вернёт `null`
+ * и значение покажется как неизвестное. Значений «на будущее» здесь быть не должно:
+ * пока их нет, `tsc` ловит сравнение с несуществующим статусом (P2-13, Р-33 — то же
+ * правило, что у транзакций в `types/transaction.ts`, P2-12, Р-30).
+ *
+ * Статуса `paid` у бэкенда нет и не было: оплаченная одноразовая ссылка приходит
+ * как `COMPLETED`. Написание одно — `CANCELED`, с одной `l`.
+ */
+// SUSPENDED (P2-8): ссылка заблокированного терминала. Ставится и снимается только блокировкой
+// и разблокировкой терминала в `directory` — мерчант этот статус не выставляет и не снимает.
+export const LINK_STATUSES = ['ACTIVE', 'EXPIRED', 'COMPLETED', 'CANCELED', 'SUSPENDED'] as const;
 
-export type LinkStatus = 'active' | 'paid' | 'completed' | 'expired' | 'cancelled' | 'canceled';
-export type LinkUsageType = 'single' | 'multiple';
-export type PaymentType = 'sms' | 'dms';
+export type LinkStatus = (typeof LINK_STATUSES)[number];
+
+export const LINK_USAGE_TYPES = ['SINGLE', 'MULTIPLE'] as const;
+
+export type LinkUsageType = (typeof LINK_USAGE_TYPES)[number];
+
+export const PAYMENT_TYPES = ['SMS', 'DMS'] as const;
+
+export type PaymentType = (typeof PAYMENT_TYPES)[number];
+
+/**
+ * Стадия DMS-платежа. Собственного поля под неё в ответе бэкенда нет — значение
+ * появляется только локально, после успешного `POST /transactions/{id}/complete`.
+ * Это не словарь бэкенда, поэтому разборщика у него нет.
+ */
 export type DmsStatus = 'authorized' | 'finalized';
+
+/**
+ * Общая часть трёх разборщиков ниже: строгое сравнение со словарём, без приведения
+ * регистра и trim, никогда не бросает. **Никакой подстановки по умолчанию** — раньше
+ * на этом месте стояло `(l.status || 'active').toLowerCase()`, и любое нераспознанное
+ * значение молча становилось активной ссылкой, то есть «по ней можно платить».
+ *
+ * Предупреждение в консоль — единственный побочный эффект: разбор идёт в одном месте,
+ * поэтому расхождение со словарём бэкенда видно сразу и с исходным значением.
+ */
+const parseEnumValue = <T extends string>(
+  values: readonly T[],
+  raw: unknown,
+  what: string,
+): T | null => {
+  if (typeof raw !== 'string') {
+    if (raw !== null && raw !== undefined) {
+      console.warn(`[pay-by-link] ${what} не строка:`, raw);
+    }
+    return null;
+  }
+  if ((values as readonly string[]).includes(raw)) {
+    return raw as T;
+  }
+  console.warn(`[pay-by-link] неизвестный ${what}: "${raw}"`);
+  return null;
+};
+
+/** Разбор `status` из ответа `/api/v1/payment-links*`. Зеркало `parseTransactionStatus`. */
+export function parseLinkStatus(raw: unknown): LinkStatus | null {
+  return parseEnumValue(LINK_STATUSES, raw, 'статус ссылки');
+}
+
+/** Разбор `usageType` из ответа. Правила те же, что у `parseLinkStatus`. */
+export function parseLinkUsageType(raw: unknown): LinkUsageType | null {
+  return parseEnumValue(LINK_USAGE_TYPES, raw, 'тип использования ссылки');
+}
+
+/** Разбор `paymentType` из ответа. Правила те же, что у `parseLinkStatus`. */
+export function parsePaymentType(raw: unknown): PaymentType | null {
+  return parseEnumValue(PAYMENT_TYPES, raw, 'тип платежа');
+}
 
 export interface PaymentLink {
   id: string;
   shortCode: string;
   url: string;
-  status: LinkStatus;
+  /** Разобранный статус; `null` — бэкенд прислал значение вне словаря, см. `statusRaw`. */
+  status: LinkStatus | null;
+  /** Исходное значение статуса. Показывается серым и как есть, когда `status === null`. */
+  statusRaw?: string;
   amount: number;
   currency: string;
   description: string;
   customerName: string;
   customerEmail: string;
   customerPhone: string;
-  usageType: LinkUsageType;
+  /** `null` — значение вне словаря бэкенда; подставлять `SINGLE` вместо него нельзя. */
+  usageType: LinkUsageType | null;
+  /** `null` — значение вне словаря бэкенда; подставлять `SMS` вместо него нельзя. */
+  paymentType: PaymentType | null;
   maxUses: number;
+  /**
+   * Сколько раз ссылкой воспользовались — `currentPaymentsCount` из API. С P2-16 (Р-49)
+   * это состоявшиеся платежи: `SUCCESS` + `REFUNDED` + `PARTIALLY_REFUNDED`. Возврат —
+   * полный или частичный — использование не отменяет: число не уменьшается и слот
+   * не освобождается. В списочном ответе поля нет, там всегда 0.
+   */
   usedCount: number;
+  /**
+   * Сколько из состоявшихся платежей возвращено, полностью или частично, —
+   * `refundedPaymentsCount` из API (P2-16, Р-50). Всегда ≤ `usedCount`. Показывается
+   * на карточке рядом с «использовано N из M» только когда больше нуля. В списочном
+   * ответе поля нет намеренно (счётчик на строку вернул бы N+1) — там всегда 0.
+   */
+  refundedCount: number;
   createdAt: Date;
   expiresAt: Date;
+
+  /**
+   * Время последнего успешного платежа по ссылке — `lastPaidAt` из API (P2-15, Р-46).
+   * `undefined` означает «не оплачивалась»; подставлять сюда что-либо нельзя.
+   *
+   * Возвращённый платёж датой оплаты остаётся: бэкенд ищет по `SUCCESS`, `REFUNDED`
+   * и `PARTIALLY_REFUNDED`, потому что возврат переписывает статус самой транзакции.
+   */
   paidAt?: Date;
-  redirectUrl: string;
-  note: string;
-  // payment type
-  paymentType: PaymentType;
-  dmsStatus?: DmsStatus;   // only relevant when paymentType === 'dms' && status === 'paid'
+
+  // ─── Поля, которых в ответе API пока нет ────────────────────────────────────
+  // Мок-генератор, который их заполнял, удалён вместе с P2-13. Разметка их читает,
+  // поэтому они оставлены — но до появления соответствующих полей в API все они
+  // **всегда `undefined`**, и ветки под ними на экран не попадают. Подставлять вместо
+  // них значения по умолчанию запрещено (Р-48): построитель, сочинявший карту и номер
+  // транзакции из этих полей, удалён в P2-15 — он был безвреден ровно до того дня,
+  // когда заработало поле, за которым он прятался.
+  redirectUrl?: string;
+  note?: string;
+  dmsStatus?: DmsStatus;
   finalizedAt?: Date;
-  terminalRid?: string;    // merchant terminal used to process the payment
-  // enriched fields for detail view
-  paymentMethod?: string;
   cardNetwork?: string;
   cardLast4?: string;
   transactionId?: string;
   payerIp?: string;
   sentVia?: ('email' | 'whatsapp' | 'copy')[];
+  // Бэкенд отдаёт `PaymentLinkResponse.terminal` и `.rid`, но маппинг из API их пока
+  // не переносит — читаются в `PayByLinkDetailPage` и всегда undefined.
+  terminalId?: number;
+  merchantRid?: string;
 }
-
-const customers = [
-  { name: 'Anar Mammadov',   email: 'anar.m@gmail.com',    phone: '+994501234567' },
-  { name: 'Leyla Aliyeva',   email: 'leyla.a@mail.ru',      phone: '+994552345678' },
-  { name: 'Rauf Hasanov',    email: 'rauf.h@outlook.com',   phone: '+994703456789' },
-  { name: 'Nigar Guliyeva',  email: 'nigar.g@yahoo.com',    phone: '+994514567890' },
-  { name: 'Tural Rzayev',    email: 'tural.r@gmail.com',    phone: '+994555678901' },
-  { name: 'Sevinc Abbasova', email: 'sevinc.a@mail.ru',     phone: '+994706789012' },
-  { name: 'Kamran Quliyev',  email: 'kamran.q@gmail.com',   phone: '+994517890123' },
-  { name: 'Aysel Ismayilova',email: 'aysel.i@outlook.com',  phone: '+994558901234' },
-];
-
-const descriptions = [
-  'Invoice #INV-2024-0891 — Software Subscription',
-  'Order #ORD-5534 — Product Purchase',
-  'Service Fee — Consulting 2h',
-  'Invoice #INV-2024-0892 — Annual License',
-  'Event Ticket — Tech Conference',
-  'Order #ORD-5535 — Equipment Rental',
-  'Invoice #INV-2024-0893 — Web Development',
-  'Donation — Charity Fund',
-];
-
-const statuses: LinkStatus[] = ['active', 'active', 'paid', 'expired', 'cancelled', 'active', 'paid'];
-const paymentMethods = ['Visa', 'Mastercard', 'Visa', 'Mastercard', 'AmEx'];
-const cardNetworks = ['Visa', 'Mastercard', 'Visa', 'Mastercard', 'AmEx'];
-const terminalRids = [
-  'TRM-001-AZE', 'TRM-002-BAK', 'TRM-003-GNJ',
-  'TRM-004-SMX', 'TRM-005-MNG', 'TRM-006-AZE',
-  'TRM-007-BAK', 'TRM-008-GNJ', 'TRM-009-SMX', 'TRM-010-MNG',
-];
-
-// Merchant terminal registry with metadata shown in the selector
-export const merchantTerminals: { rid: string; label: string; location: string; type: 'ecommerce' | 'pos' }[] = [
-  { rid: 'TRM-001-AZE', label: 'Main Gateway — Baku HQ',         location: 'Baku',       type: 'ecommerce' },
-  { rid: 'TRM-002-BAK', label: 'POS Terminal 1 — Baku Store',    location: 'Baku',       type: 'pos'       },
-  { rid: 'TRM-003-GNJ', label: 'POS Terminal 2 — Ganja Branch',  location: 'Ganja',      type: 'pos'       },
-  { rid: 'TRM-004-SMX', label: 'POS Terminal 3 — Sheki Branch',  location: 'Sheki',      type: 'pos'       },
-  { rid: 'TRM-005-MNG', label: 'Online Store Gateway',           location: 'Virtual',    type: 'ecommerce' },
-  { rid: 'TRM-006-AZE', label: 'Mobile POS — Field Sales',       location: 'Baku',       type: 'pos'       },
-  { rid: 'TRM-007-BAK', label: 'POS Terminal 4 — Airport Kiosk', location: 'Baku',       type: 'pos'       },
-  { rid: 'TRM-008-GNJ', label: 'Secondary Gateway',              location: 'Virtual',    type: 'ecommerce' },
-  { rid: 'TRM-009-SMX', label: 'POS Terminal 5 — Sumqayit',      location: 'Sumqayit',   type: 'pos'       },
-  { rid: 'TRM-010-MNG', label: 'POS Terminal 6 — Mingachevir',   location: 'Mingachevir',type: 'pos'       },
-];
-
-export const generateLinks = (): PaymentLink[] =>
-  Array.from({ length: 18 }, (_, i) => {
-    const status    = statuses[i % statuses.length];
-    const customer  = customers[i % customers.length];
-    const createdAt = new Date(Date.now() - (i + 1) * 3.2 * 60 * 60 * 1000);
-    const expiresAt = new Date(createdAt.getTime() + (i % 3 === 0 ? 1 : i % 3 === 1 ? 24 : 168) * 60 * 60 * 1000);
-    const shortCode = `PL${String(1000 + i).padStart(4, '0')}`;
-    const isPaid    = status === 'paid';
-
-    const paymentType: PaymentType = i % 3 === 0 ? 'dms' : 'sms';
-    const isDms = paymentType === 'dms';
-    const dmsStatus: DmsStatus | undefined = isPaid && isDms
-      ? (i % 2 === 0 ? 'authorized' : 'finalized')
-      : undefined;
-    const finalizedAt = dmsStatus === 'finalized'
-      ? new Date(createdAt.getTime() + 90 * 60 * 1000)
-      : undefined;
-
-    return {
-      id:            `link-${String(i + 1).padStart(3, '0')}`,
-      shortCode,
-      url:           `https://pay.gateway.az/${shortCode}`,
-      status,
-      amount:        [49.99, 120.00, 250.50, 75.00, 890.00, 34.99, 1500.00, 299.99][i % 8],
-      currency:      'AZN',
-      description:   descriptions[i % descriptions.length],
-      customerName:  customer.name,
-      customerEmail: customer.email,
-      customerPhone: customer.phone,
-      usageType:     i % 4 === 0 ? 'multiple' : 'single',
-      maxUses:       i % 4 === 0 ? 5 : 1,
-      usedCount:     isPaid ? 1 : status === 'active' && i % 4 === 0 ? Math.floor(i / 4) : 0,
-      createdAt,
-      expiresAt,
-      paidAt:        isPaid ? new Date(createdAt.getTime() + 45 * 60 * 1000) : undefined,
-      redirectUrl:   'https://yourstore.az/thank-you',
-      note:          i % 3 === 0 ? 'Customer requested link via phone' : '',
-      paymentType,
-      dmsStatus,
-      finalizedAt,
-      terminalRid: terminalRids[i % terminalRids.length],
-      // payment detail fields
-      paymentMethod: isPaid ? paymentMethods[i % paymentMethods.length] : undefined,
-      cardNetwork:   isPaid ? cardNetworks[i % cardNetworks.length] : undefined,
-      cardLast4:     isPaid ? String(1000 + (i * 37) % 9000) : undefined,
-      transactionId: isPaid ? `TXN-${shortCode}-${String(i * 7 + 1001).padStart(6, '0')}` : undefined,
-      payerIp:       isPaid ? `185.${i + 10}.${i * 3 + 1}.${i * 7 + 2}` : undefined,
-      sentVia:       i % 2 === 0 ? ['email'] : i % 3 === 0 ? ['whatsapp', 'copy'] : ['copy'],
-    };
-  });
 
 export const formatDateTime = (d: Date) =>
   d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -151,26 +163,34 @@ export const expiryPercent = (link: PaymentLink): number =>
      (link.expiresAt.getTime() - link.createdAt.getTime())) * 100
   ));
 
-export const statusConfig: Record<string, {
-  label: string;
-  color: 'success' | 'info' | 'default' | 'error';
+interface LinkStatusColors {
+  color: 'success' | 'info' | 'default' | 'error' | 'warning';
   bgColor: string;
   textColor: string;
-}> = {
-  active:    { label: 'Active',    color: 'success', bgColor: 'rgba(46,125,50,0.1)',    textColor: '#2e7d32' },
-  paid:      { label: 'Paid',      color: 'info',    bgColor: 'rgba(21,101,192,0.1)',   textColor: '#1565c0' },
-  completed: { label: 'Completed', color: 'info',    bgColor: 'rgba(21,101,192,0.1)',   textColor: '#1565c0' },
-  expired:   { label: 'Expired',   color: 'default', bgColor: 'rgba(0,0,0,0.06)',       textColor: '#546e7a' },
-  cancelled: { label: 'Cancelled', color: 'error',   bgColor: 'rgba(198,40,40,0.1)',    textColor: '#c62828' },
-  canceled:  { label: 'Canceled',  color: 'error',   bgColor: 'rgba(198,40,40,0.1)',    textColor: '#c62828' },
+}
+
+const LINK_STATUS_COLORS: Record<LinkStatus, LinkStatusColors> = {
+  ACTIVE:    { color: 'success', bgColor: 'rgba(46,125,50,0.1)',  textColor: '#2e7d32' },
+  COMPLETED: { color: 'info',    bgColor: 'rgba(21,101,192,0.1)', textColor: '#1565c0' },
+  EXPIRED:   { color: 'default', bgColor: 'rgba(0,0,0,0.06)',     textColor: '#546e7a' },
+  CANCELED:  { color: 'error',   bgColor: 'rgba(198,40,40,0.1)',  textColor: '#c62828' },
+  // Приостановлена не мерчантом и не по сроку: янтарный, чтобы отличалась и от активной,
+  // и от отменённой — по ней нельзя платить, но она вернётся, когда терминал разблокируют.
+  SUSPENDED: { color: 'warning', bgColor: 'rgba(237,108,2,0.12)', textColor: '#ed6c02' },
 };
 
-export const getStatusConfig = (status?: string) => {
-  const st = (status || '').toLowerCase();
-  return statusConfig[st] || {
-    label: status || 'Unknown',
-    color: 'default',
-    bgColor: 'rgba(0,0,0,0.06)',
-    textColor: '#546e7a',
-  };
+/** Статус вне словаря бэкенда: серый, чтобы его нельзя было спутать с активной ссылкой. */
+const UNKNOWN_STATUS_COLORS: LinkStatusColors = {
+  color: 'default',
+  bgColor: 'rgba(158,158,158,0.16)',
+  textColor: '#616161',
 };
+
+/**
+ * Цвет статуса. Аргумент уже разобран `parseLinkStatus`, поэтому ни `toLowerCase()`,
+ * ни ветки под два написания `canceled`/`cancelled` здесь больше не нужны.
+ * `null` — статус вне словаря: серый, а не «активна» по умолчанию.
+ * Зеркало `getStatusColorScheme` из `utils/statusColors.ts` (P2-12).
+ */
+export const getLinkStatusColors = (status: LinkStatus | null | undefined): LinkStatusColors =>
+  (status ? LINK_STATUS_COLORS[status] : UNKNOWN_STATUS_COLORS);

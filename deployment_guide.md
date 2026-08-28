@@ -20,11 +20,13 @@
 12. [Шаг 10 — Настройка HTTPS (SSL-сертификат)](#12-шаг-10--настройка-https-ssl-сертификат)
 13. [Шаг 11 — Настройка файрвола](#13-шаг-11--настройка-файрвола)
 14. [Шаг 12 — Проверка работоспособности](#14-шаг-12--проверка-работоспособности)
+    - [14.3 Swagger на время приёмки](#143-swagger-на-время-приёмки)
 15. [Обновление системы](#15-обновление-системы)
 16. [Резервное копирование](#16-резервное-копирование)
 17. [Мониторинг и логи](#17-мониторинг-и-логи)
 18. [Устранение неполадок](#18-устранение-неполадок)
 19. [Справочник: порты и сервисы](#19-справочник-порты-и-сервисы)
+20. [Первый запуск и ротация ключа](#20-первый-запуск-и-ротация-ключа)
 
 ---
 
@@ -242,6 +244,56 @@ CREATE DATABASE merchant_portal;
 > 
 > **НЕ ИСПОЛЬЗУЙТЕ** пароль `password` на продакшн-серверах!
 
+### 5.1a. Роль приложения и права на журнал аудита (Р-42)
+
+Журнал аудита (`audit_logs`) — доказательство того, что происходило в системе. Значит, само
+приложение не должно уметь его править и удалять: строки только добавляются. В коде это уже так
+(репозиторий журнала умеет единственное — `save`, у записи нет сеттеров), а в базе это делается
+правами.
+
+Заведите **обычную роль для приложения** — не суперпользователя — и выдайте ей права:
+
+```sql
+-- Роль, под которой работают три сервиса. NOSUPERUSER и NOCREATEROLE — обязательно.
+CREATE ROLE mp_app WITH LOGIN PASSWORD 'ПАРОЛЬ_ПРИЛОЖЕНИЯ' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+
+-- Работа со схемой и с обычными таблицами
+GRANT CONNECT ON DATABASE merchant_portal TO mp_app;
+GRANT USAGE ON SCHEMA public TO mp_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO mp_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO mp_app;
+
+-- А журнал аудита — только добавление и чтение. Ни UPDATE, ни DELETE.
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM mp_app;
+GRANT SELECT, INSERT ON audit_logs TO mp_app;
+
+-- То же самое для таблиц, которые появятся при следующих миграциях
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO mp_app;
+```
+
+> [!WARNING]
+> **Сегодня эти права ни на что не влияют.** Все три сервиса подключаются к базе как `postgres`,
+> то есть суперпользователем, а на суперпользователя `REVOKE` не действует — он обходит проверку
+> прав целиком. Пока `DB_USERNAME` в `/opt/mp/.env` (раздел 8.3) не сменят с `postgres` на
+> `mp_app`, защита журнала существует только в коде приложения.
+>
+> Смена пользователя базы затрагивает все три сервиса и миграции сразу, поэтому она вынесена в
+> отдельную работу и описана как открытая проблема в `problems.md`. Команды выше приведены здесь,
+> чтобы их можно было выполнить сразу, как только до этого дойдут руки.
+
+> [!NOTE]
+> **Liquibase и права.** Миграции создают и меняют таблицы, а роль приложения такого права не
+> имеет. Два рабочих варианта:
+> 1. выдать `mp_app` право на схему (`GRANT CREATE ON SCHEMA public TO mp_app;`) — проще, но роль
+>    приложения снова может создать таблицу и, например, подменить журнал;
+> 2. прогонять миграции отдельным пользователем (тем же `postgres`) до старта сервисов, а сервисы
+>    запускать под `mp_app` с выключенным Liquibase (`spring.liquibase.enabled=false`) — строже,
+>    но требует отдельного шага при каждом обновлении.
+>
+> Пока сервисы ходят под `postgres`, выбирать не приходится; решать это нужно вместе со сменой
+> `DB_USERNAME`.
+
 ### 5.2. Разрешение подключения по паролю
 
 Откройте конфигурационный файл PostgreSQL:
@@ -391,10 +443,10 @@ spring:
   application:
     name: auth
   datasource:
-    url: jdbc:postgresql://localhost:5432/merchant_portal
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/merchant_portal}
     driver-class-name: org.postgresql.Driver
-    username: postgres
-    password: ВАШ_ПАРОЛЬ_БАЗЫ_ДАННЫХ
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -405,25 +457,49 @@ spring:
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.xml
 
+auth:
+  bootstrap:
+    # Разовое создание первого администратора. Подробности — раздел 20.
+    enabled: ${AUTH_BOOTSTRAP_ENABLED:false}
+  refresh:
+    # Refresh-токены (P1-12): срок, окно снисхождения ротации, уборка просроченных.
+    ttl: ${AUTH_REFRESH_TTL:P30D}
+    rotation-grace: ${AUTH_REFRESH_ROTATION_GRACE:PT10S}
+    cleanup-enabled: ${AUTH_REFRESH_CLEANUP_ENABLED:true}
+    cleanup-cron: "${AUTH_REFRESH_CLEANUP_CRON:0 30 3 * * *}"
+
 pbl:
   security:
     jwt:
-      secret: ЗАМЕНИТЕ_НА_СВОЙ_СЕКРЕТНЫЙ_КЛЮЧ_BASE64
-      expiration-ms: 86400000
+      secret: ${JWT_SECRET}
+      # Срок access-токена: 15 минут (P1-13). Фронтенд обновляет его сам через /refresh;
+      # это же — верхняя граница, сколько после выхода/блокировки пользователь ещё имеет доступ.
+      expiration-ms: ${JWT_EXPIRATION_MS:900000}
 
 management:
+  server:
+    # Actuator на отдельном порту, привязанном к 127.0.0.1: снаружи сервера он недоступен
+    # физически. Порты: auth 9081, directory 9082, pbl 9080. Здесь — auth.
+    port: ${MANAGEMENT_PORT:9081}
+    address: 127.0.0.1
   endpoints:
     web:
       exposure:
         include: health,info,metrics
   endpoint:
     health:
+      # Можно оставить always: детали (состояние БД, свободное место на дисках) видны
+      # только с самой машины, на публичном порту эндпоинта нет вовсе.
       show-details: always
 
 springdoc:
+  # Swagger выключен в постоянной эксплуатации: /v3/api-docs — это полная карта API.
+  # На время приёмо-сдаточных испытаний включается SWAGGER_ENABLED=true, см. раздел 14.3.
   api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /v3/api-docs
   swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /swagger-ui.html
 
 logging:
@@ -446,10 +522,10 @@ spring:
   application:
     name: directory
   datasource:
-    url: jdbc:postgresql://localhost:5432/merchant_portal
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/merchant_portal}
     driver-class-name: org.postgresql.Driver
-    username: postgres
-    password: ВАШ_ПАРОЛЬ_БАЗЫ_ДАННЫХ
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -463,21 +539,35 @@ spring:
 pbl:
   security:
     jwt:
-      secret: ЗАМЕНИТЕ_НА_СВОЙ_СЕКРЕТНЫЙ_КЛЮЧ_BASE64
+      secret: ${JWT_SECRET}
+      # Одинаково с auth (P1-13). directory токены только проверяет — значение здесь для
+      # единообразия трёх конфигураций.
+      expiration-ms: ${JWT_EXPIRATION_MS:900000}
 
 management:
+  server:
+    # Actuator на отдельном порту, привязанном к 127.0.0.1: снаружи сервера он недоступен
+    # физически. Порты: auth 9081, directory 9082, pbl 9080. Здесь — directory.
+    port: ${MANAGEMENT_PORT:9082}
+    address: 127.0.0.1
   endpoints:
     web:
       exposure:
         include: health,info,metrics
   endpoint:
     health:
+      # Можно оставить always: детали (состояние БД, свободное место на дисках) видны
+      # только с самой машины, на публичном порту эндпоинта нет вовсе.
       show-details: always
 
 springdoc:
+  # Swagger выключен в постоянной эксплуатации: /v3/api-docs — это полная карта API.
+  # На время приёмо-сдаточных испытаний включается SWAGGER_ENABLED=true, см. раздел 14.3.
   api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /v3/api-docs
   swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /swagger-ui.html
 
 logging:
@@ -500,10 +590,10 @@ spring:
   application:
     name: pbl
   datasource:
-    url: jdbc:postgresql://localhost:5432/merchant_portal
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/merchant_portal}
     driver-class-name: org.postgresql.Driver
-    username: postgres
-    password: ВАШ_ПАРОЛЬ_БАЗЫ_ДАННЫХ
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -515,32 +605,69 @@ spring:
     change-log: classpath:db/changelog/db.changelog-master.xml
 
 pbl:
-  base-url: https://ВАШ_ДОМЕН/
+  # Публичный адрес сервиса — задаётся переменной окружения PBL_BASE_URL (mp.env, п. 8.3),
+  # а не правкой этого файла. Дефолта нет намеренно: значение уходит эквайеру как адрес
+  # возврата плательщика (hppRedirectUrl).
+  base-url: ${PBL_BASE_URL}
   security:
-    api-token: ЗАМЕНИТЕ_НА_СЛОЖНЫЙ_API_ТОКЕН
-    api-token-enabled: true
+    api-token: ${PBL_API_TOKEN:}
+    api-token-enabled: ${PBL_API_TOKEN_ENABLED:false}
     jwt:
-      secret: ЗАМЕНИТЕ_НА_СВОЙ_СЕКРЕТНЫЙ_КЛЮЧ_BASE64
+      secret: ${JWT_SECRET}
+      # Одинаково с auth (P1-13). pbl токены только проверяет — значение здесь для
+      # единообразия трёх конфигураций.
+      expiration-ms: ${JWT_EXPIRATION_MS:900000}
+  link:
+    # Срок жизни ссылки, если мерчант не передал expiresAt при создании.
+    default-ttl: ${PBL_LINK_DEFAULT_TTL:PT24H}
+    # Потолок: дальше этого от момента СОЗДАНИЯ ссылки срок выставить нельзя —
+    # ни при создании, ни последующими PATCH'ами.
+    max-ttl: ${PBL_LINK_MAX_TTL:P90D}
+  reconciliation:
+    # Фоновая сверка зависших PENDING-транзакций с эквайером (callback'а у эквайера нет —
+    # опрос единственный способ дожать статус). Значения по умолчанию рабочие.
+    enabled: ${PBL_RECONCILIATION_ENABLED:true}
+    cron: "${PBL_RECONCILIATION_CRON:0 */2 * * * *}"
+    min-age: ${PBL_RECONCILIATION_MIN_AGE:PT2M}
+    max-age: ${PBL_RECONCILIATION_MAX_AGE:PT24H}
+    # Старше этого возраста PENDING сверкой не опрашивается — ручной случай (P1-8a).
+    give-up-age: ${PBL_RECONCILIATION_GIVE_UP_AGE:P7D}
+    batch-size: ${PBL_RECONCILIATION_BATCH_SIZE:50}
   provider:
-    gateway-base-url: https://test.millikart.az:8083/
-    api-base-url: http://test.millikart.az:8000/
-    create-order-path: /order
-    exec-tran-path: /order/{orderId}/exec-tran
-    get-order-path: /order/{orderId}
+    # Адреса эквайера — из окружения, без дефолтов: дефолт на тестовый стенд в проде
+    # отправил бы платежи тестовому эквайеру (ничего не списывается, портал показывает
+    # «оплачено»). Значения выдаёт MilliKart, задаются в mp.env (п. 8.3).
+    gateway-base-url: ${PBL_PROVIDER_GATEWAY_BASE_URL}
+    api-base-url: ${PBL_PROVIDER_API_BASE_URL}
+    # Пути — константы протокола, дефолты у них есть; в кавычках из-за фигурных скобок.
+    create-order-path: "${PBL_PROVIDER_CREATE_ORDER_PATH:/order}"
+    exec-tran-path: "${PBL_PROVIDER_EXEC_TRAN_PATH:/order/{orderId}/exec-tran}"
+    get-order-path: "${PBL_PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
 
 management:
+  server:
+    # Actuator на отдельном порту, привязанном к 127.0.0.1: снаружи сервера он недоступен
+    # физически. Порты: auth 9081, directory 9082, pbl 9080. Здесь — pbl.
+    port: ${MANAGEMENT_PORT:9080}
+    address: 127.0.0.1
   endpoints:
     web:
       exposure:
         include: health,info,metrics
   endpoint:
     health:
+      # Можно оставить always: детали (состояние БД, свободное место на дисках) видны
+      # только с самой машины, на публичном порту эндпоинта нет вовсе.
       show-details: always
 
 springdoc:
+  # Swagger выключен в постоянной эксплуатации: /v3/api-docs — это полная карта API.
+  # На время приёмо-сдаточных испытаний включается SWAGGER_ENABLED=true, см. раздел 14.3.
   api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /v3/api-docs
   swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /swagger-ui.html
 
 resilience4j:
@@ -568,28 +695,95 @@ EOF
 
 ### 8.2. Что нужно заменить в конфигурации
 
-> [!CAUTION]
-> **Обязательно** замените следующие значения во ВСЕХ трёх файлах:
+В самих yaml-файлах менять **ничего не нужно**. Раньше здесь был плейсхолдер `ВАШ_ДОМЕН`
+в `pbl.base-url`; с P1-10 домен, как и адреса эквайера, задаётся переменной окружения
+(`PBL_BASE_URL`, `PBL_PROVIDER_GATEWAY_BASE_URL`, `PBL_PROVIDER_API_BASE_URL` — следующий
+пункт), а не правкой yaml. Все три без значения по умолчанию: сервис без них не стартует.
 
-| Плейсхолдер | Где менять | На что заменить | Пример |
-|---|---|---|---|
-| `ВАШ_ПАРОЛЬ_БАЗЫ_ДАННЫХ` | Все 3 файла | Пароль из шага 5.1 | `Mp$ecure_2026!Prod` |
-| `ЗАМЕНИТЕ_НА_СВОЙ_СЕКРЕТНЫЙ_КЛЮЧ_BASE64` | Все 3 файла | **Одинаковый** ключ во всех! | см. ниже |
-| `ВАШ_ДОМЕН` | Только PBL | Ваш домен | `mp.millikart.az` |
-| `ЗАМЕНИТЕ_НА_СЛОЖНЫЙ_API_ТОКЕН` | Только PBL | Любая длинная случайная строка | `pbl-prod-a7f3e9b2c4d1` |
+Все настройки окружения — записи вида `${ПЕРЕМЕННАЯ}`. Ни секретов, ни адресов в yaml
+больше нет и быть не должно: их подставляет окружение процесса. Файл конфигурации после
+этого можно показывать кому угодно, и один и тот же файл годится для тестового стенда
+и для прода.
 
-### 8.3. Как сгенерировать JWT-секрет
+### 8.3. Файл с переменными окружения
 
-Выполните команду:
+Секреты и адреса живут в одном файле, который читает systemd. Шаблон со всеми переменными и
+пояснениями — `.env.example` в корне репозитория.
 
 ```bash
-openssl rand -base64 64 | tr -d '\n'
+sudo touch /opt/merchant-portal/config/mp.env
+sudo chown mpuser:mpuser /opt/merchant-portal/config/mp.env
+# Файл содержит пароль БД и ключ подписи — читать его должен только сервис:
+sudo chmod 600 /opt/merchant-portal/config/mp.env
+
+sudo tee /opt/merchant-portal/config/mp.env > /dev/null << EOF
+DB_URL=jdbc:postgresql://localhost:5432/merchant_portal
+DB_USERNAME=postgres
+DB_PASSWORD=ВАШ_ПАРОЛЬ_БАЗЫ_ДАННЫХ
+JWT_SECRET=$(openssl rand -base64 48)
+PBL_BASE_URL=https://ВАШ_ДОМЕН/
+PBL_PROVIDER_GATEWAY_BASE_URL=АДРЕС_ШЛЮЗА_ОТ_MILLIKART
+PBL_PROVIDER_API_BASE_URL=АДРЕС_API_ОТ_MILLIKART
+AUTH_BOOTSTRAP_ENABLED=false
+PBL_API_TOKEN_ENABLED=false
+SWAGGER_ENABLED=false
+EOF
 ```
 
-Скопируйте результат и вставьте вместо `ЗАМЕНИТЕ_НА_СВОЙ_СЕКРЕТНЫЙ_КЛЮЧ_BASE64` во **ВСЕХ ТРЁХ** конфигурационных файлах.
+> [!CAUTION]
+> **`PBL_BASE_URL` — это адрес, на который эквайер вернёт плательщика после оплаты.**
+> Сервис отдаёт его MilliKart как `hppRedirectUrl` при создании каждого заказа. Неверное,
+> но формально корректное значение (чужой домен, опечатка в домене, `http://` вместо
+> `https://`) сервис **не роняет**:
+> он стартует, ссылки создаются, страница оплаты открывается — а после оплаты эквайер
+> отправляет плательщика не на тот хост, и ни один платёж не завершается. Ошибки в логе
+> при этом не будет. Проверьте значение дважды: схема `https://`, ваш домен, завершающий `/`.
+> На старте проверяется только форма: пустое значение, не-URL (в том числе незаменённый
+> плейсхолдер), относительный путь или схема кроме `http`/`https` — отказ стартовать
+> с инструкцией (в том числе значение с пробелом или переводом строки на конце — оно
+> используется как есть и сломало бы каждый URL); не-HTTPS адрес на любом хосте, кроме
+> `localhost`/`127.0.0.1`/`[::1]`, — WARN в рамке.
+>
+> `PBL_PROVIDER_GATEWAY_BASE_URL` и `PBL_PROVIDER_API_BASE_URL` — адреса шлюза и API эквайера,
+> их выдаёт MilliKart, и у тестового стенда и прода они разные. Дефолтов у них нет по той же
+> причине: дефолт на тестовый стенд в проде — это платежи, ушедшие тестовому эквайеру, при
+> «оплачено» в портале. Если адрес API у эквайера пока только `http://`, сервис стартует,
+> но пишет WARN: по этому каналу уходит Basic-авторизация с логином и паролем терминала.
+> Это разговор с MilliKart о HTTPS, а не правка конфигурации.
+
+> [!NOTE]
+> `SWAGGER_ENABLED=false` — это рабочее состояние. Как временно включить документацию
+> на время приёмки, описано в разделе [14.3](#143-swagger-на-время-приёмки).
+> `MANAGEMENT_PORT` в файл не добавляем: у каждого сервиса свой порт actuator задан
+> в его yaml (auth 9081, directory 9082, pbl 9080), и одна общая переменная сломала бы
+> это разделение. Переопределять его нужно только при конфликте портов — и тогда
+> персонально, в юните конкретного сервиса.
+
+> [!NOTE]
+> Здесь `<< EOF` **без кавычек** — это намеренно: так `$(openssl rand -base64 48)` выполнится
+> и в файл попадёт готовый ключ. В блоках выше кавычки (`<< 'EOF'`) есть, потому что там
+> `${...}` должны остаться текстом.
+
+Проверьте, что ключ действительно записался (а не строка `$(openssl…)`):
+
+```bash
+sudo grep JWT_SECRET /opt/merchant-portal/config/mp.env
+```
 
 > [!WARNING]
-> JWT-секрет должен быть **одинаковым** во всех трёх сервисах! Иначе авторизация не будет работать — сервисы не смогут проверять токены друг друга.
+> `JWT_SECRET` должен быть **одинаковым** во всех трёх сервисах — поэтому файл один на всех.
+> Разные значения означают, что токен, выданный `auth`, не пройдёт проверку в `directory` и `pbl`,
+> и любой запрос к ним вернёт 401.
+
+> [!CAUTION]
+> `DB_PASSWORD` и `JWT_SECRET` (а для `pbl` — и три адреса из блока выше) **не имеют значений
+> по умолчанию**. Сервис, запущенный без них, не стартует и печатает, что именно задать. Это не
+> помеха, а защита: значение по умолчанию — ровно то, из-за чего прежний ключ подписи попал
+> в репозиторий и стал публичным, а у адресов дефолт — это прод, молча отправляющий
+> плательщиков на `localhost`.
+
+Полная процедура первого запуска, создания администратора и смены ключа —
+раздел [20](#20-первый-запуск-и-ротация-ключа).
 
 ### 8.4. Создание директории для логов
 
@@ -632,6 +826,9 @@ Group=mpuser
 
 WorkingDirectory=/opt/merchant-portal/deploy
 
+# Секреты (DB_PASSWORD, JWT_SECRET и остальные) — только отсюда, не из yaml.
+EnvironmentFile=/opt/merchant-portal/config/mp.env
+
 ExecStart=/usr/bin/java \
     -Xms256m -Xmx512m \
     -jar /opt/merchant-portal/deploy/auth.jar \
@@ -668,6 +865,9 @@ User=mpuser
 Group=mpuser
 
 WorkingDirectory=/opt/merchant-portal/deploy
+
+# Секреты (DB_PASSWORD, JWT_SECRET и остальные) — только отсюда, не из yaml.
+EnvironmentFile=/opt/merchant-portal/config/mp.env
 
 ExecStart=/usr/bin/java \
     -Xms256m -Xmx512m \
@@ -706,6 +906,9 @@ Group=mpuser
 
 WorkingDirectory=/opt/merchant-portal/deploy
 
+# Секреты (DB_PASSWORD, JWT_SECRET и остальные) — только отсюда, не из yaml.
+EnvironmentFile=/opt/merchant-portal/config/mp.env
+
 ExecStart=/usr/bin/java \
     -Xms256m -Xmx512m \
     -jar /opt/merchant-portal/deploy/pbl.jar \
@@ -728,6 +931,11 @@ EOF
 
 ### 9.5. Запуск всех сервисов
 
+> [!IMPORTANT]
+> Если это **первый** запуск установки — сначала прочитайте раздел
+> [20](#20-первый-запуск-и-ротация-ключа): пустая база не содержит ни одного пользователя,
+> и администратора нужно завести отдельным шагом.
+
 ```bash
 # Перечитываем конфигурацию systemd (обязательно после создания новых юнитов)
 sudo systemctl daemon-reload
@@ -735,18 +943,17 @@ sudo systemctl daemon-reload
 # Включаем автозапуск при старте сервера
 sudo systemctl enable mp-auth mp-directory mp-pbl
 
-# Запускаем сервисы (порядок важен!)
-sudo systemctl start mp-auth
-
-# Ждём 15 секунд, пока auth инициализируется и создаст таблицы
-sleep 15
-
-sudo systemctl start mp-directory
-
-sleep 10
-
-sudo systemctl start mp-pbl
+# Запускаем сервисы. Порядок значения не имеет (с 17.08.2026, P1-2): миграции каждого
+# сервиса обложены преконтролями, любой из трёх может создать общие таблицы первым.
+sudo systemctl start mp-auth mp-directory mp-pbl
 ```
+
+> [!NOTE]
+> На **первой** установке единственный внешний ключ, который зависит от порядка, —
+> `fk_terminals_company`: его создаёт `auth`, а таблицу `terminals` — `directory`/`pbl`.
+> Если `auth` успел стартовать раньше них, ключ появится при следующем запуске `auth`
+> (`sudo systemctl restart mp-auth`). Подробности — раздел
+> [20.1](#201-первый-запуск-новой-установки), шаг 3.
 
 ### 9.6. Проверка статуса
 
@@ -790,6 +997,14 @@ npm install
 npm run build
 ```
 
+> С 18.08.2026 `npm run build` = `tsc -b && vite build`: сначала проверка типов, потом сборка.
+> Если сборка упала с `error TS…` — это ошибка в коде фронтенда, а не окружения.
+>
+> Адрес API задаётся переменной `VITE_API_BASE_URL` (шаблон `frontend/.env.example`) **на этапе
+> сборки**. Для схемы из этого руководства (Nginx раздаёт фронтенд и проксирует `/api/v1/*` с того же
+> домена) её задавать **не нужно** — пустое значение означает «относительно текущего домена».
+> Указывать её нужно только если фронтенд обслуживается с другого домена, чем API.
+
 После успешной сборки появится папка `dist/` с готовыми файлами:
 
 ```bash
@@ -811,6 +1026,25 @@ sudo chown -R www-data:www-data /var/www/merchant-portal
 ## 11. Шаг 9 — Настройка Nginx
 
 ### 11.1. Создание конфигурации сайта
+
+> [!IMPORTANT]
+> **`X-Real-IP` в блоках ниже — не украшение, а источник адреса клиента.** С P3-Auth
+> (19.08.2026) `auth` считает по нему неудачные попытки входа, а `pbl` пишет его
+> в `transactions.client_ip`. Сервисы верят этому заголовку только от адресов из
+> `TRUSTED_PROXIES` (по умолчанию `127.0.0.1,::1` — этот самый nginx), и берут
+> **последний** элемент `X-Forwarded-For`, потому что `$proxy_add_x_forwarded_for`
+> дописывает настоящий адрес в конец, а всё, что прислал клиент, оставляет впереди.
+>
+> Поэтому:
+> * **строку `proxy_set_header X-Real-IP $remote_addr;` убирать нельзя** ни из одного
+>   `location` — без неё все запросы через этот маршрут считаются под адресом самого
+>   nginx, то есть лимит входа становится общим на весь мир;
+> * `$remote_addr` не заменять на `$http_x_real_ip` или `$http_x_forwarded_for` —
+>   это ровно то, что прислал клиент;
+> * если однажды перед nginx встанет ещё один прокси (балансировщик, CDN), адрес
+>   этого прокси нужно добавить в `TRUSTED_PROXIES`, иначе адреса клиентов схлопнутся
+>   в один.
+
 
 ```bash
 sudo nano /etc/nginx/sites-available/merchant-portal
@@ -940,19 +1174,27 @@ server {
     }
 
     # ───── Swagger UI (документация API) ─────
-    # Доступна только с локального сервера. Уберите ограничение, если нужен внешний доступ.
+    # Работает, только когда сервис запущен с SWAGGER_ENABLED=true (раздел 14.3).
+    # При выключенном флаге springdoc не регистрирует эндпоинты и оба пути отдают 404.
+    # Ограничение allow/deny оставлено: даже включённую документацию не стоит показывать наружу.
     location /swagger-ui.html {
         proxy_pass http://pbl_backend;
         allow 127.0.0.1;
         deny all;
     }
 
-    # ───── Actuator Health Checks ─────
-    location /actuator/ {
-        proxy_pass http://auth_backend;
+    location /v3/api-docs {
+        proxy_pass http://pbl_backend;
         allow 127.0.0.1;
         deny all;
     }
+
+    # ───── Actuator ─────
+    # Здесь его НЕТ намеренно. Actuator живёт на отдельных портах (auth 9081, directory 9082,
+    # pbl 9080), привязанных к 127.0.0.1: с самого сервера он доступен по curl, снаружи —
+    # никак. Проксировать его через nginx означало бы вернуть наружу ровно то, что мы убрали:
+    # состояние подключения к БД, свободное место на дисках и версии компонентов.
+    # Проверка здоровья — раздел 14.1.
 
     # ───── Статические файлы фронтенда ─────
     
@@ -1080,22 +1322,38 @@ sudo ufw status
 
 ```bash
 # Auth-сервис
-curl -s http://localhost:8081/actuator/health | python3 -m json.tool
+curl -s http://127.0.0.1:9081/actuator/health | python3 -m json.tool
 
 # Directory-сервис
-curl -s http://localhost:8082/actuator/health | python3 -m json.tool
+curl -s http://127.0.0.1:9082/actuator/health | python3 -m json.tool
 
 # PBL-сервис
-curl -s http://localhost:8080/actuator/health | python3 -m json.tool
+curl -s http://127.0.0.1:9080/actuator/health | python3 -m json.tool
 ```
 
-Для каждого сервиса вы должны увидеть:
+> [!IMPORTANT]
+> Порты **не те же**, что у самого сервиса. Actuator вынесен на отдельный порт
+> (auth 9081, directory 9082, pbl 9080), привязанный к `127.0.0.1`: эти команды работают
+> только с самого сервера, снаружи порт закрыт на уровне сети, а не пароля.
+> На рабочих портах 8080/8081/8082 путь `/actuator/health` теперь отдаёт **404** — это
+> нормально и означает, что настройка применилась.
+
+Токен для health-check не нужен и не будет нужен: пробы мониторинга его не имеют.
+Для каждого сервиса вы должны увидеть примерно это (детали видны, потому что порт локальный):
 
 ```json
 {
-    "status": "UP"
+    "status": "UP",
+    "components": {
+        "db": { "status": "UP" },
+        "diskSpace": { "status": "UP" },
+        "ping": { "status": "UP" }
+    }
 }
 ```
+
+Если ответ пустой или «connection refused» — сервис не поднялся; смотрите логи
+(`sudo journalctl -u mp-auth -n 50`).
 
 ### 14.2. Проверяем фронтенд
 
@@ -1106,6 +1364,54 @@ https://ВАШ_ДОМЕН
 ```
 
 Вы должны увидеть страницу входа (логин) Merchant Portal.
+
+### 14.3. Swagger на время приёмки
+
+Интерактивная документация API (Swagger UI) заявлена в `technical_handover.md` как
+передаваемый артефакт, но **в постоянной эксплуатации она выключена**: `/v3/api-docs` —
+это полная карта API, включая пути, которые снаружи знать незачем.
+
+При выключенном флаге springdoc вообще не регистрирует эти эндпоинты: `/swagger-ui.html`
+и `/v3/api-docs` отдают 404 (без токена — 401, потому что модель доступа теперь
+«по умолчанию запрещено»).
+
+**Включить на время приёмо-сдаточных испытаний:**
+
+```bash
+# 1. Добавляем переменную в общий файл окружения
+sudo sed -i 's/^SWAGGER_ENABLED=.*/SWAGGER_ENABLED=true/' /opt/merchant-portal/config/mp.env
+sudo grep SWAGGER_ENABLED /opt/merchant-portal/config/mp.env
+
+# 2. Перезапускаем сервисы
+sudo systemctl restart mp-auth mp-directory mp-pbl
+
+# 3. Проверяем с самого сервера
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8081/v3/api-docs   # ожидается 200
+```
+
+Открыть UI: `http://localhost:8081/swagger-ui.html` (auth), `:8082` (directory),
+`:8080` (pbl). Через интернет он не откроется — в конфигурации nginx на эти пути стоит
+`allow 127.0.0.1; deny all;`. С рабочего места пользуйтесь SSH-туннелем:
+
+```bash
+ssh -L 8081:localhost:8081 ПОЛЬЗОВАТЕЛЬ@ВАШ_СЕРВЕР
+# и затем в браузере: http://localhost:8081/swagger-ui.html
+```
+
+**Выключить обратно после приёмки** (обязательный шаг, не забыть):
+
+```bash
+sudo sed -i 's/^SWAGGER_ENABLED=.*/SWAGGER_ENABLED=false/' /opt/merchant-portal/config/mp.env
+sudo systemctl restart mp-auth mp-directory mp-pbl
+
+# Проверяем, что документация закрылась
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8081/v3/api-docs   # ожидается 401
+```
+
+> [!NOTE]
+> Флаг один на все три сервиса и включает обе части сразу — и `/v3/api-docs`, и
+> `/swagger-ui.html`. Разрешение этих путей в Spring Security привязано к тому же флагу:
+> при `SWAGGER_ENABLED=false` для них не создаётся ни одного разрешающего правила.
 
 ### 14.3. Проверяем API через Nginx
 
@@ -1144,12 +1450,8 @@ cp pbl/build/libs/pbl-0.0.1-SNAPSHOT.jar /opt/merchant-portal/deploy/pbl.jar
 # 6. Восстанавливаем права
 sudo chown mpuser:mpuser /opt/merchant-portal/deploy/*.jar
 
-# 7. Запускаем сервисы обратно
-sudo systemctl start mp-auth
-sleep 15
-sudo systemctl start mp-directory
-sleep 10
-sudo systemctl start mp-pbl
+# 7. Запускаем сервисы обратно (порядок не важен — миграции обложены преконтролями)
+sudo systemctl start mp-auth mp-directory mp-pbl
 
 # 8. Проверяем
 sudo systemctl status mp-auth mp-directory mp-pbl
@@ -1224,10 +1526,8 @@ sudo systemctl stop mp-pbl mp-directory mp-auth
 gunzip -c /opt/merchant-portal/backups/merchant_portal_ДАТА.sql.gz | \
   PGPASSWORD="ВАШ_ПАРОЛЬ_БАЗЫ_ДАННЫХ" psql -U postgres -h localhost merchant_portal
 
-# Запускаем обратно
-sudo systemctl start mp-auth
-sleep 15
-sudo systemctl start mp-directory mp-pbl
+# Запускаем обратно (порядок не важен)
+sudo systemctl start mp-auth mp-directory mp-pbl
 ```
 
 ---
@@ -1261,9 +1561,13 @@ sudo tail -f /var/log/nginx/access.log
 
 | Сервис | URL | Что показывает |
 |--------|-----|----------------|
-| Auth | `http://localhost:8081/actuator/health` | Статус сервиса + подключение к БД |
-| Directory | `http://localhost:8082/actuator/health` | Статус сервиса + подключение к БД |
-| PBL | `http://localhost:8080/actuator/health` | Статус сервиса + подключение к БД |
+| Auth | `http://127.0.0.1:9081/actuator/health` | Статус сервиса + подключение к БД |
+| Directory | `http://127.0.0.1:9082/actuator/health` | Статус сервиса + подключение к БД |
+| PBL | `http://127.0.0.1:9080/actuator/health` | Статус сервиса + подключение к БД |
+
+Это **отдельные порты**, не рабочие 8080/8081/8082, и они привязаны к `127.0.0.1`:
+запрос проходит только с самого сервера. Токен не нужен. Кроме `health` открыты
+`info` и `metrics` — например, `curl -s http://127.0.0.1:9081/actuator/metrics`.
 
 ### 17.3. Мониторинг ресурсов сервера
 
@@ -1316,7 +1620,8 @@ sudo journalctl -u mp-auth -n 100 --no-pager
 ### ❌ Проблема: «401 Unauthorized» после логина
 
 1. Проверьте, что JWT-секрет **одинаковый** во всех трёх конфигурациях
-2. Проверьте, что Auth-сервис работает: `curl http://localhost:8081/actuator/health`
+2. Проверьте, что Auth-сервис работает: `curl http://127.0.0.1:9081/actuator/health`
+   (порт actuator — 9081, а не рабочий 8081; на 8081 этот путь отдаёт 404)
 
 ### ❌ Проблема: Ошибка Liquibase при запуске
 
@@ -1357,6 +1662,18 @@ sudo systemctl restart mp-auth
 | `8080` | PBL (Pay-By-Link) | HTTP |
 | `8081` | Auth (Авторизация) | HTTP |
 | `8082` | Directory (Справочник) | HTTP |
+
+### Порты actuator (только с самой машины, `127.0.0.1`)
+
+| Порт | Сервис | Переменная | Что отдаёт |
+|------|--------|------------|------------|
+| `9081` | Auth | `MANAGEMENT_PORT` | `/actuator/health`, `/info`, `/metrics` |
+| `9082` | Directory | `MANAGEMENT_PORT` | то же |
+| `9080` | PBL | `MANAGEMENT_PORT` | то же |
+
+Эти порты не слушают внешний интерфейс: их защищает привязка адреса, а не токен, —
+именно поэтому пробы мониторинга работают без авторизации. На рабочих портах
+(8080/8081/8082) путь `/actuator/**` не обслуживается и отдаёт 404.
 
 ### Внешние порты (доступны из интернета)
 
@@ -1401,6 +1718,205 @@ sudo systemctl restart mp-auth
 | `/var/www/merchant-portal/` | Собранный фронтенд (HTML/CSS/JS) |
 | `/var/log/merchant-portal/` | Логи приложения |
 | `/var/log/nginx/` | Логи Nginx |
+
+---
+
+## 20. Первый запуск и ротация ключа
+
+Раздел про две вещи, которые делаются руками и в определённом порядке: как поднять
+**новую** установку и как **сменить** ключ подписи JWT на уже работающей.
+
+Оркестратора и хранилища секретов в проекте нет — сервисы запускаются вручную. Поэтому
+защита встроена в сами приложения: `DB_PASSWORD` и `JWT_SECRET` (а у `pbl` — ещё три адреса,
+`PBL_BASE_URL`, `PBL_PROVIDER_GATEWAY_BASE_URL`, `PBL_PROVIDER_API_BASE_URL`, п. 8.3) не имеют
+значений по умолчанию, и сервис без них **не стартует**, печатая, что именно задать.
+
+### 20.1. Первый запуск новой установки
+
+#### Шаг 1. Сгенерировать ключ подписи
+
+```bash
+openssl rand -base64 48
+```
+
+Требования проверяются на старте: непустой, не короче 32 байт (HS256 подписывает
+256-битным хешем). Ключ, лежавший в этом репозитории до 17.08.2026, отвергается отдельно
+по SHA-256 — он публичный, и вернуть его «чтобы заработало» не получится.
+
+#### Шаг 2. Задать переменные окружения для всех трёх сервисов
+
+Как это оформляется для systemd — в разделе [8.3](#83-файл-с-переменными-окружения):
+один файл `/opt/merchant-portal/config/mp.env` с правами `600`, подключённый в юниты
+через `EnvironmentFile=`. Для ручного запуска из консоли:
+
+```bash
+export DB_PASSWORD='пароль пользователя PostgreSQL'
+export JWT_SECRET='значение из шага 1'
+# Только для pbl (P1-10): публичный адрес и адреса эквайера, без дефолтов
+export PBL_BASE_URL='https://ВАШ_ДОМЕН/'
+export PBL_PROVIDER_GATEWAY_BASE_URL='адрес шлюза от MilliKart'
+export PBL_PROVIDER_API_BASE_URL='адрес API от MilliKart'
+```
+
+| Переменная | auth | directory | pbl | Значение по умолчанию |
+|---|:---:|:---:|:---:|---|
+| `DB_PASSWORD` | **обязательна** | **обязательна** | **обязательна** | нет |
+| `JWT_SECRET` | **обязательна** | **обязательна** | **обязательна** | нет |
+| `DB_URL` | необязательна | необязательна | необязательна | `jdbc:postgresql://localhost:5432/postgres` |
+| `DB_USERNAME` | необязательна | необязательна | необязательна | `postgres` |
+| `JWT_EXPIRATION_MS` | необязательна | необязательна | необязательна | `900000` (15 минут, с P1-13). Токен выдаёт `auth`; `directory` и `pbl` только проверяют его, переменная объявлена у всех трёх для единообразия. Фронтенд обновляет токен сам через `/refresh`; это же — верхняя граница, сколько после выхода, блокировки или удаления пользователь ещё имеет доступ |
+| `AUTH_REFRESH_TTL` | необязательна | не читается | не читается | `P30D` (срок refresh-токена) |
+| `AUTH_REFRESH_ROTATION_GRACE` | необязательна | не читается | не читается | `PT10S` (окно, в котором повтор заменённого refresh-токена — гонка вкладок, а не кража) |
+| `AUTH_REFRESH_CLEANUP_ENABLED` | необязательна | не читается | не читается | `true` |
+| `AUTH_REFRESH_CLEANUP_CRON` | необязательна | не читается | не читается | `0 30 3 * * *` |
+| `AUTH_BOOTSTRAP_ENABLED` | необязательна | не читается | не читается | `false` |
+| `BOOTSTRAP_ADMIN_USERNAME` | обязательна при включённом bootstrap | не читается | не читается | нет |
+| `BOOTSTRAP_ADMIN_PASSWORD` | обязательна при включённом bootstrap | не читается | не читается | нет |
+| `PBL_API_TOKEN_ENABLED` | не читается | не читается | необязательна | `false` |
+| `PBL_API_TOKEN` | не читается | не читается | обязательна при включённом флаге | пусто |
+| `PBL_BASE_URL` | не читается | не читается | **обязательна** | нет — публичный адрес сервиса, уходит эквайеру как адрес возврата плательщика (P1-10) |
+| `PBL_PROVIDER_GATEWAY_BASE_URL` | не читается | не читается | **обязательна** | нет — адрес шлюза эквайера, выдаёт MilliKart; не-HTTPS даёт WARN |
+| `PBL_PROVIDER_API_BASE_URL` | не читается | не читается | **обязательна** | нет — адрес e-commerce API эквайера, выдаёт MilliKart; не-HTTPS даёт WARN |
+| `PBL_PROVIDER_CREATE_ORDER_PATH` | не читается | не читается | необязательна | `/order` |
+| `PBL_PROVIDER_EXEC_TRAN_PATH` | не читается | не читается | необязательна | `/order/{orderId}/exec-tran` |
+| `PBL_PROVIDER_GET_ORDER_PATH` | не читается | не читается | необязательна | `/order/{orderId}` |
+
+«Не читается» означает, что сервис эту переменную игнорирует; лишняя переменная
+в общем файле окружения ничему не мешает.
+
+> [!CAUTION]
+> `JWT_SECRET` обязан **совпадать во всех трёх сервисах**, символ в символ. Токен выдаёт
+> `auth`, а проверяют его `directory` и `pbl` тем же самым ключом (HS256 симметричный).
+> Разные значения — и любой запрос к `directory` и `pbl` вернёт 401, хотя логин при этом
+> будет проходить успешно. Это самая частая ошибка при развёртывании.
+
+Полный список переменных с пояснениями — `.env.example` в корне репозитория.
+
+#### Шаг 3. Запустить сервисы
+
+```bash
+sudo systemctl start mp-auth mp-directory mp-pbl
+```
+
+> [!NOTE]
+> **Порядок больше не важен** (с 17.08.2026, P1-2). Раньше требовалось поднимать `auth` первым:
+> его changeset создавал таблицу `companies` без `<preConditions>`, и стартовавший раньше
+> `directory` ронял `auth` на «table companies already exists». Теперь каждый changeset,
+> создающий общую таблицу, обложен собственным условием — по одному объекту на changeset, —
+> поэтому первым может подняться любой из трёх сервисов, в том числе все три одновременно.
+>
+> Внешний ключ `terminals.company_id → companies.id` создаёт `auth`, а саму таблицу `terminals` —
+> `directory` или `pbl`. Если `auth` стартовал раньше них, ключ на этом запуске не создаётся:
+> changeset стоит под `onFail="CONTINUE"`, не записывается в `DATABASECHANGELOG` и повторяет
+> попытку при следующем запуске `auth`. Поэтому **на свежей установке, где `auth` поднялся
+> раньше остальных, перезапустите его один раз после того, как поднялись `directory` и `pbl`** —
+> либо просто дождитесь ближайшего планового рестарта. Проверить:
+>
+> ```bash
+> psql -U postgres -d postgres -c "\d terminals" | grep fk_terminals_company
+> ```
+
+#### Шаг 4. Один раз создать администратора
+
+Миграция администратора **не заводит**: пароль, лежащий в changeset, одинаков на всех
+установках и виден каждому, у кого есть репозиторий. Вместо этого первый `SYSTEM_ADMIN`
+создаётся разовым запуском `auth`.
+
+```bash
+sudo systemctl stop mp-auth
+
+sudo tee -a /opt/merchant-portal/config/mp.env > /dev/null << 'EOF'
+BOOTSTRAP_ADMIN_USERNAME=admin@ваша-компания.az
+BOOTSTRAP_ADMIN_PASSWORD=ПридуманныйПароль123!
+EOF
+sudo sed -i 's/^AUTH_BOOTSTRAP_ENABLED=false/AUTH_BOOTSTRAP_ENABLED=true/' /opt/merchant-portal/config/mp.env
+
+sudo systemctl daemon-reload
+sudo systemctl start mp-auth
+```
+
+В журнале должна появиться строка уровня WARN — пароль в неё не попадает:
+
+```bash
+sudo journalctl -u mp-auth -n 100 | grep "Admin bootstrap"
+# Admin bootstrap created SYSTEM_ADMIN 'admin@ваша-компания.az' (id=…). Set AUTH_BOOTSTRAP_ENABLED=false …
+```
+
+Требования к паролю — те же, что и у любого пользователя портала (PCI-DSS v4.0):
+минимум 12 символов, заглавная и строчная буквы, цифра и спецсимвол. Слабый пароль —
+сервис не стартует. Логин обязан быть адресом электронной почты: форма входа проверяет
+формат, и учётная запись с другим логином никогда не смогла бы войти.
+
+Проверьте, что вход работает, и **сразу выключите флаг**:
+
+```bash
+sudo sed -i 's/^AUTH_BOOTSTRAP_ENABLED=true/AUTH_BOOTSTRAP_ENABLED=false/' /opt/merchant-portal/config/mp.env
+sudo sed -i '/^BOOTSTRAP_ADMIN_PASSWORD=/d' /opt/merchant-portal/config/mp.env
+sudo systemctl restart mp-auth
+```
+
+> [!NOTE]
+> Забыть выключить флаг не опасно: раннер работает только на **пустой** таблице `users`.
+> При следующем старте он увидит существующих пользователей, напишет в лог, что пропускает
+> себя, и ничего не тронет. Но пароль администратора останется лежать в файле окружения —
+> ради этого строку и удаляют.
+
+### 20.2. Ротация ключа подписи
+
+Ключ меняют планово или после любого подозрения, что он утёк: попал в лог, в переписку,
+в скриншот, в чужие руки вместе с бэкапом конфигурации.
+
+```bash
+# 1. Новый ключ
+NEW_SECRET=$(openssl rand -base64 48)
+
+# 2. Остановить ВСЕ три сервиса
+sudo systemctl stop mp-pbl mp-directory mp-auth
+
+# 3. Заменить значение в общем файле окружения
+sudo sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${NEW_SECRET}|" /opt/merchant-portal/config/mp.env
+sudo grep JWT_SECRET /opt/merchant-portal/config/mp.env   # убедиться, что значение одно и новое
+
+# 4. Поднять обратно (порядок не важен — миграции уже применены)
+sudo systemctl start mp-auth mp-directory mp-pbl
+```
+
+> [!CAUTION]
+> **Все выданные access-токены станут недействительными.** Чёрного списка и версионирования
+> ключей в системе нет, а при ручном запуске нет и промежутка, когда старый и новый ключ
+> приняты одновременно. С P1-13 это уже не выбрасывает пользователей на страницу входа:
+> refresh-токен не подписан ключом (в базе лежит его SHA-256), поэтому первый же запрос
+> с 401 заставит фронтенд вызвать `/refresh`, `auth` выпустит access-токен уже новым ключом,
+> и запрос повторится сам. Пользователь заметит только паузу на время перезапуска сервисов;
+> заново войти придётся лишь тому, у кого истёк или отозван refresh-токен.
+> Планируйте ротацию на время наименьшей нагрузки — сами перезапуски дают простой.
+
+> [!WARNING]
+> Останавливать нужно **все три** сервиса, а не перезапускать по одному. Сервис со старым
+> ключом и сервис с новым не понимают токены друг друга: пока идёт «плавный» перезапуск,
+> часть запросов будет получать 401 без всякой закономерности.
+
+Пароль базы данных (`DB_PASSWORD`) меняется так же — правкой одного файла и перезапуском
+всех трёх сервисов, — но выданных токенов он не затрагивает и пользователей из портала
+не выбрасывает.
+
+### 20.3. Если сервис не стартует
+
+| Сообщение при старте | Что произошло | Что делать |
+|---|---|---|
+| `The environment variable JWT_SECRET is not set` | Переменной нет в окружении процесса | Задать её; для systemd — проверить `EnvironmentFile=` в юните |
+| `The environment variable DB_PASSWORD is not set` | То же для пароля БД | Задать её |
+| `JWT signing secret is too short: N bytes` | Ключ короче 32 байт | Сгенерировать заново: `openssl rand -base64 48` |
+| `JWT signing secret is the key that leaked into this repository's git history` | Подставлен старый публичный ключ | Сгенерировать новый; старый использовать нельзя |
+| `BOOTSTRAP_ADMIN_PASSWORD does not satisfy the password policy` | Пароль администратора слабее политики | 12+ символов, заглавная, строчная, цифра, спецсимвол |
+| `auth.bootstrap.enabled is true but BOOTSTRAP_ADMIN_USERNAME and/or BOOTSTRAP_ADMIN_PASSWORD is not set` | Флаг включён, а данных администратора нет | Задать обе переменные либо выключить флаг |
+| `pbl.security.api-token-enabled is true but pbl.security.api-token is empty` | Включён статический токен без значения | Выключить `PBL_API_TOKEN_ENABLED` (обычно это и нужно) |
+| `The environment variable PBL_BASE_URL is not set` (то же для `PBL_PROVIDER_GATEWAY_BASE_URL`, `PBL_PROVIDER_API_BASE_URL`) | Адреса нет в окружении `pbl` | Задать её в `mp.env` (п. 8.3); дефолта нет намеренно |
+| `The environment variable PBL_BASE_URL (property pbl.base-url) is empty` / `has leading or trailing whitespace` / `is not a valid URL` / `must be an absolute URL` / `has a host part that is not a valid host name` / `must use http or https` | Переменная есть, но значение не годится (пусто, пробел или CRLF на конце, незаменённый `ВАШ_ДОМЕН`, относительный путь, `ftp://`) | Задать абсолютный `https://` адрес без лишних пробелов, например `https://ВАШ_ДОМЕН/` с реальным доменом |
+| `WARNING: the acquirer address is not HTTPS` (в рамке, сервис стартует) | Адрес шлюза или API эквайера задан по `http://` | Это не ошибка конфигурации: HTTPS даёт MilliKart. Запросить у них `https://` адрес и заменить переменную |
+| `WARNING: the public address of this service is not HTTPS` (в рамке, сервис стартует) | `PBL_BASE_URL` по `http://` на не-локальном хосте | В проде — `https://ВАШ_ДОМЕН/` (раздел 12); для `localhost`/`127.0.0.1`/`[::1]` предупреждения нет |
+| Логин проходит, но `directory` и `pbl` отвечают 401 | `JWT_SECRET` различается между сервисами | Привести к одному значению и перезапустить все три |
+| Платёж проходит у эквайера, но плательщик возвращается не туда / транзакция висит в PENDING | `PBL_BASE_URL` указывает не на этот сервис (чужой домен, опечатка) | Исправить `PBL_BASE_URL` в `mp.env` и перезапустить `mp-pbl`; сервис такое не роняет, см. п. 8.3 |
 
 ---
 

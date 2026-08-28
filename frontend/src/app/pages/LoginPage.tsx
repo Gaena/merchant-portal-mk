@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router';
+import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
+import { AuthError } from '../auth/session';
 import {
   Box,
   Paper,
@@ -68,10 +70,18 @@ export const LoginPage: React.FC = () => {
     try {
       await login(email, password);
       setIsLoading(false);
-      navigate('/home');
-    } catch (err: any) {
+      // Маршрута /home нет; главная — '/'. replace: «назад» не должен возвращать на форму входа.
+      navigate('/', { replace: true });
+    } catch (err: unknown) {
       setIsLoading(false);
-      const serverMessage = err.response?.data?.message || err.response?.data?.error;
+      if (err instanceof AuthError && err.code === 'UNKNOWN_ROLE') {
+        // Сервер ответил 200, но роль не распознана — вход отклонён на клиенте (fail-closed).
+        setError(tObj.auth.unknownRole);
+        return;
+      }
+      const serverMessage = axios.isAxiosError(err)
+        ? (err.response?.data?.message || err.response?.data?.error)
+        : (err instanceof Error ? err.message : undefined);
       setError(serverMessage || 'Failed to authenticate. Please check your credentials.');
     }
   };

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
 import {
   Box,
   Typography,
@@ -22,6 +23,7 @@ import {
   Alert,
   InputAdornment,
   CircularProgress,
+  TablePagination,
   Tooltip
 } from '@mui/material';
 import {
@@ -34,6 +36,8 @@ import {
 import { apiClient } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useDebounced } from '../hooks/useDebounced';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 import type { UserDto, CompanyDto } from '../types/dto';
 
@@ -41,6 +45,11 @@ export const UsersPage: React.FC = () => {
   const { user: currentUser } = useAuth();
   const { tObj } = useLanguage();
   const [usersList, setUsersList] = useState<UserDto[]>([]);
+  // Удаление уходит на сервер только после подтверждения: оно мягкое, но необратимое из
+  // портала (updateUser на удалённом отвечает «User not found») и гасит все сессии сразу.
+  const [pendingDelete, setPendingDelete] = useState<UserDto | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [snackbar, setSnackbar] = useState('');
   const [companiesList, setCompaniesList] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -56,27 +65,55 @@ export const UsersPage: React.FC = () => {
   const [userError, setUserError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
+  // Поиск и фильтр по роли — серверные (P3-1): клиентский фильтр видел только текущую страницу.
+  // 300 мс задержки, чтобы не слать запрос на каждую букву.
+  const debouncedSearch = useDebounced(searchQuery, 300);
 
-  const fetchUsers = () => {
+  // Страница берётся с сервера (P2-1): `/api/v1/users` отвечает `PagedResponse`, а не массивом.
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [totalElements, setTotalElements] = useState(0);
+
+  const fetchUsers = useCallback((signal?: AbortSignal) => {
     setLoading(true);
-    apiClient.get('/api/v1/users')
+    const params: Record<string, unknown> = { page, size: rowsPerPage };
+    if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
+    if (roleFilter !== 'all') params.role = roleFilter;
+    apiClient.get('/api/v1/users', { params, signal })
       .then(res => {
-        setUsersList(Array.isArray(res.data) ? res.data : []);
+        const content = Array.isArray(res.data) ? res.data : (res.data?.content || []);
+        setUsersList(Array.isArray(content) ? content : []);
+        setTotalElements(res.data?.totalElements ?? content.length);
       })
-      .catch(() => {
+      .catch(err => {
+        // Гонка ответов: устаревший запрос отменён эффектом ниже, его исход не трогает экран.
+        if (axios.isCancel(err)) return;
         setUsersList([]);
+        setTotalElements(0);
       })
-      .finally(() => setLoading(false));
-  };
+      .finally(() => {
+        if (!signal?.aborted) setLoading(false);
+      });
+  }, [page, rowsPerPage, debouncedSearch, roleFilter]);
+
+  // Отмена предыдущего запроса при каждом изменении параметров: без неё ответ на «ив» может
+  // прийти позже ответа на «ива» и перезаписать более точный результат.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchUsers(controller.signal);
+    return () => controller.abort();
+  }, [fetchUsers]);
 
   useEffect(() => {
-    fetchUsers();
-    apiClient.get('/api/v1/companies')
+    // Компании нужны только для выпадающего списка в диалоге создания, поэтому берём их
+    // одной страницей по потолку (200 — тот же лимит, что у журнала аудита).
+    apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 } })
       .then(res => {
-        if (Array.isArray(res.data)) {
-          setCompaniesList(res.data);
-          if (res.data.length > 0) {
-            setUserForm(f => ({ ...f, companyId: res.data[0].id }));
+        const content = Array.isArray(res.data) ? res.data : (res.data?.content || []);
+        if (Array.isArray(content)) {
+          setCompaniesList(content);
+          if (content.length > 0) {
+            setUserForm(f => ({ ...f, companyId: content[0].id }));
           }
         }
       })
@@ -97,8 +134,10 @@ export const UsersPage: React.FC = () => {
         role: userForm.role,
         companyId: userForm.companyId || undefined,
       };
-      const res = await apiClient.post('/api/v1/users', payload);
-      setUsersList(prev => [...prev, res.data]);
+      await apiClient.post('/api/v1/users', payload);
+      // Не дописываем строку в массив: список постраничный и отсортирован сервером — новая
+      // учётная запись может принадлежать другой странице, а на этой строк станет больше `size`.
+      fetchUsers();
       setUserDialogOpen(false);
       setUserForm({
         username: '',
@@ -112,12 +151,19 @@ export const UsersPage: React.FC = () => {
     }
   };
 
-  const handleDeleteUser = async (id: string) => {
+  const handleDeleteUser = async () => {
+    if (!pendingDelete || deleteBusy) return;
+    setDeleteBusy(true);
     try {
-      await apiClient.delete(`/api/v1/users/${id}`);
-      setUsersList(prev => prev.filter(u => u.id !== id));
+      await apiClient.delete(`/api/v1/users/${pendingDelete.id}`);
+      // Перечитываем страницу: после удаления на неё поднимается строка со следующей.
+      fetchUsers();
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to delete user');
+      // Полосой на странице, а не системным alert'ом: остальные экраны отвечают так же.
+      setSnackbar(err.response?.data?.message || 'Failed to delete user');
+    } finally {
+      setDeleteBusy(false);
+      setPendingDelete(null);
     }
   };
 
@@ -126,22 +172,6 @@ export const UsersPage: React.FC = () => {
     const comp = companiesList.find(c => String(c.id) === String(companyId));
     return comp ? comp.name : companyId;
   };
-
-  const filteredUsers = useMemo(() => {
-    return usersList.filter(u => {
-      if (roleFilter !== 'all' && u.role !== roleFilter) return false;
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const matchUsername = (u.username || '').toLowerCase().includes(q);
-        const matchName = (u.fullName || '').toLowerCase().includes(q);
-        const matchCompanyId = (u.companyId || '').toLowerCase().includes(q);
-        const compName = getCompanyName(u.companyId).toLowerCase();
-        const matchCompanyName = compName.includes(q);
-        if (!matchUsername && !matchName && !matchCompanyId && !matchCompanyName) return false;
-      }
-      return true;
-    });
-  }, [usersList, roleFilter, searchQuery, companiesList]);
 
   return (
     <Box>
@@ -157,7 +187,7 @@ export const UsersPage: React.FC = () => {
           </Typography>
         </Box>
         <Stack direction="row" spacing={2}>
-          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchUsers}>
+          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => fetchUsers()}>
             {tObj.common.refresh}
           </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setUserDialogOpen(true)}>
@@ -166,13 +196,19 @@ export const UsersPage: React.FC = () => {
         </Stack>
       </Box>
 
+      {snackbar && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setSnackbar('')}>
+          {snackbar}
+        </Alert>
+      )}
+
       {/* Filters Bar */}
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         <TextField
           size="small"
           placeholder={tObj.users.searchPlaceholder}
           value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
+          onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
           sx={{ minWidth: 320 }}
           InputProps={{
             startAdornment: (
@@ -187,7 +223,7 @@ export const UsersPage: React.FC = () => {
           size="small"
           label={tObj.users.role}
           value={roleFilter}
-          onChange={e => setRoleFilter(e.target.value)}
+          onChange={e => { setRoleFilter(e.target.value); setPage(0); }}
           sx={{ minWidth: 200 }}
         >
           <MenuItem value="all">{tObj.common.all}</MenuItem>
@@ -218,7 +254,7 @@ export const UsersPage: React.FC = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredUsers.map((u: any) => (
+              {usersList.map((u: any) => (
                 <TableRow key={u.id} hover>
                   <TableCell sx={{ fontWeight: 600 }}>{u.username}</TableCell>
                   <TableCell>{u.fullName || '—'}</TableCell>
@@ -231,7 +267,7 @@ export const UsersPage: React.FC = () => {
                   </TableCell>
                   <TableCell align="center">
                     <Tooltip title={tObj.common.delete}>
-                      <IconButton color="error" size="small" onClick={() => handleDeleteUser(u.id)}>
+                      <IconButton color="error" size="small" onClick={() => setPendingDelete(u)}>
                         <DeleteIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
@@ -241,6 +277,15 @@ export const UsersPage: React.FC = () => {
             </TableBody>
           </Table>
         )}
+        <TablePagination
+          rowsPerPageOptions={[10, 20, 50, 100]}
+          component="div"
+          count={totalElements}
+          rowsPerPage={rowsPerPage}
+          page={page}
+          onPageChange={(_, p) => setPage(p)}
+          onRowsPerPageChange={e => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
+        />
       </TableContainer>
 
       {/* Create User Dialog */}
@@ -310,6 +355,30 @@ export const UsersPage: React.FC = () => {
           <Button variant="contained" onClick={handleCreateUser}>{tObj.common.create}</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Confirm Delete Dialog */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={tObj.users.deleteTitle}
+        question={tObj.users.deleteQuestion}
+        confirmLabel={tObj.common.delete}
+        busy={deleteBusy}
+        onConfirm={handleDeleteUser}
+        onCancel={() => setPendingDelete(null)}
+      >
+        {/* Кого именно удаляем — в самом окне: у списка бывает по двадцать похожих строк. */}
+        {pendingDelete && (
+          <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+              {pendingDelete.fullName || pendingDelete.username}
+            </Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>
+              {pendingDelete.username} · {pendingDelete.role}
+            </Typography>
+          </Box>
+        )}
+        <Alert severity="warning" sx={{ mt: 2 }}>{tObj.users.deleteIrreversible}</Alert>
+      </ConfirmDialog>
     </Box>
   );
 };

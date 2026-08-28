@@ -1,5 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
 import { apiClient } from '../api/client';
+import { useDebounced } from '../hooks/useDebounced';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import {
   Box,
   Paper,
@@ -21,6 +24,7 @@ import {
   DialogActions,
   Alert,
   Stack,
+  TablePagination,
   Tooltip,
   InputAdornment,
 } from '@mui/material';
@@ -28,13 +32,15 @@ import {
   PointOfSale as POSIcon,
   Add as AddIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon,
+  Block as BlockIcon,
+  PlayArrow as UnblockIcon,
   Refresh as RefreshIcon,
   Business as BusinessIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
 import { useLanguage } from '../context/LanguageContext';
-import type { TerminalDto, CompanyDto } from '../types/dto';
+import { isTerminalActive } from '../types/dto';
+import type { TerminalDto, CompanyDto, TerminalStatus } from '../types/dto';
 
 export const TerminalsPage: React.FC = () => {
   const { tObj } = useLanguage();
@@ -48,23 +54,49 @@ export const TerminalsPage: React.FC = () => {
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
+  // чтобы не слать запрос на каждую букву.
+  const debouncedSearch = useDebounced(searchQuery, 300);
+  // Терминал, который собираются заблокировать, и число ссылок, которые при этом приостановятся.
+  // `affectedLinks === null` — счёт ещё идёт или не удался; в диалоге это так и написано.
+  // Разблокировка спрашивает наравне с блокировкой: она тоже трогает чужие ссылки, просто
+  // в другую сторону, и «случайно нажал» здесь стоит столько же.
+  const [statusChange, setStatusChange] = useState<
+    { terminal: TerminalDto; nextStatus: TerminalStatus; affectedLinks: number | null } | null>(null);
+  // Правка уходит на сервер только после отдельного подтверждения со списком изменений:
+  // форма правки меняет логин, пароль и **компанию-владельца** — цена промаха разная.
+  const [editConfirm, setEditConfirm] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const fetchTerminals = async () => {
+  // Страница берётся с сервера (P2-1): `/api/v1/terminals` отвечает `PagedResponse`.
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [totalElements, setTotalElements] = useState(0);
+
+  const fetchTerminals = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await apiClient.get('/api/v1/terminals');
+      const params: Record<string, unknown> = { page, size: rowsPerPage };
+      if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
+      const res = await apiClient.get('/api/v1/terminals', { params, signal });
       const list = Array.isArray(res.data) ? res.data : (res.data?.content || []);
       setTerminals(list);
-    } catch {
+      setTotalElements(res.data?.totalElements ?? list.length);
+    } catch (err) {
+      // Гонка ответов: устаревший запрос отменён эффектом ниже, его исход не трогает экран.
+      if (axios.isCancel(err)) return;
       setTerminals([]);
+      setTotalElements(0);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  };
+  }, [page, rowsPerPage, debouncedSearch]);
 
   const fetchCompanies = async () => {
     try {
-      const res = await apiClient.get('/api/v1/companies');
+      // Компании нужны только для выпадающего списка в диалогах, поэтому берём их одной
+      // страницей по потолку (200 — тот же лимит, что у журнала аудита).
+      const res = await apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 } });
       const list = Array.isArray(res.data) ? res.data : (res.data?.content || []);
       setCompanies(list);
       if (list.length > 0 && !form.companyId) {
@@ -75,8 +107,15 @@ export const TerminalsPage: React.FC = () => {
     }
   };
 
+  // Отмена предыдущего запроса при каждом изменении параметров: без неё ответ на «ив» может
+  // прийти позже ответа на «ива» и перезаписать более точный результат.
   useEffect(() => {
-    fetchTerminals();
+    const controller = new AbortController();
+    fetchTerminals(controller.signal);
+    return () => controller.abort();
+  }, [fetchTerminals]);
+
+  useEffect(() => {
     fetchCompanies();
   }, []);
 
@@ -116,8 +155,10 @@ export const TerminalsPage: React.FC = () => {
         password: form.password.trim(),
         companyId: form.companyId,
       };
-      const res = await apiClient.post('/api/v1/terminals', payload);
-      setTerminals(prev => [...prev, res.data]);
+      await apiClient.post('/api/v1/terminals', payload);
+      // Не дописываем строку в массив: список постраничный и отсортирован сервером по имени —
+      // новый терминал может принадлежать другой странице.
+      fetchTerminals();
       setCreateOpen(false);
       setForm({ id: '', name: '', login: '', password: '', companyId: companies[0]?.id || '' });
       setSnackbar('Acquiring terminal registered successfully');
@@ -150,16 +191,83 @@ export const TerminalsPage: React.FC = () => {
       setSnackbar('Acquiring terminal updated successfully');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to update terminal');
+    } finally {
+      setEditConfirm(null);
     }
   };
 
-  const handleDelete = async (id: number) => {
+  /**
+   * Смена статуса терминала трогает чужие платёжные ссылки, поэтому спрашиваем — и вместе с
+   * вопросом показываем, скольких ссылок это коснётся. Число берём у `pbl` (`totalElements`
+   * пагинированного ответа), без отдельной ручки в бэкенде: перед блокировкой считаем активные
+   * ссылки (их приостановят), перед разблокировкой — приостановленные (их вернут в работу).
+   */
+  const handleAskStatus = async (terminal: TerminalDto, nextStatus: TerminalStatus) => {
+    setStatusChange({ terminal, nextStatus, affectedLinks: null });
     try {
-      await apiClient.delete(`/api/v1/terminals/${id}`);
-      setTerminals(prev => prev.filter(t => t.id !== id));
-      setSnackbar('Terminal deleted successfully');
+      const res = await apiClient.get('/api/v1/payment-links', {
+        params: { terminal: terminal.id, status: nextStatus === 'BLOCKED' ? 'ACTIVE' : 'SUSPENDED', size: 1 },
+      });
+      const total = res.data?.totalElements;
+      setStatusChange({ terminal, nextStatus, affectedLinks: typeof total === 'number' ? total : null });
+    } catch {
+      // Счёт — справка, а не условие: не смогли посчитать, диалог всё равно показывает, что делает.
+      setStatusChange({ terminal, nextStatus, affectedLinks: null });
+    }
+  };
+
+  /**
+   * Что именно изменится, если сохранить форму правки. Пустой список означает, что менять
+   * нечего, и тогда запрос не уходит вовсе: PATCH, который ничего не меняет, всё равно оставит
+   * запись в журнале аудита.
+   */
+  const pendingEditChanges = (): string[] => {
+    const original = terminals.find(t => t.id === editingTerminalId);
+    if (!original) return [];
+    const changes: string[] = [];
+    if (form.name.trim() !== (original.name || '')) {
+      changes.push(`${tObj.terminals.name}: ${original.name || '—'} → ${form.name.trim()}`);
+    }
+    if (form.login.trim() !== (original.login || '')) {
+      changes.push(`${tObj.terminals.login}: ${original.login || '—'} → ${form.login.trim()}`);
+    }
+    if (form.companyId !== (original.companyId || '')) {
+      changes.push(`${tObj.terminals.company}: ${getCompanyName(original.companyId || '')} → ${getCompanyName(form.companyId)}`);
+    }
+    if (form.password.trim()) {
+      changes.push(tObj.terminals.editPasswordReplaced);
+    }
+    return changes;
+  };
+
+  const handleAskUpdate = () => {
+    if (!form.name.trim() || !form.login.trim() || !form.companyId) {
+      setError('Name, Login and Company selection are required');
+      return;
+    }
+    setError('');
+    const changes = pendingEditChanges();
+    if (changes.length === 0) {
+      setEditOpen(false);
+      setSnackbar(tObj.terminals.editNothingChanged);
+      return;
+    }
+    setEditConfirm(changes);
+  };
+
+  const setTerminalStatus = async (terminal: TerminalDto, status: 'ACTIVE' | 'BLOCKED') => {
+    setBusy(true);
+    try {
+      const res = await apiClient.patch(`/api/v1/terminals/${terminal.id}`, { status });
+      setTerminals(prev => prev.map(t => (t.id === terminal.id ? res.data : t)));
+      setSnackbar(status === 'BLOCKED'
+        ? `Терминал #${terminal.id} заблокирован: новые платежи по нему не принимаются, активные ссылки приостановлены`
+        : `Терминал #${terminal.id} разблокирован: приостановленные ссылки вернулись в работу (кроме тех, у которых истёк срок)`);
     } catch (err: any) {
-      setSnackbar(err.response?.data?.message || 'Failed to delete terminal');
+      setSnackbar(err.response?.data?.message || 'Не удалось изменить статус терминала');
+    } finally {
+      setBusy(false);
+      setStatusChange(null);
     }
   };
 
@@ -167,19 +275,6 @@ export const TerminalsPage: React.FC = () => {
     const comp = companies.find(c => c.id === companyId);
     return comp ? comp.name : companyId;
   };
-
-  const filteredTerminals = useMemo(() => {
-    return terminals.filter(term => {
-      if (!searchQuery.trim()) return true;
-      const q = searchQuery.toLowerCase();
-      const matchId = String(term.id).toLowerCase().includes(q);
-      const matchName = (term.name || '').toLowerCase().includes(q);
-      const matchLogin = (term.login || '').toLowerCase().includes(q);
-      const compName = getCompanyName(term.companyId).toLowerCase();
-      const matchCompany = compName.includes(q) || (term.companyId || '').toLowerCase().includes(q);
-      return matchId || matchName || matchLogin || matchCompany;
-    });
-  }, [terminals, searchQuery, companies]);
 
   return (
     <Box>
@@ -194,7 +289,7 @@ export const TerminalsPage: React.FC = () => {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.5}>
-          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchTerminals}>
+          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => fetchTerminals()}>
             {tObj.common.refresh}
           </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreate}>
@@ -215,7 +310,7 @@ export const TerminalsPage: React.FC = () => {
           size="small"
           placeholder={tObj.terminals.searchPlaceholder}
           value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
+          onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
           sx={{ minWidth: 320, width: { xs: '100%', sm: 420 } }}
           InputProps={{
             startAdornment: (
@@ -237,14 +332,17 @@ export const TerminalsPage: React.FC = () => {
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.name}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.login}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.company}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.common.status}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }} align="center">{tObj.common.actions}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredTerminals.map((term) => (
-                <TableRow key={term.id} hover>
-                  <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'primary.main' }}>
+              {terminals.map((term) => {
+                const active = isTerminalActive(term);
+                return (
+                <TableRow key={term.id} hover sx={active ? undefined : { opacity: 0.6 }}>
+                  <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: active ? 'primary.main' : 'text.disabled' }}>
                     #{term.id}
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{term.name}</TableCell>
@@ -258,28 +356,47 @@ export const TerminalsPage: React.FC = () => {
                       sx={{ fontWeight: 600 }}
                     />
                   </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={active ? tObj.terminals.statuses.ACTIVE : tObj.terminals.statuses.BLOCKED}
+                      size="small"
+                      color={active ? 'success' : 'warning'}
+                      variant={active ? 'outlined' : 'filled'}
+                      sx={{ fontWeight: 600 }}
+                    />
+                  </TableCell>
                   <TableCell sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
                     {term.createdAt ? new Date(term.createdAt).toLocaleString() : 'N/A'}
                   </TableCell>
                   <TableCell align="center">
                     <Stack direction="row" spacing={0.5} justifyContent="center">
-                      <Tooltip title="Edit Terminal">
+                      <Tooltip title={tObj.terminals.editTerminal}>
                         <IconButton color="primary" size="small" onClick={() => handleOpenEdit(term)}>
                           <EditIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Delete Terminal">
-                        <IconButton color="error" size="small" onClick={() => handleDelete(term.id)}>
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                      {active ? (
+                        <Tooltip title={tObj.terminals.blockAction}>
+                          <IconButton color="warning" size="small" onClick={() => handleAskStatus(term, 'BLOCKED')}>
+                            <BlockIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip title={tObj.terminals.unblockAction}>
+                          <IconButton color="success" size="small" disabled={busy}
+                                      onClick={() => handleAskStatus(term, 'ACTIVE')}>
+                            <UnblockIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </Stack>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
               {terminals.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
                     <POSIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                     <Typography color="text.secondary">No acquiring terminals registered yet.</Typography>
                   </TableCell>
@@ -288,11 +405,44 @@ export const TerminalsPage: React.FC = () => {
             </TableBody>
           </Table>
         </TableContainer>
+        <TablePagination
+          rowsPerPageOptions={[10, 20, 50, 100]}
+          component="div"
+          count={totalElements}
+          rowsPerPage={rowsPerPage}
+          page={page}
+          onPageChange={(_, p) => setPage(p)}
+          onRowsPerPageChange={e => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
+        />
       </Paper>
+
+      {/* Block confirmation: says what it will do, and to how many links */}
+      <ConfirmDialog
+        open={statusChange !== null}
+        maxWidth="xs"
+        title={<>
+          {statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockAction : tObj.terminals.unblockAction}
+          {' #'}{statusChange?.terminal.id}
+        </>}
+        question={statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockExplains : tObj.terminals.unblockExplains}
+        confirmLabel={statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockAction : tObj.terminals.unblockAction}
+        confirmColor={statusChange?.nextStatus === 'BLOCKED' ? 'warning' : 'success'}
+        busy={busy}
+        onConfirm={() => statusChange && setTerminalStatus(statusChange.terminal, statusChange.nextStatus)}
+        onCancel={() => setStatusChange(null)}
+      >
+        <Alert severity={statusChange?.affectedLinks ? 'warning' : 'info'} sx={{ mt: 2 }}>
+          {statusChange?.affectedLinks === null
+            ? tObj.terminals.blockLinksUnknown
+            : `${statusChange?.nextStatus === 'BLOCKED'
+                ? tObj.terminals.blockLinksAffected
+                : tObj.terminals.unblockLinksAffected}: ${statusChange?.affectedLinks ?? 0}`}
+        </Alert>
+      </ConfirmDialog>
 
       {/* Create Terminal Dialog */}
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>Register New Acquiring Terminal</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.createDialogTitle}</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{error}</Alert>}
           <Stack spacing={2.5} sx={{ mt: 1 }}>
@@ -335,7 +485,7 @@ export const TerminalsPage: React.FC = () => {
               fullWidth
             />
             <TextField
-              label="Terminal Password *"
+              label={`${tObj.terminals.password} *`}
               type="password"
               value={form.password}
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
@@ -345,14 +495,14 @@ export const TerminalsPage: React.FC = () => {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
-          <Button onClick={() => setCreateOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreate}>Register Terminal</Button>
+          <Button onClick={() => setCreateOpen(false)}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={handleCreate}>{tObj.terminals.registerAction}</Button>
         </DialogActions>
       </Dialog>
 
       {/* Edit Terminal Dialog */}
       <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>Edit Acquiring Terminal #{editingTerminalId}</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.editDialogTitle} #{editingTerminalId}</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{error}</Alert>}
           <Stack spacing={2.5} sx={{ mt: 1 }}>
@@ -397,10 +547,31 @@ export const TerminalsPage: React.FC = () => {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
-          <Button onClick={() => setEditOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleUpdate}>Save Changes</Button>
+          <Button onClick={() => setEditOpen(false)}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={handleAskUpdate}>{tObj.common.save}</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Confirm Edit Dialog */}
+      <ConfirmDialog
+        open={editConfirm !== null}
+        title={<>{tObj.terminals.editConfirmTitle} #{editingTerminalId}</>}
+        question={tObj.terminals.editConfirmQuestion}
+        confirmLabel={tObj.common.confirm}
+        confirmColor="primary"
+        onConfirm={handleUpdate}
+        onCancel={() => setEditConfirm(null)}
+      >
+        {/* Построчно, что именно изменится: подтверждать «правку терминала» вслепую
+            значит подтверждать не глядя — в форме рядом лежат логин, пароль и компания. */}
+        <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+          <Stack spacing={1}>
+            {(editConfirm ?? []).map(change => (
+              <Typography key={change} variant="body2">{change}</Typography>
+            ))}
+          </Stack>
+        </Box>
+      </ConfirmDialog>
     </Box>
   );
 };

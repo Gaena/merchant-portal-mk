@@ -4,13 +4,11 @@ import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.dto.CustomerDto;
 import az.millikart.pbl.dto.PaymentLinkResponse;
 import az.millikart.pbl.dto.PaymentLinkSummaryResponse;
+import java.time.Instant;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriComponentsBuilder;
 
-/**
- * Maps {@link PaymentLink} entities to their API response representations.
- */
 @Component
 public class PaymentLinkMapper {
 
@@ -20,9 +18,6 @@ public class PaymentLinkMapper {
         this.baseUrl = baseUrl;
     }
 
-    /**
-     * Builds the customer-facing open URL for a payment link.
-     */
     public String buildOpenLink(PaymentLink link) {
         return UriComponentsBuilder.fromUriString(baseUrl)
                 .path("/api/v1/payment-links/{id}/open")
@@ -30,7 +25,11 @@ public class PaymentLinkMapper {
                 .toString();
     }
 
-    public PaymentLinkResponse toResponse(PaymentLink link, int currentPaymentsCount) {
+    // lastPaidAt и оба счётчика приходят готовыми: лишний запрос на вызов может позволить себе
+    // только одиночный эндпоинт, список считает всю страницу разом (P2-15). Чем считать — решает
+    // сервис: использования по PAID_STATUSES, возвраты по возвращённой паре (P2-16).
+    public PaymentLinkResponse toResponse(PaymentLink link, int currentPaymentsCount,
+                                          int refundedPaymentsCount, Instant lastPaidAt) {
         CustomerDto customer = null;
         if (link.getCustomerName() != null || link.getCustomerEmail() != null || link.getCustomerPhone() != null) {
             customer = new CustomerDto(link.getCustomerName(), link.getCustomerEmail(), link.getCustomerPhone());
@@ -48,14 +47,19 @@ public class PaymentLinkMapper {
                 link.getUsageType(),
                 link.getMaxPayments(),
                 currentPaymentsCount,
+                refundedPaymentsCount,
                 link.getStatus(),
                 buildOpenLink(link),
                 link.getMetadata(),
+                link.getExpiresAt(),
+                lastPaidAt,
                 link.getCreatedAt()
         );
     }
 
-    public PaymentLinkSummaryResponse toSummary(PaymentLink link) {
+    // lastPaidAt передаётся, а не ищется: вызывающий разрешает всю страницу одним группирующим
+    // запросом, и этот маппер в таблицу транзакций не ходит вовсе (P2-15).
+    public PaymentLinkSummaryResponse toSummary(PaymentLink link, Instant lastPaidAt) {
         return new PaymentLinkSummaryResponse(
                 link.getId(),
                 link.getStatus(),
@@ -69,6 +73,7 @@ public class PaymentLinkMapper {
                 link.getUsageType(),
                 link.getMaxPayments(),
                 link.getExpiresAt(),
+                lastPaidAt,
                 link.getCreatedAt()
         );
     }

@@ -1,20 +1,36 @@
 package az.millikart.directory.service;
 
+import az.millikart.common.dto.PagedResponse;
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.directory.domain.Terminal;
+import az.millikart.directory.domain.TerminalStatus;
 import az.millikart.directory.dto.CreateTerminalRequest;
+import az.millikart.directory.dto.TerminalOptionResponse;
 import az.millikart.directory.dto.TerminalResponse;
 import az.millikart.directory.dto.UpdateTerminalRequest;
 import az.millikart.directory.repository.CompanyRepository;
+import az.millikart.directory.repository.PaymentLinkStatusRepository;
 import az.millikart.directory.repository.TerminalRepository;
+import az.millikart.common.audit.AuditAction;
+import az.millikart.common.audit.AuditEntity;
+import az.millikart.common.audit.AuditEvent;
+import az.millikart.common.audit.AuditLogService;
+import az.millikart.common.search.SearchTerms;
+import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
+import java.time.Instant;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,28 +39,37 @@ public class TerminalService {
 
     private static final Logger log = LoggerFactory.getLogger(TerminalService.class);
 
+    private static final Set<Role> TERMINAL_WRITE_ROLES =
+            EnumSet.of(Role.SYSTEM_ADMIN, Role.COMPANY_HEAD, Role.COMPANY_MANAGER);
+
     private final TerminalRepository terminalRepository;
     private final CompanyRepository companyRepository;
+    private final PaymentLinkStatusRepository paymentLinkStatusRepository;
     private final AuditLogService auditLogService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public TerminalService(TerminalRepository terminalRepository,
                            CompanyRepository companyRepository,
-                           AuditLogService auditLogService) {
+                           PaymentLinkStatusRepository paymentLinkStatusRepository,
+                           AuditLogService auditLogService,
+                           ApplicationEventPublisher eventPublisher) {
         this.terminalRepository = terminalRepository;
         this.companyRepository = companyRepository;
+        this.paymentLinkStatusRepository = paymentLinkStatusRepository;
         this.auditLogService = auditLogService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
     public TerminalResponse createTerminal(CreateTerminalRequest request, UserPrincipal principal) {
         String actorUsername = UserPrincipal.getUsername(principal);
-        String actorRole = UserPrincipal.getRole(principal);
-        String actorCompanyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to create terminal: id={}, name={}, companyId={} by actor: {}", 
+        log.info("Request to create terminal: id={}, name={}, companyId={} by actor: {}",
                 request.id(), request.name(), request.companyId(), actorUsername);
 
-        validateWriteAccessToCompany(request.companyId(), actorRole, actorCompanyId);
+        validateWriteAccessToCompany(request.companyId(), principal,
+                String.valueOf(request.id()), AuditAction.CREATE,
+                "create terminal " + request.id() + " for company " + request.companyId());
 
         if (!companyRepository.existsById(request.companyId())) {
             throw new BusinessException("Company with ID '" + request.companyId() + "' not found");
@@ -66,65 +91,102 @@ public class TerminalService {
 
         terminal = terminalRepository.save(terminal);
 
-        // Audit log
-        auditLogService.logAction(
-                "TERMINAL",
+        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
+        eventPublisher.publishEvent(AuditEvent.of(
+                AuditEntity.TERMINAL,
                 terminal.getId().toString(),
-                "CREATE",
+                AuditAction.CREATE,
                 actorUsername,
                 terminal.getCompanyId(),
                 "Created terminal: " + terminal.getName() + " for company " + terminal.getCompanyId()
-        );
+        ));
 
         return mapToResponse(terminal);
     }
 
+    // Страница терминалов (P2-1) с поиском по name, login, id, companyId и имени компании (P3-1).
+    // Сортировка name + id: без уникального довеска записи с равным именем прыгают между
+    // страницами. Скоуп компании — условие запроса, поиск его не обходит: чужой терминал по имени
+    // не находится.
     @Transactional(readOnly = true)
-    public List<TerminalResponse> listTerminals(UserPrincipal principal) {
-        String actorRole = UserPrincipal.getRole(principal);
-        String actorCompanyId = UserPrincipal.getCompanyId(principal);
+    public PagedResponse<TerminalResponse> listTerminals(Pageable pageable, UserPrincipal principal,
+                                                         String search) {
+        Pageable byName = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+                Sort.by(Sort.Order.asc("name"), Sort.Order.asc("id")));
 
-        List<Terminal> terminals;
-        if ("SYSTEM_ADMIN".equals(actorRole) || "AUDITOR".equals(actorRole)) {
-            terminals = terminalRepository.findAll();
-        } else if ("COMPANY_HEAD".equals(actorRole) || "COMPANY_MANAGER".equals(actorRole) || "COMPANY_EMPLOYEE".equals(actorRole)) {
-            if (actorCompanyId == null) {
-                throw new InvalidStateException("Access denied: User not assigned to a company");
-            }
-            terminals = terminalRepository.findAllByCompanyId(actorCompanyId);
-        } else {
-            throw new InvalidStateException("Access denied");
-        }
+        String companyScope = isGlobalReader(principal) ? null : requireOwnCompany(principal);
+        Page<Terminal> page = terminalRepository.search(companyScope,
+                SearchTerms.toLikePattern(search), byName);
+
+        return PagedResponse.of(page, page.getContent().stream()
+                .map(this::mapToResponse)
+                .collect(Collectors.toList()));
+    }
+
+    // Р-45: лёгкий фид для селекторов — id, name, status, без страниц. Заблокированные терминалы
+    // отдаются намеренно, фильтрует потребитель: форме ссылки нужны только ACTIVE (бэкенд всё
+    // равно откажет по заблокированному, P2-8), а экрану транзакций — все, иначе старый платёж
+    // теряет имя своего терминала. Фильтр на сервере обслужил бы первого и сломал второго.
+    @Transactional(readOnly = true)
+    public List<TerminalOptionResponse> listTerminalOptions(UserPrincipal principal) {
+        List<Terminal> terminals = isGlobalReader(principal)
+                ? terminalRepository.findAllByOrderByNameAscIdAsc()
+                : terminalRepository.findAllByCompanyIdOrderByNameAscIdAsc(requireOwnCompany(principal));
 
         return terminals.stream()
-                .map(this::mapToResponse)
+                .map(t -> new TerminalOptionResponse(t.getId(), t.getName(), t.getStatus()))
                 .collect(Collectors.toList());
     }
 
-    @Transactional(readOnly = true)
-    @Cacheable(value = "terminals", key = "#id")
-    public TerminalResponse getTerminal(Integer id, UserPrincipal principal) {
-        String actorRole = UserPrincipal.getRole(principal);
-        String actorCompanyId = UserPrincipal.getCompanyId(principal);
+    // Возвращает не только флаг: роль без права на список получает отказ прямо здесь.
+    private boolean isGlobalReader(UserPrincipal principal) {
+        Role actorRole = UserPrincipal.getRole(principal);
+        if (actorRole == Role.SYSTEM_ADMIN || actorRole == Role.AUDITOR) {
+            return true;
+        }
+        if (actorRole == Role.COMPANY_HEAD || actorRole == Role.COMPANY_MANAGER
+                || actorRole == Role.COMPANY_EMPLOYEE) {
+            return false;
+        }
+        auditLogService.logDenied(AuditEntity.TERMINAL, "ALL", AuditAction.LIST,
+                UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                "Denied: role " + UserPrincipal.getRawRole(principal)
+                        + " attempted to list terminals");
+        throw new InvalidStateException("Access denied");
+    }
 
+    // Читатель без компании получает отказ, а не null.
+    private String requireOwnCompany(UserPrincipal principal) {
+        String actorCompanyId = UserPrincipal.getCompanyId(principal);
+        if (actorCompanyId == null) {
+            auditLogService.logDenied(AuditEntity.TERMINAL, "ALL", AuditAction.LIST,
+                    UserPrincipal.getUsername(principal), null,
+                    "Denied: " + UserPrincipal.getRole(principal)
+                            + " without a company attempted to list terminals");
+            throw new InvalidStateException("Access denied: User not assigned to a company");
+        }
+        return actorCompanyId;
+    }
+
+    @Transactional(readOnly = true)
+    public TerminalResponse getTerminal(Integer id, UserPrincipal principal) {
         Terminal terminal = terminalRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("Terminal not found"));
 
-        validateReadAccessToCompany(terminal.getCompanyId(), actorRole, actorCompanyId);
+        validateReadAccessToCompany(terminal.getCompanyId(), principal, String.valueOf(id));
         return mapToResponse(terminal);
     }
 
     @Transactional
-    @CacheEvict(value = "terminals", key = "#id")
     public TerminalResponse updateTerminal(Integer id, UpdateTerminalRequest request, UserPrincipal principal) {
         String actorUsername = UserPrincipal.getUsername(principal);
-        String actorRole = UserPrincipal.getRole(principal);
-        String actorCompanyId = UserPrincipal.getCompanyId(principal);
 
         Terminal terminal = terminalRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("Terminal not found"));
 
-        validateWriteAccessToCompany(terminal.getCompanyId(), actorRole, actorCompanyId);
+        validateWriteAccessToCompany(terminal.getCompanyId(), principal,
+                String.valueOf(id), AuditAction.UPDATE,
+                "update terminal " + id + " of company " + terminal.getCompanyId());
 
         StringBuilder changes = new StringBuilder();
         if (request.name() != null && !request.name().isBlank()) {
@@ -140,7 +202,9 @@ public class TerminalService {
             terminal.setPassword(request.password());
         }
         if (request.companyId() != null && !request.companyId().isBlank()) {
-            validateWriteAccessToCompany(request.companyId(), actorRole, actorCompanyId);
+            validateWriteAccessToCompany(request.companyId(), principal,
+                    String.valueOf(id), AuditAction.UPDATE,
+                    "move terminal " + id + " to company " + request.companyId());
             if (!companyRepository.existsById(request.companyId())) {
                 throw new BusinessException("Company with ID '" + request.companyId() + "' not found");
             }
@@ -148,66 +212,106 @@ public class TerminalService {
             terminal.setCompanyId(request.companyId());
         }
 
+        // Последним и отдельно: единственное поле, чья правка выходит за строку терминала.
+        // Установка того же статуса — не изменение и не должна трогать ни одной ссылки, иначе
+        // PATCH, возвращающий объект целиком, переприостанавливает ссылки на каждом сохранении.
+        String statusChange = null;
+        if (request.status() != null && request.status() != terminal.getStatus()) {
+            statusChange = applyStatusChange(terminal, request.status());
+            changes.append(statusChange).append(". ");
+        }
+
         terminal.setUpdatedBy(actorUsername);
         terminal = terminalRepository.save(terminal);
 
-        // Audit log
-        auditLogService.logAction(
-                "TERMINAL",
+        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
+        eventPublisher.publishEvent(AuditEvent.of(
+                AuditEntity.TERMINAL,
                 terminal.getId().toString(),
-                "UPDATE",
+                AuditAction.UPDATE,
                 actorUsername,
                 terminal.getCompanyId(),
                 changes.toString()
-        );
+        ));
+
+        // Блокировка и разблокировка — отдельные действия BLOCK/UNBLOCK: это единственный след
+        // массовой правки чужих платёжных ссылок, и число затронутых обязано быть в записи.
+        if (statusChange != null) {
+            eventPublisher.publishEvent(AuditEvent.of(
+                    AuditEntity.TERMINAL,
+                    terminal.getId().toString(),
+                    request.status() == TerminalStatus.BLOCKED ? AuditAction.BLOCK : AuditAction.UNBLOCK,
+                    actorUsername,
+                    terminal.getCompanyId(),
+                    statusChange
+            ));
+        }
 
         return mapToResponse(terminal);
     }
 
-    @Transactional
-    @CacheEvict(value = "terminals", key = "#id")
-    public void deleteTerminal(Integer id, UserPrincipal principal) {
-        String actorUsername = UserPrincipal.getUsername(principal);
-        String actorRole = UserPrincipal.getRole(principal);
-        String actorCompanyId = UserPrincipal.getCompanyId(principal);
+    // Р-39, Р-40: смена ACTIVE/BLOCKED тянет платёжные ссылки в этой же транзакции —
+    // заблокированного терминала с оплачиваемыми ссылками не должно быть ни мгновения, а сбой на
+    // ссылках обязан откатить и саму блокировку. Возвращает описание с числами — оно идёт в журнал.
+    private String applyStatusChange(Terminal terminal, TerminalStatus target) {
+        Integer terminalId = terminal.getId();
+        terminal.setStatus(target);
 
-        Terminal terminal = terminalRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("Terminal not found"));
+        if (target == TerminalStatus.BLOCKED) {
+            int suspended = paymentLinkStatusRepository.suspendActiveLinks(terminalId);
+            log.info("Blocked terminal {}: suspended {} active payment links", terminalId, suspended);
+            return "Blocked terminal " + terminalId + ", suspended " + suspended + " links";
+        }
 
-        validateWriteAccessToCompany(terminal.getCompanyId(), actorRole, actorCompanyId);
-
-        terminalRepository.delete(terminal);
-
-        // Audit log
-        auditLogService.logAction(
-                "TERMINAL",
-                terminal.getId().toString(),
-                "DELETE",
-                actorUsername,
-                terminal.getCompanyId(),
-                "Deleted terminal ID " + id
-        );
+        // Разблокировка делит приостановленные надвое: срок ещё впереди — в ACTIVE, истёк за время
+        // блокировки — в EXPIRED, а не в ACTIVE (Р-40).
+        Instant now = Instant.now();
+        int resumed = paymentLinkStatusRepository.resumeSuspendedLinks(terminalId, now);
+        int expired = paymentLinkStatusRepository.expireSuspendedLinks(terminalId, now);
+        log.info("Unblocked terminal {}: reactivated {} payment links, expired {}", terminalId, resumed, expired);
+        return "Unblocked terminal " + terminalId + ", resumed " + resumed + " links, expired " + expired + " links";
     }
 
-    private void validateReadAccessToCompany(String targetCompanyId, String actorRole, String actorCompanyId) {
-        if ("SYSTEM_ADMIN".equals(actorRole) || "AUDITOR".equals(actorRole)) {
+    private void validateReadAccessToCompany(String targetCompanyId, UserPrincipal principal, String entityId) {
+        Role actorRole = UserPrincipal.getRole(principal);
+        String actorCompanyId = UserPrincipal.getCompanyId(principal);
+        if (actorRole == Role.SYSTEM_ADMIN || actorRole == Role.AUDITOR) {
             return;
         }
         if (targetCompanyId != null && targetCompanyId.equals(actorCompanyId)) {
             return;
         }
+        // Подшивается под компанию актора, а не названную в запросе (AuditLogService.logDenied).
+        auditLogService.logDenied(AuditEntity.TERMINAL, entityId, AuditAction.READ,
+                UserPrincipal.getUsername(principal), actorCompanyId,
+                "Denied: role " + UserPrincipal.getRawRole(principal) + " of company " + actorCompanyId
+                        + " attempted to read terminal " + entityId + " of company " + targetCompanyId);
         throw new InvalidStateException("Access denied");
     }
 
-    private void validateWriteAccessToCompany(String targetCompanyId, String actorRole, String actorCompanyId) {
-        if ("AUDITOR".equals(actorRole)) {
+    private void validateWriteAccessToCompany(String targetCompanyId, UserPrincipal principal,
+                                              String entityId, String action, String attempt) {
+        Role actorRole = UserPrincipal.getRole(principal);
+        String actorCompanyId = UserPrincipal.getCompanyId(principal);
+        // Роль проверяется до companyId (P1-15): совпадение компании прав на запись не даёт, иначе
+        // COMPANY_EMPLOYEE и любая нераспознанная роль правят терминалы своей компании.
+        boolean allowed;
+        if (actorRole == Role.AUDITOR || actorRole == null || !TERMINAL_WRITE_ROLES.contains(actorRole)) {
+            allowed = false;
+        } else if (actorRole == Role.SYSTEM_ADMIN) {
+            allowed = true;
+        } else {
+            allowed = targetCompanyId != null && targetCompanyId.equals(actorCompanyId);
+        }
+        if (allowed) {
+            return;
+        }
+        auditLogService.logDenied(AuditEntity.TERMINAL, entityId, action,
+                UserPrincipal.getUsername(principal), actorCompanyId,
+                "Denied: role " + UserPrincipal.getRawRole(principal) + " of company " + actorCompanyId
+                        + " attempted to " + attempt);
+        if (actorRole == Role.AUDITOR) {
             throw new InvalidStateException("Access denied: AUDITOR is read-only");
-        }
-        if ("SYSTEM_ADMIN".equals(actorRole)) {
-            return;
-        }
-        if (targetCompanyId != null && targetCompanyId.equals(actorCompanyId)) {
-            return;
         }
         throw new InvalidStateException("Access denied");
     }
@@ -219,6 +323,7 @@ public class TerminalService {
                 terminal.getLogin(),
                 "********",
                 terminal.getCompanyId(),
+                terminal.getStatus(),
                 terminal.getCreatedBy(),
                 terminal.getCreatedAt() != null ? terminal.getCreatedAt() : java.time.Instant.now(),
                 terminal.getUpdatedBy(),
@@ -226,4 +331,3 @@ public class TerminalService {
         );
     }
 }
-

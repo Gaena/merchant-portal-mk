@@ -1,0 +1,10 @@
+# Use this workspace to collaborate
+workspace:
+  id: 79c2b967-41e4-445d-97ef-990856b51475
+
+localResources:
+  collections:
+    - ../auth/Auth.postman_collection.json
+    - ../directory/Directory.postman_collection.json
+    - ../pbl/NON-PSP Ecom.postman_collection.json
+    - ../pbl/Pay-By-Link.postman_collection.json

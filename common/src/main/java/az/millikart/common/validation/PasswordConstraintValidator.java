@@ -6,7 +6,7 @@ import java.util.regex.Pattern;
 
 public class PasswordConstraintValidator implements ConstraintValidator<ValidPassword, String> {
 
-    // PCI-DSS v4.0: Min 12 chars, at least 1 uppercase, 1 lowercase, 1 digit, 1 special character
+    // Требование PCI-DSS v4.0: минимум 12 символов, заглавная, строчная, цифра и спецсимвол.
     private static final Pattern LOWERCASE_PATTERN = Pattern.compile(".*[a-z].*");
     private static final Pattern UPPERCASE_PATTERN = Pattern.compile(".*[A-Z].*");
     private static final Pattern DIGIT_PATTERN = Pattern.compile(".*[0-9].*");

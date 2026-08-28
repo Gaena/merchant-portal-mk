@@ -11,14 +11,16 @@ public class UserPrincipal implements UserDetails, Principal {
 
     private final String userId;
     private final String username;
-    private final String role;
+    private final String rawRole;
+    private final Role role;
     private final String companyId;
     private final Collection<? extends GrantedAuthority> authorities;
 
     public UserPrincipal(String userId, String username, String role, String companyId) {
         this.userId = userId;
         this.username = username;
-        this.role = role;
+        this.rawRole = role;
+        this.role = Role.fromValue(role).orElse(null);
         this.companyId = companyId;
         if (role != null && !role.isBlank()) {
             String roleName = role.startsWith("ROLE_") ? role : "ROLE_" + role;
@@ -32,7 +34,13 @@ public class UserPrincipal implements UserDetails, Principal {
         return userId;
     }
 
-    public String getRole() {
+    // Роль ровно как пришла в токене — только для логов и сообщений, не для решений о доступе.
+    public String getRawRole() {
+        return rawRole;
+    }
+
+    // null означает, что токен принёс нераспознанное значение: вызывающий обязан отказать (P0-4).
+    public Role getRole() {
         return role;
     }
 
@@ -88,8 +96,13 @@ public class UserPrincipal implements UserDetails, Principal {
         return principal != null ? principal.getUsername() : "system";
     }
 
-    public static String getRole(UserPrincipal principal) {
+    // null — либо principal'а нет, либо его роль нераспознана; в обоих случаях доступ закрыт.
+    public static Role getRole(UserPrincipal principal) {
         return principal != null ? principal.getRole() : null;
+    }
+
+    public static String getRawRole(UserPrincipal principal) {
+        return principal != null ? principal.getRawRole() : null;
     }
 
     public static String getCompanyId(UserPrincipal principal) {

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- P3-7: the dashboard groups `transactions` by a `created_at` range and nothing else.
+
+         None of the three indexes from 007 serves that. `idx_transactions_status_created` leads
+         with `status`, and the summary filters no status — it counts all six. A leading column
+         that is not in the predicate cannot be used for the range, so every dashboard load would
+         read the whole table, and `transactions` is the fastest-growing table in the system: one
+         row per payment attempt, forever.
+
+         This was decided by reasoning, not by EXPLAIN: there is no installation with production
+         volumes to measure on, and on a development database every plan is a sequential scan and
+         every plan is fast. Recorded here so that the *presence* of this index reads as a
+         decision, the same way SearchTerms records the absence of pg_trgm.
+
+         Not composite: the company scope lives on `payment_links.terminal_id`, one join away, and
+         `idx_payment_links_term_status` from 002 already leads with that column. Adding columns
+         here that the predicate cannot reach would cost insert time and buy nothing.
+
+         One index per changeset behind its own precondition, for the reason stated in 002: a
+         database restored from a dump without its DATABASECHANGELOG must skip what is already
+         there and still create what is missing. The changeset id carries the module name — all
+         three services share one DATABASECHANGELOG table (problems.md). -->
+
+    <changeSet id="8-pbl-index-transactions-created" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="transactions" indexName="idx_transactions_created"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="transactions" indexName="idx_transactions_created"><column name="created_at"/></createIndex>
+    </changeSet>
+
+</databaseChangeLog>

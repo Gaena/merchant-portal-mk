@@ -1,20 +1,15 @@
 package az.millikart.common.security;
 
-import az.millikart.common.dto.ErrorResponse;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
@@ -29,15 +24,30 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final JwtProvider jwtProvider;
     private final String fallbackApiToken;
     private final boolean fallbackApiTokenEnabled;
-    private final ObjectMapper objectMapper;
+    private final SecurityErrorResponder errorResponder;
+    private final boolean swaggerEnabled;
 
     public JwtAuthFilter(JwtProvider jwtProvider,
-                          @Value("${pbl.security.api-token:pbl-secret-token}") String fallbackApiToken,
-                          @Value("${pbl.security.api-token-enabled:false}") boolean fallbackApiTokenEnabled) {
+                          SecurityErrorResponder errorResponder,
+                          @Value("${pbl.security.api-token:}") String fallbackApiToken,
+                          @Value("${pbl.security.api-token-enabled:false}") boolean fallbackApiTokenEnabled,
+                          @Value("${springdoc.api-docs.enabled:false}") boolean swaggerEnabled) {
+        // Статический токен аутентифицирует как SYSTEM_ADMIN без пароля, поэтому встроенного
+        // значения у него быть не должно: известный дефолт — это бэкдор. Включён без значения —
+        // ошибка конфигурации: флаг поднят, проверка мертва. Поэтому падаем на старте.
+        if (fallbackApiTokenEnabled && (fallbackApiToken == null || fallbackApiToken.isBlank())) {
+            throw new IllegalStateException(
+                    "pbl.security.api-token-enabled is true but pbl.security.api-token is empty. "
+                            + "The static fallback token grants role SYSTEM_ADMIN, so it has no default value.\n"
+                            + "How to fix: either set PBL_API_TOKEN_ENABLED=false (recommended — JWT is the "
+                            + "normal way in), or set PBL_API_TOKEN to a long random value, e.g. "
+                            + "export PBL_API_TOKEN=\"$(openssl rand -base64 32)\"");
+        }
         this.jwtProvider = jwtProvider;
+        this.errorResponder = errorResponder;
         this.fallbackApiToken = fallbackApiToken;
         this.fallbackApiTokenEnabled = fallbackApiTokenEnabled;
-        this.objectMapper = new ObjectMapper().findAndRegisterModules();
+        this.swaggerEnabled = swaggerEnabled;
     }
 
 
@@ -67,7 +77,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (fallbackApiTokenEnabled && fallbackApiToken != null && !fallbackApiToken.isBlank() && fallbackApiToken.equals(token)) {
             username = "admin@millikart.az";
             userId = "00000000-0000-0000-0000-000000000000";
-            role = "SYSTEM_ADMIN";
+            role = Role.SYSTEM_ADMIN.name();
             companyId = null;
             log.debug("Fallback static token authentication successful for path: {}", path);
         } else {
@@ -93,7 +103,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        String finalRole = role != null ? role : "COMPANY_EMPLOYEE";
+        // Claim остаётся здесь сырой строкой намеренно: разбирает её UserPrincipal, а
+        // нераспознанное значение должно дойти до сервисов как «нет роли», а не быть отвергнуто.
+        String finalRole = role != null ? role : Role.COMPANY_EMPLOYEE.name();
         String finalUsername = username != null ? username : "system";
 
         UserPrincipal principal = new UserPrincipal(userId, finalUsername, finalRole, companyId);
@@ -113,41 +125,21 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
     }
 
+    // Публичных путей здесь нет — они в PublicEndpoints, общем с SecurityConfig. Прежняя версия
+    // решала по префиксу и пропускала всё, что вне /api/v1/, — так и остались открыты actuator и
+    // swagger. Springdoc — единственный условный случай: его пути существуют лишь при
+    // springdoc.api-docs.enabled, и SecurityConfig разрешает их по тому же флагу.
     private boolean requiresAuthentication(String path) {
-        if (path == null || !path.startsWith("/api/v1/")) {
+        if (PublicEndpoints.isPublic(path)) {
             return false;
         }
-        // Public Auth endpoints
-        if (path.startsWith("/api/v1/auth/")) {
-            return false;
-        }
-        // Public PBL endpoints
-        if (path.startsWith("/api/v1/payment-links/") && path.endsWith("/open")) {
-            return false;
-        }
-        if (path.startsWith("/api/v1/payment-links/redirect")) {
-            return false;
-        }
-        if (path.startsWith("/api/v1/transactions/") && path.endsWith("/status")) {
-            return false;
-        }
-        return true;
+        return !(swaggerEnabled && PublicEndpoints.isSwagger(path));
     }
 
     private void writeUnauthorized(HttpServletRequest request,
                                    HttpServletResponse response,
                                    String message) throws IOException {
-        response.setStatus(HttpStatus.UNAUTHORIZED.value());
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setCharacterEncoding("UTF-8");
-        String body = objectMapper.writeValueAsString(new ErrorResponse(
-                Instant.now(),
-                HttpStatus.UNAUTHORIZED.value(),
-                HttpStatus.UNAUTHORIZED.getReasonPhrase(),
-                message,
-                request.getRequestURI()
-        ));
-        response.getWriter().write(body);
+        errorResponder.writeUnauthorized(request, response, message);
     }
 }
 

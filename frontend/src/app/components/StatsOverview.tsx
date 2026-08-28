@@ -1,13 +1,12 @@
 import React from 'react';
-import { Box, Paper, Typography, Chip, Grid } from '@mui/material';
+import { Box, Paper, Typography, Grid } from '@mui/material';
 import {
   TrendingUp as TrendingUpIcon,
   Receipt as ReceiptIcon,
   CheckCircle as CheckCircleIcon,
   HourglassEmpty as HourglassIcon,
-  Cancel as CancelIcon,
-  ArrowUpward as ArrowUpwardIcon,
-  ArrowDownward as ArrowDownwardIcon
+  Error as ErrorIcon,
+  Replay as ReplayIcon
 } from '@mui/icons-material';
 import type { Transaction } from '../types/transaction';
 import { formatCurrency } from '../utils/mockData';
@@ -17,22 +16,30 @@ interface StatsOverviewProps {
 }
 
 export const StatsOverview: React.FC<StatsOverviewProps> = ({ transactions }) => {
+  // Считаем по словарю бэкенда (`TransactionStatus`, шесть значений). Прежние 'success' /
+  // 'pending' / 'canceled' / '3d-failed' не совпадали ни с одним реальным статусом, поэтому
+  // выручка и все счётчики всегда были нулевыми (P2-12).
   const totalAmount = transactions
-    .filter(t => t.status === 'success')
+    .filter(t => t.status === 'SUCCESS')
     .reduce((sum, t) => sum + (t.currency === 'AZN' ? t.amount : 0), 0);
-  
+
   const totalTransactions = transactions.length;
-  const successCount = transactions.filter(t => t.status === 'success').length;
-  const pendingCount = transactions.filter(t => t.status === 'pending').length;
-  const canceledCount = transactions.filter(t => t.status === 'canceled').length;
-  const failedCount = transactions.filter(t => t.status === '3d-failed').length;
+  const successCount = transactions.filter(t => t.status === 'SUCCESS').length;
+  // AUTHORIZED — деньги захолдированы, но не списаны: для мерчанта это «в процессе».
+  const pendingCount = transactions.filter(t => t.status === 'PENDING' || t.status === 'AUTHORIZED').length;
+  const failedCount = transactions.filter(t => t.status === 'FAILED').length;
+  const refundedCount = transactions.filter(
+    t => t.status === 'REFUNDED' || t.status === 'PARTIALLY_REFUNDED'
+  ).length;
 
   // Calculate completion rate
   const completionRate = totalTransactions > 0 
     ? ((successCount / totalTransactions) * 100).toFixed(1) 
     : '0';
 
-  // Primary stats - shown first and larger
+  // Primary stats - shown first and larger.
+  // Без trend: прежние '+12.5%' и '+8.2%' были зашиты в код и выглядели как настоящая
+  // аналитика. Сравнивать не с чем — за период сравнения данных здесь нет.
   const primaryStats = [
     {
       title: 'Total Revenue',
@@ -40,19 +47,16 @@ export const StatsOverview: React.FC<StatsOverviewProps> = ({ transactions }) =>
       value: formatCurrency(totalAmount, 'AZN'),
       icon: <TrendingUpIcon />,
       color: '#2e7d32',
-      bgColor: '#e8f5e9',
-      trend: '+12.5%',
-      trendUp: true
+      bgColor: '#e8f5e9'
     },
     {
       title: 'Total Transactions',
-      subtitle: 'Last 10 minutes',
+      // Компонент получает уже отфильтрованный список, а не «последние 10 минут».
+      subtitle: 'Matching current filters',
       value: totalTransactions.toString(),
       icon: <ReceiptIcon />,
       color: '#1565c0',
-      bgColor: '#e3f2fd',
-      trend: '+8.2%',
-      trendUp: true
+      bgColor: '#e3f2fd'
     }
   ];
 
@@ -68,27 +72,27 @@ export const StatsOverview: React.FC<StatsOverviewProps> = ({ transactions }) =>
     },
     {
       title: 'Pending',
-      subtitle: 'Awaiting confirmation',
+      subtitle: 'Awaiting confirmation or capture',
       value: pendingCount.toString(),
       icon: <HourglassIcon />,
       color: '#ef6c00',
       bgColor: '#fff3e0'
     },
     {
-      title: 'Canceled',
-      subtitle: 'Canceled by user',
-      value: canceledCount.toString(),
-      icon: <CancelIcon />,
-      color: '#1565c0',
-      bgColor: '#e3f2fd'
-    },
-    {
-      title: '3D-Failed',
-      subtitle: 'Authentication failed',
+      title: 'Failed',
+      subtitle: 'Payment did not go through',
       value: failedCount.toString(),
-      icon: <CancelIcon />,
+      icon: <ErrorIcon />,
       color: '#c62828',
       bgColor: '#ffebee'
+    },
+    {
+      title: 'Refunded',
+      subtitle: 'Full and partial refunds',
+      value: refundedCount.toString(),
+      icon: <ReplayIcon />,
+      color: '#7b1fa2',
+      bgColor: '#f3e5f5'
     }
   ];
 
@@ -147,20 +151,6 @@ export const StatsOverview: React.FC<StatsOverviewProps> = ({ transactions }) =>
                     </Typography>
                   </Box>
                 </Box>
-                <Chip
-                  icon={stat.trendUp ? <ArrowUpwardIcon sx={{ fontSize: 14 }} /> : <ArrowDownwardIcon sx={{ fontSize: 14 }} />}
-                  label={stat.trend}
-                  size="small"
-                  sx={{
-                    bgcolor: stat.trendUp ? '#e8f5e9' : '#ffebee',
-                    color: stat.trendUp ? '#2e7d32' : '#c62828',
-                    fontWeight: 600,
-                    fontSize: '0.75rem',
-                    '& .MuiChip-icon': {
-                      color: stat.trendUp ? '#2e7d32' : '#c62828'
-                    }
-                  }}
-                />
               </Box>
               <Typography className="text-[32px]" 
                 variant="h3" 

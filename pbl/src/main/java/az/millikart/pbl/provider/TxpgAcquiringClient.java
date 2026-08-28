@@ -1,27 +1,34 @@
 package az.millikart.pbl.provider;
 
+import az.millikart.common.exception.BusinessException;
+import az.millikart.common.exception.PaymentOutcomeUnknownException;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentType;
 import az.millikart.pbl.provider.dto.EcomCreateOrderRequest;
 import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
+import az.millikart.pbl.provider.dto.MoneyOperationResult;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
+// Единственный AcquiringClient. Стаб под флагом pbl.provider.stub убран (20.08.2026): флаг мог
+// выбрать не тот клиент или ни одного; локальный прогон идёт на стенд MilliKart через
+// PBL_PROVIDER_*. Второй реализации в main быть не должно — тестовый двойник живёт в тестах.
 @Component
-@ConditionalOnProperty(name = "pbl.provider.stub", havingValue = "false", matchIfMissing = true)
 public class TxpgAcquiringClient implements AcquiringClient {
 
     private static final Logger log = LoggerFactory.getLogger(TxpgAcquiringClient.class);
@@ -33,13 +40,16 @@ public class TxpgAcquiringClient implements AcquiringClient {
     private final String execTranPath;
     private final String getOrderPath;
 
+    // Дефолтов здесь нет намеренно: единственное место для них — application.yaml. У адресов их нет
+    // и там (P1-10) — сервис, не нашедший адрес, не должен стартовать; пути дефолтятся в yaml.
+    // Иначе выпавший из конфигурации ключ молча увёл бы клиента на другой хост или другой путь.
     public TxpgAcquiringClient(
             RestClient restClient,
-            @Value("${pbl.provider.api-base-url:https://test.millikart.az:8083}") String apiBaseUrl,
-            @Value("${pbl.provider.gateway-base-url:https://test.millikart.az:8083}") String gatewayBaseUrl,
-            @Value("${pbl.provider.create-order-path:/order}") String createOrderPath,
-            @Value("${pbl.provider.exec-tran-path:/api/order/{orderId}/exec-tran}") String execTranPath,
-            @Value("${pbl.provider.get-order-path:/api/order/{orderId}}") String getOrderPath) {
+            @Value("${pbl.provider.api-base-url}") String apiBaseUrl,
+            @Value("${pbl.provider.gateway-base-url}") String gatewayBaseUrl,
+            @Value("${pbl.provider.create-order-path}") String createOrderPath,
+            @Value("${pbl.provider.exec-tran-path}") String execTranPath,
+            @Value("${pbl.provider.get-order-path}") String getOrderPath) {
         this.restClient = restClient;
         this.apiBaseUrl = apiBaseUrl;
         this.gatewayBaseUrl = gatewayBaseUrl;
@@ -48,6 +58,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
         this.getOrderPath = getOrderPath;
     }
 
+    // Ретраится намеренно, в отличие от денежных операций ниже: дубль заказа с нашим ridByMerchant
+    // остаётся неоплаченным и ничего не стоит — в отличие от дубля возврата или списания холда.
     @Override
     @CircuitBreaker(name = "acquiring")
     @Retry(name = "acquiring")
@@ -73,8 +85,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 )
         );
 
-        log.info("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, MerchantRid: {}, Type: {}, Amount: {} {}", 
-                url, login, merchantRid, typeRid, link.getAmount(), link.getCurrency());
+        log.info("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, MerchantRid: {}, Type: {}, Amount: {} {}",
+                ProviderPayloads.urlForLog(url), login, merchantRid, typeRid, link.getAmount(), link.getCurrency());
         log.debug("PROVIDER REQ BODY [createEcomOrder]: {}", request);
 
         try {
@@ -88,25 +100,32 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(EcomCreateOrderResponse.class);
 
-            log.info("PROVIDER RESP [createEcomOrder] <- SUCCESS for MerchantRid: {}, ProviderOrderId: {}", 
+            log.info("PROVIDER RESP [createEcomOrder] <- SUCCESS for MerchantRid: {}, ProviderOrderId: {}",
                     merchantRid, response != null && response.order() != null ? response.order().id() : "N/A");
+            // P0-9: в теле — пароль заказа; его маскирует EcomCreateOrderResponse.Order.toString().
             log.debug("PROVIDER RESP BODY [createEcomOrder]: {}", response);
             return response;
-        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+        } catch (HttpStatusCodeException e) {
             log.error("PROVIDER RESP [createEcomOrder] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
             String desc = extractErrorDescription(e.getResponseBodyAsString());
-            throw new az.millikart.common.exception.BusinessException("Acquirer error: " + desc);
+            throw new BusinessException("Acquirer error: " + desc);
         } catch (Exception e) {
             log.error("PROVIDER REQ [createEcomOrder] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
-            throw new az.millikart.common.exception.BusinessException("Acquirer connection failed: " + e.getMessage());
+            throw new BusinessException("Acquirer connection failed: " + e.getMessage());
         }
     }
 
+    // P0-7: намеренно без @Retry. Списание холда не идемпотентно — на таймауте чтения capture мог
+    // уже пройти, и повтор спишет с держателя карты дважды. Circuit breaker остаётся: он только
+    // отказывает в новых вызовах, но никогда не пересылает уже отправленный.
     @Override
     @CircuitBreaker(name = "acquiring")
-    @Retry(name = "acquiring")
     @SuppressWarnings("unchecked")
-    public Map<String, Object> completeDms(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
+    public MoneyOperationResult completeDms(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
+        // Р-25: пароль заказа уходит в query-строке, поэтому URL нельзя логировать иначе как через
+        // ProviderPayloads.urlForLog (P0-9). По контракту пароль в адресе нужен только для
+        // GET /order/{id}; для exec-tran его добавили мы, но убирать нельзя без прогона на стенде —
+        // это денежный путь (problems.md §5).
         String url = UriComponentsBuilder.fromUriString(apiBaseUrl)
                 .path(execTranPath)
                 .queryParam("password", password)
@@ -115,10 +134,14 @@ public class TxpgAcquiringClient implements AcquiringClient {
 
         Map<String, Object> tran = new HashMap<>();
         tran.put("phase", "Clearing");
+        // P0-8: раньше amount здесь терялся, эквайер списывал весь холд, а API изображал удавшийся
+        // частичный capture. MilliKart подтвердили, что phase "Clearing" принимает amount.
+        tran.put("amount", formatAmount(amount));
         Map<String, Object> body = new HashMap<>();
         body.put("tran", tran);
 
-        log.info("PROVIDER REQ [completeDms] -> POST URL: {}, ProviderOrderId: {}, Login: {}, Amount: {}", url, providerOrderId, login, amount);
+        log.info("PROVIDER REQ [completeDms] -> POST URL: {}, ProviderOrderId: {}, Login: {}, Amount: {}",
+                ProviderPayloads.urlForLog(url), providerOrderId, login, amount);
         log.debug("PROVIDER REQ BODY [completeDms]: {}", body);
 
         try {
@@ -132,26 +155,21 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(Map.class);
 
-            log.info("PROVIDER RESP [completeDms] <- SUCCESS for ProviderOrderId: {}, Response: {}", providerOrderId, response);
+            log.info("PROVIDER RESP [completeDms] <- SUCCESS for ProviderOrderId: {}, Response: {}",
+                    providerOrderId, ProviderPayloads.withoutSecrets(response));
             checkAndThrowIfErrorCode(response, "completeDms");
-            return response;
-        } catch (az.millikart.common.exception.BusinessException e) {
-            throw e;
-        } catch (org.springframework.web.client.HttpStatusCodeException e) {
-            log.error("PROVIDER RESP [completeDms] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
-            String desc = extractErrorDescription(e.getResponseBodyAsString());
-            throw new az.millikart.common.exception.BusinessException("Acquirer error: " + desc);
+            return requireConfirmation("completeDms", providerOrderId, response);
         } catch (Exception e) {
-            log.error("PROVIDER REQ [completeDms] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
-            throw new az.millikart.common.exception.BusinessException("Clearing capture failed: " + e.getMessage());
+            throw classifyMoneyOperationFailure("completeDms", providerOrderId, e);
         }
     }
 
+    // P0-7: намеренно без @Retry, по той же причине, что completeDms. Повторённый возврат — худший
+    // случай: мерчант записывает один возврат, а эквайер выплачивает до трёх.
     @Override
     @CircuitBreaker(name = "acquiring")
-    @Retry(name = "acquiring")
     @SuppressWarnings("unchecked")
-    public Map<String, Object> refund(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
+    public MoneyOperationResult refund(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
         String url = UriComponentsBuilder.fromUriString(apiBaseUrl)
                 .path(execTranPath)
                 .queryParam("password", password)
@@ -160,12 +178,13 @@ public class TxpgAcquiringClient implements AcquiringClient {
 
         Map<String, Object> tran = new HashMap<>();
         tran.put("phase", "Single");
-        tran.put("amount", amount.toString());
+        tran.put("amount", formatAmount(amount));
         tran.put("type", "Refund");
         Map<String, Object> body = new HashMap<>();
         body.put("tran", tran);
 
-        log.info("PROVIDER REQ [refund] -> POST URL: {}, ProviderOrderId: {}, Login: {}, Refund Amount: {}", url, providerOrderId, login, amount);
+        log.info("PROVIDER REQ [refund] -> POST URL: {}, ProviderOrderId: {}, Login: {}, Refund Amount: {}",
+                ProviderPayloads.urlForLog(url), providerOrderId, login, amount);
         log.debug("PROVIDER REQ BODY [refund]: {}", body);
 
         try {
@@ -179,18 +198,12 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(Map.class);
 
-            log.info("PROVIDER RESP [refund] <- SUCCESS for ProviderOrderId: {}, Response: {}", providerOrderId, response);
+            log.info("PROVIDER RESP [refund] <- SUCCESS for ProviderOrderId: {}, Response: {}",
+                    providerOrderId, ProviderPayloads.withoutSecrets(response));
             checkAndThrowIfErrorCode(response, "refund");
-            return response;
-        } catch (az.millikart.common.exception.BusinessException e) {
-            throw e;
-        } catch (org.springframework.web.client.HttpStatusCodeException e) {
-            log.error("PROVIDER RESP [refund] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
-            String desc = extractErrorDescription(e.getResponseBodyAsString());
-            throw new az.millikart.common.exception.BusinessException("Acquirer error: " + desc);
+            return requireConfirmation("refund", providerOrderId, response);
         } catch (Exception e) {
-            log.error("PROVIDER REQ [refund] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
-            throw new az.millikart.common.exception.BusinessException("Refund failed: " + e.getMessage());
+            throw classifyMoneyOperationFailure("refund", providerOrderId, e);
         }
     }
 
@@ -208,7 +221,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 .buildAndExpand(providerOrderId)
                 .toUriString();
 
-        log.info("PROVIDER REQ [getOrderStatus] -> GET URL: {}, ProviderOrderId: {}, Login: {}", url, providerOrderId, login);
+        log.info("PROVIDER REQ [getOrderStatus] -> GET URL: {}, ProviderOrderId: {}, Login: {}",
+                ProviderPayloads.urlForLog(url), providerOrderId, login);
 
         try {
             Map<String, Object> body = restClient.get()
@@ -217,22 +231,118 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(Map.class);
 
-            log.info("PROVIDER RESP [getOrderStatus] <- SUCCESS for ProviderOrderId: {}, Response: {}", providerOrderId, body);
             checkAndThrowIfErrorCode(body, "getOrderStatus");
-            if (body != null && body.containsKey("order")) {
-                return (Map<String, Object>) body.get("order");
-            }
-            return body;
-        } catch (az.millikart.common.exception.BusinessException e) {
+            Map<String, Object> order = body != null && body.containsKey("order")
+                    ? (Map<String, Object>) body.get("order")
+                    : body;
+            // P0-9: при orderDetailLevel=2 объект order несёт пароль заказа (§5.8.3) — в лог он
+            // идёт без этого ключа. Логируется после проверки errorCode, чтобы отказ не
+            // объявлялся сначала как SUCCESS.
+            log.info("PROVIDER RESP [getOrderStatus] <- SUCCESS for ProviderOrderId: {}, Response: {}",
+                    providerOrderId, ProviderPayloads.withoutSecrets(order));
+            return order;
+        } catch (BusinessException e) {
             throw e;
-        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+        } catch (HttpStatusCodeException e) {
             log.error("PROVIDER RESP [getOrderStatus] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
             String desc = extractErrorDescription(e.getResponseBodyAsString());
-            throw new az.millikart.common.exception.BusinessException("Acquirer error: " + desc);
+            throw new BusinessException("Acquirer error: " + desc);
         } catch (Exception e) {
             log.error("PROVIDER REQ [getOrderStatus] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
-            throw new az.millikart.common.exception.BusinessException("Order status check failed: " + e.getMessage());
+            throw new BusinessException("Order status check failed: " + e.getMessage());
         }
+    }
+
+    // Сумма уходит строкой — так в примере Refund у эквайера. toPlainString, а не toString: у
+    // BigDecimal из JSON бывает такой scale, что toString даёт "1E+3", и шлюз прочтёт что угодно,
+    // кроме 1000.00. RoundingMode.UNNECESSARY — намеренно: за спиной мерчанта ничего не должно
+    // округлиться; суммы с тремя знаками отсекает PaymentLinkService — это сломанный инвариант.
+    private static String formatAmount(BigDecimal amount) {
+        return amount.setScale(2, RoundingMode.UNNECESSARY).toPlainString();
+    }
+
+    // P1-8b: «нет errorCode» — ещё не «прошло». Подтверждение по контракту — tran.match.ridByPmo
+    // (§5.5-5.7), его же читает проверка успеха у эквайера (§5.8.8). Без него исход не отказ,
+    // а неизвестность (Р-23): PaymentOutcomeUnknownException (502), а не BusinessException (400).
+    // Разбор защитный намеренно: кривая форма даёт «не подтверждено», а не ClassCastException.
+    private MoneyOperationResult requireConfirmation(String action, String providerOrderId, Map<String, Object> response) {
+        Map<String, Object> tran = asMap(response != null ? response.get("tran") : null);
+        Map<String, Object> match = asMap(tran != null ? tran.get("match") : null);
+        // Что считается идентификатором, решает одно правило на пакет: ProviderPayloads.scalarText.
+        String ridByPmo = ProviderPayloads.scalarText(match != null ? match.get("ridByPmo") : null);
+
+        if (ridByPmo == null) {
+            // Тело целиком в лог намеренно (Р-23): если реальный шлюз ответит не по §5.5-5.7,
+            // возвраты встанут, и одной строки должно хватить, чтобы увидеть, чем он отличается.
+            log.error("PROVIDER RESP [{}] <- NO CONFIRMATION for ProviderOrderId: {}. "
+                            + "The response carries no tran.match.ridByPmo. Full body: {}",
+                    action, providerOrderId, ProviderPayloads.withoutSecrets(response));
+            throw new PaymentOutcomeUnknownException(
+                    "Acquirer accepted the " + action + " but did not confirm it: the response has no "
+                            + "tran.match.ridByPmo, so the operation may or may not have executed. "
+                            + "Expected shape — see pbl/TXPG-client-side-integration.md §5.5-5.7.");
+        }
+
+        String approvalCode = ProviderPayloads.scalarText(tran.get("approvalCode"));
+        String tranActionId = ProviderPayloads.scalarText(match.get("tranActionId"));
+        if (approvalCode == null) {
+            log.warn("PROVIDER RESP [{}] <- confirmed for ProviderOrderId: {} (ridByPmo {}) but without "
+                    + "tran.approvalCode; the operation counts, the dispute trail is thinner", action, providerOrderId, ridByPmo);
+        }
+        if (tranActionId == null) {
+            log.warn("PROVIDER RESP [{}] <- confirmed for ProviderOrderId: {} (ridByPmo {}) but without "
+                    + "tran.match.tranActionId; the operation counts, the dispute trail is thinner", action, providerOrderId, ridByPmo);
+        }
+        log.info("PROVIDER RESP [{}] <- CONFIRMED for ProviderOrderId: {}. ridByPmo: {}, tranActionId: {}, approvalCode: {}",
+                action, providerOrderId, ridByPmo, tranActionId, approvalCode);
+        return new MoneyOperationResult(approvalCode, tranActionId, ridByPmo, response);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMap(Object value) {
+        return value instanceof Map<?, ?> map ? (Map<String, Object>) map : null;
+    }
+
+    // Делит провал денежной операции на «шлюз отказал» (ничего не двинулось, повтор безопасен) и
+    // «мы не знаем» (могло уже пройти). Отказ — только errorCode внутри 200 и 4xx; всё прочее,
+    // включая 5xx и таймаут чтения, — неизвестность. По умолчанию «неизвестно» намеренно: раньше
+    // всё схлопывалось в BusinessException, мерчант принимал неизвестность за отказ и повторял.
+    private RuntimeException classifyMoneyOperationFailure(String action, String providerOrderId, Exception e) {
+        if (e instanceof BusinessException businessException) {
+            // Из checkAndThrowIfErrorCode: 200 с errorCode. Шлюз прочитал запрос и отказал —
+            // значит, точно не выполнил.
+            return businessException;
+        }
+        if (e instanceof PaymentOutcomeUnknownException unconfirmed) {
+            // Из requireConfirmation: 200 без tran.match.ridByPmo. Уже нужный тип с нужным
+            // текстом — обёртка похоронила бы оба под «failed without a verdict».
+            return unconfirmed;
+        }
+        if (e instanceof HttpStatusCodeException httpError) {
+            String desc = extractErrorDescription(httpError.getResponseBodyAsString());
+            if (httpError.getStatusCode().is4xxClientError()) {
+                log.error("PROVIDER RESP [{}] <- REJECTED for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
+                        action, providerOrderId, httpError.getStatusCode(), httpError.getResponseBodyAsString(), httpError);
+                return new BusinessException("Acquirer error: " + desc);
+            }
+            // 5xx: шлюз принял запрос и упал уже где-то за ним.
+            log.error("PROVIDER RESP [{}] <- OUTCOME UNKNOWN for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
+                    action, providerOrderId, httpError.getStatusCode(), httpError.getResponseBodyAsString(), httpError);
+            return new PaymentOutcomeUnknownException(
+                    "Acquirer did not confirm the " + action + " (HTTP " + httpError.getStatusCode() + "): " + desc, httpError);
+        }
+        if (e instanceof ResourceAccessException) {
+            // Таймаут чтения или обрыв: истёкшие 10s ничего не говорят о том, выполнил ли TXPG
+            // операцию до того, как мы перестали слушать.
+            log.error("PROVIDER REQ [{}] <- OUTCOME UNKNOWN for ProviderOrderId: {}. No response from the acquirer: {}",
+                    action, providerOrderId, e.getMessage(), e);
+            return new PaymentOutcomeUnknownException(
+                    "No response from the acquirer for the " + action + ": " + e.getMessage(), e);
+        }
+        log.error("PROVIDER REQ [{}] <- OUTCOME UNKNOWN for ProviderOrderId: {}. Unexpected failure: {}",
+                action, providerOrderId, e.getMessage(), e);
+        return new PaymentOutcomeUnknownException(
+                "Acquirer call for the " + action + " failed without a verdict: " + e.getMessage(), e);
     }
 
     private void checkAndThrowIfErrorCode(Map<String, Object> response, String action) {
@@ -242,7 +352,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     ? String.valueOf(response.get("errorDescription"))
                     : errorCode;
             log.error("PROVIDER RESP [{}] <- REJECTED BY MILLIKART. ErrorCode: {}, Description: {}", action, errorCode, errorDesc);
-            throw new az.millikart.common.exception.BusinessException("Acquirer error: " + errorDesc);
+            throw new BusinessException("Acquirer error: " + errorDesc);
         }
     }
 

@@ -10,12 +10,10 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Map;
 import org.hibernate.validator.constraints.URL;
 
-/**
- * Request payload for creating a new payment link.
- */
 public record CreatePaymentLinkRequest(
 
         String merchantOrderId,
@@ -46,12 +44,14 @@ public record CreatePaymentLinkRequest(
         @Positive(message = "maxPayments must be greater than 0")
         Integer maxPayments,
 
+        // Необязателен: без него ссылка получает срок по умолчанию (pbl.link.default-ttl), а не
+        // живёт вечно. @Future здесь намеренно нет — сверху срок ограничен pbl.link.max-ttl, и обе
+        // проверки живут в сервисе, где отказ может назвать потолок, который мерчант перешёл.
+        Instant expiresAt,
+
         Map<String, Object> metadata
 ) {
 
-    /**
-     * When {@code usageType} is {@code MULTIPLE}, {@code maxPayments} must be provided and positive.
-     */
     @AssertTrue(message = "maxPayments is required and must be greater than 0 when usageType is MULTIPLE")
     public boolean isMaxPaymentsValid() {
         if (usageType == UsageType.MULTIPLE) {

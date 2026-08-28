@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- P2-2 / P2-5 / P2-6: client address and outcome on every audit record, plus the three
+         indexes the queries actually run on. Changeset ids carry the module name because all
+         three services share one DATABASECHANGELOG table (problems.md) — an id that repeats in
+         another module would be silently skipped. Each change guards itself with a precondition,
+         same as after P1-2: a database restored without its DATABASECHANGELOG must skip what is
+         already there and still add what is missing. -->
+
+    <changeSet id="4-directory-audit-client-ip" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="audit_logs" columnName="client_ip"/>
+            </not>
+        </preConditions>
+        <!-- 45 characters: the longest textual IPv6 form, ::ffff:255.255.255.255 included. -->
+        <addColumn tableName="audit_logs">
+            <column name="client_ip" type="varchar(45)"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="4-directory-audit-outcome" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="audit_logs" columnName="outcome"/>
+            </not>
+        </preConditions>
+        <!-- Every record written before this column existed was a successful action: denials
+             were not recorded at all, so SUCCESS is the truthful backfill. -->
+        <addColumn tableName="audit_logs">
+            <column name="outcome" type="varchar(16)" defaultValue="SUCCESS">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <!-- The merchant's main query: own company's log, newest first. -->
+    <changeSet id="4-directory-audit-index-company-created" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="idx_audit_logs_company_created" tableName="audit_logs"/>
+            </not>
+        </preConditions>
+        <createIndex indexName="idx_audit_logs_company_created" tableName="audit_logs"><column name="company_id"/><column name="created_at" descending="true"/></createIndex>
+    </changeSet>
+
+    <!-- History of one object: filter by entityType/entityId. -->
+    <changeSet id="4-directory-audit-index-entity" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="idx_audit_logs_entity" tableName="audit_logs"/>
+            </not>
+        </preConditions>
+        <createIndex indexName="idx_audit_logs_entity" tableName="audit_logs"><column name="entity_type"/><column name="entity_id"/></createIndex>
+    </changeSet>
+
+    <!-- The administrator's unfiltered view, newest first. -->
+    <changeSet id="4-directory-audit-index-created" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="idx_audit_logs_created" tableName="audit_logs"/>
+            </not>
+        </preConditions>
+        <createIndex indexName="idx_audit_logs_created" tableName="audit_logs"><column name="created_at" descending="true"/></createIndex>
+    </changeSet>
+
+</databaseChangeLog>

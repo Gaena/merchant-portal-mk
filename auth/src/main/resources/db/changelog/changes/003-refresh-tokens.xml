@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      P1-12: refresh tokens with rotation.
+
+      One changeset per object, each behind its own precondition — the convention from P1-2
+      (see 002-user-directory-schema.xml). `refresh_tokens` is owned by `auth` alone, so no other
+      service can race these; the preconditions cover a database restored without its
+      DATABASECHANGELOG, where every object already exists and every changeset must skip cleanly.
+
+      What is stored: `token_hash` is the SHA-256 (hex) of the token that was handed to the client,
+      never the token itself. A dump of this table therefore contains no usable session.
+      `family_id` groups the successive tokens of one login (each refresh rotates the token but
+      keeps the family); reuse of a rotated token or a logout revokes the family as a whole.
+    -->
+
+    <changeSet id="3-auth-refresh-tokens" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="refresh_tokens"/>
+            </not>
+        </preConditions>
+        <createTable tableName="refresh_tokens">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="user_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <!-- SHA-256 in hex is always 64 characters. -->
+            <column name="token_hash" type="varchar(64)">
+                <constraints nullable="false" unique="true" uniqueConstraintName="uq_refresh_tokens_token_hash"/>
+            </column>
+            <column name="family_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="issued_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="expires_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Set when this token was replaced by its successor; the rotation-grace window counts from here. -->
+            <column name="rotated_at" type="timestamp"/>
+            <!-- Set on explicit revocation: logout, user blocked/deleted, reuse detected. -->
+            <column name="revoked_at" type="timestamp"/>
+        </createTable>
+    </changeSet>
+
+    <!-- Lookups by hash are served by the unique constraint above (PostgreSQL and H2 back a unique
+         constraint with an index). The two indexes below serve the bulk operations: revoking every
+         token of a user (block / delete) and revoking a whole rotation family (logout / reuse). -->
+    <changeSet id="3-auth-refresh-tokens-index-user" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="refresh_tokens"/>
+            <not>
+                <indexExists tableName="refresh_tokens" indexName="idx_refresh_tokens_user"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="refresh_tokens" indexName="idx_refresh_tokens_user">
+            <column name="user_id"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="3-auth-refresh-tokens-index-family" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="refresh_tokens"/>
+            <not>
+                <indexExists tableName="refresh_tokens" indexName="idx_refresh_tokens_family"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="refresh_tokens" indexName="idx_refresh_tokens_family">
+            <column name="family_id"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- ON DELETE CASCADE: a refresh token has no meaning without its user, and the application
+         never revokes a token by keeping it while its user row disappears (users are soft-deleted
+         via status = DELETED; a hard delete only happens when a database is being cleaned up).
+         onFail="CONTINUE" for the same reason as 2-auth-users-company-fk: a skipped key must stay
+         retryable rather than be recorded as done. -->
+    <changeSet id="3-auth-refresh-tokens-user-fk" author="millikart">
+        <preConditions onFail="CONTINUE">
+            <tableExists tableName="refresh_tokens"/>
+            <tableExists tableName="users"/>
+            <not>
+                <foreignKeyConstraintExists foreignKeyName="fk_refresh_tokens_user" foreignKeyTableName="refresh_tokens"/>
+            </not>
+        </preConditions>
+        <addForeignKeyConstraint baseTableName="refresh_tokens" baseColumnNames="user_id"
+                                 constraintName="fk_refresh_tokens_user"
+                                 referencedTableName="users" referencedColumnNames="id"
+                                 onDelete="CASCADE"/>
+    </changeSet>
+
+</databaseChangeLog>
