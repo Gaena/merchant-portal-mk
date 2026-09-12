@@ -1,5 +1,6 @@
 package az.millikart.pbl;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -50,7 +52,12 @@ import org.springframework.test.web.servlet.ResultActions;
 // строки платежа (REFUNDED или PARTIALLY_REFUNDED, второй строки нет), поэтому подсчёт только по
 // SUCCESS стирал возвращённые платежи из арифметики использований: слот освобождался, и ссылка
 // на 3 платежа собирала за жизнь 4.
+//
+// На настоящей PostgreSQL, а не на H2: тест про суммы — сколько возвращено, сколько осталось,
+// когда возврат считается полным. Это вопрос к настоящему numeric и его точности, а не к тому,
+// как её изображает эмуляция.
 @SpringBootTest
+@Import(PostgresTestContainer.class)
 @AutoConfigureMockMvc
 class PaymentLinkRefundUsageTest {
 

@@ -17,6 +17,12 @@ subprojects {
     apply plugin: 'java'
     apply plugin: 'io.spring.dependency-management'
 
+    // Testcontainers новее, чем в BOM Spring Boot 3.2.5 (1.19.7). Причина конкретная: 1.19.x
+    // обращается к Docker по версии API 1.32, а Docker Engine 29 объявляет минимальной 1.40 и
+    // отвечает на такие запросы 400. Testcontainers рапортует «Could not find a valid Docker
+    // environment», хотя докер работает и CLI к нему ходит. Обновится Boot — строку можно снять.
+    ext['testcontainers.version'] = '1.20.6'
+
     java {
         toolchain {
             languageVersion = JavaLanguageVersion.of(21)
@@ -25,5 +31,12 @@ subprojects {
 
     test {
         useJUnitPlatform()
+
+        // Версия Docker API для Testcontainers. Без неё docker-java берёт свою умолчательную
+        // 1.32, а Docker Engine 29 объявляет минимальной 1.40 и отвечает на неё 400 — наружу
+        // это выглядит как «Could not find a valid Docker environment», хотя докер работает.
+        // Значение читает сам docker-java из окружения; на машинах со старым докером оно
+        // безвредно, потому что 1.40 поддерживается всеми версиями с 2019 года.
+        systemProperty 'api.version', System.getProperty('api.version') ?: '1.40'
     }
 }

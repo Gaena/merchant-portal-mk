@@ -1,5 +1,6 @@
 package az.millikart.pbl;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.sql.Connection;
@@ -13,12 +14,18 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 
 // Три индекса из changeset 007 обязаны существовать после миграции; проверяем по метаданным самой
 // схемы, а не по учёту Liquibase: changeset, помеченный как выполненный, но тихо пропущенный
 // предусловием, удовлетворил бы DATABASECHANGELOG и оставил таблицу без индексов. Та же логика,
 // что у AuditLogSchemaTest в directory.
+//
+// На настоящей PostgreSQL, а не на H2: смысл теста в том, что миграция создаёт индексы там, где
+// они будут в проде. H2 в режиме совместимости — эмуляция, и её метаданные отвечают за свою схему,
+// а не за нашу.
 @SpringBootTest
+@Import(PostgresTestContainer.class)
 public class TransactionIndexSchemaTest {
 
     @Autowired
@@ -31,7 +38,11 @@ public class TransactionIndexSchemaTest {
 
         try (Connection connection = dataSource.getConnection();
              ResultSet indexInfo = connection.getMetaData()
-                     .getIndexInfo(null, null, "TRANSACTIONS", false, false)) {
+                     // Имя в нижнем регистре: PostgreSQL складывает неэкранированные
+                     // идентификаторы именно так, и метаданные отдают их в том же виде.
+                     // С H2 здесь стояло "TRANSACTIONS" — первое же расхождение, которое
+                     // видно после переезда на настоящую СУБД.
+                     .getIndexInfo(null, null, "transactions", false, false)) {
             // JDBC отдаёт строки по имени индекса и порядковой позиции, поэтому собранные здесь
             // списки колонок идут в порядке определения индекса.
             while (indexInfo.next()) {

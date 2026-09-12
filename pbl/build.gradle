@@ -17,6 +17,9 @@ dependencies {
     runtimeOnly 'com.h2database:h2'
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // Тесты схемы, миграций и конкурентности идут на настоящей PostgreSQL в контейнере:
+    // H2 в режиме совместимости их вопросы не проверяет. См. common PostgresTestContainer.
+    testImplementation testFixtures(project(':common'))
 }
 
 tasks.named('test') {

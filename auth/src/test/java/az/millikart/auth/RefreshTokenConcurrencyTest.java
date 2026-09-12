@@ -1,5 +1,6 @@
 package az.millikart.auth;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -36,6 +37,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -43,7 +45,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 // блокирует пользователя посреди refresh. Кто коммитит вторым, обязан увидеть работу первого:
 // иначе logout или block отчитаются об успехе, а живой токен уцелеет. Оба сценария идут через
 // сервисы мимо MockMvc: SpyBean держит refresh в find или issue. Без Transactional — нужны коммиты.
+//
+// На настоящей PostgreSQL, а не на H2, и здесь это существенно: весь тест про то, что второй
+// коммит видит работу первого, то есть про блокировки и изоляцию. У H2 они свои, и на ней тест
+// подтверждал бы, что код не виснет, а не что гонка закрыта той СУБД, которая стоит в проде.
 @SpringBootTest
+@Import(PostgresTestContainer.class)
 class RefreshTokenConcurrencyTest {
 
     private static final String EMAIL = "race@comp01.com";

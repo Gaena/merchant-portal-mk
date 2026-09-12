@@ -1,5 +1,6 @@
 package az.millikart.auth;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -23,13 +24,19 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
 // Список аккаунтов после P2-1: страницы приходят из базы, порядок стабилен между запросами
 // страниц, а ролевые правила — ровно те же, что были у эндпоинта с голым списком.
+//
+// Сортировка строк в PostgreSQL зависит от локали базы, а H2 сравнивает побайтово: порядок
+// страниц и результат поиска через LIKE — ровно те вопросы, на которые эмуляция отвечает
+// за себя, а не за прод.
 @SpringBootTest
+@Import(PostgresTestContainer.class)
 @AutoConfigureMockMvc
 public class UserListPaginationTest {
 
