@@ -760,7 +760,7 @@ SYSTEM_ADMIN и AUDITOR — все; COMPANY_HEAD/MANAGER/EMPLOYEE — своей
 
 `/api/v1/terminals/options`
 
-**Лёгкий список терминалов** (Р-45, 22.08.2026): `id`, `name`, `status`, без пагинации и без учётных данных. Отдаёт **и заблокированные** — фильтрует потребитель
+**Лёгкий список терминалов** (Р-45, 22.08.2026): `id`, `name`, `login`, `status`, без пагинации. Отдаёт **и заблокированные** — фильтрует потребитель. `login` — основной параметр терминала, им он подписан на всех экранах платежей; ворота те же, что у `GET /api/v1/terminals`, который логин отдаёт и так. Пароля в фиде нет
 
 Тот же, что у `GET /api/v1/terminals`
 
@@ -772,13 +772,21 @@ SYSTEM_ADMIN и AUDITOR — все; COMPANY_HEAD/MANAGER/EMPLOYEE — своей
 
 SYSTEM_ADMIN, AUDITOR, сотрудники компании терминала (в т.ч. COMPANY_EMPLOYEE)
 
+`GET`
+
+`/api/v1/terminals/{id}/password`
+
+**Пароль терминала как есть** (11.09.2026) — единственное место, где ключ эквайринга уходит наружу. В `TerminalResponse` он по-прежнему `********`. Каждое чтение пишется в журнал аудита как `READ` по терминалу; сам пароль в журнал не попадает
+
+**Только SYSTEM_ADMIN**
+
 `PATCH`
 
 `/api/v1/terminals/{id}`
 
-Обновить терминал
+Обновить терминал. Поле `password` принимается **только от SYSTEM_ADMIN** (11.09.2026): остальным — `403`, а не тихое игнорирование. Прочие поля — как раньше
 
-SYSTEM_ADMIN, COMPANY_HEAD/MANAGER (своя компания)
+SYSTEM_ADMIN, COMPANY_HEAD/MANAGER (своя компания); пароль — только SYSTEM_ADMIN
 
 `DELETE`
 
@@ -892,7 +900,7 @@ pbl/src/main/java/az/millikart/pbl/
 │   ├── CreatePaymentLinkRequest.java  ← { terminal, amount, currency, paymentType, usageType, expiresAt?, ... }
 │   ├── UpdatePaymentLinkRequest.java  ← { description, status, maxPayments, expiresAt, ... }
 │   ├── PaymentLinkResponse.java       ← Полная информация + payUrl + expiresAt + lastPaidAt + currentPaymentsCount/refundedPaymentsCount (P2-16)
-│   ├── PaymentLinkSummaryResponse.java ← Список (без транзакций) + lastPaidAt; счётчиков нет намеренно (N+1)
+│   ├── PaymentLinkSummaryResponse.java ← Список (без транзакций) + lastPaidAt + terminal; счётчиков нет намеренно (N+1)
 │   ├── TransactionResponse.java       ← { id, amount, capturedAmount, refundedAmount, status, providerOrderId, ... }
 │   ├── CompleteDmsRequest.java        ← { amount } — подтверждение DMS, допускается частичная сумма
 │   ├── RefundRequest.java             ← { amount } — возврат
@@ -1140,7 +1148,7 @@ JWT; роль из READ_ROLES + компания терминала (SYSTEM_ADMI
 
 `/api/v1/transactions/{id}`
 
-P3-7: карточка операции по UUID. Обычное чтение, **эквайер не опрашивается** — за свежим исходом ходит `/{id}/status`
+P3-7: карточка операции по UUID. Обычное чтение, **эквайер не опрашивается** — за свежим исходом ходит `/{id}/status`. В ответе есть `statusHistory` (11.09.2026): заведение, списание холда и каждый возврат — со своим записанным временем, суммой и ссылкой эквайера. Переходов, времени которых никто не записывал, в списке нет
 
 JWT; роль из READ_ROLES + компания терминала (SYSTEM_ADMIN и AUDITOR — глобально)
 
