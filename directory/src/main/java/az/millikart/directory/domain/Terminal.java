@@ -46,6 +46,23 @@ public class Terminal {
     @Builder.Default
     private TerminalStatus status = TerminalStatus.ACTIVE;
 
+    // Кто поставил текущий статус. Не null по той же причине: колонка not null default 'MANUAL'
+    // (006-terminal-status-source.xml), и для всех существующих строк это правда — до появления
+    // синхронизации статусы ставили только люди.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status_source", nullable = false, length = 16)
+    @Builder.Default
+    private TerminalStatusSource statusSource = TerminalStatusSource.MANUAL;
+
+    /**
+     * Терминал провайдера, за которым стоит этот. Заполняется при заведении, когда админ
+     * выбирает строку из слепка: у провайдера один терминал — это один мерчант, и логин
+     * с названием приходят оттуда же. Пусто у терминалов, заведённых до синхронизации;
+     * их сверка не касается.
+     */
+    @Column(name = "provider_rid")
+    private String providerRid;
+
     @Column(name = "created_by")
     private String createdBy;
 

@@ -272,15 +272,18 @@ public class DashboardService {
                     });
         }
 
-        // Имя добирается одним запросом по готовому топу, не построчно. Терминала может уже
-        // не быть — тогда имени нет, и выдумывать его («TRM-…», «Default Terminal») нельзя.
-        Map<Integer, String> names = terminalRepository.findAllById(needed).stream()
+        // Логин и имя добираются одним запросом по готовому топу, не построчно. Терминала может
+        // уже не быть — тогда подписи нет, и выдумывать её («TRM-…», «Default Terminal») нельзя.
+        Map<Integer, Terminal> terminals = terminalRepository.findAllById(needed).stream()
                 .filter(terminal -> terminal.getId() != null)
-                .collect(Collectors.toMap(Terminal::getId, Terminal::getName, (first, second) -> first));
+                .collect(Collectors.toMap(Terminal::getId, terminal -> terminal, (first, second) -> first));
 
         for (Map.Entry<TerminalKey, Accumulator> entry : selected) {
             TerminalKey key = entry.getKey();
-            result.add(new TerminalTotal(key.currency(), key.terminalId(), names.get(key.terminalId()),
+            Terminal terminal = terminals.get(key.terminalId());
+            result.add(new TerminalTotal(key.currency(), key.terminalId(),
+                    terminal != null ? terminal.getLogin() : null,
+                    terminal != null ? terminal.getName() : null,
                     money(entry.getValue().net()), entry.getValue().transactionCount));
         }
         return result;

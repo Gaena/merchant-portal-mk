@@ -1,6 +1,7 @@
 package az.millikart.directory.repository;
 
 import az.millikart.directory.domain.Terminal;
+import java.util.Optional;
 import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -37,4 +38,7 @@ public interface TerminalRepository extends JpaRepository<Terminal, Integer> {
     List<Terminal> findAllByOrderByNameAscIdAsc();
 
     List<Terminal> findAllByCompanyIdOrderByNameAscIdAsc(String companyId);
+
+    /** Один терминал провайдера — одна наша компания: связь проверяется перед заведением. */
+    Optional<Terminal> findByProviderRid(String providerRid);
 }

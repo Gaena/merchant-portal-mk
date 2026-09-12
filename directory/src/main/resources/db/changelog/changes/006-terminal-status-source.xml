@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Две колонки к `terminals` под синхронизацию с провайдером.
+
+      `status_source` — кто последним менял **статус**: человек или синхронизация. Без него
+      правило «решение клиента не трогаем» неисполнимо: в таблице виден только сам статус, а
+      «выключен человеком» и «выключен системой» требуют разного обращения. Терминал,
+      выключенный человеком, не включает никто и никогда; выключенный синхронизацией она же
+      и включит, когда провайдер вернёт его в строй, — иначе одно временное отключение на их
+      стороне оставляло бы наш терминал мёртвым навсегда, а его ссылки приостановленными.
+
+      Значение по умолчанию `MANUAL` правдиво для всех существующих строк: их статус ставил
+      человек, синхронизации до сих пор не было.
+
+      `provider_rid` — какой терминал провайдера стоит за нашим. Заполняется при заведении,
+      когда админ выбирает строку из `provider_terminals`; у терминалов, заведённых до этого,
+      пусто, и синхронизация их не касается.
+
+      Колонки добавляются changelog'ами двух сервисов под одинаковым preCondition — как и
+      `status` в 005: таблицу создаёт тот из них, кто стартовал первым, и второй changeSet
+      просто отметится выполненным.
+    -->
+    <changeSet id="006-directory-terminal-status-source" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="terminals" columnName="status_source"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="terminals">
+            <column name="status_source" type="varchar(16)" defaultValue="MANUAL">
+                <constraints nullable="false"/>
+            </column>
+            <column name="provider_rid" type="varchar(64)"/>
+        </addColumn>
+    </changeSet>
+
+    <!-- Один терминал провайдера стоит за одним нашим. Без ограничения две компании завели бы
+         один и тот же терминал и смотрели бы в одну выписку, каждая видя платежи другой.
+         Обычный уникальный индекс, без условия: `provider_rid` пуст у всех терминалов,
+         заведённых до синхронизации, а пустые значения уникальность и так не ограничивает —
+         ни в PostgreSQL, ни в H2, на которой идут тесты. -->
+    <changeSet id="006-directory-terminal-provider-rid-unique" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="uk_terminals_provider_rid"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="terminals" indexName="uk_terminals_provider_rid" unique="true">
+            <column name="provider_rid"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

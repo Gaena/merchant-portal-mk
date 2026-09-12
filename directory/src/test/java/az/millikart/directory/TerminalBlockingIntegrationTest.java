@@ -1,5 +1,6 @@
 package az.millikart.directory;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import az.millikart.common.audit.AuditLog;
 import az.millikart.common.audit.AuditOutcome;
 import az.millikart.common.security.JwtProvider;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpHeaders;
@@ -28,6 +30,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +42,7 @@ import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -47,7 +52,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // ссылками. Таблица payment_links принадлежит pbl, и в H2 этого модуля не заводится, поэтому её
 // создаёт настоящий changelog pbl через SharedDatabaseSchema: так же выглядит прод (одна общая
 // база), и только так нативные update-ы проверяются против реальной таблицы.
+//
+// Пишет в `payment_links` — таблицу чужого модуля — нативным запросом, и проверяет, что
+// блокировка терминала двигает ссылки. Диалект здесь существенный, а не безразличный.
 @SpringBootTest
+@Import(PostgresTestContainer.class)
 @AutoConfigureMockMvc
 public class TerminalBlockingIntegrationTest {
 
@@ -174,7 +183,7 @@ public class TerminalBlockingIntegrationTest {
         block(TERMINAL);
         // Срок истекает, пока терминал заблокирован.
         jdbcTemplate.update("UPDATE payment_links SET expires_at = ? WHERE id = ?",
-                java.sql.Timestamp.from(Instant.now().minus(1, ChronoUnit.HOURS)), ranOut);
+                utc(Instant.now().minus(1, ChronoUnit.HOURS)), ranOut);
 
         unblock(TERMINAL);
 
@@ -317,8 +326,8 @@ public class TerminalBlockingIntegrationTest {
                         VALUES (?, 0, ?, ?, ?, 10.00, 'AZN', 'SMS', 'SINGLE', 0, ?, ?, ?)""",
                 id, "RID-" + id.toString().substring(0, 8), "order-" + id.toString().substring(0, 8),
                 terminalId, status,
-                expiresAt != null ? java.sql.Timestamp.from(expiresAt) : null,
-                java.sql.Timestamp.from(Instant.now()));
+                expiresAt != null ? utc(expiresAt) : null,
+                utc(Instant.now()));
         return id;
     }
 
@@ -335,12 +344,105 @@ public class TerminalBlockingIntegrationTest {
                 .andExpect(status().isCreated());
     }
 
+    // --- пароль терминала ------------------------------------------------------------------
+
+    // Пароль эквайринга уходит наружу ровно одним путём и только администратору системы.
+    // Каждое чтение оставляет след: посмотреть чужой платёжный ключ — как раз то событие,
+    // ради которого журнал и заведён.
+    @Test
+    public void password_isRevealedToASystemAdmin_andRecorded() throws Exception {
+        mockMvc.perform(get("/api/v1/terminals/{id}/password", TERMINAL)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id", is(TERMINAL)))
+                .andExpect(jsonPath("$.password", is("term_pass")));
+
+        List<AuditLog> reads = auditLogRepository.findAll().stream()
+                .filter(record -> "READ".equals(record.getAction())
+                        && String.valueOf(TERMINAL).equals(record.getEntityId()))
+                .toList();
+        assertThat(reads).hasSize(1);
+        assertThat(reads.getFirst().getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
+        assertThat(reads.getFirst().getPerformedBy()).isEqualTo("admin@millikart.az");
+        // Сам ключ в журнал не попадает: журнал читают не только те, кому пароль полагается.
+        assertThat(reads.getFirst().getDetails()).doesNotContain("term_pass");
+    }
+
+    // Сотруднику компании пароль не показывают, хотя терминалы своей компании он читает свободно.
+    @Test
+    public void password_isRefusedToEveryoneElse_andTheAttemptIsRecorded() throws Exception {
+        mockMvc.perform(get("/api/v1/terminals/{id}/password", TERMINAL)
+                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
+                .andExpect(status().isForbidden());
+
+        List<AuditLog> denied = auditLogRepository.findAll().stream()
+                .filter(record -> record.getOutcome() == AuditOutcome.DENIED)
+                .toList();
+        assertThat(denied).hasSize(1);
+        assertThat(denied.getFirst().getAction()).isEqualTo("READ");
+        assertThat(denied.getFirst().getPerformedBy()).isEqualTo("employee@comp1.com");
+    }
+
+    // В обычном ответе по терминалу пароль как был замаскирован, так и остаётся: отдельный путь
+    // заведён именно для того, чтобы списки и карточки ключа не несли.
+    @Test
+    public void terminalResponse_keepsThePasswordMasked() throws Exception {
+        mockMvc.perform(get("/api/v1/terminals/{id}", TERMINAL)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.password", is("********")));
+    }
+
+    // Менять пароль тоже может только администратор системы: молча проигнорировать чужую попытку
+    // нельзя — глава компании решил бы, что ключ сменён, и остался бы со старым.
+    @Test
+    public void passwordChange_byAnyoneButASystemAdmin_isRefusedAndChangesNothing() throws Exception {
+        String headTokenCompany1 = "Bearer " + jwtProvider.generateToken(
+                "111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
+
+        mockMvc.perform(patch("/api/v1/terminals/{id}", TERMINAL)
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"stolen-key\"}"))
+                .andExpect(status().isForbidden());
+
+        assertThat(terminalRepository.findById(TERMINAL).orElseThrow().getPassword())
+                .isEqualTo("term_pass");
+    }
+
+    // Остальные поля глава компании правит по-прежнему: ограничение касается ключа, а не терминала.
+    @Test
+    public void nameChange_byACompanyHead_stillGoesThrough() throws Exception {
+        String headTokenCompany1 = "Bearer " + jwtProvider.generateToken(
+                "111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
+
+        mockMvc.perform(patch("/api/v1/terminals/{id}", TERMINAL)
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Renamed Terminal\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name", is("Renamed Terminal")));
+    }
+
+    /**
+     * Момент времени так, как его пишет приложение.
+     *
+     * Колонка `expires_at` объявлена как `timestamp` без зоны, и Hibernate кладёт в неё `Instant`
+     * в UTC. `java.sql.Timestamp.from(...)`, который стоял здесь раньше, драйвер переводит в
+     * **локальную зону JVM**: на машине в Баку срок «час назад» ложился в базу как «через три
+     * часа», разблокировка считала ссылку живой и возвращала её в ACTIVE вместо EXPIRED.
+     * На H2 расхождение не проявлялось — поймалось сразу после переезда на PostgreSQL.
+     */
+    private static LocalDateTime utc(Instant instant) {
+        return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
+    }
+
     private void createTerminal(int id, String name) throws Exception {
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateTerminalRequest(id, name, "term_login", "term_pass", "comp-01"))))
+                                new CreateTerminalRequest(id, name, "term_login", "term_pass", "comp-01", null))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status", is("ACTIVE")));
     }

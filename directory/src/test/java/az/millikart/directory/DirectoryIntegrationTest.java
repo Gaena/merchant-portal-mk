@@ -133,7 +133,7 @@ public class DirectoryIntegrationTest {
                 "term_login",
                 "term_pass",
                 "comp-01"
-        );
+        , null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
@@ -149,7 +149,7 @@ public class DirectoryIntegrationTest {
                 "term_login2",
                 "term_pass2",
                 "comp-01"
-        );
+        , null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany2)
@@ -229,7 +229,7 @@ public class DirectoryIntegrationTest {
         createCompany("comp-01", "MilliKart LLC");
 
         CreateTerminalRequest request = new CreateTerminalRequest(
-                700311, "Employee Terminal", "term_login", "term_pass", "comp-01");
+                700311, "Employee Terminal", "term_login", "term_pass", "comp-01", null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
@@ -301,7 +301,7 @@ public class DirectoryIntegrationTest {
         createCompany("comp-01", "MilliKart LLC");
 
         CreateTerminalRequest request = new CreateTerminalRequest(
-                700314, "Manager Terminal", "term_login", "term_pass", "comp-01");
+                700314, "Manager Terminal", "term_login", "term_pass", "comp-01", null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, managerTokenCompany1)
@@ -317,7 +317,7 @@ public class DirectoryIntegrationTest {
         createCompany("comp-01", "MilliKart LLC");
 
         CreateTerminalRequest request = new CreateTerminalRequest(
-                700315, "Unknown Role Terminal", "term_login", "term_pass", "comp-01");
+                700315, "Unknown Role Terminal", "term_login", "term_pass", "comp-01", null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, unknownRoleToken)
@@ -331,7 +331,7 @@ public class DirectoryIntegrationTest {
         createCompany("comp-01", "MilliKart LLC");
 
         CreateTerminalRequest request = new CreateTerminalRequest(
-                700316, "Auditor Terminal", "term_login", "term_pass", "comp-01");
+                700316, "Auditor Terminal", "term_login", "term_pass", "comp-01", null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, auditorToken)
@@ -386,7 +386,7 @@ public class DirectoryIntegrationTest {
     }
 
     private void createTerminal(int id, String name, String companyId, String token) throws Exception {
-        CreateTerminalRequest request = new CreateTerminalRequest(id, name, "term_login", "term_pass", companyId);
+        CreateTerminalRequest request = new CreateTerminalRequest(id, name, "term_login", "term_pass", companyId, null);
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, token)
                         .contentType(MediaType.APPLICATION_JSON)
