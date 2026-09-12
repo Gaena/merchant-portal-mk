@@ -84,6 +84,8 @@ export interface TranslationDictionary {
     };
     recentTransactions: {
       title: string;
+      providerOrderId: string;
+      merchantRid: string;
       id: string;
       date: string;
       terminal: string;
@@ -218,6 +220,13 @@ export interface TranslationDictionary {
      */
     statuses: Record<TransactionStatus, string>;
     columns: {
+      /**
+       * Идентификаторы, которые мерчант знает по своей стороне: номер заказа у провайдера
+       * и RID платежа. Идут первыми во всех таблицах операций — внутренний `id` для мерчанта
+       * ничего не значит и стоит последним, служебной колонкой.
+       */
+      providerOrderId: string;
+      merchantRid: string;
       id: string;
       date: string;
       amount: string;
@@ -226,6 +235,11 @@ export interface TranslationDictionary {
       rrn: string;
       method: string;
       terminal: string;
+      /**
+       * Подпись колонки терминала. Основной его параметр — логин: имя мерчант придумывает сам,
+       * а числовой id внутренний. Короткая форма `terminals.login`, годная для шапки таблицы.
+       */
+      terminalLogin: string;
       actions: string;
     };
     detail: {
@@ -255,7 +269,31 @@ export interface TranslationDictionary {
       paymentInfo: string;
       technicalInfo: string;
       approvalCode: string;
+      /**
+       * Тексты неподтверждённого исхода денежной операции (502 от бэкенда). Отдельные от
+       * обычного отказа намеренно: при отказе деньги не двигались и повтор безопасен, здесь
+       * операция могла уже пройти — см. `utils/moneyOperationError.ts`.
+       */
+      unresolvedTitle: string;
+      unresolvedHint: string;
+      /** Кнопка, спрашивающая эквайера о судьбе операции. Единственный верный следующий шаг. */
+      checkStatusAction: string;
+      statusChecked: string;
+      /** Остаток к возврату у частично возвращённой операции: вернуть можно только его. */
+      refundableLeft: string;
+      /**
+       * Подписи событий на шкале истории. Денежные события называют действие, а не состояние
+       * после него: «возврат» понятнее, чем «частично возвращена», когда рядом стоит сумма.
+       */
+      eventCreated: string;
+      eventCaptured: string;
+      eventRefunded: string;
+      /** Ответ не принёс ни одного события. Пустая шкала без слов читается как поломка. */
+      historyEmpty: string;
+      /** Заголовок блока с ProviderOrderId и MerchantRid — он открывает карточку операции. */
+      identifiers: string;
       providerOrderId: string;
+      merchantRid: string;
       clientIp: string;
     };
   };
@@ -272,6 +310,14 @@ export interface TranslationDictionary {
     terminalId: string;
     login: string;
     password: string;
+    /**
+     * Раскрытие пароля терминала: ключ от эквайринга показывается по нажатию, только системному
+     * администратору и с записью в журнал аудита (`TerminalService.revealPassword`).
+     */
+    revealPassword: string;
+    hidePassword: string;
+    newPassword: string;
+    newPasswordHint: string;
     company: string;
     status: string;
     /** Полный словарь статусов терминала: новое значение потребует перевода на все три языка. */
@@ -465,6 +511,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       recentTransactions: {
         title: 'Latest payments',
+        providerOrderId: 'Provider Order ID',
+        merchantRid: 'Merchant RID',
         id: 'Transaction',
         date: 'Date & time',
         terminal: 'Terminal',
@@ -580,7 +628,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       ecommerceTitle: 'E-commerce Transactions',
       filters: {
         dateRange: 'Date Range',
-        search: 'Search by ID, customer or RRN...',
+        search: 'Search by Provider Order ID, Merchant RID, customer, email or transaction ID...',
         paymentMethod: 'Payment Method',
         terminal: 'Terminal',
         clearFilters: 'Clear Filters',
@@ -594,6 +642,8 @@ export const translations: Record<Language, TranslationDictionary> = {
         REFUNDED: 'Refunded',
       },
       columns: {
+        providerOrderId: 'Provider Order ID',
+        merchantRid: 'Merchant RID',
         id: 'Transaction ID',
         date: 'Date & Time',
         amount: 'Amount',
@@ -602,6 +652,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         rrn: 'RRN',
         method: 'Method',
         terminal: 'Terminal',
+        terminalLogin: 'Terminal Login',
         actions: 'Details',
       },
       detail: {
@@ -622,7 +673,18 @@ export const translations: Record<Language, TranslationDictionary> = {
         paymentInfo: 'Payment Breakdown',
         technicalInfo: 'Technical Gateway Info',
         approvalCode: 'Approval Code',
+        unresolvedTitle: 'Outcome not confirmed by the acquirer',
+        unresolvedHint: 'The operation may already have gone through. Do not send it again — check the transaction status first.',
+        checkStatusAction: 'Check status',
+        statusChecked: 'Status re-read from the acquirer.',
+        refundableLeft: 'Left to refund',
+        eventCreated: 'Transaction opened',
+        eventCaptured: 'Hold captured',
+        eventRefunded: 'Refund confirmed',
+        historyEmpty: 'No recorded events for this transaction yet.',
+        identifiers: 'Payment Identifiers',
         providerOrderId: 'Provider Order ID',
+        merchantRid: 'Merchant RID',
         clientIp: 'Client IP Address',
       },
     },
@@ -638,6 +700,10 @@ export const translations: Record<Language, TranslationDictionary> = {
       terminalId: 'Numeric Terminal ID',
       login: 'Merchant Login ID',
       password: 'Terminal Password',
+      revealPassword: 'Show password',
+      hidePassword: 'Hide password',
+      newPassword: 'New Terminal Password (Optional)',
+      newPasswordHint: 'Leave blank to keep the current terminal password',
       company: 'Assigned Company',
       status: 'Status',
       statuses: {
@@ -810,6 +876,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       recentTransactions: {
         title: 'Son ödənişlər',
+        providerOrderId: 'Provayder Sifariş ID',
+        merchantRid: 'Merchant RID',
         id: 'Əməliyyat',
         date: 'Tarix və vaxt',
         terminal: 'Terminal',
@@ -925,7 +993,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       ecommerceTitle: 'E-ticarət Əməliyyatları',
       filters: {
         dateRange: 'Tarix Aralığı',
-        search: 'ID, müştəri və ya RRN üzrə axtarış...',
+        search: 'Provayder Sifariş ID, Merchant RID, müştəri, e-poçt və ya əməliyyat ID üzrə axtarış...',
         paymentMethod: 'Ödəniş Üsulu',
         terminal: 'Terminal',
         clearFilters: 'Filtrləri Sıfırla',
@@ -939,6 +1007,8 @@ export const translations: Record<Language, TranslationDictionary> = {
         REFUNDED: 'Qaytarılıb',
       },
       columns: {
+        providerOrderId: 'Provayder Sifariş ID',
+        merchantRid: 'Merchant RID',
         id: 'Əməliyyat ID',
         date: 'Tarix və Vaxt',
         amount: 'Məbləğ',
@@ -947,6 +1017,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         rrn: 'RRN',
         method: 'Üsul',
         terminal: 'Terminal',
+        terminalLogin: 'Terminal Logini',
         actions: 'Ətraflı',
       },
       detail: {
@@ -967,7 +1038,18 @@ export const translations: Record<Language, TranslationDictionary> = {
         paymentInfo: 'Ödəniş Bölgüsü',
         technicalInfo: 'Texniki Əlaqə Məlumatı',
         approvalCode: 'Təsdiq Kodu (Approval Code)',
+        unresolvedTitle: 'Nəticə ekvayer tərəfindən təsdiqlənmədi',
+        unresolvedHint: 'Əməliyyat artıq keçmiş ola bilər. Təkrar göndərməyin — əvvəlcə əməliyyatın statusunu yoxlayın.',
+        checkStatusAction: 'Statusu yoxla',
+        statusChecked: 'Status ekvayerdən yenidən oxundu.',
+        refundableLeft: 'Qaytarıla bilən qalıq',
+        eventCreated: 'Əməliyyat açıldı',
+        eventCaptured: 'Blok məbləği silindi',
+        eventRefunded: 'Qaytarma təsdiqləndi',
+        historyEmpty: 'Bu əməliyyat üzrə qeydə alınmış hadisə yoxdur.',
+        identifiers: 'Ödəniş identifikatorları',
         providerOrderId: 'Provayder Sifariş ID',
+        merchantRid: 'Merchant RID',
         clientIp: 'Müştərinin IP Ünvanı',
       },
     },
@@ -983,6 +1065,10 @@ export const translations: Record<Language, TranslationDictionary> = {
       terminalId: 'Reqamli Terminal ID',
       login: 'Mərfəti Terminal Logini',
       password: 'Terminal Şifrəsi',
+      revealPassword: 'Şifrəni göstər',
+      hidePassword: 'Şifrəni gizlət',
+      newPassword: 'Yeni terminal şifrəsi (istəyə görə)',
+      newPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
       company: 'Təyin Olunmuş Şirkət',
       status: 'Status',
       statuses: {
@@ -1155,6 +1241,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       recentTransactions: {
         title: 'Последние платежи',
+        providerOrderId: 'ID заказа провайдера',
+        merchantRid: 'Merchant RID',
         id: 'Операция',
         date: 'Дата и время',
         terminal: 'Терминал',
@@ -1270,7 +1358,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       ecommerceTitle: 'Электронные транзакции',
       filters: {
         dateRange: 'Диапазон дат',
-        search: 'Поиск по ID, клиенту или RRN...',
+        search: 'Поиск по ID заказа провайдера, Merchant RID, клиенту, email или ID транзакции...',
         paymentMethod: 'Метод оплаты',
         terminal: 'Терминал',
         clearFilters: 'Сбросить фильтры',
@@ -1284,6 +1372,8 @@ export const translations: Record<Language, TranslationDictionary> = {
         REFUNDED: 'Возврат',
       },
       columns: {
+        providerOrderId: 'ID заказа провайдера',
+        merchantRid: 'Merchant RID',
         id: 'ID Транзакции',
         date: 'Дата и Время',
         amount: 'Сумма',
@@ -1292,6 +1382,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         rrn: 'RRN',
         method: 'Метод',
         terminal: 'Терминал',
+        terminalLogin: 'Логин терминала',
         actions: 'Детали',
       },
       detail: {
@@ -1312,7 +1403,18 @@ export const translations: Record<Language, TranslationDictionary> = {
         paymentInfo: 'Параметры платежа',
         technicalInfo: 'Техническая информация шлюза',
         approvalCode: 'Код одобрения (Approval Code)',
+        unresolvedTitle: 'Эквайер не подтвердил исход',
+        unresolvedHint: 'Операция могла уже пройти. Не отправляйте её повторно — сначала проверьте статус операции.',
+        checkStatusAction: 'Проверить статус',
+        statusChecked: 'Статус перечитан у эквайера.',
+        refundableLeft: 'Остаток к возврату',
+        eventCreated: 'Операция заведена',
+        eventCaptured: 'Холд списан',
+        eventRefunded: 'Возврат подтверждён',
+        historyEmpty: 'По этой операции не записано ни одного события.',
+        identifiers: 'Идентификаторы платежа',
         providerOrderId: 'ID заказа провайдера',
+        merchantRid: 'Merchant RID',
         clientIp: 'IP адрес клиента',
       },
     },
@@ -1328,6 +1430,10 @@ export const translations: Record<Language, TranslationDictionary> = {
       terminalId: 'Цифровой Terminal ID',
       login: 'Логин терминала мерчанта',
       password: 'Пароль терминала',
+      revealPassword: 'Показать пароль',
+      hidePassword: 'Скрыть пароль',
+      newPassword: 'Новый пароль терминала (необязательно)',
+      newPasswordHint: 'Оставьте пустым, чтобы сохранить текущий пароль терминала',
       company: 'Назначенная компания',
       status: 'Статус',
       statuses: {

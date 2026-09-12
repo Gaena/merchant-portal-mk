@@ -13,6 +13,7 @@ import {
   Grid,
   Tooltip,
   Alert,
+  AlertTitle,
   Snackbar,
   LinearProgress,
   Avatar,
@@ -56,7 +57,9 @@ import {
   parsePaymentType,
 } from '../utils/payByLinkData';
 import type { PaymentLink } from '../utils/payByLinkData';
-import { parseTransactionStatus } from '../types/transaction';
+import type { TerminalOptionDto } from '../types/dto';
+import { buildTerminalIndex, terminalLabel, terminalSubLabel } from '../utils/terminals';
+import { readMoneyOperationFailure, type MoneyOperationFailure } from '../utils/moneyOperationError';
 import { linkStatusLabel } from '../i18n/translations';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
@@ -177,6 +180,7 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
 
 const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
   const navigate = useNavigate();
+  const { tObj } = useLanguage();
   const [transactions, setTransactions] = useState<any[]>([]);
 
   useEffect(() => {
@@ -215,12 +219,14 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
           <Table size="small">
             <TableHead>
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                <TableCell sx={{ fontWeight: 600 }}>Transaction ID</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.transactions.columns.providerOrderId}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.transactions.columns.merchantRid}</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Date & Time</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Payer IP</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Device / User-Agent</TableCell>
                 <TableCell sx={{ fontWeight: 600 }} align="right">Amount</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.transactions.columns.id}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -240,49 +246,22 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                   <TableRow
                     key={txn.id}
                     hover
-                    onClick={() => {
-                      // Никакого обратного перевода в собственный словарь: статус уходит
-                      // на детальную страницу таким, каким его прислал бэкенд (P2-12).
-                      const parsedStatus = parseTransactionStatus(status);
-                      const txObj = {
-                        id: String(txn.id),
-                        timestamp: new Date(txn.createdAt || txn.timestamp || Date.now()),
-                        customer: txn.customerName || link.customerName || 'N/A',
-                        customerEmail: txn.customerEmail || link.customerEmail || 'N/A',
-                        amount: Number(txn.amount ?? link.amount),
-                        currency: txn.currency || link.currency || 'AZN',
-                        status: parsedStatus,
-                        statusRaw: status,
-                        paymentMethod: link.paymentType,
-                        description: link.description || 'Payment Link Transaction',
-                        merchantReference: txn.merchantOrderId || txn.providerOrderId || txn.provider_order_id || txn.id,
-                        providerOrderId: txn.providerOrderId || txn.provider_order_id,
-                        cardLast4: txn.cardNumberMasked ? String(txn.cardNumberMasked).slice(-4) : (txn.cardLast4 || undefined),
-                        fee: Number(txn.fee || 0),
-                        terminalRid: link.merchantRid ? String(link.merchantRid) : (link.terminalId ? `TRM-${link.terminalId}` : '—'),
-                        channel: 'ecommerce' as const,
-                        clientIp: txn.clientIp,
-                        userAgent: txn.userAgent,
-                        statusHistory: [
-                          {
-                            status: 'PENDING' as const,
-                            timestamp: new Date(txn.createdAt || txn.timestamp || Date.now()),
-                            note: 'Payment attempt initiated by customer',
-                          },
-                          ...(parsedStatus === 'SUCCESS' ? [{
-                            status: 'SUCCESS' as const,
-                            timestamp: new Date(txn.createdAt || txn.timestamp || Date.now()),
-                            note: 'Payment successfully completed',
-                          }] : [])
-                        ]
-                      };
-                      navigate(`/transactions/${txn.id}`, { state: { transaction: txObj } });
-                    }}
+                    // Без router state: карточка грузит себя сама (GET /api/v1/transactions/{id},
+                    // P3-7) — как это давно делает таблица последних платежей на главной. Здесь
+                    // собирался целый объект операции, и в нём была выдуманная история статусов:
+                    // «создано» и «оплачено» с одним и тем же временем и подписями, которых никто
+                    // не писал. Настоящую историю отдаёт сам ответ по операции.
+                    onClick={() => navigate(`/transactions/${txn.id}`)}
                     sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'rgba(0,0,0,0.04)' } }}
                   >
                     <TableCell>
                       <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                        {txn.id}
+                        {txn.providerOrderId || txn.provider_order_id || '—'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                        {txn.merchantRid || txn.merchant_rid || '—'}
                       </Typography>
                     </TableCell>
                     <TableCell>
@@ -318,6 +297,15 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                         sx={{ fontWeight: 700, fontSize: '0.68rem', bgcolor: sc.bgcolor }}
                       />
                     </TableCell>
+                    <TableCell>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ fontFamily: 'monospace', fontSize: '0.68rem' }}
+                      >
+                        {txn.id}
+                      </Typography>
+                    </TableCell>
                   </TableRow>
                 );
               })}
@@ -341,6 +329,17 @@ export const PayByLinkDetailPage: React.FC = () => {
   const stateLink = location.state?.link as PaymentLink | undefined;
 
   const [link, setLink] = useState<PaymentLink | null>(stateLink || null);
+  // Терминалы берутся все, включая заблокированные: ссылка, созданная на снятом с обслуживания
+  // терминале, должна сохранить его подпись.
+  const [terminalIndex, setTerminalIndex] = useState<Record<number, TerminalOptionDto>>({});
+
+  useEffect(() => {
+    const controller = new AbortController();
+    apiClient.get('/api/v1/terminals/options', { signal: controller.signal })
+      .then(res => setTerminalIndex(buildTerminalIndex(res.data)))
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
 
   const fetchLink = useCallback(() => {
     if (!id) return;
@@ -372,6 +371,9 @@ export const PayByLinkDetailPage: React.FC = () => {
             // Дата последнего успешного платежа (P2-15) — то же поле и то же значение, что
             // в списке. Пусто — платежей не было.
             paidAt: l.lastPaidAt ? new Date(l.lastPaidAt) : undefined,
+            // `PaymentLinkResponse.terminal` — эквайринговый терминал ссылки. Маппинг его
+            // не переносил, и карточка терминал не показывала вовсе.
+            terminalId: typeof l.terminal === 'number' ? l.terminal : undefined,
           });
         }
       })
@@ -387,6 +389,12 @@ export const PayByLinkDetailPage: React.FC = () => {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [finalizeDialogOpen, setFinalizeDialogOpen] = useState(false);
   const [finalizeBusy, setFinalizeBusy] = useState(false);
+  /**
+   * Отказ списания холда остаётся в окне подтверждения, а не улетает снекбаром: снекбар
+   * уходит через несколько секунд, а неподтверждённый исход — это то, что мерчант обязан
+   * увидеть и разобрать. Разбор исхода — в `utils/moneyOperationError.ts`.
+   */
+  const [finalizeError, setFinalizeError] = useState<MoneyOperationFailure | null>(null);
 
   // Проверки по статусу ссылки здесь нет: `paid` бэкенд не присылает, а стадия DMS живёт
   // в собственном поле (`dmsStatus`), не в статусе ссылки.
@@ -443,6 +451,7 @@ export const PayByLinkDetailPage: React.FC = () => {
     if (!link) return;
     const txId = link.transactionId || link.id;
     setFinalizeBusy(true);
+    setFinalizeError(null);
     try {
       await apiClient.post(`/api/v1/transactions/${txId}/complete`, { amount: link.amount });
       setLink(prev => prev ? {
@@ -452,15 +461,16 @@ export const PayByLinkDetailPage: React.FC = () => {
       } : prev);
       setFinalizeDialogOpen(false);
       setSnackbar({ text: 'Payment finalized — funds captured successfully' });
-    } catch (err: any) {
-      setSnackbar({
-        text: err.response?.data?.message || 'Failed to complete DMS transaction on server',
-        error: true,
-      });
+    } catch (err: unknown) {
+      setFinalizeError(readMoneyOperationFailure(err, 'Failed to complete DMS transaction on server'));
     } finally {
       setFinalizeBusy(false);
     }
   };
+
+  // Исход списания не подтверждён: повторять нельзя, а состояние холда видно по статусу
+  // транзакции в таблице связанных операций ниже.
+  const finalizeUnresolved = finalizeError?.outcome === 'unknown';
 
   return (
     <Box>
@@ -700,6 +710,31 @@ export const PayByLinkDetailPage: React.FC = () => {
                 <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1rem' }}>Link Settings</Typography>
               </Box>
               <Divider sx={{ mb: 2 }} />
+              {/* Терминал ссылки — первой строкой: через него пойдут все платежи по ней.
+                  Подпись — логин, имя идёт под ним (см. `utils/terminals.ts`). */}
+              <InfoRow
+                label={tObj.payByLinkDetail.summary.terminal}
+                value={
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                    <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                      {terminalLabel({
+                        terminalLogin: terminalIndex[link.terminalId as number]?.login,
+                        terminalName: terminalIndex[link.terminalId as number]?.name,
+                        terminalId: link.terminalId
+                      })}
+                    </Typography>
+                    {terminalSubLabel({
+                      terminalLogin: terminalIndex[link.terminalId as number]?.login,
+                      terminalName: terminalIndex[link.terminalId as number]?.name
+                    }) && (
+                      <Typography variant="caption" color="text.secondary">
+                        {terminalIndex[link.terminalId as number]?.name}
+                      </Typography>
+                    )}
+                  </Box>
+                }
+              />
+              <Divider sx={{ opacity: 0.5 }} />
               <InfoRow
                 label="Payment Type"
                 value={
@@ -1024,8 +1059,9 @@ export const PayByLinkDetailPage: React.FC = () => {
         confirmColor="success"
         confirmIcon={<FinalizeIcon />}
         busy={finalizeBusy}
+        confirmDisabled={finalizeUnresolved}
         onConfirm={handleFinalize}
-        onCancel={() => setFinalizeDialogOpen(false)}
+        onCancel={() => { setFinalizeDialogOpen(false); setFinalizeError(null); }}
       >
         <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
           <Typography variant="body2" color="text.secondary">
@@ -1041,6 +1077,15 @@ export const PayByLinkDetailPage: React.FC = () => {
             ₼{link.amount.toFixed(2)}
           </Typography>
         </Box>
+        {finalizeError && (
+          <Alert severity={finalizeUnresolved ? 'warning' : 'error'} sx={{ mt: 2 }}>
+            {finalizeUnresolved && (
+              <AlertTitle sx={{ fontWeight: 700 }}>{tObj.transactions.detail.unresolvedTitle}</AlertTitle>
+            )}
+            {finalizeError.message}
+            {finalizeUnresolved && ` ${tObj.transactions.detail.unresolvedHint}`}
+          </Alert>
+        )}
       </ConfirmDialog>
 
       {/* ── Cancel dialog ───────────────────────────────────────────────────

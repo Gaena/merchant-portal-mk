@@ -24,9 +24,12 @@ import {
 import FilterListOutlinedIcon from '@mui/icons-material/FilterListOutlined';
 import type { TransactionFilters } from '../types/transaction';
 import { PAYMENT_METHODS, TRANSACTION_STATUSES } from '../types/transaction';
-import { getPaymentMethodLabel, terminalRids } from '../utils/mockData';
+import { getPaymentMethodLabel } from '../utils/mockData';
 import { getStatusColorScheme } from '../utils/statusColors';
 import { useLanguage } from '../context/LanguageContext';
+import { apiClient } from '../api/client';
+import type { TerminalOptionDto } from '../types/dto';
+import { terminalOptionLabel } from '../utils/terminals';
 
 interface FilterPanelProps {
   filters: TransactionFilters;
@@ -47,6 +50,19 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
     terminalRid: filters.terminalRid || []
   });
   const [expanded, setExpanded] = useState(false);
+  // Настоящие терминалы вместо прежнего мок-списка «TRM-001-AZE…»: те коды не совпадали
+  // ни с одной транзакцией, и фильтр по терминалу всегда давал пустой список.
+  const [terminals, setTerminals] = useState<TerminalOptionDto[]>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    apiClient.get('/api/v1/terminals/options', { signal: controller.signal })
+      .then(res => {
+        setTerminals(Array.isArray(res.data) ? res.data : []);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
 
   // Sync with parent filters
   useEffect(() => {
@@ -172,7 +188,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
           </Typography>
           <TextField
             fullWidth
-            placeholder="Search by transaction ID, customer name, email, or reference..."
+            placeholder={tObj.transactions.filters.search}
             value={localFilters.searchQuery}
             onChange={(e) => handleChange('searchQuery', e.target.value)}
             InputProps={{
@@ -301,7 +317,7 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
               <TextField
                 select
                 fullWidth
-                label="Terminal RID"
+                label={tObj.transactions.filters.terminal}
                 value={Array.isArray(localFilters.terminalRid) ? localFilters.terminalRid : []}
                 onChange={(e) => handleChange('terminalRid', e.target.value)}
                 SelectProps={{
@@ -326,21 +342,27 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
                   }
                 }}
               >
-                {[...new Set(terminalRids)].map((terminal) => (
-                  <MenuItem key={terminal} value={terminal}>
-                    <Checkbox
-                      checked={localFilters.terminalRid.indexOf(terminal) > -1}
-                      sx={{ mr: 1 }}
-                    />
-                    <ListItemText
-                      primary={terminal}
-                      primaryTypographyProps={{
-                        fontFamily: 'monospace',
-                        fontWeight: 500
-                      }}
-                    />
-                  </MenuItem>
-                ))}
+                {terminals.map((terminal) => {
+                  // Значение пункта — логин: ровно он лежит в `Transaction.terminalRid`,
+                  // иначе выбор снова не сойдётся ни с одной строкой.
+                  const value = terminalOptionLabel(terminal);
+                  return (
+                    <MenuItem key={terminal.id} value={value}>
+                      <Checkbox
+                        checked={localFilters.terminalRid.indexOf(value) > -1}
+                        sx={{ mr: 1 }}
+                      />
+                      <ListItemText
+                        primary={value}
+                        secondary={terminal.name !== value ? terminal.name : undefined}
+                        primaryTypographyProps={{
+                          fontFamily: 'monospace',
+                          fontWeight: 500
+                        }}
+                      />
+                    </MenuItem>
+                  );
+                })}
               </TextField>
               {localFilters.terminalRid.length > 0 && (
                 <Box sx={{ mt: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>

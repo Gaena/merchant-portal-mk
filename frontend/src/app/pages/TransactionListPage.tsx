@@ -70,13 +70,16 @@ export const TransactionListPage: React.FC<TransactionListPageProps> = ({
       // Search query filter
       if (filters.searchQuery) {
         const query = filters.searchQuery.toLowerCase();
-        const matchesId = txn.id.toLowerCase().includes(query);
+        // Порядок здесь — порядок поиска мерчанта: он знает номер заказа у провайдера и RID
+        // платежа, а внутренний `id` ему ничего не говорит и потому идёт последним.
+        const matchesProviderOrderId = txn.providerOrderId?.toLowerCase().includes(query);
+        const matchesMerchantRid = txn.merchantRid?.toLowerCase().includes(query);
         const matchesCustomer = txn.customer.toLowerCase().includes(query);
         const matchesEmail = txn.customerEmail.toLowerCase().includes(query);
-        const matchesRef = txn.merchantReference?.toLowerCase().includes(query);
-        const matchesProviderOrderId = txn.providerOrderId?.toLowerCase().includes(query);
+        const matchesId = txn.id.toLowerCase().includes(query);
 
-        if (!matchesId && !matchesCustomer && !matchesEmail && !matchesRef && !matchesProviderOrderId) return false;
+        if (!matchesProviderOrderId && !matchesMerchantRid && !matchesCustomer
+            && !matchesEmail && !matchesId) return false;
       }
 
       return true;

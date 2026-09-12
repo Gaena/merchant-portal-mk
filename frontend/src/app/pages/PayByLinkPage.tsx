@@ -73,6 +73,7 @@ import type {
   PaymentType,
 } from '../utils/payByLinkData';
 import { isTerminalActive } from '../types/dto';
+import { terminalOptionLabel } from '../utils/terminals';
 import { linkStatusLabel } from '../i18n/translations';
 import type { TranslationDictionary } from '../i18n/translations';
 
@@ -230,6 +231,9 @@ export const PayByLinkPage: React.FC = () => {
             // последний платёж, отсюда `lastPaidAt` на стороне API (Р-46). Пусто — платежей
             // не было; подставлять сюда что-либо нельзя.
             paidAt: l.lastPaidAt ? new Date(l.lastPaidAt) : undefined,
+            // Терминал ссылки: карточка подписывает его логином, и без этого поля она ждала бы
+            // собственного запроса, показывая до него прочерк.
+            terminalId: typeof l.terminal === 'number' ? l.terminal : undefined,
           }));
           setLinks(mapped);
         }
@@ -342,6 +346,7 @@ export const PayByLinkPage: React.FC = () => {
         createdAt: new Date(),
         expiresAt: created.expiresAt ? new Date(created.expiresAt) : new Date(Date.now() + 86400000),
         paymentType: parsePaymentType(created.paymentType),
+        terminalId: typeof created.terminal === 'number' ? created.terminal : selectedTerminal,
       };
 
       setLinks(prev => [newLink, ...prev]);
@@ -786,9 +791,18 @@ export const PayByLinkPage: React.FC = () => {
                   onChange={e => setForm(f => ({ ...f, terminalId: e.target.value }))}
                   helperText="Эквайринговый терминал, через который пройдет платеж"
                 >
+                  {/* Терминал подписан логином — основным его параметром; имя идёт после,
+                      как пояснение, а числовой id мерчанту ничего не говорит. */}
                   {terminals.map((t: any) => (
                     <MenuItem key={t.id} value={t.id}>
-                      {t.name || `Terminal #${t.id}`} (ID: {t.terminalId || t.id})
+                      <Box component="span" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                        {terminalOptionLabel(t)}
+                      </Box>
+                      {t.name && t.name !== terminalOptionLabel(t) && (
+                        <Box component="span" sx={{ ml: 1, color: 'text.secondary' }}>
+                          {t.name}
+                        </Box>
+                      )}
                     </MenuItem>
                   ))}
                 </TextField>

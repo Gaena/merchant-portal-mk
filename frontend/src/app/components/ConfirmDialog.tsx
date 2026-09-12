@@ -28,6 +28,12 @@ interface ConfirmDialogProps {
   cancelLabel?: React.ReactNode;
   /** Запрос идёт: обе кнопки погашены, окно не закрыть кликом мимо. */
   busy?: boolean;
+  /**
+   * Подтверждение закрыто, но окно живое: кнопка отказа работает, кликом мимо закрывается.
+   * Для случая, когда повторять действие нельзя, а уйти из окна — можно и нужно (исход
+   * денежной операции не подтверждён, см. `utils/moneyOperationError.ts`).
+   */
+  confirmDisabled?: boolean;
   maxWidth?: 'xs' | 'sm';
   onConfirm: () => void;
   onCancel: () => void;
@@ -42,6 +48,7 @@ interface ConfirmDialogProps {
  *   1. `onClose` игнорируется, пока идёт запрос, — окно не закрыть кликом мимо;
  *   2. кнопка отказа первая и в фокусе — Enter не подтверждает опасное действие;
  *   3. обе кнопки гаснут на время запроса — двойной клик не даёт двух запросов;
+ *      `confirmDisabled` гасит одно подтверждение, оставляя выход;
  *   4. подтверждение — `contained` и цветное, заголовок жирный.
  *
  * Окна-формы (создание пользователя, компании, терминала, ссылки; правка терминала;
@@ -57,6 +64,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   confirmIcon,
   cancelLabel,
   busy = false,
+  confirmDisabled = false,
   maxWidth = 'sm',
   onConfirm,
   onCancel,
@@ -86,7 +94,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           variant="contained"
           color={confirmColor}
           startIcon={confirmIcon}
-          disabled={busy}
+          disabled={busy || confirmDisabled}
         >
           {confirmLabel}
         </Button>

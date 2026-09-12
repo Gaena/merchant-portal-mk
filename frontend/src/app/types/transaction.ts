@@ -69,9 +69,25 @@ export const parsePaymentMethod = (raw: unknown): PaymentMethod | null => {
 export type TransactionChannel = 'ecommerce' | 'pos';
 export type POSPaymentType = 'chip' | 'contactless' | 'swipe' | 'manual';
 
+/**
+ * Записанное событие жизни операции — из поля `statusHistory` ответа по операции.
+ *
+ * Событий ровно столько, сколько их записано: заведение, списание холда, каждый возврат и,
+ * если состояние ничем из перечисленного не объяснено, само состояние со временем последней
+ * записи. Генератор, рисовавший «создано» и «оплачено» одним временем, удалён вместе
+ * с подписями вроде «Payment successfully completed» — см. `PaymentLinkService.statusHistoryOf`.
+ */
 export interface StatusHistoryEntry {
-  status: TransactionStatus;
+  /** Что произошло: `CREATED`, `CAPTURED`, `REFUNDED` или `STATUS`. */
+  type: string;
+  /** Состояние операции после события; `null` — значение вне словаря, см. `statusRaw`. */
+  status: TransactionStatus | null;
+  statusRaw?: string;
   timestamp: Date;
+  /** Сумма события. Есть только у денежных — списания и возврата. */
+  amount?: number;
+  /** Ссылка эквайера на операцию (`ridByPmo`) — та, что весома в споре. */
+  acquirerReference?: string;
   note?: string;
 }
 
@@ -83,6 +99,12 @@ export interface Transaction {
   customerEmail: string;
   customerPhone?: string;
   amount: number;
+  /**
+   * Сколько эквайер реально склирил при списании DMS-холда. `undefined` у SMS-платежей и
+   * у холдов, которые не списывали. Именно эта сумма, а не `amount`, задаёт потолок возвратов
+   * (`PaymentLinkService.refundableBase`), поэтому без неё остаток к возврату посчитать нельзя.
+   */
+  capturedAmount?: number;
   refundedAmount?: number;
   currency: string;
   /** Разобранный статус; `null` — бэкенд прислал значение вне словаря, см. `statusRaw`. */
@@ -91,7 +113,7 @@ export interface Transaction {
   statusRaw?: string;
   paymentMethod: PaymentMethod | null;
   description: string;
-  merchantReference?: string;
+  // Номера заказа мерчанта (`merchantOrderId`) здесь нет намеренно — см. `utils/exportExcel.ts`.
   cardLast4?: string;
   cardNumberMasked?: string;
   rrn?: string;
@@ -99,10 +121,17 @@ export interface Transaction {
   merchantRid?: string;
   providerOrderId?: string;
   terminalId?: number;
+  /**
+   * Логин терминала — основной параметр, по которому мерчант его опознаёт. Приходит не с
+   * транзакцией, а из `GET /api/v1/terminals/options` и подставляется по `terminalId`.
+   * Подписывает терминал во всех списках и на карточке операции — см. `utils/terminals.ts`.
+   */
+  terminalLogin?: string;
   clientIp?: string;
   userAgent?: string;
   fee: number;
   statusHistory: StatusHistoryEntry[];
+  /** Ключ фильтра по терминалу: тот же логин, что и в `terminalLogin`, — по нему фильтрует `FilterPanel`. */
   terminalRid: string;
   terminalName?: string;
   canceledBy?: 'customer' | 'api';
@@ -128,6 +157,7 @@ export interface TransactionFilters {
   minAmount: string;
   maxAmount: string;
   searchQuery: string;
+  /** Выбранные логины терминалов; сверяется с `Transaction.terminalRid`. */
   terminalRid: string[];
   // POS-specific filters
   posPaymentType?: POSPaymentType | 'all';

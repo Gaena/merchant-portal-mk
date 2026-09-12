@@ -37,13 +37,24 @@ import {
   Refresh as RefreshIcon,
   Business as BusinessIcon,
   Search as SearchIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
 } from '@mui/icons-material';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import { isTerminalActive } from '../types/dto';
 import type { TerminalDto, CompanyDto, TerminalStatus } from '../types/dto';
 
 export const TerminalsPage: React.FC = () => {
   const { tObj } = useLanguage();
+  const { user } = useAuth();
+  /**
+   * Пароль терминала — ключ от эквайринга, и видеть его может только системный администратор
+   * (`TerminalService.revealPassword`). Здесь та же роль решает, показывать ли кнопку раскрытия
+   * и поле смены пароля: прятать кнопку, которой сервер всё равно откажет, честнее, чем
+   * предлагать действие и отвечать на него отказом.
+   */
+  const canSeePassword = user?.role === 'SYSTEM_ADMIN';
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +65,13 @@ export const TerminalsPage: React.FC = () => {
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  /**
+   * Раскрытые пароли — по одному запросу на терминал, и только пока открыта страница. Ответ
+   * намеренно не кладётся в `terminals`: там он пережил бы перерисовку списка и разъехался бы
+   * с тем, что отдаёт сервер, где пароль по-прежнему замаскирован.
+   */
+  const [revealed, setRevealed] = useState<Record<number, string>>({});
+  const [revealing, setRevealing] = useState<number | null>(null);
   // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
   // чтобы не слать запрос на каждую букву.
   const debouncedSearch = useDebounced(searchQuery, 300);
@@ -75,6 +93,9 @@ export const TerminalsPage: React.FC = () => {
 
   const fetchTerminals = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
+    // Раскрытые ключи не переживают перезагрузку списка: на новой странице те же строки — уже
+    // другие терминалы, и оставить значение на экране значило бы подписать им чужой пароль.
+    setRevealed({});
     try {
       const params: Record<string, unknown> = { page, size: rowsPerPage };
       if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
@@ -164,6 +185,32 @@ export const TerminalsPage: React.FC = () => {
       setSnackbar('Acquiring terminal registered successfully');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to create terminal');
+    }
+  };
+
+  /**
+   * Показать или спрятать пароль терминала. Каждое раскрытие — отдельный запрос, и каждый
+   * пишется в журнал аудита на сервере; повторное нажатие просто убирает значение с экрана,
+   * ничего не спрашивая.
+   */
+  const togglePassword = async (terminalId: number) => {
+    if (revealed[terminalId] !== undefined) {
+      setRevealed(prev => {
+        const next = { ...prev };
+        delete next[terminalId];
+        return next;
+      });
+      return;
+    }
+    setRevealing(terminalId);
+    setError('');
+    try {
+      const res = await apiClient.get(`/api/v1/terminals/${terminalId}/password`);
+      setRevealed(prev => ({ ...prev, [terminalId]: String(res.data?.password ?? '') }));
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to reveal the terminal password');
+    } finally {
+      setRevealing(null);
     }
   };
 
@@ -328,9 +375,10 @@ export const TerminalsPage: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.terminalId}</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.name}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.login}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.password}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.name}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.terminalId}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.company}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.status}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
@@ -342,11 +390,40 @@ export const TerminalsPage: React.FC = () => {
                 const active = isTerminalActive(term);
                 return (
                 <TableRow key={term.id} hover sx={active ? undefined : { opacity: 0.6 }}>
+                  {/* Логин впереди: по нему мерчант терминал и опознаёт, имя он придумывает
+                      сам, а номер — внутренний. */}
                   <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: active ? 'primary.main' : 'text.disabled' }}>
-                    #{term.id}
+                    {term.login}
+                  </TableCell>
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{ fontFamily: 'monospace', letterSpacing: revealed[term.id] === undefined ? 2 : 0 }}
+                      >
+                        {revealed[term.id] ?? '••••••••'}
+                      </Typography>
+                      {canSeePassword && (
+                        <Tooltip title={revealed[term.id] === undefined
+                          ? tObj.terminals.revealPassword
+                          : tObj.terminals.hidePassword}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={revealing === term.id}
+                              onClick={() => togglePassword(term.id)}
+                            >
+                              {revealed[term.id] === undefined
+                                ? <VisibilityIcon fontSize="small" />
+                                : <VisibilityOffIcon fontSize="small" />}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      )}
+                    </Box>
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{term.name}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>{term.login}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>#{term.id}</TableCell>
                   <TableCell>
                     <Chip
                       icon={<BusinessIcon fontSize="small" />}
@@ -535,15 +612,19 @@ export const TerminalsPage: React.FC = () => {
               placeholder="e.g. term_login_001"
               fullWidth
             />
-            <TextField
-              label="New Terminal Password (Optional)"
-              type="password"
-              value={form.password}
-              onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-              placeholder="Leave blank to keep existing password"
-              fullWidth
-              helperText="Оставьте пустым, если не хотите менять пароль терминала"
-            />
+            {/* Пароль эквайринга меняет только системный администратор — те же ворота, что
+                и на его чтение. Остальным поле не показывается вовсе: сервер откажет. */}
+            {canSeePassword && (
+              <TextField
+                label={tObj.terminals.newPassword}
+                type="password"
+                value={form.password}
+                onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                placeholder="Leave blank to keep existing password"
+                fullWidth
+                helperText={tObj.terminals.newPasswordHint}
+              />
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>

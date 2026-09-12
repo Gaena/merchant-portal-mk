@@ -140,9 +140,12 @@ export interface PaymentLink {
   transactionId?: string;
   payerIp?: string;
   sentVia?: ('email' | 'whatsapp' | 'copy')[];
-  // Бэкенд отдаёт `PaymentLinkResponse.terminal` и `.rid`, но маппинг из API их пока
-  // не переносит — читаются в `PayByLinkDetailPage` и всегда undefined.
+  /**
+   * Эквайринговый терминал ссылки — `PaymentLinkResponse.terminal`. Подписывается логином
+   * на карточке ссылки (`utils/terminals.ts`); пусто, если ответ терминал не назвал.
+   */
   terminalId?: number;
+  // `PaymentLinkResponse.rid` маппинг из API пока не переносит — поле всегда undefined.
   merchantRid?: string;
 }
 
