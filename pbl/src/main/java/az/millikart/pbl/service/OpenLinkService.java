@@ -169,20 +169,20 @@ public class OpenLinkService {
             transactionRepository.save(attempt);
         }
 
-        UUID merchantRid = UUID.randomUUID();
+        UUID ridByMerchant = UUID.randomUUID();
 
-        log.info("Registering fresh order at provider for link: {}, terminal: {}, merchantRid: {}, clientIp: {}", id, terminal.getId(), merchantRid, clientIp);
+        log.info("Registering fresh order at provider for link: {}, terminal: {}, ridByMerchant: {}, clientIp: {}", id, terminal.getId(), ridByMerchant, clientIp);
 
         String hppRedirectUrl = UriComponentsBuilder.fromUriString(baseUrl)
                 .path("/api/v1/payment-links/redirect/{tx}")
-                .buildAndExpand(merchantRid.toString())
+                .buildAndExpand(ridByMerchant.toString())
                 .toUriString();
 
         log.debug("Using redirect URL for provider: {}", hppRedirectUrl);
 
-        EcomCreateOrderResponse response = acquiringClient.createEcomOrder(link, terminal.getLogin(), terminal.getPassword(), merchantRid, hppRedirectUrl);
+        EcomCreateOrderResponse response = acquiringClient.createEcomOrder(link, terminal.getLogin(), terminal.getPassword(), ridByMerchant, hppRedirectUrl);
         if (response == null || response.order() == null) {
-            log.error("Failed to register order at provider for merchantRid: {}", merchantRid);
+            log.error("Failed to register order at provider for ridByMerchant: {}", ridByMerchant);
             throw new BusinessException("Failed to register order with provider");
         }
 
@@ -190,7 +190,7 @@ public class OpenLinkService {
 
         Transaction transaction = Transaction.builder()
                 .link(link)
-                .merchantRid(merchantRid)
+                .ridByMerchant(ridByMerchant)
                 .providerOrderId(String.valueOf(response.order().id()))
                 .providerPassword(response.order().password())
                 .amount(link.getAmount())
@@ -206,7 +206,7 @@ public class OpenLinkService {
                 ))
                 .build();
         transactionRepository.save(transaction);
-        log.debug("Persisted new PENDING transaction: {} for merchantRid: {}, clientIp: {}", transaction.getId(), merchantRid, clientIp);
+        log.debug("Persisted new PENDING transaction: {} for ridByMerchant: {}, clientIp: {}", transaction.getId(), ridByMerchant, clientIp);
 
         // Пароль остаётся в редиректе плательщика — он и открывает платёжную страницу (§5.3). Отсюда
         // и дальше этот адрес не логировать: контроллер пишет его через ProviderPayloads.urlForLog.

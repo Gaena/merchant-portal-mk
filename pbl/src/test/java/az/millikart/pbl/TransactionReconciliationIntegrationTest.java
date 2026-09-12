@@ -410,7 +410,7 @@ class TransactionReconciliationIntegrationTest {
 
         return transactionRepository.save(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId("ORD-" + key)
                 .providerPassword("provider-password")
                 .amount(new BigDecimal("100.00"))

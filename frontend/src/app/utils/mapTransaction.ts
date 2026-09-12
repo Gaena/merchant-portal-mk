@@ -7,7 +7,7 @@ import { terminalLabel } from './terminals';
  * Разбор одной операции из ответа `/api/v1/transactions*` в её экранный вид.
  *
  * Копий этого разбора было две — в `App.tsx` и на карточке операции, — и они успели разойтись:
- * карточка знала о `merchantRid`, список нет. Теперь место одно, и проверка статуса у эквайера
+ * карточка знала о `ridByMerchant`, список нет. Теперь место одно, и проверка статуса у эквайера
  * читает ответ тем же разбором, что и список.
  *
  * `terminalIndex` — ответ `GET /api/v1/terminals/options`: операция несёт только `terminalId`,
@@ -67,7 +67,7 @@ export const mapTransaction = (
     cardLast4: raw.cardNumberMasked ? String(raw.cardNumberMasked).slice(-4) : undefined,
     rrn: raw.rrn,
     approvalCode: raw.approvalCode,
-    merchantRid: raw.merchantRid,
+    ridByMerchant: raw.ridByMerchant,
     providerOrderId: raw.providerOrderId || raw.provider_order_id,
     terminalId: raw.terminalId,
     terminalLogin: terminal?.login,

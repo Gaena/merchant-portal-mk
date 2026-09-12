@@ -63,7 +63,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
     @Override
     @CircuitBreaker(name = "acquiring")
     @Retry(name = "acquiring")
-    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID merchantRid, String hppRedirectUrl) {
+    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID ridByMerchant, String hppRedirectUrl) {
         String url = UriComponentsBuilder.fromUriString(gatewayBaseUrl)
                 .path(createOrderPath)
                 .toUriString();
@@ -75,7 +75,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
         EcomCreateOrderRequest request = new EcomCreateOrderRequest(
                 new EcomCreateOrderRequest.Order(
                         typeRid,
-                        merchantRid.toString(),
+                        ridByMerchant.toString(),
                         link.getAmount(),
                         link.getCurrency(),
                         link.getDescription() != null ? link.getDescription() : "Payment via Pay-By-Link",
@@ -85,8 +85,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 )
         );
 
-        log.info("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, MerchantRid: {}, Type: {}, Amount: {} {}",
-                ProviderPayloads.urlForLog(url), login, merchantRid, typeRid, link.getAmount(), link.getCurrency());
+        log.info("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, RidByMerchant: {}, Type: {}, Amount: {} {}",
+                ProviderPayloads.urlForLog(url), login, ridByMerchant, typeRid, link.getAmount(), link.getCurrency());
         log.debug("PROVIDER REQ BODY [createEcomOrder]: {}", request);
 
         try {
@@ -100,8 +100,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(EcomCreateOrderResponse.class);
 
-            log.info("PROVIDER RESP [createEcomOrder] <- SUCCESS for MerchantRid: {}, ProviderOrderId: {}",
-                    merchantRid, response != null && response.order() != null ? response.order().id() : "N/A");
+            log.info("PROVIDER RESP [createEcomOrder] <- SUCCESS for RidByMerchant: {}, ProviderOrderId: {}",
+                    ridByMerchant, response != null && response.order() != null ? response.order().id() : "N/A");
             // P0-9: в теле — пароль заказа; его маскирует EcomCreateOrderResponse.Order.toString().
             log.debug("PROVIDER RESP BODY [createEcomOrder]: {}", response);
             return response;

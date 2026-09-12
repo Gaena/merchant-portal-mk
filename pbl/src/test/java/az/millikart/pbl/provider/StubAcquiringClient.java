@@ -22,10 +22,10 @@ public class StubAcquiringClient implements AcquiringClient {
     private static final Logger log = LoggerFactory.getLogger(StubAcquiringClient.class);
 
     @Override
-    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID merchantRid, String hppRedirectUrl) {
+    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID ridByMerchant, String hppRedirectUrl) {
         long orderId = (long) (Math.random() * 1000000000L);
         String hppUrl = "https://gateway.txpg.example.com/pay?rid=" + orderId;
-        log.info("[STUB PROVIDER] createEcomOrder for merchantRid: {}, amount: {}, generated orderId: {}", merchantRid, link.getAmount(), orderId);
+        log.info("[STUB PROVIDER] createEcomOrder for ridByMerchant: {}, amount: {}, generated orderId: {}", ridByMerchant, link.getAmount(), orderId);
         return new EcomCreateOrderResponse(
                 new EcomCreateOrderResponse.Order(hppUrl, orderId, "Preparing", "password123")
         );

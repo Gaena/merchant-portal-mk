@@ -18,7 +18,7 @@
       Значение по умолчанию `MANUAL` правдиво для всех существующих строк: их статус ставил
       человек, синхронизации до сих пор не было.
 
-      `provider_rid` — какой терминал провайдера стоит за нашим. Заполняется при заведении,
+      `merchant_rid` — какой терминал провайдера стоит за нашим. Заполняется при заведении,
       когда админ выбирает строку из `provider_terminals`; у терминалов, заведённых до этого,
       пусто, и синхронизация их не касается.
 
@@ -36,23 +36,23 @@
             <column name="status_source" type="varchar(16)" defaultValue="MANUAL">
                 <constraints nullable="false"/>
             </column>
-            <column name="provider_rid" type="varchar(64)"/>
+            <column name="merchant_rid" type="varchar(64)"/>
         </addColumn>
     </changeSet>
 
     <!-- Один терминал провайдера стоит за одним нашим. Без ограничения две компании завели бы
          один и тот же терминал и смотрели бы в одну выписку, каждая видя платежи другой.
-         Обычный уникальный индекс, без условия: `provider_rid` пуст у всех терминалов,
+         Обычный уникальный индекс, без условия: `merchant_rid` пуст у всех терминалов,
          заведённых до синхронизации, а пустые значения уникальность и так не ограничивает —
          ни в PostgreSQL, ни в H2, на которой идут тесты. -->
     <changeSet id="006-directory-terminal-provider-rid-unique" author="millikart">
         <preConditions onFail="MARK_RAN">
             <not>
-                <indexExists indexName="uk_terminals_provider_rid"/>
+                <indexExists indexName="uk_terminals_merchant_rid"/>
             </not>
         </preConditions>
-        <createIndex tableName="terminals" indexName="uk_terminals_provider_rid" unique="true">
-            <column name="provider_rid"/>
+        <createIndex tableName="terminals" indexName="uk_terminals_merchant_rid" unique="true">
+            <column name="merchant_rid"/>
         </createIndex>
     </changeSet>
 

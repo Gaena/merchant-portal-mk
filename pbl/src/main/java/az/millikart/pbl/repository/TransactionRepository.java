@@ -19,10 +19,10 @@ import org.springframework.stereotype.Repository;
 public interface TransactionRepository extends JpaRepository<Transaction, UUID> {
     Optional<Transaction> findByProviderOrderId(String providerOrderId);
 
-    // Ключ страницы возврата плательщика: merchantRid — случайный UUID на попытку оплаты, его, в
+    // Ключ страницы возврата плательщика: ridByMerchant — случайный UUID на попытку оплаты, его, в
     // отличие от providerOrderId, не перебрать. Граф подтягивает ленивый link, из которого чек.
     @EntityGraph(attributePaths = "link")
-    Optional<Transaction> findByMerchantRid(UUID merchantRid);
+    Optional<Transaction> findByRidByMerchant(UUID ridByMerchant);
 
     // Счёт использований ссылки идёт только отсюда и только набором TransactionStatus.PAID_STATUSES
     // (возвращённый платёж входит); OpenLinkService добавляет AUTHORIZED под слоты (P1-6). Одного

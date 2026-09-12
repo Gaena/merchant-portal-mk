@@ -340,7 +340,7 @@ class PaymentLinkRefundUsageTest {
     private Transaction seedTransaction(PaymentLink link, TransactionStatus status) {
         return transactionRepository.save(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId("ORD-" + UUID.randomUUID())
                 .providerPassword("provider-password")
                 .amount(AMOUNT)

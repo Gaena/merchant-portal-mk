@@ -85,7 +85,7 @@ export interface TranslationDictionary {
     recentTransactions: {
       title: string;
       providerOrderId: string;
-      merchantRid: string;
+      ridByMerchant: string;
       id: string;
       date: string;
       terminal: string;
@@ -226,7 +226,7 @@ export interface TranslationDictionary {
        * ничего не значит и стоит последним, служебной колонкой.
        */
       providerOrderId: string;
-      merchantRid: string;
+      ridByMerchant: string;
       id: string;
       date: string;
       amount: string;
@@ -293,7 +293,7 @@ export interface TranslationDictionary {
       /** Заголовок блока с ProviderOrderId и MerchantRid — он открывает карточку операции. */
       identifiers: string;
       providerOrderId: string;
-      merchantRid: string;
+      ridByMerchant: string;
       clientIp: string;
     };
   };
@@ -512,7 +512,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       recentTransactions: {
         title: 'Latest payments',
         providerOrderId: 'Provider Order ID',
-        merchantRid: 'Merchant RID',
+        ridByMerchant: 'RID by merchant',
         id: 'Transaction',
         date: 'Date & time',
         terminal: 'Terminal',
@@ -628,7 +628,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       ecommerceTitle: 'E-commerce Transactions',
       filters: {
         dateRange: 'Date Range',
-        search: 'Search by Provider Order ID, Merchant RID, customer, email or transaction ID...',
+        search: 'Search by Provider Order ID, RID by merchant, customer, email or transaction ID...',
         paymentMethod: 'Payment Method',
         terminal: 'Terminal',
         clearFilters: 'Clear Filters',
@@ -643,7 +643,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       columns: {
         providerOrderId: 'Provider Order ID',
-        merchantRid: 'Merchant RID',
+        ridByMerchant: 'RID by merchant',
         id: 'Transaction ID',
         date: 'Date & Time',
         amount: 'Amount',
@@ -684,7 +684,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         historyEmpty: 'No recorded events for this transaction yet.',
         identifiers: 'Payment Identifiers',
         providerOrderId: 'Provider Order ID',
-        merchantRid: 'Merchant RID',
+        ridByMerchant: 'RID by merchant',
         clientIp: 'Client IP Address',
       },
     },
@@ -877,7 +877,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       recentTransactions: {
         title: 'Son ödənişlər',
         providerOrderId: 'Provayder Sifariş ID',
-        merchantRid: 'Merchant RID',
+        ridByMerchant: 'RID by merchant',
         id: 'Əməliyyat',
         date: 'Tarix və vaxt',
         terminal: 'Terminal',
@@ -993,7 +993,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       ecommerceTitle: 'E-ticarət Əməliyyatları',
       filters: {
         dateRange: 'Tarix Aralığı',
-        search: 'Provayder Sifariş ID, Merchant RID, müştəri, e-poçt və ya əməliyyat ID üzrə axtarış...',
+        search: 'Provayder Sifariş ID, RID by merchant, müştəri, e-poçt və ya əməliyyat ID üzrə axtarış...',
         paymentMethod: 'Ödəniş Üsulu',
         terminal: 'Terminal',
         clearFilters: 'Filtrləri Sıfırla',
@@ -1008,7 +1008,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       columns: {
         providerOrderId: 'Provayder Sifariş ID',
-        merchantRid: 'Merchant RID',
+        ridByMerchant: 'RID by merchant',
         id: 'Əməliyyat ID',
         date: 'Tarix və Vaxt',
         amount: 'Məbləğ',
@@ -1049,7 +1049,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         historyEmpty: 'Bu əməliyyat üzrə qeydə alınmış hadisə yoxdur.',
         identifiers: 'Ödəniş identifikatorları',
         providerOrderId: 'Provayder Sifariş ID',
-        merchantRid: 'Merchant RID',
+        ridByMerchant: 'RID by merchant',
         clientIp: 'Müştərinin IP Ünvanı',
       },
     },
@@ -1242,7 +1242,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       recentTransactions: {
         title: 'Последние платежи',
         providerOrderId: 'ID заказа провайдера',
-        merchantRid: 'Merchant RID',
+        ridByMerchant: 'RID by merchant',
         id: 'Операция',
         date: 'Дата и время',
         terminal: 'Терминал',
@@ -1358,7 +1358,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       ecommerceTitle: 'Электронные транзакции',
       filters: {
         dateRange: 'Диапазон дат',
-        search: 'Поиск по ID заказа провайдера, Merchant RID, клиенту, email или ID транзакции...',
+        search: 'Поиск по ID заказа провайдера, RID by merchant, клиенту, email или ID транзакции...',
         paymentMethod: 'Метод оплаты',
         terminal: 'Терминал',
         clearFilters: 'Сбросить фильтры',
@@ -1373,7 +1373,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       columns: {
         providerOrderId: 'ID заказа провайдера',
-        merchantRid: 'Merchant RID',
+        ridByMerchant: 'RID by merchant',
         id: 'ID Транзакции',
         date: 'Дата и Время',
         amount: 'Сумма',
@@ -1414,7 +1414,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         historyEmpty: 'По этой операции не записано ни одного события.',
         identifiers: 'Идентификаторы платежа',
         providerOrderId: 'ID заказа провайдера',
-        merchantRid: 'Merchant RID',
+        ridByMerchant: 'RID by merchant',
         clientIp: 'IP адрес клиента',
       },
     },

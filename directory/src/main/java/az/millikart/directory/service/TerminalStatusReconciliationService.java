@@ -85,7 +85,7 @@ public class TerminalStatusReconciliationService {
         int untouched = 0;
 
         for (Terminal terminal : terminalRepository.findAll()) {
-            String rid = terminal.getProviderRid();
+            String rid = terminal.getMerchantRid();
             if (rid == null || rid.isBlank()) {
                 untouched++;
                 continue;

@@ -89,23 +89,23 @@ public class TerminalService {
         // введённые руками однажды разойдутся с тем, чем терминал ходит в шлюз.
         String name = request.name();
         String login = request.login();
-        String providerRid = trimToNull(request.providerRid());
-        if (providerRid != null) {
+        String merchantRid = trimToNull(request.merchantRid());
+        if (merchantRid != null) {
             // Один терминал провайдера — одна наша компания. Иначе две компании смотрели бы
             // в одну выписку, и каждая видела бы платежи другой.
-            terminalRepository.findByProviderRid(providerRid).ifPresent(existing -> {
-                throw new BusinessException("Provider terminal " + providerRid
+            terminalRepository.findByMerchantRid(merchantRid).ifPresent(existing -> {
+                throw new BusinessException("Provider terminal " + merchantRid
                         + " is already linked to terminal " + existing.getId());
             });
             ProviderTerminalStatusRepository.ProviderTerminalRow row = providerTerminals
-                    .findByRid(providerRid)
+                    .findByRid(merchantRid)
                     .orElseThrow(() -> new BusinessException(
-                            "Provider terminal " + providerRid + " is not in the synchronised list"));
+                            "Provider terminal " + merchantRid + " is not in the synchronised list"));
             name = row.title();
             login = row.login();
         }
         if (name == null || name.isBlank() || login == null || login.isBlank()) {
-            throw new BusinessException("Terminal name and login are required unless providerRid is given");
+            throw new BusinessException("Terminal name and login are required unless merchantRid is given");
         }
 
         Terminal terminal = Terminal.builder()
@@ -114,7 +114,7 @@ public class TerminalService {
                 .login(login)
                 .password(request.password())
                 .companyId(request.companyId())
-                .providerRid(providerRid)
+                .merchantRid(merchantRid)
                 .createdBy(actorUsername)
                 .updatedBy(actorUsername)
                 .build();

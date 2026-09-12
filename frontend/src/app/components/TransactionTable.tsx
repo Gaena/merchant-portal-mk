@@ -102,11 +102,11 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
               </TableCell>
               <TableCell>
                 <TableSortLabel
-                  active={orderBy === 'merchantRid'}
-                  direction={orderBy === 'merchantRid' ? order : 'asc'}
-                  onClick={() => createSortHandler('merchantRid')}
+                  active={orderBy === 'ridByMerchant'}
+                  direction={orderBy === 'ridByMerchant' ? order : 'asc'}
+                  onClick={() => createSortHandler('ridByMerchant')}
                 >
-                  {tObj.transactions.columns.merchantRid}
+                  {tObj.transactions.columns.ridByMerchant}
                 </TableSortLabel>
               </TableCell>
               <TableCell>{tObj.transactions.columns.customer}</TableCell>
@@ -176,7 +176,7 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                 </TableCell>
                 <TableCell>
                   <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem', fontWeight: 700 }}>
-                    {transaction.merchantRid || '—'}
+                    {transaction.ridByMerchant || '—'}
                   </Typography>
                 </TableCell>
                 <TableCell>

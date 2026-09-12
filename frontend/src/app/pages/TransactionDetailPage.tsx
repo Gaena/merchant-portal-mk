@@ -339,9 +339,9 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                 </Box>
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {tObj.transactions.detail.merchantRid}:{' '}
+                {tObj.transactions.detail.ridByMerchant}:{' '}
                 <Box component="span" sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'text.primary' }}>
-                  {transaction.merchantRid || '—'}
+                  {transaction.ridByMerchant || '—'}
                 </Box>
               </Typography>
             </Stack>
@@ -455,7 +455,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                   fontSize: '0.7rem',
                   letterSpacing: 0.5
                 }}>
-                  {tObj.transactions.detail.merchantRid}
+                  {tObj.transactions.detail.ridByMerchant}
                 </Typography>
                 <Typography variant="h6" sx={{
                   fontWeight: 700,
@@ -464,7 +464,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                   mt: 0.5,
                   wordBreak: 'break-all'
                 }}>
-                  {transaction.merchantRid || '—'}
+                  {transaction.ridByMerchant || '—'}
                 </Typography>
               </Box>
             </Box>
@@ -1055,7 +1055,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
             {tObj.transactions.detail.providerOrderId}: {transaction.providerOrderId || '—'}
           </Typography>
           <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            {tObj.transactions.detail.merchantRid}: {transaction.merchantRid || '—'}
+            {tObj.transactions.detail.ridByMerchant}: {transaction.ridByMerchant || '—'}
           </Typography>
           <Typography variant="body2">
             {tObj.transactions.detail.captureAmount}: {formatCurrency(transaction.amount, transaction.currency)}
@@ -1081,7 +1081,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
             {tObj.transactions.detail.providerOrderId}: {transaction.providerOrderId || '—'}
           </Typography>
           <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            {tObj.transactions.detail.merchantRid}: {transaction.merchantRid || '—'}
+            {tObj.transactions.detail.ridByMerchant}: {transaction.ridByMerchant || '—'}
           </Typography>
           <Typography variant="body2">
             {tObj.transactions.detail.refundAmount}: {formatCurrency(refundableLeft, transaction.currency)}

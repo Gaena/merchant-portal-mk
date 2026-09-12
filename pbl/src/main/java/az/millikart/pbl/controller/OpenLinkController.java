@@ -54,14 +54,14 @@ public class OpenLinkController {
                 .build();
     }
 
-    // Транзакция ищется только по tx — нашему случайному merchantRid из пути. Параметры запроса ID,
+    // Транзакция ищется только по tx — нашему случайному ridByMerchant из пути. Параметры запроса ID,
     // PASSWORD и STATUS от провайдера подконтрольны атакующему и намеренно не объявлены: так они не
     // попадают ни в этот метод, ни в логи.
     @GetMapping("/redirect/{tx}")
     public String redirectPage(@PathVariable("tx") String tx, Model model) {
         PaymentReceiptView receipt = null;
         try {
-            receipt = paymentLinkService.refreshByMerchantRid(UUID.fromString(tx)).orElse(null);
+            receipt = paymentLinkService.refreshByRidByMerchant(UUID.fromString(tx)).orElse(null);
         } catch (IllegalArgumentException e) {
             log.warn("Payment return page requested with a malformed transaction reference");
         }

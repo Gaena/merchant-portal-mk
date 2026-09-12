@@ -77,12 +77,12 @@ export const EcommerceTransactionListPage: React.FC<EcommerceTransactionListPage
         // Порядок здесь — порядок поиска мерчанта: он знает номер заказа у провайдера и RID
         // платежа, а внутренний `id` ему ничего не говорит и потому идёт последним.
         const matchesProviderOrderId = txn.providerOrderId?.toLowerCase().includes(query);
-        const matchesMerchantRid = txn.merchantRid?.toLowerCase().includes(query);
+        const matchesRidByMerchant = txn.ridByMerchant?.toLowerCase().includes(query);
         const matchesCustomer = txn.customer.toLowerCase().includes(query);
         const matchesEmail = txn.customerEmail.toLowerCase().includes(query);
         const matchesId = txn.id.toLowerCase().includes(query);
 
-        if (!matchesProviderOrderId && !matchesMerchantRid && !matchesCustomer
+        if (!matchesProviderOrderId && !matchesRidByMerchant && !matchesCustomer
             && !matchesEmail && !matchesId) return false;
       }
 

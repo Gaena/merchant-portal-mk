@@ -322,7 +322,7 @@ export const HomePage: React.FC = () => {
               <TableHead>
                 <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
                   <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.providerOrderId}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.merchantRid}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.ridByMerchant}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.date}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.terminal}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.ip}</TableCell>
@@ -354,7 +354,7 @@ export const HomePage: React.FC = () => {
                       </TableCell>
                       <TableCell>
                         <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                          {tx.merchantRid || tx.merchant_rid || '—'}
+                          {tx.ridByMerchant || tx.rid_by_merchant || '—'}
                         </Typography>
                       </TableCell>
                       <TableCell>

@@ -20,7 +20,10 @@ public record TransactionResponse(
         String merchantOrderId,
         String paymentType,
         Integer terminalId,
-        String merchantRid,
+        // Reference id платежа, заданный мерчантом (словарь провайдера). Не путать с merchantRid —
+        // reference id самого мерчанта, который задаёт провайдер. По ссылкам, заведённым порталом,
+        // заполнен всегда: его генерирует OpenLinkService.
+        String ridByMerchant,
         String cardNumberMasked,
         String rrn,
         String approvalCode,

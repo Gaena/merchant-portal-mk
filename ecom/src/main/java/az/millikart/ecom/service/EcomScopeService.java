@@ -42,7 +42,7 @@ public class EcomScopeService {
         // SYSTEM_ADMIN и AUDITOR читают глобально — но и они видят только то, что заведено
         // у нас: терминал провайдера, за которым не стоит наш, к порталу отношения не имеет.
         if (role == Role.SYSTEM_ADMIN || role == Role.AUDITOR) {
-            return terminals.findAllProviderRids();
+            return terminals.findAllMerchantRids();
         }
 
         String companyId = UserPrincipal.getCompanyId(principal);
@@ -52,6 +52,6 @@ public class EcomScopeService {
                     "Denied: " + role + " without a company asked for acquiring transactions");
             throw new InvalidStateException("Access denied: User not assigned to a company");
         }
-        return terminals.findProviderRidsByCompany(companyId);
+        return terminals.findMerchantRidsByCompany(companyId);
     }
 }

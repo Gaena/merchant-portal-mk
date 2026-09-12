@@ -1501,7 +1501,7 @@ erDiagram
     transactions {
         uuid id PK
         uuid link_id FK "→ payment_links.id"
-        uuid merchant_rid "UUID для redirect"
+        uuid rid_by_merchant "reference id платежа, задаём мы; уходит провайдеру как ridByMerchant"
         varchar provider_order_id "ID заказа в TXPG"
         varchar provider_password "Пароль заказа TXPG"
         numeric amount "Авторизованная сумма (после capture не меняется)"
@@ -2254,7 +2254,7 @@ PBL-модуль интегрирован с **TransaXis Payment Gateway (TXPG)*
 ```java
 public interface AcquiringClient {
     // Создать заказ в TXPG → получить URL платёжной страницы
-    EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID merchantRid, String hppRedirectUrl);
+    EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID ridByMerchant, String hppRedirectUrl);
     
     // Подтвердить DMS-транзакцию (списать заблокированные деньги)
     Map<String, Object> completeDms(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount);

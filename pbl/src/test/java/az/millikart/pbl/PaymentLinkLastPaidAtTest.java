@@ -117,7 +117,7 @@ public class PaymentLinkLastPaidAtTest {
     private Transaction seedTransaction(PaymentLink link, TransactionStatus status) {
         Transaction saved = transactionRepository.saveAndFlush(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId("ORD-" + UUID.randomUUID())
                 .providerPassword("secret")
                 .amount(new BigDecimal("100.00"))

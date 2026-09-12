@@ -7,10 +7,10 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface TerminalRepository extends JpaRepository<Terminal, Integer> {
 
-    @Query("select t.providerRid from Terminal t "
-            + "where t.companyId = :companyId and t.providerRid is not null")
-    List<String> findProviderRidsByCompany(String companyId);
+    @Query("select t.merchantRid from Terminal t "
+            + "where t.companyId = :companyId and t.merchantRid is not null")
+    List<String> findMerchantRidsByCompany(String companyId);
 
-    @Query("select t.providerRid from Terminal t where t.providerRid is not null")
-    List<String> findAllProviderRids();
+    @Query("select t.merchantRid from Terminal t where t.merchantRid is not null")
+    List<String> findAllMerchantRids();
 }

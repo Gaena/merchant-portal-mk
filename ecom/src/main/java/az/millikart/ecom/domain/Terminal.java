@@ -31,6 +31,6 @@ public class Terminal {
     private String companyId;
 
     /** Терминал провайдера, за которым стоит наш. Пусто у заведённых до синхронизации. */
-    @Column(name = "provider_rid")
-    private String providerRid;
+    @Column(name = "merchant_rid")
+    private String merchantRid;
 }

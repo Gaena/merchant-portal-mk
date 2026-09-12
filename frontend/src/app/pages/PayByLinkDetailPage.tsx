@@ -220,7 +220,7 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
             <TableHead>
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
                 <TableCell sx={{ fontWeight: 600 }}>{tObj.transactions.columns.providerOrderId}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{tObj.transactions.columns.merchantRid}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{tObj.transactions.columns.ridByMerchant}</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Date & Time</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Payer IP</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Device / User-Agent</TableCell>
@@ -261,7 +261,7 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                     </TableCell>
                     <TableCell>
                       <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                        {txn.merchantRid || txn.merchant_rid || '—'}
+                        {txn.ridByMerchant || txn.rid_by_merchant || '—'}
                       </Typography>
                     </TableCell>
                     <TableCell>

@@ -145,8 +145,12 @@ export interface PaymentLink {
    * на карточке ссылки (`utils/terminals.ts`); пусто, если ответ терминал не назвал.
    */
   terminalId?: number;
-  // `PaymentLinkResponse.rid` маппинг из API пока не переносит — поле всегда undefined.
-  merchantRid?: string;
+  /**
+   * `PaymentLinkResponse.rid` — ссылка провайдера на саму платёжную ссылку
+   * (`PaymentLink.providerReference`). Не `ridByMerchant`: тот относится к платежу и живёт
+   * в транзакции. Маппинг из API поле пока не переносит — оно всегда undefined.
+   */
+  providerReference?: string;
 }
 
 export const formatDateTime = (d: Date) =>

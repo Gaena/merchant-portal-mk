@@ -354,7 +354,7 @@ public class DashboardSummaryTest {
                              String amount, String captured, String refunded, Instant at) {
         Transaction saved = transactionRepository.saveAndFlush(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId("ORD-" + UUID.randomUUID())
                 .providerPassword("secret")
                 .amount(new BigDecimal(amount))

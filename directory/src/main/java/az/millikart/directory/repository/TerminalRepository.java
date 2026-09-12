@@ -40,5 +40,5 @@ public interface TerminalRepository extends JpaRepository<Terminal, Integer> {
     List<Terminal> findAllByCompanyIdOrderByNameAscIdAsc(String companyId);
 
     /** Один терминал провайдера — одна наша компания: связь проверяется перед заведением. */
-    Optional<Terminal> findByProviderRid(String providerRid);
+    Optional<Terminal> findByMerchantRid(String merchantRid);
 }

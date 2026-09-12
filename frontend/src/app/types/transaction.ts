@@ -118,7 +118,7 @@ export interface Transaction {
   cardNumberMasked?: string;
   rrn?: string;
   approvalCode?: string;
-  merchantRid?: string;
+  ridByMerchant?: string;
   providerOrderId?: string;
   terminalId?: number;
   /**

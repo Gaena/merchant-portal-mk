@@ -45,7 +45,7 @@ class TerminalStatusReconciliationTest {
         service = new TerminalStatusReconciliationService(terminals, snapshot, links, audit);
     }
 
-    private Terminal terminal(TerminalStatus status, TerminalStatusSource source, String providerRid) {
+    private Terminal terminal(TerminalStatus status, TerminalStatusSource source, String merchantRid) {
         return Terminal.builder()
                 .id(500001)
                 .name("Terminal")
@@ -54,7 +54,7 @@ class TerminalStatusReconciliationTest {
                 .companyId("comp-01")
                 .status(status)
                 .statusSource(source)
-                .providerRid(providerRid)
+                .merchantRid(merchantRid)
                 .build();
     }
 

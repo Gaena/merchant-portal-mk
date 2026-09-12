@@ -378,7 +378,7 @@ class TerminalBlockedIntegrationTest {
 
         return transactionRepository.save(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId(providerOrderId != null ? providerOrderId : "ORD-" + key)
                 .providerPassword("provider-password")
                 .amount(AMOUNT)

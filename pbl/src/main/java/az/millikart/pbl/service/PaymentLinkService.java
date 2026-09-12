@@ -772,14 +772,14 @@ public class PaymentLinkService {
     }
 
     // Проверка статуса для плательщика (страница возврата от провайдера). Ключ — случайный
-    // merchantRid из пути, перебрать его нельзя, поэтому проверки владения здесь нет, а ответ
+    // ridByMerchant из пути, перебрать его нельзя, поэтому проверки владения здесь нет, а ответ
     // намеренно беден на персональные данные. Пусто вместо ошибки — чтобы страница не выдала,
     // существовала ссылка или нет.
     @Transactional
-    public Optional<PaymentReceiptView> refreshByMerchantRid(UUID merchantRid) {
-        Optional<Transaction> found = transactionRepository.findByMerchantRid(merchantRid);
+    public Optional<PaymentReceiptView> refreshByRidByMerchant(UUID ridByMerchant) {
+        Optional<Transaction> found = transactionRepository.findByRidByMerchant(ridByMerchant);
         if (found.isEmpty()) {
-            log.info("No transaction matches the merchantRid on the return page request");
+            log.info("No transaction matches the ridByMerchant on the return page request");
             return Optional.empty();
         }
 
@@ -1145,7 +1145,7 @@ public class PaymentLinkService {
                 tx.getLink() != null ? tx.getLink().getMerchantOrderId() : null,
                 tx.getLink() != null && tx.getLink().getPaymentType() != null ? tx.getLink().getPaymentType().name() : "SMS",
                 tx.getLink() != null ? tx.getLink().getTerminalId() : null,
-                tx.getMerchantRid() != null ? tx.getMerchantRid().toString() : null,
+                tx.getRidByMerchant() != null ? tx.getRidByMerchant().toString() : null,
                 facts.maskedCard(),
                 facts.rrn(),
                 facts.approvalCode(),

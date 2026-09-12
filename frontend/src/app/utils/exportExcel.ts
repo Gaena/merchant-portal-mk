@@ -14,7 +14,7 @@ export function exportTransactionsToExcel(transactions: Transaction[], filename:
   // идёт первым, внутренний идентификатор операции — последним.
   const excelData = transactions.map(txn => ({
     'Provider Order ID': txn.providerOrderId || 'N/A',
-    'Merchant RID': txn.merchantRid || 'N/A',
+    'RID by merchant': txn.ridByMerchant || 'N/A',
     // Терминал подписан логином — тем же, что и на экране.
     'Terminal Login': terminalLabel(txn),
     'Date & Time': formatDateTime(txn.timestamp),
@@ -36,7 +36,7 @@ export function exportTransactionsToExcel(transactions: Transaction[], filename:
   // Set column widths
   const columnWidths = [
     { wch: 25 }, // Provider Order ID
-    { wch: 38 }, // Merchant RID
+    { wch: 38 }, // RID by merchant
     { wch: 22 }, // Terminal Login
     { wch: 22 }, // Date & Time
     { wch: 20 }, // Customer Name

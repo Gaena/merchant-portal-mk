@@ -8,7 +8,7 @@ import java.util.Map;
 import java.util.UUID;
 
 public interface AcquiringClient {
-    EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID merchantRid, String hppRedirectUrl);
+    EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID ridByMerchant, String hppRedirectUrl);
 
     // Обе денежные операции возвращают результат, только если эквайер подтвердил её через
     // tran.match.ridByPmo; принятый, но неподтверждённый ответ — PaymentOutcomeUnknownException,
