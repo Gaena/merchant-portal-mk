@@ -1,5 +1,6 @@
 package az.millikart.pbl;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
@@ -8,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -47,6 +49,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -57,8 +60,15 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 // частичный capture не должен становиться способом вернуть неснятые деньги, а операция считается
 // выполненной только после подтверждения эквайера. StubAcquiringClient всегда отвечает успехом и
 // FullyPaid — поэтому здесь провайдер это @MockBean и каждый тест сам диктует ответ эквайера.
+//
+// На настоящей PostgreSQL, а не на H2: почти всё, что здесь проверяется, лежит в
+// `provider_response` — колонке типа jsonb. След возврата, метка списания и история операции
+// читаются и пишутся через неё, а у H2 под `@JdbcTypeCode(SqlTypes.JSON)` свой тип со своим
+// поведением. Сюда же суммы: точность BigDecimal при частичном списании — вопрос к настоящему
+// numeric, а не к его эмуляции.
 @SpringBootTest
 @AutoConfigureMockMvc
+@Import(PostgresTestContainer.class)
 class MoneyOperationsIntegrationTest {
 
     private static final int TERMINAL_ID = 123456789;
@@ -540,6 +550,93 @@ class MoneyOperationsIntegrationTest {
     }
 
     // --- фикстуры ---------------------------------------------------------------------------
+
+    // --- история операции -----------------------------------------------------------------
+
+    // Карточка операции показывает историю из того, что записано: заведение, списание холда и
+    // каждый возврат — со своим временем и своей суммой. Блок был пуст, потому что ответ по
+    // операции истории не нёс вовсе, а таблица связанных операций рисовала вместо неё две
+    // выдуманные записи с одним временем.
+    @Test
+    void statusHistory_carriesCreationCaptureAndEveryRefund() throws Exception {
+        Transaction authorized = dmsTransaction("HIST", TransactionStatus.AUTHORIZED,
+                AUTHORIZED_AMOUNT, null);
+        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(confirmed("CAP"));
+        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(confirmed("REF-1"))
+                .thenReturn(confirmed("REF-2"));
+
+        mockMvc.perform(capture(authorized, CAPTURED_AMOUNT)).andExpect(status().isOk());
+        mockMvc.perform(refund(authorized, new BigDecimal("200.00"))).andExpect(status().isOk());
+        mockMvc.perform(refund(authorized, new BigDecimal("300.00"))).andExpect(status().isOk());
+
+        JsonNode history = historyOf(authorized);
+        Assertions.assertEquals(4, history.size(), "creation, capture and two refunds: " + history);
+
+        Assertions.assertEquals("CREATED", history.get(0).get("type").asText());
+        Assertions.assertEquals("PENDING", history.get(0).get("status").asText());
+
+        Assertions.assertEquals("CAPTURED", history.get(1).get("type").asText());
+        Assertions.assertEquals("SUCCESS", history.get(1).get("status").asText());
+        Assertions.assertEquals(0, CAPTURED_AMOUNT.compareTo(history.get(1).get("amount").decimalValue()));
+        Assertions.assertEquals("RID-CAP", history.get(1).get("acquirerReference").asText());
+
+        // Возврат 200 из снятых 500 — ещё не полный, поэтому PARTIALLY_REFUNDED; следующий
+        // добирает до 500 и закрывает операцию.
+        Assertions.assertEquals("REFUNDED", history.get(2).get("type").asText());
+        Assertions.assertEquals("PARTIALLY_REFUNDED", history.get(2).get("status").asText());
+        Assertions.assertEquals("RID-REF-1", history.get(2).get("acquirerReference").asText());
+
+        Assertions.assertEquals("REFUNDED", history.get(3).get("type").asText());
+        Assertions.assertEquals("REFUNDED", history.get(3).get("status").asText());
+        Assertions.assertEquals("RID-REF-2", history.get(3).get("acquirerReference").asText());
+
+        // Порядок — по возрастанию времени, и время у каждого события своё, записанное.
+        for (int i = 1; i < history.size(); i++) {
+            Assertions.assertTrue(
+                    !history.get(i).get("at").asText().isBlank()
+                            && history.get(i).get("at").asText().compareTo(history.get(i - 1).get("at").asText()) >= 0,
+                    "events must be ordered by their own recorded time: " + history);
+        }
+    }
+
+    // Ничего не происходило — ничего и не выдумывается: одно событие, заведение операции.
+    // Статус её при этом PENDING, то есть тем же событием и объяснён.
+    @Test
+    void statusHistory_forAnUntouchedTransaction_carriesOnlyItsCreation() throws Exception {
+        Transaction pending = transaction("FRESH", TransactionStatus.PENDING);
+
+        JsonNode history = historyOf(pending);
+        Assertions.assertEquals(1, history.size(), "nothing happened yet: " + history);
+        Assertions.assertEquals("CREATED", history.get(0).get("type").asText());
+        Assertions.assertEquals("PENDING", history.get(0).get("status").asText());
+        Assertions.assertTrue(history.get(0).get("amount").isNull(), "creation moves no money");
+    }
+
+    // У SMS-платежа стадии списания нет, и отдельной записи о переходе в SUCCESS никто не делал.
+    // Состояние всё равно должно быть на экране: его закрывает событие STATUS со временем
+    // последней записи строки — единственным временем, которое об этом переходе известно.
+    @Test
+    void statusHistory_forASettledSmsPayment_closesWithItsCurrentStatus() throws Exception {
+        Transaction settled = smsTransaction("SMS-DONE", TransactionStatus.SUCCESS, AMOUNT);
+
+        JsonNode history = historyOf(settled);
+        Assertions.assertEquals(2, history.size(), "creation plus the state it ended in: " + history);
+        Assertions.assertEquals("CREATED", history.get(0).get("type").asText());
+        Assertions.assertEquals("STATUS", history.get(1).get("type").asText());
+        Assertions.assertEquals("SUCCESS", history.get(1).get("status").asText());
+        Assertions.assertTrue(history.get(1).get("acquirerReference").isNull(),
+                "no acquirer reference is recorded for a transition nobody wrote down");
+    }
+
+    private JsonNode historyOf(Transaction tx) throws Exception {
+        String body = mockMvc.perform(get("/api/v1/transactions/{id}", tx.getId())
+                        .header(HttpHeaders.AUTHORIZATION, headToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body).get("statusHistory");
+    }
 
     private MockHttpServletRequestBuilder capture(Transaction tx, BigDecimal amount) throws Exception {
         ObjectNode body = objectMapper.createObjectNode();

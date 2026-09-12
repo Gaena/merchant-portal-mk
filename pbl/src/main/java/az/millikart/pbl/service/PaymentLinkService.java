@@ -41,8 +41,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -1154,8 +1156,117 @@ public class PaymentLinkService {
                 tx.getClientIp(),
                 tx.getUserAgent(),
                 tx.getProviderOrderId(),
+                statusHistoryOf(tx, resp),
                 failureReasonOf(resp)
         );
+    }
+
+    /**
+     * История операции из того, что о ней записано, по возрастанию времени.
+     *
+     * Источников ровно три, и у каждого своё время, поставленное в момент события:
+     *   `createdAt`             — операция заведена, статус PENDING (OpenLinkService);
+     *   `CAPTURE_KEY.at`        — холд списан, операция стала SUCCESS;
+     *   `REFUNDS_KEY[i].at`     — возврат подтверждён эквайером.
+     *
+     * Статус после каждого возврата считается нарастающим итогом от той же базы, по которой
+     * решает сам возврат (`refundableBase`): сравнялись — REFUNDED, нет — PARTIALLY_REFUNDED.
+     * Хранить это отдельно незачем, а вывести из уже записанных сумм можно однозначно.
+     *
+     * Последним, и только если текущий статус ничем выше не объяснён, идёт событие STATUS со
+     * временем `updatedAt`. Так на экран попадает SMS-платёж, ставший SUCCESS или FAILED, и
+     * холд, ставший AUTHORIZED: отдельной записи об этих переходах никто не делал, а `updatedAt`
+     * — это и есть момент, когда статус записали. Если после перехода строку меняли (возврат),
+     * события выше уже объясняют состояние, и STATUS не добавляется — иначе он приписал бы
+     * переходу чужое время.
+     *
+     * Ничего, кроме перечисленного, здесь появиться не должно. Генератор, рисовавший «создано»
+     * и «оплачено» одним временем с подписью «Payment successfully completed», выдумывал
+     * обстоятельства платежа (Р-48).
+     */
+    private List<TransactionResponse.TransactionEvent> statusHistoryOf(Transaction tx, Map<String, Object> resp) {
+        List<TransactionResponse.TransactionEvent> events = new ArrayList<>();
+
+        if (tx.getCreatedAt() != null) {
+            events.add(new TransactionResponse.TransactionEvent(
+                    tx.getCreatedAt(), "CREATED", TransactionStatus.PENDING.name(), null, null));
+        }
+
+        Map<String, Object> capture = resp != null && resp.get(CAPTURE_KEY) instanceof Map<?, ?> m
+                ? castRecord(m)
+                : null;
+        if (capture != null) {
+            events.add(new TransactionResponse.TransactionEvent(
+                    instantOf(capture.get("at")), "CAPTURED", TransactionStatus.SUCCESS.name(),
+                    amountOf(capture.get("amount")), ProviderPayloads.scalarText(capture.get("ridByPmo"))));
+        }
+
+        BigDecimal base = refundableBase(tx);
+        BigDecimal running = BigDecimal.ZERO;
+        if (resp != null && resp.get(REFUNDS_KEY) instanceof List<?> refunds) {
+            for (Object entry : refunds) {
+                if (!(entry instanceof Map<?, ?> m)) {
+                    continue;
+                }
+                Map<String, Object> refund = castRecord(m);
+                BigDecimal amount = amountOf(refund.get("amount"));
+                if (amount != null) {
+                    running = running.add(amount);
+                }
+                TransactionStatus after = base != null && running.compareTo(base) >= 0
+                        ? TransactionStatus.REFUNDED
+                        : TransactionStatus.PARTIALLY_REFUNDED;
+                events.add(new TransactionResponse.TransactionEvent(
+                        instantOf(refund.get("at")), "REFUNDED", after.name(),
+                        amount, ProviderPayloads.scalarText(refund.get("ridByPmo"))));
+            }
+        }
+
+        // События без времени сортировать не по чему, и показывать их как датированные нельзя.
+        events.removeIf(event -> event.at() == null);
+        events.sort(Comparator.comparing(TransactionResponse.TransactionEvent::at));
+
+        String current = tx.getStatus().name();
+        boolean explained = !events.isEmpty()
+                && events.get(events.size() - 1).status().equals(current);
+        if (!explained && tx.getUpdatedAt() != null) {
+            events.add(new TransactionResponse.TransactionEvent(
+                    tx.getUpdatedAt(), "STATUS", current, null, null));
+        }
+        return events;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castRecord(Map<?, ?> raw) {
+        return (Map<String, Object>) raw;
+    }
+
+    // Время события записано строкой ISO-8601 (moneyOperationRecord). Нечитаемое значение — это
+    // «времени нет», а не повод уронить чтение карточки: событие без времени отсеется выше.
+    private static Instant instantOf(Object raw) {
+        String text = ProviderPayloads.scalarText(raw);
+        if (text == null) {
+            return null;
+        }
+        try {
+            return Instant.parse(text);
+        } catch (DateTimeParseException e) {
+            log.warn("Transaction event carries an unparseable timestamp {}; the event is dropped", text);
+            return null;
+        }
+    }
+
+    private static BigDecimal amountOf(Object raw) {
+        String text = ProviderPayloads.scalarText(raw);
+        if (text == null) {
+            return null;
+        }
+        try {
+            return new BigDecimal(text);
+        } catch (NumberFormatException e) {
+            log.warn("Transaction event carries an unparseable amount {}; the event keeps no amount", text);
+            return null;
+        }
     }
 
     // P1-8b: причина отказа, сохранённая refreshStatus, или null, если её нет.
