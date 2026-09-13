@@ -42,6 +42,13 @@ import {
 } from '@mui/icons-material';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
+import {
+  checkExistingTerminal,
+  checkNewTerminal,
+  checkSeverity,
+  type TerminalCheckOutcome,
+  type TerminalCheckResponse,
+} from '../utils/terminalCheck';
 import { isTerminalActive } from '../types/dto';
 import type { TerminalDto, CompanyDto, TerminalStatus } from '../types/dto';
 
@@ -55,6 +62,13 @@ export const TerminalsPage: React.FC = () => {
    * предлагать действие и отвечать на него отказом.
    */
   const canSeePassword = user?.role === 'SYSTEM_ADMIN';
+
+  const checkLabel = (outcome: TerminalCheckOutcome): string => ({
+    OK: tObj.terminals.checkOk,
+    INVALID_CREDENTIALS: tObj.terminals.checkInvalid,
+    REJECTED: tObj.terminals.checkRejected,
+    UNREACHABLE: tObj.terminals.checkUnreachable,
+  })[outcome];
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +86,15 @@ export const TerminalsPage: React.FC = () => {
    */
   const [revealed, setRevealed] = useState<Record<number, string>>({});
   const [revealing, setRevealing] = useState<number | null>(null);
+  /**
+   * Итог последней проверки по каждому терминалу. Хранится до перезагрузки списка, как и
+   * раскрытые пароли, — и по той же причине: на новой странице те же строки уже другие терминалы.
+   */
+  const [checks, setChecks] = useState<Record<number, TerminalCheckResponse>>({});
+  const [checking, setChecking] = useState<number | null>(null);
+  // Проверка в форме заведения: ключ ещё не сохранён.
+  const [formCheck, setFormCheck] = useState<TerminalCheckResponse | null>(null);
+  const [formChecking, setFormChecking] = useState(false);
   // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
   // чтобы не слать запрос на каждую букву.
   const debouncedSearch = useDebounced(searchQuery, 300);
@@ -96,6 +119,7 @@ export const TerminalsPage: React.FC = () => {
     // Раскрытые ключи не переживают перезагрузку списка: на новой странице те же строки — уже
     // другие терминалы, и оставить значение на экране значило бы подписать им чужой пароль.
     setRevealed({});
+    setChecks({});
     try {
       const params: Record<string, unknown> = { page, size: rowsPerPage };
       if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
@@ -193,6 +217,37 @@ export const TerminalsPage: React.FC = () => {
    * пишется в журнал аудита на сервере; повторное нажатие просто убирает значение с экрана,
    * ничего не спрашивая.
    */
+  /**
+   * «Тест» у терминала. Результат — всегда один из четырёх исходов, даже при неверном пароле
+   * или недоступном провайдере; сбоем здесь считается только отказ самого портала (например,
+   * нехватка прав), и он идёт в общую строку ошибки.
+   */
+  const runCheck = async (terminalId: number) => {
+    setChecking(terminalId);
+    setError('');
+    try {
+      const result = await checkExistingTerminal(terminalId);
+      setChecks(prev => ({ ...prev, [terminalId]: result }));
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to check the terminal');
+    } finally {
+      setChecking(null);
+    }
+  };
+
+  const runFormCheck = async () => {
+    setFormCheck(null);
+    setFormChecking(true);
+    setError('');
+    try {
+      setFormCheck(await checkNewTerminal(form.login.trim(), form.password));
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to check the terminal');
+    } finally {
+      setFormChecking(false);
+    }
+  };
+
   const togglePassword = async (terminalId: number) => {
     if (revealed[terminalId] !== undefined) {
       setRevealed(prev => {
@@ -446,7 +501,27 @@ export const TerminalsPage: React.FC = () => {
                     {term.createdAt ? new Date(term.createdAt).toLocaleString() : 'N/A'}
                   </TableCell>
                   <TableCell align="center">
-                    <Stack direction="row" spacing={0.5} justifyContent="center">
+                    <Stack direction="row" spacing={0.5} justifyContent="center" alignItems="center">
+                      {/* «Тест» — только администратору: проверка отвечает на вопрос, подходит ли
+                          ключ, и перебирать ключи другим ролям незачем. */}
+                      {canSeePassword && (
+                        <Tooltip title={checks[term.id]
+                          ? `${checkLabel(checks[term.id].outcome)}${checks[term.id].message ? ` — ${checks[term.id].message}` : ''}`
+                          : tObj.terminals.testAction}>
+                          <span>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color={checks[term.id] ? checkSeverity(checks[term.id].outcome) : 'primary'}
+                              disabled={checking === term.id}
+                              onClick={() => runCheck(term.id)}
+                              sx={{ minWidth: 0, px: 1 }}
+                            >
+                              {checking === term.id ? '…' : tObj.terminals.testAction}
+                            </Button>
+                          </span>
+                        </Tooltip>
+                      )}
                       <Tooltip title={tObj.terminals.editTerminal}>
                         <IconButton color="primary" size="small" onClick={() => handleOpenEdit(term)}>
                           <EditIcon fontSize="small" />
@@ -557,7 +632,7 @@ export const TerminalsPage: React.FC = () => {
             <TextField
               label="Terminal Login *"
               value={form.login}
-              onChange={e => setForm(f => ({ ...f, login: e.target.value }))}
+              onChange={e => { setForm(f => ({ ...f, login: e.target.value })); setFormCheck(null); }}
               placeholder="e.g. term_login_001"
               fullWidth
             />
@@ -565,10 +640,30 @@ export const TerminalsPage: React.FC = () => {
               label={`${tObj.terminals.password} *`}
               type="password"
               value={form.password}
-              onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+              onChange={e => { setForm(f => ({ ...f, password: e.target.value })); setFormCheck(null); }}
               placeholder="••••••••"
               fullWidth
             />
+            {/* Проверить ключ до сохранения: неверный пароль иначе выяснится на первом платеже.
+                Итог сбрасывается, как только логин или пароль поменяли, — он относится только
+                к тому, что проверяли. */}
+            {canSeePassword && (
+              <Box>
+                <Button
+                  variant="outlined"
+                  disabled={formChecking || !form.login.trim() || !form.password}
+                  onClick={runFormCheck}
+                >
+                  {formChecking ? tObj.common.loading : tObj.terminals.testAction}
+                </Button>
+                {formCheck && (
+                  <Alert severity={checkSeverity(formCheck.outcome)} sx={{ mt: 1.5 }}>
+                    {checkLabel(formCheck.outcome)}
+                    {formCheck.message ? ` — ${formCheck.message}` : ''}
+                  </Alert>
+                )}
+              </Box>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>

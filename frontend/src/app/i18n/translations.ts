@@ -316,6 +316,15 @@ export interface TranslationDictionary {
      */
     revealPassword: string;
     hidePassword: string;
+    /**
+     * Кнопка «Тест» и её исходы. Проверка — пробный заказ у провайдера; различать нужно все
+     * четыре исхода, потому что следующий шаг у каждого свой (`utils/terminalCheck.ts`).
+     */
+    testAction: string;
+    checkOk: string;
+    checkInvalid: string;
+    checkRejected: string;
+    checkUnreachable: string;
     newPassword: string;
     newPasswordHint: string;
     company: string;
@@ -702,6 +711,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       password: 'Terminal Password',
       revealPassword: 'Show password',
       hidePassword: 'Hide password',
+      testAction: 'Test',
+      checkOk: 'Credentials accepted, payments allowed',
+      checkInvalid: 'Invalid login or password',
+      checkRejected: 'Credentials accepted, but the acquirer refused a payment',
+      checkUnreachable: 'The acquirer did not answer — nothing is known about the terminal',
       newPassword: 'New Terminal Password (Optional)',
       newPasswordHint: 'Leave blank to keep the current terminal password',
       company: 'Assigned Company',
@@ -1067,6 +1081,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       password: 'Terminal Şifrəsi',
       revealPassword: 'Şifrəni göstər',
       hidePassword: 'Şifrəni gizlət',
+      testAction: 'Test',
+      checkOk: 'Məlumatlar qəbul edildi, ödənişlər icazəlidir',
+      checkInvalid: 'Login və ya şifrə yanlışdır',
+      checkRejected: 'Məlumatlar qəbul edildi, lakin ekvayer ödənişə icazə vermədi',
+      checkUnreachable: 'Ekvayer cavab vermədi — terminal barədə məlumat yoxdur',
       newPassword: 'Yeni terminal şifrəsi (istəyə görə)',
       newPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
       company: 'Təyin Olunmuş Şirkət',
@@ -1432,6 +1451,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       password: 'Пароль терминала',
       revealPassword: 'Показать пароль',
       hidePassword: 'Скрыть пароль',
+      testAction: 'Тест',
+      checkOk: 'Данные приняты, оплаты разрешены',
+      checkInvalid: 'Неверный логин или пароль',
+      checkRejected: 'Данные приняты, но эквайер не разрешил оплату',
+      checkUnreachable: 'Эквайер не ответил — о терминале ничего не известно',
       newPassword: 'Новый пароль терминала (необязательно)',
       newPasswordHint: 'Оставьте пустым, чтобы сохранить текущий пароль терминала',
       company: 'Назначенная компания',

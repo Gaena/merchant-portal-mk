@@ -61,6 +61,17 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
+      // Проверка учётных данных терминала пробным заказом. В pbl, а не в directory, куда уходит
+      // весь /api/v1/terminals: к провайдеру умеет ходить только pbl.
+      '/api/v1/acquiring': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      // Сервис выписки и слепок терминалов провайдера.
+      '/api/v1/ecom': {
+        target: 'http://localhost:8083',
+        changeOrigin: true,
+      },
     },
   },
 })
