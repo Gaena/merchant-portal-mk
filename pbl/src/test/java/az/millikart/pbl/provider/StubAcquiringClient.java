@@ -3,6 +3,7 @@ package az.millikart.pbl.provider;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
 import az.millikart.pbl.provider.dto.MoneyOperationResult;
+import az.millikart.pbl.provider.dto.TerminalCheckResult;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -50,6 +51,14 @@ public class StubAcquiringClient implements AcquiringClient {
         response.put("status", "FullyPaid");
         response.put("id", providerOrderId);
         return response;
+    }
+
+    // Заглушка принимает любые учётные данные: тесты, которым нужен другой исход проверки,
+    // подменяют клиента моком и диктуют ответ сами.
+    @Override
+    public TerminalCheckResult checkTerminalCredentials(String login, String password) {
+        log.info("[STUB PROVIDER] checkTerminalCredentials for login: {}", login);
+        return TerminalCheckResult.ok();
     }
 
     // P1-8b: та же форма, которой настоящий шлюз отвечает на exec-tran (контракт §5.5–5.7), и

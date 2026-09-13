@@ -7,6 +7,7 @@ import az.millikart.pbl.domain.PaymentType;
 import az.millikart.pbl.provider.dto.EcomCreateOrderRequest;
 import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
 import az.millikart.pbl.provider.dto.MoneyOperationResult;
+import az.millikart.pbl.provider.dto.TerminalCheckResult;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import org.slf4j.Logger;
@@ -250,6 +251,101 @@ public class TxpgAcquiringClient implements AcquiringClient {
         } catch (Exception e) {
             log.error("PROVIDER REQ [getOrderStatus] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
             throw new BusinessException("Order status check failed: " + e.getMessage());
+        }
+    }
+
+    // Код ошибки, которым провайдер отвечает на неверный логин или пароль терминала.
+    private static final String INVALID_LOGIN = "InvalidLogin";
+
+    // Сумма пробного заказа. Не списывается никогда: заказ остаётся неоплаченным и уходит в
+    // Expired. Одна манатка, а не копейка — чтобы проверка не упёрлась в минимальную сумму.
+    private static final BigDecimal CHECK_AMOUNT = new BigDecimal("1.00");
+
+    /**
+     * Проверка учётных данных терминала пробным заказом.
+     *
+     * Намеренно **без** `@Retry` и **без** `@CircuitBreaker`, в отличие от боевого заведения
+     * заказа. Повтор здесь только множит пробные заказы у провайдера, а общий с платёжным путём
+     * breaker означал бы, что администратор, десять раз проверивший неверный пароль, закрывает
+     * приём платежей всем мерчантам.
+     *
+     * Классификация — по коду ошибки, а не по HTTP-статусу: тот же `InvalidLogin` провайдер
+     * может прислать и в 200, и в 4xx, и разбирать надо тело в обоих случаях.
+     */
+    @Override
+    public TerminalCheckResult checkTerminalCredentials(String login, String password) {
+        String url = UriComponentsBuilder.fromUriString(gatewayBaseUrl)
+                .path(createOrderPath)
+                .toUriString();
+
+        EcomCreateOrderRequest request = new EcomCreateOrderRequest(
+                new EcomCreateOrderRequest.Order(
+                        "Order_SMS",
+                        UUID.randomUUID().toString(),
+                        CHECK_AMOUNT,
+                        "AZN",
+                        "Terminal credentials check",
+                        "az",
+                        gatewayBaseUrl,
+                        new EcomCreateOrderRequest.SubMerchant("https://millikart.az/")
+                )
+        );
+
+        log.info("PROVIDER REQ [checkTerminalCredentials] -> POST URL: {}, Login: {}",
+                ProviderPayloads.urlForLog(url), login);
+
+        try {
+            Map<String, Object> body = restClient.post()
+                    .uri(url)
+                    .headers(headers -> {
+                        headers.setBasicAuth(login, password);
+                        headers.setContentType(MediaType.APPLICATION_JSON);
+                    })
+                    .body(request)
+                    .retrieve()
+                    .body(Map.class);
+            return classifyCheck(login, body);
+        } catch (HttpStatusCodeException e) {
+            if (e.getStatusCode().is5xxServerError()) {
+                log.warn("PROVIDER RESP [checkTerminalCredentials] <- HTTP {} for Login: {}", e.getStatusCode(), login);
+                return TerminalCheckResult.unreachable("Acquirer answered HTTP " + e.getStatusCode().value());
+            }
+            return classifyCheck(login, parseBody(e.getResponseBodyAsString()));
+        } catch (Exception e) {
+            log.warn("PROVIDER REQ [checkTerminalCredentials] <- no answer for Login: {}: {}", login, e.getMessage());
+            return TerminalCheckResult.unreachable("No answer from the acquirer: " + e.getMessage());
+        }
+    }
+
+    private TerminalCheckResult classifyCheck(String login, Map<String, Object> body) {
+        if (body == null) {
+            return TerminalCheckResult.unreachable("Empty answer from the acquirer");
+        }
+        Object errorCode = body.get("errorCode");
+        if (errorCode == null) {
+            // Заказ заведён: и логин с паролем верны, и оплаты терминалу разрешены.
+            log.info("PROVIDER RESP [checkTerminalCredentials] <- OK for Login: {}", login);
+            return TerminalCheckResult.ok();
+        }
+        String code = String.valueOf(errorCode);
+        String description = body.get("errorDescription") != null ? String.valueOf(body.get("errorDescription")) : code;
+        if (INVALID_LOGIN.equals(code)) {
+            log.info("PROVIDER RESP [checkTerminalCredentials] <- invalid credentials for Login: {}", login);
+            return new TerminalCheckResult(TerminalCheckResult.Outcome.INVALID_CREDENTIALS, code, description);
+        }
+        log.info("PROVIDER RESP [checkTerminalCredentials] <- rejected for Login: {} with {}: {}", login, code, description);
+        return new TerminalCheckResult(TerminalCheckResult.Outcome.REJECTED, code, description);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseBody(String body) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(body, Map.class);
+        } catch (Exception e) {
+            return null;
         }
     }
 
