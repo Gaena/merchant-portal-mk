@@ -23,6 +23,7 @@
 10. **Refund Transaction:** Processes a refund for a successful payment.
 11. **Get Transaction by ID:** Reads one transaction without polling the acquirer (P3-7).
 12. **Dashboard Summary:** Aggregates the caller's payments over a time window; the database does the counting (P3-7).
+13. **Terminal Credentials Check:** Places a test order at the provider with a terminal's login and password and reports whether they work (since 13.09.2026, `SYSTEM_ADMIN` only).
 
 ---
 
@@ -67,7 +68,7 @@ Records each individual payment attempt/transaction associated with a link.
 
 -   `id` (UUID) - Primary Key
 -   `link_id` (UUID) - Foreign Key referencing `payment_links.id`
--   `merchant_rid` (UUID) - Unique tracking UUID sent to the provider
+-   `rid_by_merchant` (UUID) - Reference id of the payment set on the merchant side: this service generates it per payment attempt and sends it to the provider as `ridByMerchant`. The column was called `merchant_rid` until 12.09.2026 (changeset `009-rid-by-merchant.xml`) — a name that in the provider's vocabulary means the merchant, not the payment (decision Р-69)
 -   `provider_order_id` (String) - Order ID returned by the acquiring provider (TXPG)
 -   `provider_password` (String) - Password returned by the acquiring provider. The **only** place the order password is stored: it is never written into `provider_response` and never logged (P0-9)
 -   `amount` (Decimal) - Authorized amount of this attempt; **never changed by a capture**, it is the record of what was held
@@ -84,9 +85,12 @@ Stores acquiring credentials and company mapping.
 
 -   `id` (Integer) - Primary Key (Terminal ID)
 -   `name` (String) - Terminal name
--   `login` (String) - Acquiring login credentials
--   `password` (String) - Acquiring password credentials
+-   `login` (String) - Acquiring login; the terminal's primary identifier on every screen
+-   `password` (String) - Acquiring password, stored in plain text
 -   `company_id` (String) - ID of the parent company owning this terminal
+-   `status` (String) - `ACTIVE` / `BLOCKED`; a blocked terminal refuses new payments only (P2-8)
+
+The table is owned by `directory` (see `directory.md`): this service only reads it.
 
 ---
 
@@ -102,6 +106,7 @@ The service enforces stateless authorization using JWT Bearer tokens passed in t
 -   **SYSTEM_ADMIN**: Bypasses company matching logic. Has full access across all terminals.
 -   **COMPANY_HEAD / COMPANY_MANAGER**: Access to terminals belonging to their own company (`companyId` matching). Can create/update links, complete DMS, and issue refunds.
 -   **COMPANY_EMPLOYEE**: Allowed to create/update links and complete DMS payments for their company, but **refunds are forbidden** (returns `403 Forbidden`).
+-   **Terminal credentials check (§5.14)**: `SYSTEM_ADMIN` only; every other role gets `403 Forbidden`.
 -   **AUDITOR**: Read-only access (GET/LIST) to payment links and transactions **of all companies** — like `SYSTEM_ADMIN`, it bypasses company matching (`PaymentLinkService.isGlobalReader`, since 15.08.2026). All write actions are forbidden: the role is rejected by the allowed-roles check before company matching is ever reached.
 
 > Roles are the `Role` enum in `common/.../security/Role.java` (since 16.08.2026, P0-4). The
@@ -336,6 +341,7 @@ Retrieves a paginated list of links. Automatic company boundaries are enforced f
       "status": "COMPLETED",
       "amount": 1500.50,
       "currency": "AZN",
+      "terminal": 123456789,
       "expiresAt": "2026-07-10T15:00:00Z",
       "lastPaidAt": "2026-07-08T09:41:00Z",
       "createdAt": "2026-07-07T13:14:00Z"
@@ -348,6 +354,9 @@ Retrieves a paginated list of links. Automatic company boundaries are enforced f
 }
 ```
 
+-   `terminal` (since 11.09.2026) is the terminal id taken from the link row itself, so a list row can
+    be labelled with its terminal without a second request; the UI resolves the login through
+    `GET /api/v1/terminals/options`.
 -   `lastPaidAt` (since 22.08.2026, P2-15) means the same here as on the single link and carries the
     same value; in this response it is `null` rather than omitted when the link was never paid.
     The whole page is resolved with one grouped query over the transactions of its links, so the
@@ -401,7 +410,7 @@ Retrieves a paginated list of links. Automatic company boundaries are enforced f
     two payments can share a `createdAt` millisecond, and without a unique tail such a row lands on
     two adjacent pages or on neither.
 -   **Note:** No server-side filters (terminal, status, date range) — the frontend loads a page and
-    filters client-side. `size` is **not** clamped here (`problems.md` §15).
+    filters client-side. `size` is **not** clamped here — a known limitation, `AGENTS.md` §10.
 
 **Response:**
 
@@ -430,21 +439,45 @@ Retrieves a paginated list of links. Automatic company boundaries are enforced f
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440001",
-  "status": "SUCCESS",
+  "paymentLinkId": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "PARTIALLY_REFUNDED",
   "amount": 1500.50,
+  "capturedAmount": null,
+  "refundedAmount": 500.00,
   "currency": "AZN",
   "description": "Payment for order #123456",
   "merchantOrderId": "ORDER-12345",
+  "paymentType": "SMS",
+  "terminalId": 123456789,
+  "ridByMerchant": "7d1c1a0e-3f0b-4a55-9a63-2b1f0e7c9d11",
+  "cardNumberMasked": "426863******3689",
+  "rrn": "629677123123123123",
+  "approvalCode": "629677",
   "createdAt": "2026-07-07T13:15:00Z",
   "customerName": "John Doe",
   "customerEmail": "test@test.com",
   "customerPhone": "994509771884",
-  "cardNumberMasked": "426863******3689",
-  "rrn": "629677123123123123",
-  "approvalCode": "629677",
+  "clientIp": "203.0.113.7",
+  "userAgent": "Mozilla/5.0 …",
+  "providerOrderId": "1234567",
+  "statusHistory": [
+    { "at": "2026-07-07T13:15:00Z", "type": "CREATED", "status": "PENDING", "amount": null, "acquirerReference": null },
+    { "at": "2026-07-09T08:02:44Z", "type": "REFUNDED", "status": "PARTIALLY_REFUNDED", "amount": 500.00, "acquirerReference": "845120993" }
+  ],
   "failureReason": null
 }
 ```
+
+`ridByMerchant` (since 12.09.2026, Р-69) is this service's reference id of the payment, the value sent
+to the provider as `ridByMerchant`; `providerOrderId` is the provider's order number. The UI shows
+these two first and the internal `id` second (Р-58).
+
+`statusHistory` (since 11.09.2026, Р-63) holds only what was recorded, oldest first: `CREATED` at
+`createdAt`; `CAPTURED` at the capture mark (`mpCapture.at`) with the captured amount; one
+`REFUNDED` per refund (`mpRefunds[i].at`) with its amount and `acquirerReference` (`ridByPmo`);
+`STATUS` at `updatedAt` last, and only when the current status is not explained by the events above
+(an SMS payment that became `SUCCESS`, a hold that became `AUTHORIZED`). `status` is the state
+**after** the event. Events without a recorded time are dropped; nothing is made up.
 
 `failureReason` (P1-8b) is the acquirer's own decline description for a `FAILED` transaction —
 `custAttrs` `DeclineDescription`, else `PmoDeclineDescription`, else `PmoResultCode`
@@ -614,7 +647,7 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
     database performs no time-zone arithmetic at all: it groups rows no coarser than an hour, and
     the day and hour of each bucket are resolved from its earliest instant. That keeps the answer
     identical on PostgreSQL and on the H2 the tests run against, which store timestamps
-    differently (`problems.md` §19). The only assumption is a whole-hour offset.
+    differently. The only assumption is a whole-hour offset.
 -   **Money:** every amount is **per currency**; there is no grand total across currencies.
     `transactions` has no `currency` column — it lives on `payment_links`, and
     `CreatePaymentLinkRequest` accepts any three-letter ISO code, so a single figure spanning
@@ -643,8 +676,8 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
   "statusBreakdown": [ { "status": "PENDING", "count": 4 } ],
   "dailyTotals": [ { "date": "2026-08-18", "currency": "AZN", "netAmount": 5120.00, "transactionCount": 41 } ],
   "hourlyTotals": [ { "hour": 0, "transactionCount": 3 } ],
-  "topTerminals": [ { "currency": "AZN", "terminalId": 1, "terminalName": "Main e-commerce",
-                      "netAmount": 31000.00, "transactionCount": 190 } ],
+  "topTerminals": [ { "currency": "AZN", "terminalId": 1, "terminalLogin": "main_ecom",
+                      "terminalName": "Main e-commerce", "netAmount": 31000.00, "transactionCount": 190 } ],
   "paymentLinks": {
     "total": 57,
     "byPaymentType": [ { "paymentType": "SMS", "count": 40 } ],
@@ -655,8 +688,51 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
 ```
 
 -   `topTerminals` is the top five **per currency**; "the top five by amount" across currencies
-    would be comparing manats with euros. `terminalName` is `null` when the terminal is gone —
-    no invented prefix and no placeholder name.
+    would be comparing manats with euros. `terminalLogin` (since 11.09.2026) is what the merchant
+    recognises the terminal by; the UI shows it first and the name under it. Both are `null` when the
+    terminal is gone — no invented prefix and no placeholder name.
+
+### 5.14. Terminal Credentials Check
+
+-   **Methods:**
+    -   `POST /api/v1/acquiring/terminal-checks` — check a login and password that are not saved yet
+        (the terminal creation form). Body: `{"login": "term_login", "password": "term_password"}`,
+        both required (`400` when blank).
+    -   `POST /api/v1/acquiring/terminal-checks/{terminalId}` — check a saved terminal with the
+        credentials stored for it; they never travel through the browser. No body. `404` when there is
+        no such terminal.
+-   **Headers:**
+    -   `Authorization: Bearer <token>`
+-   **Access:** `SYSTEM_ADMIN` only. Any other role gets `403 Forbidden`, the refusal is written to the
+    audit journal, and no order reaches the provider.
+-   **Description (since 13.09.2026, decision Р-70):** the only provider request that proves both that
+    the login and password are right and that the terminal may take payments is creating an order, so
+    the check places a real `Order_SMS` for 1.00 AZN with the terminal's credentials. It is never paid:
+    the provider expires it after ten minutes, and the statement only takes completed orders (Р-71).
+    The provider agreed to this load. Lives in `pbl`, not next to the other terminal endpoints, because
+    only `pbl` talks to the provider while `/api/v1/terminals` is routed to `directory`.
+-   **No retries and no circuit breaker**, unlike the production order path: a retry only multiplies
+    test orders, and a breaker shared with payments would let repeated checks shut payments down.
+
+**Response:**
+
+-   **Status Code:** `200 OK` for every outcome — the outcome is the answer, not an error.
+-   **Body:**
+
+```json
+{ "outcome": "INVALID_CREDENTIALS", "providerErrorCode": "InvalidLogin", "message": "Invalid login or password" }
+```
+
+| `outcome` | When | Meaning for the administrator |
+|:---|:---|:---|
+| `OK` | the provider created the order (no `errorCode`) | credentials accepted, payments allowed |
+| `INVALID_CREDENTIALS` | `errorCode` = `InvalidLogin`, in a 200 or a 4xx body | wrong login or password |
+| `REJECTED` | any other `errorCode` | credentials accepted, but the provider refused the order; its text is passed on |
+| `UNREACHABLE` | 5xx, timeout, no or empty answer | nothing is known about the terminal |
+
+The outcome is classified by the code in the body, not by the HTTP status. Every check is written to
+the audit journal as `TERMINAL` / `READ` with its outcome (entity id `NEW` for an unsaved terminal);
+the password is never logged or recorded.
 
 ---
 

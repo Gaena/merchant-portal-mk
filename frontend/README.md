@@ -2,8 +2,8 @@
 
 Реализация личного кабинета мерчанта на базе React 18, TypeScript 7, Vite 6 и Material UI 7.
 
-Подробное руководство по архитектуре, маршрутам и правилам сквозной интеграции с бэкенд-микросервисами зафиксировано в документе:
-👉 [frontend.md](file:///Users/salayevim/IdeaProjects/mp/.agents/workflows/frontend.md)
+Правила фронтенда — маршруты, авторизация, подтверждения, прокси на сервисы — в корневом
+[`AGENTS.md`](../AGENTS.md), §9; устройство приложения — [`project_docs/application_description.md`](../project_docs/application_description.md), §10.
 
 ## Команды:
 

@@ -32,50 +32,31 @@
 
 ## 1. Обзор системы
 
-Merchant Portal — это веб-приложение, состоящее из **4 компонентов**:
+Merchant Portal — это веб-приложение, состоящее из **5 компонентов**:
 
 | Компонент | Описание | Порт |
 |-----------|----------|------|
 | **auth** | Авторизация пользователей, JWT-токены | `8081` |
 | **directory** | Справочник компаний и терминалов | `8082` |
-| **pbl** | Pay-By-Link — создание платёжных ссылок | `8080` |
+| **pbl** | Pay-By-Link — платёжные ссылки, операции, сводка главной, проверка терминала у провайдера | `8080` |
+| **ecom** | Выписка E-commerce и справочник терминалов провайдера — читает базу платёжного шлюза; ставится только там, где к ней есть доступ | `8083` |
 | **frontend** | Веб-интерфейс (React + Vite) | `3000` (разработка) / через Nginx (продакшн) |
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                     Интернет                           │
-│                        │                               │
-│                   ┌────▼────┐                           │
-│                   │  Nginx  │  (порт 80/443)            │
-│                   └────┬────┘                           │
-│            ┌───────────┼───────────┐                    │
-│            │           │           │                    │
-│      Статические   /api/v1/auth  /api/v1/companies     │
-│      файлы         /api/v1/users /api/v1/terminals     │
-│      (frontend)        │        /api/v1/audit-logs     │
-│            │           │           │                    │
-│            │      ┌────▼────┐ ┌────▼─────┐              │
-│            │      │  Auth   │ │Directory │              │
-│            │      │ :8081   │ │  :8082   │              │
-│            │      └─────────┘ └──────────┘              │
-│            │                                            │
-│            │      /api/v1/payment-links                  │
-│            │      /api/v1/transactions                   │
-│            │           │                                │
-│            │      ┌────▼────┐                            │
-│            │      │   PBL   │                            │
-│            │      │ :8080   │                            │
-│            │      └─────────┘                            │
-│            │                                            │
-│      ┌─────▼──────┐    ┌──────────────┐                 │
-│      │  dist/      │    │  PostgreSQL  │                 │
-│      │ (HTML/JS)   │    │   :5432      │                 │
-│      └─────────────┘    └──────────────┘                 │
-└────────────────────────────────────────────────────────┘
+Интернет → Nginx (порты 80/443)
+  ├── статические файлы фронтенда (dist/)
+  ├── /api/v1/auth, /api/v1/users                                → auth       :8081
+  ├── /api/v1/companies, /api/v1/terminals, /api/v1/audit-logs   → directory  :8082
+  ├── /api/v1/payment-links, /api/v1/transactions,
+  │   /api/v1/dashboard, /api/v1/acquiring                       → pbl        :8080  → API шлюза MilliKart
+  └── /api/v1/ecom                                               → ecom       :8083  → база шлюза (только чтение)
+
+auth, directory, pbl, ecom → PostgreSQL :5432 (одна база на все сервисы)
 ```
 
 > [!IMPORTANT]
-> Все три бэкенд-сервиса используют **одну и ту же базу данных PostgreSQL**, но разные таблицы. Миграции (создание таблиц) выполняются автоматически при первом запуске через Liquibase.
+> Все бэкенд-сервисы используют **одну и ту же базу данных PostgreSQL**. Миграции (создание таблиц) выполняются автоматически при первом запуске через Liquibase.
+> `ecom` вдобавок читает базу платёжного шлюза MilliKart (Oracle) — только на чтение. Без доступа к ней его не устанавливают: остальные сервисы работают и без него, просто вкладка E-commerce остаётся пустой.
 
 ---
 
@@ -97,6 +78,8 @@ Merchant Portal — это веб-приложение, состоящее из 
 - **Логин и пароль** для подключения к серверу (обычно `root` + пароль)
 - **Доменное имя** (если планируется HTTPS), например `mp.millikart.az`
 - **Доступ к Git-репозиторию** проекта (логин + пароль или SSH-ключ)
+- **Адреса шлюза и API эквайера** для `pbl` — выдаёт MilliKart
+- **Только для `ecom`:** адрес базы платёжного шлюза, схема и учётная запись с правом только на чтение, а также сетевой доступ к этой базе с сервера — выдаёт MilliKart
 
 ---
 
@@ -254,7 +237,7 @@ CREATE DATABASE merchant_portal;
 Заведите **обычную роль для приложения** — не суперпользователя — и выдайте ей права:
 
 ```sql
--- Роль, под которой работают три сервиса. NOSUPERUSER и NOCREATEROLE — обязательно.
+-- Роль, под которой работают сервисы портала. NOSUPERUSER и NOCREATEROLE — обязательно.
 CREATE ROLE mp_app WITH LOGIN PASSWORD 'ПАРОЛЬ_ПРИЛОЖЕНИЯ' NOSUPERUSER NOCREATEDB NOCREATEROLE;
 
 -- Работа со схемой и с обычными таблицами
@@ -273,13 +256,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 ```
 
 > [!WARNING]
-> **Сегодня эти права ни на что не влияют.** Все три сервиса подключаются к базе как `postgres`,
+> **Сегодня эти права ни на что не влияют.** Все сервисы подключаются к базе как `postgres`,
 > то есть суперпользователем, а на суперпользователя `REVOKE` не действует — он обходит проверку
-> прав целиком. Пока `DB_USERNAME` в `/opt/mp/.env` (раздел 8.3) не сменят с `postgres` на
+> прав целиком. Пока `DB_USERNAME` в `/opt/merchant-portal/config/mp.env` (раздел 8.3) не сменят с `postgres` на
 > `mp_app`, защита журнала существует только в коде приложения.
 >
-> Смена пользователя базы затрагивает все три сервиса и миграции сразу, поэтому она вынесена в
-> отдельную работу и описана как открытая проблема в `problems.md`. Команды выше приведены здесь,
+> Смена пользователя базы затрагивает все сервисы и миграции сразу, поэтому она вынесена в
+> отдельную работу и записана в известных ограничениях (`AGENTS.md`, раздел 10). Команды выше приведены здесь,
 > чтобы их можно было выполнить сразу, как только до этого дойдут руки.
 
 > [!NOTE]
@@ -407,6 +390,7 @@ BUILD SUCCESSFUL in Xm Xs
 | auth | `auth/build/libs/auth-0.0.1-SNAPSHOT.jar` |
 | directory | `directory/build/libs/directory-0.0.1-SNAPSHOT.jar` |
 | pbl | `pbl/build/libs/pbl-0.0.1-SNAPSHOT.jar` |
+| ecom | `ecom/build/libs/ecom-0.0.1-SNAPSHOT.jar` |
 
 ### 7.3. Копирование JAR-файлов в рабочую директорию
 
@@ -418,6 +402,8 @@ sudo mkdir -p /opt/merchant-portal/deploy
 cp auth/build/libs/auth-0.0.1-SNAPSHOT.jar /opt/merchant-portal/deploy/auth.jar
 cp directory/build/libs/directory-0.0.1-SNAPSHOT.jar /opt/merchant-portal/deploy/directory.jar
 cp pbl/build/libs/pbl-0.0.1-SNAPSHOT.jar /opt/merchant-portal/deploy/pbl.jar
+# Только если на этом сервере ставится ecom:
+cp ecom/build/libs/ecom-0.0.1-SNAPSHOT.jar /opt/merchant-portal/deploy/ecom.jar
 ```
 
 ---
@@ -461,12 +447,23 @@ auth:
   bootstrap:
     # Разовое создание первого администратора. Подробности — раздел 20.
     enabled: ${AUTH_BOOTSTRAP_ENABLED:false}
+  login:
+    rate-limit:
+      # Лимит неудачных попыток входа с одного адреса (P3-Auth). Строки обязательны: у этих
+      # настроек нет значений по умолчанию в коде, и без них сервис не стартует.
+      enabled: ${LOGIN_RATE_LIMIT_ENABLED:true}
+      max-failures: ${LOGIN_RATE_LIMIT_MAX_FAILURES:10}
+      window: ${LOGIN_RATE_LIMIT_WINDOW:PT15M}
   refresh:
     # Refresh-токены (P1-12): срок, окно снисхождения ротации, уборка просроченных.
     ttl: ${AUTH_REFRESH_TTL:P30D}
     rotation-grace: ${AUTH_REFRESH_ROTATION_GRACE:PT10S}
     cleanup-enabled: ${AUTH_REFRESH_CLEANUP_ENABLED:true}
     cleanup-cron: "${AUTH_REFRESH_CLEANUP_CRON:0 30 3 * * *}"
+
+mp:
+  # Прокси, чьим заголовкам X-Real-IP / X-Forwarded-For сервис верит, — этот nginx (раздел 11).
+  trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
 
 pbl:
   security:
@@ -479,7 +476,7 @@ pbl:
 management:
   server:
     # Actuator на отдельном порту, привязанном к 127.0.0.1: снаружи сервера он недоступен
-    # физически. Порты: auth 9081, directory 9082, pbl 9080. Здесь — auth.
+    # физически. Порты: auth 9081, directory 9082, pbl 9080, ecom 9083. Здесь — auth.
     port: ${MANAGEMENT_PORT:9081}
     address: 127.0.0.1
   endpoints:
@@ -536,18 +533,28 @@ spring:
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.xml
 
+directory:
+  terminal-reconciliation:
+    # Сверка статусов терминалов со справочником провайдера, который обновляет ecom. Где ecom не
+    # установлен, справочник пуст, и сверка ничего не меняет.
+    enabled: ${DIRECTORY_TERMINAL_RECONCILIATION_ENABLED:true}
+    cron: "${DIRECTORY_TERMINAL_RECONCILIATION_CRON:0 */15 * * * *}"
+
+mp:
+  trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+
 pbl:
   security:
     jwt:
       secret: ${JWT_SECRET}
       # Одинаково с auth (P1-13). directory токены только проверяет — значение здесь для
-      # единообразия трёх конфигураций.
+      # единообразия конфигураций.
       expiration-ms: ${JWT_EXPIRATION_MS:900000}
 
 management:
   server:
     # Actuator на отдельном порту, привязанном к 127.0.0.1: снаружи сервера он недоступен
-    # физически. Порты: auth 9081, directory 9082, pbl 9080. Здесь — directory.
+    # физически. Порты: auth 9081, directory 9082, pbl 9080, ecom 9083. Здесь — directory.
     port: ${MANAGEMENT_PORT:9082}
     address: 127.0.0.1
   endpoints:
@@ -605,6 +612,9 @@ spring:
     change-log: classpath:db/changelog/db.changelog-master.xml
 
 pbl:
+  dashboard:
+    # Часовой пояс сводки на главной странице (P3-7). Строка обязательна: без неё сервис не стартует.
+    zone: ${PBL_DASHBOARD_ZONE:Asia/Baku}
   # Публичный адрес сервиса — задаётся переменной окружения PBL_BASE_URL (mp.env, п. 8.3),
   # а не правкой этого файла. Дефолта нет намеренно: значение уходит эквайеру как адрес
   # возврата плательщика (hppRedirectUrl).
@@ -615,7 +625,7 @@ pbl:
     jwt:
       secret: ${JWT_SECRET}
       # Одинаково с auth (P1-13). pbl токены только проверяет — значение здесь для
-      # единообразия трёх конфигураций.
+      # единообразия конфигураций.
       expiration-ms: ${JWT_EXPIRATION_MS:900000}
   link:
     # Срок жизни ссылки, если мерчант не передал expiresAt при создании.
@@ -644,10 +654,13 @@ pbl:
     exec-tran-path: "${PBL_PROVIDER_EXEC_TRAN_PATH:/order/{orderId}/exec-tran}"
     get-order-path: "${PBL_PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
 
+mp:
+  trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+
 management:
   server:
     # Actuator на отдельном порту, привязанном к 127.0.0.1: снаружи сервера он недоступен
-    # физически. Порты: auth 9081, directory 9082, pbl 9080. Здесь — pbl.
+    # физически. Порты: auth 9081, directory 9082, pbl 9080, ecom 9083. Здесь — pbl.
     port: ${MANAGEMENT_PORT:9080}
     address: 127.0.0.1
   endpoints:
@@ -693,6 +706,95 @@ logging:
 EOF
 ```
 
+#### Конфигурация ecom-сервиса (только где есть доступ к базе шлюза)
+
+```bash
+cat > /opt/merchant-portal/config/ecom-application.yaml << 'EOF'
+server:
+  port: 8083
+
+spring:
+  application:
+    name: ecom
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/merchant_portal}
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+
+ecom:
+  txpg:
+    # Схема базы шлюза, из которой читаем; у тестового стенда и прода она может отличаться.
+    schema: ${ECOM_TXPG_SCHEMA:TXPG}
+    # Предохранители отчётных запросов: они идут по боевой базе платежей.
+    max-window: ${ECOM_TXPG_MAX_WINDOW:P92D}
+    max-page-size: ${ECOM_TXPG_MAX_PAGE_SIZE:200}
+    query-timeout: ${ECOM_TXPG_QUERY_TIMEOUT:PT30S}
+    fetch-size: ${ECOM_TXPG_FETCH_SIZE:200}
+    # Сколько обновлений подряд терминал должен отсутствовать у провайдера, чтобы считаться выключенным.
+    missing-runs-before-disable: ${ECOM_TXPG_MISSING_RUNS:3}
+    datasource:
+      # Без значений по умолчанию: адрес и учётную запись базы шлюза выдаёт MilliKart (mp.env, п. 8.3).
+      url: ${ECOM_TXPG_URL}
+      driver-class-name: oracle.jdbc.OracleDriver
+      username: ${ECOM_TXPG_USERNAME}
+      password: ${ECOM_TXPG_PASSWORD}
+      hikari:
+        # Маленький пул намеренно: каждое соединение отнимает ресурс у боевых авторизаций.
+        maximum-pool-size: ${ECOM_TXPG_POOL_SIZE:4}
+        connection-timeout: 10000
+  terminal-sync:
+    # Обновление справочника терминалов провайдера.
+    enabled: ${ECOM_TERMINAL_SYNC_ENABLED:true}
+    cron: "${ECOM_TERMINAL_SYNC_CRON:0 */15 * * * *}"
+
+mp:
+  trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+
+pbl:
+  security:
+    jwt:
+      # Тот же JWT_SECRET, что у остальных сервисов.
+      secret: ${JWT_SECRET}
+      expiration-ms: ${JWT_EXPIRATION_MS:900000}
+
+management:
+  server:
+    # Actuator на отдельном порту, привязанном к 127.0.0.1: снаружи сервера он недоступен
+    # физически. Порты: auth 9081, directory 9082, pbl 9080, ecom 9083. Здесь — ecom.
+    port: ${MANAGEMENT_PORT:9083}
+    address: 127.0.0.1
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: INFO
+    az.millikart: INFO
+  file:
+    name: /var/log/merchant-portal/ecom.log
+EOF
+```
+
 ### 8.2. Что нужно заменить в конфигурации
 
 В самих yaml-файлах менять **ничего не нужно**. Раньше здесь был плейсхолдер `ВАШ_ДОМЕН`
@@ -730,6 +832,21 @@ SWAGGER_ENABLED=false
 EOF
 ```
 
+Если на этом сервере ставится `ecom`, допишите в тот же файл доступ к базе шлюза — значения выдаёт MilliKart:
+
+```bash
+sudo tee -a /opt/merchant-portal/config/mp.env > /dev/null << 'EOF'
+ECOM_TXPG_URL=jdbc:oracle:thin:@//АДРЕС_БАЗЫ_ШЛЮЗА:ПОРТ/СЕРВИС
+ECOM_TXPG_USERNAME=ПОЛЬЗОВАТЕЛЬ_ТОЛЬКО_НА_ЧТЕНИЕ
+ECOM_TXPG_PASSWORD=ПАРОЛЬ
+ECOM_TXPG_SCHEMA=TXPG
+EOF
+```
+
+> [!CAUTION]
+> Учётная запись базы шлюза должна иметь право **только на чтение**: `ecom` в эту базу не пишет,
+> а его отчётные запросы идут по боевой базе платежей. Лучший вариант — отдельная читающая реплика.
+
 > [!CAUTION]
 > **`PBL_BASE_URL` — это адрес, на который эквайер вернёт плательщика после оплаты.**
 > Сервис отдаёт его MilliKart как `hppRedirectUrl` при создании каждого заказа. Неверное,
@@ -755,7 +872,7 @@ EOF
 > `SWAGGER_ENABLED=false` — это рабочее состояние. Как временно включить документацию
 > на время приёмки, описано в разделе [14.3](#143-swagger-на-время-приёмки).
 > `MANAGEMENT_PORT` в файл не добавляем: у каждого сервиса свой порт actuator задан
-> в его yaml (auth 9081, directory 9082, pbl 9080), и одна общая переменная сломала бы
+> в его yaml (auth 9081, directory 9082, pbl 9080, ecom 9083), и одна общая переменная сломала бы
 > это разделение. Переопределять его нужно только при конфликте портов — и тогда
 > персонально, в юните конкретного сервиса.
 
@@ -771,12 +888,12 @@ sudo grep JWT_SECRET /opt/merchant-portal/config/mp.env
 ```
 
 > [!WARNING]
-> `JWT_SECRET` должен быть **одинаковым** во всех трёх сервисах — поэтому файл один на всех.
-> Разные значения означают, что токен, выданный `auth`, не пройдёт проверку в `directory` и `pbl`,
+> `JWT_SECRET` должен быть **одинаковым** во всех сервисах — поэтому файл один на всех.
+> Разные значения означают, что токен, выданный `auth`, не пройдёт проверку в `directory`, `pbl` и `ecom`,
 > и любой запрос к ним вернёт 401.
 
 > [!CAUTION]
-> `DB_PASSWORD` и `JWT_SECRET` (а для `pbl` — и три адреса из блока выше) **не имеют значений
+> `DB_PASSWORD` и `JWT_SECRET` (а для `pbl` — и три адреса из блока выше, для `ecom` — доступ к базе шлюза) **не имеют значений
 > по умолчанию**. Сервис, запущенный без них, не стартует и печатает, что именно задать. Это не
 > помеха, а защита: значение по умолчанию — ровно то, из-за чего прежний ключ подписи попал
 > в репозиторий и стал публичным, а у адресов дефолт — это прод, молча отправляющий
@@ -929,6 +1046,46 @@ WantedBy=multi-user.target
 EOF
 ```
 
+### 9.4a. Создание systemd-юнита для ecom (только где есть доступ к базе шлюза)
+
+```bash
+sudo cat > /etc/systemd/system/mp-ecom.service << 'EOF'
+[Unit]
+Description=Merchant Portal - ecom Service (E-commerce statement)
+Documentation=https://gitlab.millikart.az/mp
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=mpuser
+Group=mpuser
+
+WorkingDirectory=/opt/merchant-portal/deploy
+
+# Секреты (DB_PASSWORD, JWT_SECRET, ECOM_TXPG_*) — только отсюда, не из yaml.
+EnvironmentFile=/opt/merchant-portal/config/mp.env
+
+ExecStart=/usr/bin/java \
+    -Xms256m -Xmx512m \
+    -jar /opt/merchant-portal/deploy/ecom.jar \
+    --spring.config.location=file:/opt/merchant-portal/config/ecom-application.yaml
+
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+StandardOutput=journal
+StandardError=journal
+
+Environment=JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
 ### 9.5. Запуск всех сервисов
 
 > [!IMPORTANT]
@@ -942,10 +1099,12 @@ sudo systemctl daemon-reload
 
 # Включаем автозапуск при старте сервера
 sudo systemctl enable mp-auth mp-directory mp-pbl
+sudo systemctl enable mp-ecom          # только если установлен ecom
 
 # Запускаем сервисы. Порядок значения не имеет (с 17.08.2026, P1-2): миграции каждого
-# сервиса обложены преконтролями, любой из трёх может создать общие таблицы первым.
+# сервиса обложены преконтролями, любой из сервисов может создать общие таблицы первым.
 sudo systemctl start mp-auth mp-directory mp-pbl
+sudo systemctl start mp-ecom           # только если установлен ecom
 ```
 
 > [!NOTE]
@@ -958,10 +1117,11 @@ sudo systemctl start mp-auth mp-directory mp-pbl
 ### 9.6. Проверка статуса
 
 ```bash
-# Проверяем все три сервиса
+# Проверяем сервисы
 sudo systemctl status mp-auth
 sudo systemctl status mp-directory
 sudo systemctl status mp-pbl
+sudo systemctl status mp-ecom          # только если установлен ecom
 ```
 
 Для каждого сервиса вы должны увидеть `Active: active (running)`.
@@ -1073,6 +1233,12 @@ upstream pbl_backend {
     keepalive 32;
 }
 
+# Сервис выписки (ecom). Поднимается только там, где есть доступ к схеме шлюза провайдера.
+upstream ecom_backend {
+    server 127.0.0.1:8083;
+    keepalive 16;
+}
+
 server {
     listen 80;
     server_name ВАШ_ДОМЕН;    # Замените на ваш домен, например: mp.millikart.az
@@ -1143,7 +1309,7 @@ server {
         proxy_read_timeout 60s;
     }
 
-    # PBL-сервис (платёжные ссылки и транзакции)
+    # PBL-сервис (платёжные ссылки, операции, сводка главной)
     location /api/v1/payment-links {
         proxy_pass http://pbl_backend;
         proxy_set_header Host $host;
@@ -1155,6 +1321,44 @@ server {
     }
 
     location /api/v1/transactions {
+        proxy_pass http://pbl_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 60s;
+    }
+
+    # Сводка главной страницы. Без этого блока запрос уходит в location / и вместо данных
+    # возвращается index.html фронтенда.
+    location /api/v1/dashboard {
+        proxy_pass http://pbl_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 60s;
+    }
+
+    # Сервис выписки: транзакции мерчанта из схемы шлюза провайдера и слепок его терминалов.
+    # read_timeout длиннее обычного: отчётный запрос по чужой базе бывает небыстрым, а сервис
+    # сам ограничивает его своим statement timeout (ECOM_TXPG_QUERY_TIMEOUT).
+    location /api/v1/ecom {
+        proxy_pass http://ecom_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 90s;
+    }
+
+    # Проверка учётных данных терминала пробным заказом у провайдера (кнопка «Тест»).
+    # Отдельный префикс в PBL: /api/v1/terminals целиком уходит в directory, а к провайдеру
+    # умеет ходить только PBL.
+    location /api/v1/acquiring {
         proxy_pass http://pbl_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -1191,7 +1395,7 @@ server {
 
     # ───── Actuator ─────
     # Здесь его НЕТ намеренно. Actuator живёт на отдельных портах (auth 9081, directory 9082,
-    # pbl 9080), привязанных к 127.0.0.1: с самого сервера он доступен по curl, снаружи —
+    # pbl 9080, ecom 9083), привязанных к 127.0.0.1: с самого сервера он доступен по curl, снаружи —
     # никак. Проксировать его через nginx означало бы вернуть наружу ровно то, что мы убрали:
     # состояние подключения к БД, свободное место на дисках и версии компонентов.
     # Проверка здоровья — раздел 14.1.
@@ -1329,13 +1533,16 @@ curl -s http://127.0.0.1:9082/actuator/health | python3 -m json.tool
 
 # PBL-сервис
 curl -s http://127.0.0.1:9080/actuator/health | python3 -m json.tool
+
+# ecom (только если установлен)
+curl -s http://127.0.0.1:9083/actuator/health | python3 -m json.tool
 ```
 
 > [!IMPORTANT]
 > Порты **не те же**, что у самого сервиса. Actuator вынесен на отдельный порт
-> (auth 9081, directory 9082, pbl 9080), привязанный к `127.0.0.1`: эти команды работают
+> (auth 9081, directory 9082, pbl 9080, ecom 9083), привязанный к `127.0.0.1`: эти команды работают
 > только с самого сервера, снаружи порт закрыт на уровне сети, а не пароля.
-> На рабочих портах 8080/8081/8082 путь `/actuator/health` теперь отдаёт **404** — это
+> На рабочих портах 8080–8083 путь `/actuator/health` теперь отдаёт **404** — это
 > нормально и означает, что настройка применилась.
 
 Токен для health-check не нужен и не будет нужен: пробы мониторинга его не имеют.
@@ -1384,13 +1591,14 @@ sudo grep SWAGGER_ENABLED /opt/merchant-portal/config/mp.env
 
 # 2. Перезапускаем сервисы
 sudo systemctl restart mp-auth mp-directory mp-pbl
+sudo systemctl restart mp-ecom         # только если установлен ecom
 
 # 3. Проверяем с самого сервера
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8081/v3/api-docs   # ожидается 200
 ```
 
 Открыть UI: `http://localhost:8081/swagger-ui.html` (auth), `:8082` (directory),
-`:8080` (pbl). Через интернет он не откроется — в конфигурации nginx на эти пути стоит
+`:8080` (pbl), `:8083` (ecom). Через интернет он не откроется — в конфигурации nginx на эти пути стоит
 `allow 127.0.0.1; deny all;`. С рабочего места пользуйтесь SSH-туннелем:
 
 ```bash
@@ -1403,17 +1611,18 @@ ssh -L 8081:localhost:8081 ПОЛЬЗОВАТЕЛЬ@ВАШ_СЕРВЕР
 ```bash
 sudo sed -i 's/^SWAGGER_ENABLED=.*/SWAGGER_ENABLED=false/' /opt/merchant-portal/config/mp.env
 sudo systemctl restart mp-auth mp-directory mp-pbl
+sudo systemctl restart mp-ecom         # только если установлен ecom
 
 # Проверяем, что документация закрылась
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8081/v3/api-docs   # ожидается 401
 ```
 
 > [!NOTE]
-> Флаг один на все три сервиса и включает обе части сразу — и `/v3/api-docs`, и
+> Флаг один на все сервисы и включает обе части сразу — и `/v3/api-docs`, и
 > `/swagger-ui.html`. Разрешение этих путей в Spring Security привязано к тому же флагу:
 > при `SWAGGER_ENABLED=false` для них не создаётся ни одного разрешающего правила.
 
-### 14.3. Проверяем API через Nginx
+### 14.4. Проверяем API через Nginx
 
 ```bash
 # Проверка авторизации (должен вернуть ошибку 401 — это нормально, значит API работает)
@@ -1440,18 +1649,21 @@ git pull
 ./gradlew clean build -x test
 
 # 4. Останавливаем сервисы
+sudo systemctl stop mp-ecom            # только если установлен ecom
 sudo systemctl stop mp-pbl mp-directory mp-auth
 
 # 5. Копируем новые JAR-файлы
 cp auth/build/libs/auth-0.0.1-SNAPSHOT.jar /opt/merchant-portal/deploy/auth.jar
 cp directory/build/libs/directory-0.0.1-SNAPSHOT.jar /opt/merchant-portal/deploy/directory.jar
 cp pbl/build/libs/pbl-0.0.1-SNAPSHOT.jar /opt/merchant-portal/deploy/pbl.jar
+cp ecom/build/libs/ecom-0.0.1-SNAPSHOT.jar /opt/merchant-portal/deploy/ecom.jar   # только если установлен ecom
 
 # 6. Восстанавливаем права
 sudo chown mpuser:mpuser /opt/merchant-portal/deploy/*.jar
 
 # 7. Запускаем сервисы обратно (порядок не важен — миграции обложены преконтролями)
 sudo systemctl start mp-auth mp-directory mp-pbl
+sudo systemctl start mp-ecom           # только если установлен ecom
 
 # 8. Проверяем
 sudo systemctl status mp-auth mp-directory mp-pbl
@@ -1520,6 +1732,7 @@ chmod +x /opt/merchant-portal/backup.sh
 
 ```bash
 # Останавливаем сервисы
+sudo systemctl stop mp-ecom            # только если установлен ecom
 sudo systemctl stop mp-pbl mp-directory mp-auth
 
 # Восстанавливаем базу
@@ -1528,6 +1741,7 @@ gunzip -c /opt/merchant-portal/backups/merchant_portal_ДАТА.sql.gz | \
 
 # Запускаем обратно (порядок не важен)
 sudo systemctl start mp-auth mp-directory mp-pbl
+sudo systemctl start mp-ecom           # только если установлен ecom
 ```
 
 ---
@@ -1541,6 +1755,7 @@ sudo systemctl start mp-auth mp-directory mp-pbl
 sudo journalctl -u mp-auth -f
 sudo journalctl -u mp-directory -f
 sudo journalctl -u mp-pbl -f
+sudo journalctl -u mp-ecom -f          # если установлен ecom
 
 # Логи за последний час
 sudo journalctl -u mp-auth --since "1 hour ago"
@@ -1564,8 +1779,9 @@ sudo tail -f /var/log/nginx/access.log
 | Auth | `http://127.0.0.1:9081/actuator/health` | Статус сервиса + подключение к БД |
 | Directory | `http://127.0.0.1:9082/actuator/health` | Статус сервиса + подключение к БД |
 | PBL | `http://127.0.0.1:9080/actuator/health` | Статус сервиса + подключение к БД |
+| ecom | `http://127.0.0.1:9083/actuator/health` | Статус сервиса + подключение к базам |
 
-Это **отдельные порты**, не рабочие 8080/8081/8082, и они привязаны к `127.0.0.1`:
+Это **отдельные порты**, не рабочие 8080–8083, и они привязаны к `127.0.0.1`:
 запрос проходит только с самого сервера. Токен не нужен. Кроме `health` открыты
 `info` и `metrics` — например, `curl -s http://127.0.0.1:9081/actuator/metrics`.
 
@@ -1606,9 +1822,9 @@ sudo journalctl -u mp-auth -n 100 --no-pager
 
 Это означает, что Nginx не может связаться с бэкенд-сервисом.
 
-1. Проверьте, запущены ли сервисы: `sudo systemctl status mp-auth mp-directory mp-pbl`
+1. Проверьте, запущены ли сервисы: `sudo systemctl status mp-auth mp-directory mp-pbl` (и `mp-ecom`, если установлен)
 2. Если `inactive (dead)` — запустите: `sudo systemctl start mp-auth`
-3. Проверьте порты: `ss -tlnp | grep -E '8080|8081|8082'`
+3. Проверьте порты: `ss -tlnp | grep -E '8080|8081|8082|8083'`
 
 ### ❌ Проблема: Страница логина не открывается
 
@@ -1619,7 +1835,7 @@ sudo journalctl -u mp-auth -n 100 --no-pager
 
 ### ❌ Проблема: «401 Unauthorized» после логина
 
-1. Проверьте, что JWT-секрет **одинаковый** во всех трёх конфигурациях
+1. Проверьте, что JWT-секрет **одинаковый** во всех сервисах
 2. Проверьте, что Auth-сервис работает: `curl http://127.0.0.1:9081/actuator/health`
    (порт actuator — 9081, а не рабочий 8081; на 8081 этот путь отдаёт 404)
 
@@ -1662,6 +1878,7 @@ sudo systemctl restart mp-auth
 | `8080` | PBL (Pay-By-Link) | HTTP |
 | `8081` | Auth (Авторизация) | HTTP |
 | `8082` | Directory (Справочник) | HTTP |
+| `8083` | ecom (выписка E-commerce), если установлен | HTTP |
 
 ### Порты actuator (только с самой машины, `127.0.0.1`)
 
@@ -1670,10 +1887,11 @@ sudo systemctl restart mp-auth
 | `9081` | Auth | `MANAGEMENT_PORT` | `/actuator/health`, `/info`, `/metrics` |
 | `9082` | Directory | `MANAGEMENT_PORT` | то же |
 | `9080` | PBL | `MANAGEMENT_PORT` | то же |
+| `9083` | ecom | `MANAGEMENT_PORT` | то же |
 
 Эти порты не слушают внешний интерфейс: их защищает привязка адреса, а не токен, —
 именно поэтому пробы мониторинга работают без авторизации. На рабочих портах
-(8080/8081/8082) путь `/actuator/**` не обслуживается и отдаёт 404.
+(8080–8083) путь `/actuator/**` не обслуживается и отдаёт 404.
 
 ### Внешние порты (доступны из интернета)
 
@@ -1687,13 +1905,16 @@ sudo systemctl restart mp-auth
 
 | Маршрут | Бэкенд | Описание |
 |---------|--------|----------|
-| `/api/v1/auth/**` | Auth (:8081) | Логин, регистрация |
+| `/api/v1/auth/**` | Auth (:8081) | Вход, обновление токена, выход |
 | `/api/v1/users/**` | Auth (:8081) | Управление пользователями |
 | `/api/v1/companies/**` | Directory (:8082) | Управление компаниями |
 | `/api/v1/terminals/**` | Directory (:8082) | Управление терминалами |
 | `/api/v1/audit-logs/**` | Directory (:8082) | Журнал аудита |
 | `/api/v1/payment-links/**` | PBL (:8080) | Платёжные ссылки |
 | `/api/v1/transactions/**` | PBL (:8080) | Транзакции |
+| `/api/v1/dashboard/**` | PBL (:8080) | Сводка главной страницы |
+| `/api/v1/acquiring/**` | PBL (:8080) | Проверка учётных данных терминала у провайдера |
+| `/api/v1/ecom/**` | ecom (:8083) | Выписка E-commerce и справочник терминалов провайдера |
 
 ### Конфигурационные файлы
 
@@ -1702,10 +1923,12 @@ sudo systemctl restart mp-auth
 | `/opt/merchant-portal/config/auth-application.yaml` | Настройки Auth-сервиса |
 | `/opt/merchant-portal/config/directory-application.yaml` | Настройки Directory-сервиса |
 | `/opt/merchant-portal/config/pbl-application.yaml` | Настройки PBL-сервиса |
+| `/opt/merchant-portal/config/ecom-application.yaml` | Настройки ecom-сервиса (если установлен) |
 | `/etc/nginx/sites-available/merchant-portal` | Настройки веб-сервера |
 | `/etc/systemd/system/mp-auth.service` | Systemd-юнит Auth |
 | `/etc/systemd/system/mp-directory.service` | Systemd-юнит Directory |
 | `/etc/systemd/system/mp-pbl.service` | Systemd-юнит PBL |
+| `/etc/systemd/system/mp-ecom.service` | Systemd-юнит ecom (если установлен) |
 
 ### Директории
 
@@ -1728,7 +1951,8 @@ sudo systemctl restart mp-auth
 
 Оркестратора и хранилища секретов в проекте нет — сервисы запускаются вручную. Поэтому
 защита встроена в сами приложения: `DB_PASSWORD` и `JWT_SECRET` (а у `pbl` — ещё три адреса,
-`PBL_BASE_URL`, `PBL_PROVIDER_GATEWAY_BASE_URL`, `PBL_PROVIDER_API_BASE_URL`, п. 8.3) не имеют
+`PBL_BASE_URL`, `PBL_PROVIDER_GATEWAY_BASE_URL`, `PBL_PROVIDER_API_BASE_URL`, у `ecom` — `ECOM_TXPG_URL`,
+`ECOM_TXPG_USERNAME`, `ECOM_TXPG_PASSWORD`, п. 8.3) не имеют
 значений по умолчанию, и сервис без них **не стартует**, печатая, что именно задать.
 
 ### 20.1. Первый запуск новой установки
@@ -1743,7 +1967,7 @@ openssl rand -base64 48
 256-битным хешем). Ключ, лежавший в этом репозитории до 17.08.2026, отвергается отдельно
 по SHA-256 — он публичный, и вернуть его «чтобы заработало» не получится.
 
-#### Шаг 2. Задать переменные окружения для всех трёх сервисов
+#### Шаг 2. Задать переменные окружения для всех сервисов
 
 Как это оформляется для systemd — в разделе [8.3](#83-файл-с-переменными-окружения):
 один файл `/opt/merchant-portal/config/mp.env` с правами `600`, подключённый в юниты
@@ -1756,38 +1980,49 @@ export JWT_SECRET='значение из шага 1'
 export PBL_BASE_URL='https://ВАШ_ДОМЕН/'
 export PBL_PROVIDER_GATEWAY_BASE_URL='адрес шлюза от MilliKart'
 export PBL_PROVIDER_API_BASE_URL='адрес API от MilliKart'
+# Только для ecom: база платёжного шлюза, учётная запись только на чтение
+export ECOM_TXPG_URL='jdbc:oracle:thin:@//адрес:порт/сервис от MilliKart'
+export ECOM_TXPG_USERNAME='пользователь от MilliKart'
+export ECOM_TXPG_PASSWORD='пароль от MilliKart'
 ```
 
-| Переменная | auth | directory | pbl | Значение по умолчанию |
-|---|:---:|:---:|:---:|---|
-| `DB_PASSWORD` | **обязательна** | **обязательна** | **обязательна** | нет |
-| `JWT_SECRET` | **обязательна** | **обязательна** | **обязательна** | нет |
-| `DB_URL` | необязательна | необязательна | необязательна | `jdbc:postgresql://localhost:5432/postgres` |
-| `DB_USERNAME` | необязательна | необязательна | необязательна | `postgres` |
-| `JWT_EXPIRATION_MS` | необязательна | необязательна | необязательна | `900000` (15 минут, с P1-13). Токен выдаёт `auth`; `directory` и `pbl` только проверяют его, переменная объявлена у всех трёх для единообразия. Фронтенд обновляет токен сам через `/refresh`; это же — верхняя граница, сколько после выхода, блокировки или удаления пользователь ещё имеет доступ |
-| `AUTH_REFRESH_TTL` | необязательна | не читается | не читается | `P30D` (срок refresh-токена) |
-| `AUTH_REFRESH_ROTATION_GRACE` | необязательна | не читается | не читается | `PT10S` (окно, в котором повтор заменённого refresh-токена — гонка вкладок, а не кража) |
-| `AUTH_REFRESH_CLEANUP_ENABLED` | необязательна | не читается | не читается | `true` |
-| `AUTH_REFRESH_CLEANUP_CRON` | необязательна | не читается | не читается | `0 30 3 * * *` |
-| `AUTH_BOOTSTRAP_ENABLED` | необязательна | не читается | не читается | `false` |
-| `BOOTSTRAP_ADMIN_USERNAME` | обязательна при включённом bootstrap | не читается | не читается | нет |
-| `BOOTSTRAP_ADMIN_PASSWORD` | обязательна при включённом bootstrap | не читается | не читается | нет |
-| `PBL_API_TOKEN_ENABLED` | не читается | не читается | необязательна | `false` |
-| `PBL_API_TOKEN` | не читается | не читается | обязательна при включённом флаге | пусто |
-| `PBL_BASE_URL` | не читается | не читается | **обязательна** | нет — публичный адрес сервиса, уходит эквайеру как адрес возврата плательщика (P1-10) |
-| `PBL_PROVIDER_GATEWAY_BASE_URL` | не читается | не читается | **обязательна** | нет — адрес шлюза эквайера, выдаёт MilliKart; не-HTTPS даёт WARN |
-| `PBL_PROVIDER_API_BASE_URL` | не читается | не читается | **обязательна** | нет — адрес e-commerce API эквайера, выдаёт MilliKart; не-HTTPS даёт WARN |
-| `PBL_PROVIDER_CREATE_ORDER_PATH` | не читается | не читается | необязательна | `/order` |
-| `PBL_PROVIDER_EXEC_TRAN_PATH` | не читается | не читается | необязательна | `/order/{orderId}/exec-tran` |
-| `PBL_PROVIDER_GET_ORDER_PATH` | не читается | не читается | необязательна | `/order/{orderId}` |
+| Переменная | auth | directory | pbl | ecom | Значение по умолчанию |
+|---|:---:|:---:|:---:|:---:|---|
+| `DB_PASSWORD` | **обязательна** | **обязательна** | **обязательна** | **обязательна** | нет |
+| `JWT_SECRET` | **обязательна** | **обязательна** | **обязательна** | **обязательна** | нет |
+| `DB_URL` | необязательна | необязательна | необязательна | необязательна | `jdbc:postgresql://localhost:5432/postgres` |
+| `DB_USERNAME` | необязательна | необязательна | необязательна | необязательна | `postgres` |
+| `JWT_EXPIRATION_MS` | необязательна | необязательна | необязательна | необязательна | `900000` (15 минут, с P1-13). Токен выдаёт `auth`; `directory` и `pbl` только проверяют его, переменная объявлена у всех сервисов для единообразия. Фронтенд обновляет токен сам через `/refresh`; это же — верхняя граница, сколько после выхода, блокировки или удаления пользователь ещё имеет доступ |
+| `AUTH_REFRESH_TTL` | необязательна | не читается | не читается | не читается | `P30D` (срок refresh-токена) |
+| `AUTH_REFRESH_ROTATION_GRACE` | необязательна | не читается | не читается | не читается | `PT10S` (окно, в котором повтор заменённого refresh-токена — гонка вкладок, а не кража) |
+| `AUTH_REFRESH_CLEANUP_ENABLED` | необязательна | не читается | не читается | не читается | `true` |
+| `AUTH_REFRESH_CLEANUP_CRON` | необязательна | не читается | не читается | не читается | `0 30 3 * * *` |
+| `AUTH_BOOTSTRAP_ENABLED` | необязательна | не читается | не читается | не читается | `false` |
+| `BOOTSTRAP_ADMIN_USERNAME` | обязательна при включённом bootstrap | не читается | не читается | не читается | нет |
+| `BOOTSTRAP_ADMIN_PASSWORD` | обязательна при включённом bootstrap | не читается | не читается | не читается | нет |
+| `PBL_API_TOKEN_ENABLED` | не читается | не читается | необязательна | не читается | `false` |
+| `PBL_API_TOKEN` | не читается | не читается | обязательна при включённом флаге | не читается | пусто |
+| `PBL_BASE_URL` | не читается | не читается | **обязательна** | не читается | нет — публичный адрес сервиса, уходит эквайеру как адрес возврата плательщика (P1-10) |
+| `PBL_PROVIDER_GATEWAY_BASE_URL` | не читается | не читается | **обязательна** | не читается | нет — адрес шлюза эквайера, выдаёт MilliKart; не-HTTPS даёт WARN |
+| `PBL_PROVIDER_API_BASE_URL` | не читается | не читается | **обязательна** | не читается | нет — адрес e-commerce API эквайера, выдаёт MilliKart; не-HTTPS даёт WARN |
+| `PBL_PROVIDER_CREATE_ORDER_PATH` | не читается | не читается | необязательна | не читается | `/order` |
+| `PBL_PROVIDER_EXEC_TRAN_PATH` | не читается | не читается | необязательна | не читается | `/order/{orderId}/exec-tran` |
+| `PBL_PROVIDER_GET_ORDER_PATH` | не читается | не читается | необязательна | не читается | `/order/{orderId}` |
+| `LOGIN_RATE_LIMIT_ENABLED`, `LOGIN_RATE_LIMIT_MAX_FAILURES`, `LOGIN_RATE_LIMIT_WINDOW` | необязательны | не читаются | не читаются | не читаются | `true`, `10`, `PT15M` — лимит неудачных попыток входа с одного адреса |
+| `TRUSTED_PROXIES` | необязательна | необязательна | необязательна | необязательна | `127.0.0.1,::1` — прокси, чьим заголовкам с адресом клиента верим |
+| `DIRECTORY_TERMINAL_RECONCILIATION_ENABLED`, `DIRECTORY_TERMINAL_RECONCILIATION_CRON` | не читаются | необязательны | не читаются | не читаются | `true`, `0 */15 * * * *` — сверка статусов терминалов со справочником провайдера |
+| `PBL_DASHBOARD_ZONE` | не читается | не читается | необязательна | не читается | `Asia/Baku` — часовой пояс сводки на главной |
+| `ECOM_TXPG_URL`, `ECOM_TXPG_USERNAME`, `ECOM_TXPG_PASSWORD` | не читаются | не читаются | не читаются | **обязательны** | нет — база платёжного шлюза и учётная запись только на чтение, выдаёт MilliKart |
+| `ECOM_TXPG_SCHEMA` | не читается | не читается | не читается | необязательна | `TXPG` |
+| `ECOM_TERMINAL_SYNC_ENABLED`, `ECOM_TERMINAL_SYNC_CRON` | не читаются | не читаются | не читаются | необязательны | `true`, `0 */15 * * * *` — обновление справочника терминалов провайдера |
 
 «Не читается» означает, что сервис эту переменную игнорирует; лишняя переменная
 в общем файле окружения ничему не мешает.
 
 > [!CAUTION]
-> `JWT_SECRET` обязан **совпадать во всех трёх сервисах**, символ в символ. Токен выдаёт
-> `auth`, а проверяют его `directory` и `pbl` тем же самым ключом (HS256 симметричный).
-> Разные значения — и любой запрос к `directory` и `pbl` вернёт 401, хотя логин при этом
+> `JWT_SECRET` обязан **совпадать во всех сервисах**, символ в символ. Токен выдаёт
+> `auth`, а проверяют его `directory`, `pbl` и `ecom` тем же самым ключом (HS256 симметричный).
+> Разные значения — и любой запрос к ним вернёт 401, хотя логин при этом
 > будет проходить успешно. Это самая частая ошибка при развёртывании.
 
 Полный список переменных с пояснениями — `.env.example` в корне репозитория.
@@ -1796,6 +2031,7 @@ export PBL_PROVIDER_API_BASE_URL='адрес API от MilliKart'
 
 ```bash
 sudo systemctl start mp-auth mp-directory mp-pbl
+sudo systemctl start mp-ecom           # только если установлен ecom
 ```
 
 > [!NOTE]
@@ -1803,7 +2039,7 @@ sudo systemctl start mp-auth mp-directory mp-pbl
 > его changeset создавал таблицу `companies` без `<preConditions>`, и стартовавший раньше
 > `directory` ронял `auth` на «table companies already exists». Теперь каждый changeset,
 > создающий общую таблицу, обложен собственным условием — по одному объекту на changeset, —
-> поэтому первым может подняться любой из трёх сервисов, в том числе все три одновременно.
+> поэтому первым может подняться любой из сервисов, в том числе все одновременно.
 >
 > Внешний ключ `terminals.company_id → companies.id` создаёт `auth`, а саму таблицу `terminals` —
 > `directory` или `pbl`. Если `auth` стартовал раньше них, ключ на этом запуске не создаётся:
@@ -1870,7 +2106,8 @@ sudo systemctl restart mp-auth
 # 1. Новый ключ
 NEW_SECRET=$(openssl rand -base64 48)
 
-# 2. Остановить ВСЕ три сервиса
+# 2. Остановить ВСЕ сервисы
+sudo systemctl stop mp-ecom            # только если установлен ecom
 sudo systemctl stop mp-pbl mp-directory mp-auth
 
 # 3. Заменить значение в общем файле окружения
@@ -1879,6 +2116,7 @@ sudo grep JWT_SECRET /opt/merchant-portal/config/mp.env   # убедиться, 
 
 # 4. Поднять обратно (порядок не важен — миграции уже применены)
 sudo systemctl start mp-auth mp-directory mp-pbl
+sudo systemctl start mp-ecom           # только если установлен ecom
 ```
 
 > [!CAUTION]
@@ -1892,12 +2130,12 @@ sudo systemctl start mp-auth mp-directory mp-pbl
 > Планируйте ротацию на время наименьшей нагрузки — сами перезапуски дают простой.
 
 > [!WARNING]
-> Останавливать нужно **все три** сервиса, а не перезапускать по одному. Сервис со старым
+> Останавливать нужно **все** сервисы, а не перезапускать по одному. Сервис со старым
 > ключом и сервис с новым не понимают токены друг друга: пока идёт «плавный» перезапуск,
 > часть запросов будет получать 401 без всякой закономерности.
 
 Пароль базы данных (`DB_PASSWORD`) меняется так же — правкой одного файла и перезапуском
-всех трёх сервисов, — но выданных токенов он не затрагивает и пользователей из портала
+всех сервисов, — но выданных токенов он не затрагивает и пользователей из портала
 не выбрасывает.
 
 ### 20.3. Если сервис не стартует
@@ -1915,7 +2153,8 @@ sudo systemctl start mp-auth mp-directory mp-pbl
 | `The environment variable PBL_BASE_URL (property pbl.base-url) is empty` / `has leading or trailing whitespace` / `is not a valid URL` / `must be an absolute URL` / `has a host part that is not a valid host name` / `must use http or https` | Переменная есть, но значение не годится (пусто, пробел или CRLF на конце, незаменённый `ВАШ_ДОМЕН`, относительный путь, `ftp://`) | Задать абсолютный `https://` адрес без лишних пробелов, например `https://ВАШ_ДОМЕН/` с реальным доменом |
 | `WARNING: the acquirer address is not HTTPS` (в рамке, сервис стартует) | Адрес шлюза или API эквайера задан по `http://` | Это не ошибка конфигурации: HTTPS даёт MilliKart. Запросить у них `https://` адрес и заменить переменную |
 | `WARNING: the public address of this service is not HTTPS` (в рамке, сервис стартует) | `PBL_BASE_URL` по `http://` на не-локальном хосте | В проде — `https://ВАШ_ДОМЕН/` (раздел 12); для `localhost`/`127.0.0.1`/`[::1]` предупреждения нет |
-| Логин проходит, но `directory` и `pbl` отвечают 401 | `JWT_SECRET` различается между сервисами | Привести к одному значению и перезапустить все три |
+| Логин проходит, но `directory`, `pbl` или `ecom` отвечают 401 | `JWT_SECRET` различается между сервисами | Привести к одному значению и перезапустить все сервисы |
+| `ecom` не стартует с ошибкой подключения к базе шлюза | Не заданы или неверны `ECOM_TXPG_URL`, `ECOM_TXPG_USERNAME`, `ECOM_TXPG_PASSWORD`, либо с сервера нет сетевого доступа к базе шлюза | Задать переменные в `mp.env` (п. 8.3) и проверить доступ; остальные сервисы работают без `ecom` |
 | Платёж проходит у эквайера, но плательщик возвращается не туда / транзакция висит в PENDING | `PBL_BASE_URL` указывает не на этот сервис (чужой домен, опечатка) | Исправить `PBL_BASE_URL` в `mp.env` и перезапустить `mp-pbl`; сервис такое не роняет, см. п. 8.3 |
 
 ---
@@ -1925,6 +2164,7 @@ sudo systemctl start mp-auth mp-directory mp-pbl
 > ```bash
 > # Перезапустить всё
 > sudo systemctl restart mp-auth mp-directory mp-pbl nginx
+> sudo systemctl restart mp-ecom   # если установлен ecom
 > 
 > # Проверить всё
 > sudo systemctl status mp-auth mp-directory mp-pbl nginx postgresql
@@ -1933,6 +2173,7 @@ sudo systemctl start mp-auth mp-directory mp-pbl
 > sudo journalctl -u mp-auth -n 50
 > sudo journalctl -u mp-directory -n 50
 > sudo journalctl -u mp-pbl -n 50
+> sudo journalctl -u mp-ecom -n 50   # если установлен ecom
 > 
 > # Бэкап прямо сейчас
 > /opt/merchant-portal/backup.sh

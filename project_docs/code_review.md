@@ -4,6 +4,12 @@
 **Ревизия:** `3f890de` (ветка `main`)
 **Объём:** backend ~5 000 строк Java (модули `common`, `auth`, `directory`, `pbl`), frontend ~18 700 строк TS/TSX
 
+> ✅ **Все находки P0, P1 и P2 закрыты** (P0 и P1 — к 19.08.2026, P2 — к 22.08.2026); из мелочей P3
+> открытыми остались три пункта гигиены и имя `InvalidStateException` — они помечены ⏳ в §5. Документ заморожен 13.09.2026 и дальше не
+> ведётся: история работ — [`fix_plan.md`](fix_plan.md), решения — [`decisions.md`](decisions.md), действующие
+> правила и известные ограничения — корневой `AGENTS.md`. Текст находок оставлен как есть — это снимок
+> ревью от 14.08.2026; `problems.md`, на который ссылаются отдельные отметки, удалён 13.09.2026.
+
 ---
 
 ## Резюме
@@ -102,6 +108,11 @@ if (path.startsWith("/api/v1/transactions/") && path.endsWith("/status")) {
 
 ### P0-3. Кэш обходит проверку прав — межтенантная утечка терминалов и компаний
 
+> ✅ **Исправлено 17.08.2026** вместе с P1-15. Кэш снят совсем (Р-9): `@Cacheable` с `TerminalService.getTerminal`
+> и `CompanyService.getCompany` убраны, проверка прав выполняется на каждом вызове. Сторожа —
+> `getTerminal_afterAnotherCompanyFetchedIt_stillReturns403` и `getCompany_afterAdminFetchedIt_stillReturns403ForForeignCompany`
+> в `DirectoryIntegrationTest`.
+
 `directory/.../service/TerminalService.java:104-115`
 
 ```java
@@ -151,6 +162,11 @@ validateAccess(link.getTerminalId(), principal.getRole(), principal.getCompanyId
 
 ### P0-5. Секрет подписи JWT лежит в репозитории (и в истории git)
 
+> ✅ **Исправлено 17.08.2026** вместе с P0-6 и P1-11. Ключ подписи — только из `JWT_SECRET`, без значения
+> по умолчанию во всех сервисах; `JwtProvider` отказывается стартовать на пустом ключе, на ключе короче
+> 32 байт и на скомпрометированном ключе из истории git. Историю не переписывали (Р-15): после ротации
+> старый ключ бесполезен.
+
 `auth/src/main/resources/application.yaml:26`, `directory/.../application.yaml:25`, плюс дефолт в коде `common/.../JwtProvider.java:22`:
 
 ```yaml
@@ -172,6 +188,10 @@ pbl:
 
 ### P0-6. Дефолтный админ `admin@millikart.az` / `admin123` создаётся в проде миграцией
 
+> ✅ **Исправлено 17.08.2026.** Сид удалён из `002-user-directory-schema.xml` (Р-14). Первый `SYSTEM_ADMIN`
+> создаётся `AdminBootstrapRunner` из `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` при
+> `AUTH_BOOTSTRAP_ENABLED=true`; пароль `admin123` отвергается.
+
 `auth/src/main/resources/db/changelog/changes/002-user-directory-schema.xml`
 
 ```xml
@@ -191,6 +211,11 @@ pbl:
 ---
 
 ### P0-7. Возврат помечается успешным без ретраев-защиты, ретраи не идемпотентны
+
+> ✅ **Исправлено 17.08.2026.** `@Retry` снят с `completeDms` и `refund`. Сбои денежных вызовов разведены:
+> отказ шлюза — 400, таймаут, обрыв и 5xx — `PaymentOutcomeUnknownException` (502, маркер
+> `PAYMENT_OUTCOME_UNKNOWN`); повторный capture запрещён. С 19.08.2026 успех подтверждается только
+> `tran.match.ridByPmo` (P1-8b).
 
 `pbl/.../provider/TxpgAcquiringClient.java:150-154`
 
@@ -291,6 +316,11 @@ public Map<String, Object> completeDms(String providerOrderId, String password,
 
 ### P1-1. Spring Security фактически отключён — вся авторизация на одном фильтре
 
+> ✅ **Исправлено 17.08.2026.** «По умолчанию запрещено» (`anyRequest().authenticated()`), публичные пути —
+> один список `PublicEndpoints` на `JwtAuthFilter` и `SecurityConfig`; actuator вынесен на management-порт
+> на `127.0.0.1`, swagger — за флагом `SWAGGER_ENABLED`, по умолчанию выключен. `@PreAuthorize` не
+> вводили: проверки прав остались в сервисах.
+
 `common/.../SecurityConfig.java:28-36`
 
 ```java
@@ -309,11 +339,19 @@ http.csrf(disable).cors(disable)
 
 ### P1-2. Auth-сервис ломается в зависимости от порядка старта сервисов
 
+> ✅ **Исправлено 17.08.2026.** Каждый changeset общей таблицы обложен своим `<preConditions>`, межсервисные
+> ключи — под `onFail="CONTINUE"`: любой сервис может стартовать первым. Сторожа — `MigrationOrderTest`
+> и `SharedSchemaMigrationTest`.
+
 `auth/.../002-user-directory-schema.xml` создаёт таблицу `companies` **без `<preConditions>`**, тогда как `directory/.../003-directory-schema.xml` — с проверкой `<not><tableExists/></not>`. Три сервиса пишут в одну БД и делят одну таблицу `DATABASECHANGELOG`.
 
 Если `directory` стартует раньше `auth`, changeset `2-auth-core` упадёт на «table companies already exists», и `auth` не поднимется. Порядок старта нигде не зафиксирован (compose/манифестов в проекте нет вообще).
 
 ### P1-3. Нет асинхронного callback от провайдера — статусы могут зависать навсегда
+
+> ✅ **Исправлено 16.08.2026.** Callback не делается: асинхронных уведомлений у MilliKart нет (Р-7), заготовки
+> удалены. Зависшие `PENDING` дожимает фоновая сверка `TransactionReconciliationService` (Р-8); с 19.08.2026
+> `FAILED` по таймауту ставится только при известном нефинальном статусе (Р-20).
 
 DTO `PaymentCallbackRequest.java` есть, а **контроллера, который его принимает, нет** ни в одном из трёх контроллеров `pbl`. Синхронизация статуса держится на двух вещах:
 - браузер клиента возвращается на `/api/v1/payment-links/redirect/{tx}`;
@@ -390,6 +428,10 @@ long successCount = transactionRepository.countByLinkIdAndStatus(link.getId(), S
 
 ### P1-8. Статус транзакции выставляется по факту «провайдер не вернул errorCode»
 
+> ✅ **Исправлено 19.08.2026** двумя задачами (Р-21). P1-8a: словарь статусов заказа — из контракта §5.8.8,
+> незнакомый статус никогда не даёт `FAILED`. P1-8b: успех capture и возврата подтверждается
+> `tran.match.ridByPmo`, ответ без него — неизвестный исход, 502 (Р-23).
+
 `PaymentLinkService.java:285` (`completeDms`) и `:344-351` (`refund`) выставляют `SUCCESS` / `REFUNDED` безусловно, если из клиента не прилетело исключение. Клиент (`TxpgAcquiringClient.checkAndThrowIfErrorCode`, строки 238-247) проверяет **только** наличие ключа `errorCode` в ответе. Если TXPG на HTTP 200 вернёт отказ в другом виде (например `tran.status = "Declined"`), система запишет успех.
 
 В `refund` при отсутствии `refundId` в ответе провайдера генерируется **локальный случайный** идентификатор (`:342`) — то есть в БД окажется несуществующий у эквайера номер возврата.
@@ -413,6 +455,10 @@ long successCount = transactionRepository.countByLinkIdAndStatus(link.getId(), S
 
 ### P1-10. `pbl.base-url` и адреса провайдера захардкожены на localhost/тест
 
+> ✅ **Исправлено 18.08.2026.** `PBL_BASE_URL`, `PBL_PROVIDER_GATEWAY_BASE_URL` и `PBL_PROVIDER_API_BASE_URL` —
+> из окружения без значений по умолчанию (Р-16, Р-18); HTTP у адреса эквайера даёт предупреждение в лог
+> и не блокирует старт (Р-17).
+
 `pbl/src/main/resources/application.yaml`
 
 ```yaml
@@ -427,15 +473,26 @@ pbl:
 
 ### P1-11. Пароль БД в открытом виде во всех трёх конфигах
 
+> ✅ **Исправлено 17.08.2026** вместе с P0-5. `DB_PASSWORD` — только из окружения, без значения по умолчанию;
+> секретов в `application.yaml` нет.
+
 `auth`, `directory`, `pbl` — `spring.datasource.password: password`, без `${DB_PASSWORD:...}`. Плюс `username: postgres` — подключение суперпользователем.
 
 ### P1-12. Нет refresh-токена, logout и отзыва токенов
+
+> ✅ **Исправлено 18.08.2026.** Refresh-токены с ротацией и окном снисхождения, `/refresh` и `/logout`, отзыв
+> при блокировке и удалении пользователя; в базе только SHA-256 токена, `expiresIn` берётся из настройки.
+> Access-токен при выходе не отзывается, зато живёт 15 минут (P1-13).
 
 `AuthController` содержит **только** `/login`. `technical_handover.md` (§2.2, §4.1) заявляет «Login / Refresh / Logout» и «выдачу пар JWT (Access & Refresh)» — этого нет. Токен живёт 24 часа, отозвать его нельзя: заблокированный или удалённый пользователь работает до истечения срока.
 
 Плюс `LoginResponse.java` возвращает жёстко зашитое `expiresIn = 86400` (`AuthService.java:92`), не связанное с `pbl.security.jwt.expiration-ms` — в тестовом профиле (1 час) значения расходятся вчетверо.
 
 ### P1-13. Фронтенд: роль по умолчанию `SYSTEM_ADMIN` и отсутствие ролевых guard'ов
+
+> ✅ **Исправлено 18.08.2026.** Роль разбирается строго (`parseRole`), нераспознанная — вход не состоялся;
+> ролевые guard'ы по единой раскладке `routeAccess.ts`, страницы 403 и 404; access-токен только в памяти,
+> refresh — в `localStorage`, single-flight обновление по 401. TTL access-токена сокращён до 15 минут.
 
 `frontend/src/app/context/AuthContext.tsx:46` — `role: role || 'SYSTEM_ADMIN'`. Если бэкенд не вернул роль, пользователь молча становится системным администратором (fail-open вместо fail-closed).
 
@@ -445,6 +502,9 @@ pbl:
 
 ### P1-14. Фронтенд не собирается для прода без ручной обвязки
 
+> ✅ **Исправлено 18.08.2026.** TypeScript 7 установлен, `tsc -b` стоит гейтом перед `vite build`, адрес API —
+> `VITE_API_BASE_URL`; ≈7 600 строк мёртвого кода и 48 зависимостей генератора удалены (заодно закрыт P2-11).
+
 `frontend/src/app/api/client.ts:3-7` — axios создаётся **без `baseURL`**. Разводка по трём микросервисам живёт в dev-прокси `vite.config.ts:27-58` (`8081` / `8082` / `8080`), которого в `vite build` не существует. `import.meta.env` / `VITE_*` не используется нигде, файлов `.env*` нет.
 
 Плюс: **TypeScript не установлен** (нет ни в `dependencies`, ни в `devDependencies`), `build` — это просто `vite build`, который типы не проверяет. То есть типы в проекте ни разу не были проверены компилятором.
@@ -452,6 +512,10 @@ pbl:
 ---
 
 ### P1-15. `COMPANY_EMPLOYEE` может удалять терминалы своей компании
+
+> ✅ **Исправлено 17.08.2026** вместе с P0-3. Запись терминалов — `TerminalService.TERMINAL_WRITE_ROLES`
+> (`SYSTEM_ADMIN`, `COMPANY_HEAD`, `COMPANY_MANAGER`), роль проверяется до компании. С 21.08.2026 удаления
+> терминалов нет вовсе — только блокировка (P2-8).
 
 `directory/src/main/java/az/millikart/directory/service/TerminalService.java:202-213`
 
@@ -495,11 +559,11 @@ private void validateWriteAccessToCompany(String targetCompanyId, String actorRo
 | P2-4 | ✅ **Исправлено 15.08.2026** (вместе с P0-1). Было: N+1 при листинге транзакций — `tx.getLink()` LAZY, дёргался для каждой строки в маппере. Стало: `@EntityGraph(attributePaths = "link")` на обоих методах листинга | `TransactionRepository.java`, `PaymentLinkService.mapToTransactionResponse` |
 | P2-5 | ✅ **Исправлено 21.08.2026** (Р-35). Было: `logAction` — `@Transactional` (REQUIRED), запись аудита откатывалась вместе с бизнес-операцией; отказы не логировались вообще. Стало — заметьте, **не** «просто `REQUIRES_NEW`» (он записал бы действие, которое не состоялось, — живой пример P2-8): успех пишется после коммита (`AuditEvent` → `AuditLogWriter` `AFTER_COMMIT` → `recordSuccess`), отказ — сразу в своей транзакции (`logDenied`, `outcome = DENIED`) во всех точках отказа `directory`; свою транзакцию обе записи открывают `TransactionTemplate`'ом, а не аннотацией — из `listAuditLogs` вызов идёт внутри того же класса, прокси не участвует, и с аннотацией запись об отказе в чтении журнала терялась; сбой записи журнала не роняет ни операцию, ни код отказа (ERROR `AUDIT_WRITE_FAILED`) | `AuditLogWriter`, `AuditLogService`, `CompanyService`, `TerminalService` |
 | P2-6 | ✅ **Исправлено 21.08.2026** (Р-36). Было: в `AuditLog` нет поля с IP, хотя `technical_handover.md` §4.4 заявляет фиксацию IP. Стало: `client_ip varchar(45)` + `outcome`; адрес кладёт `ClientIpFilter` (`common`) в `ClientIpHolder` через `ClientIp.resolve` — заголовкам верим только от доверенного прокси; вне запроса адрес пуст, это штатно. §4.4 сверен с кодом | `AuditLog.java`, `ClientIpFilter`, `ClientIpHolder` |
-| P2-7 | Роли — строковые литералы в 7 файлах, без enum и без валидации при создании пользователя. Можно завести пользователя с ролью `"ADMIN"` или `"Company_Head"` — он просто не получит никаких прав, тихо | `UserService.java`, `CompanyService.java`, `TerminalService.java`, `PaymentLinkService.java` |
+| P2-7 | ✅ **Исправлено 16.08.2026** вместе с P0-4 (Р-10): `enum Role` в `common`, литералов ролей в main-коде нет. Было: Роли — строковые литералы в 7 файлах, без enum и без валидации при создании пользователя. Можно завести пользователя с ролью `"ADMIN"` или `"Company_Head"` — он просто не получит никаких прав, тихо | `UserService.java`, `CompanyService.java`, `TerminalService.java`, `PaymentLinkService.java` |
 | P2-8 | ✅ **Исправлено 21.08.2026** (Р-37…Р-40). Было: жёсткое удаление терминала при живом FK `fk_payment_links_terminal` → 500 «Unexpected server error» вместо 409; статуса у терминала не было, поэтому «вывести из работы, не удаляя» тоже было нельзя. Стало: удаление убрано целиком (`DELETE` → 405), у терминала `status` `ACTIVE`/`BLOCKED` через существующий `PATCH`; блокировка переводит `ACTIVE`-ссылки терминала в `SUSPENDED` одним `UPDATE` в той же транзакции (`PaymentLinkStatusRepository`), разблокировка возвращает их в `ACTIVE`, а просроченные за время блокировки — в `EXPIRED`; открытие ссылки плательщиком проверяет терминал **после** захвата блокировки строки, иначе блокировка, случившаяся в этот момент, пропустила бы платёж. Возвраты, capture DMS и сверка статуса намеренно не проверяют статус терминала (Р-38) | `TerminalService`, `PaymentLinkStatusRepository`, `OpenLinkService`, `PaymentLinkService`, `005-terminal-status.xml` ×2 |
 | P2-9 | ✅ **Исправлено 20.08.2026** (Р-31, Р-32). Было: `update()` менял `amount` у ссылки с уже идущими платежами и воскрешал `EXPIRED`/`COMPLETED` в `ACTIVE`; заодно `maxPayments` опускался ниже числа прошедших платежей. Стало: `AMOUNT_LOCKING_STATUSES` (`PENDING`, `AUTHORIZED`, `SUCCESS`, `PARTIALLY_REFUNDED`, `REFUNDED`) запирает сумму — проверка запросом `existsByLinkIdAndStatusIn`; `ALLOWED_STATUS_TRANSITIONS` разрешает только `ACTIVE`/`EXPIRED → CANCELED` и `CANCELED → ACTIVE` со сроком в будущем; `maxPayments` не ниже числа `SUCCESS`; правка пишется одной строкой `log.info` | `PaymentLinkService.update`, `TransactionRepository` |
-| P2-10 | `extractClientIp` безусловно доверяет `X-Forwarded-For` — подделывается любым клиентом, если перед сервисом нет доверенного прокси | `OpenLinkController.java:46-56` |
-| P2-11 | Фронтенд: ~7 200 строк мёртвого кода (~40%) — `src/App.tsx` (шаблон Vite), `src/api/client.ts` (**второй axios-клиент, логирующий тела запросов, включая пароли, в консоль**), 48 неиспользуемых shadcn-компонентов, страницы `ReportsPage`/`NotificationsPage`/`POSTransactionListPage` вне роутера | `frontend/src/` |
+| P2-10 | ✅ **Исправлено 19.08.2026** вместе с P3-Auth (Р-29): адрес клиента — `ClientIp.resolve` и только от доверенного прокси. Было: `extractClientIp` безусловно доверяет `X-Forwarded-For` — подделывается любым клиентом, если перед сервисом нет доверенного прокси | `OpenLinkController.java:46-56` |
+| P2-11 | ✅ **Исправлено 18.08.2026** в P1-14: мёртвый код фронтенда удалён. Было: Фронтенд: ~7 200 строк мёртвого кода (~40%) — `src/App.tsx` (шаблон Vite), `src/api/client.ts` (**второй axios-клиент, логирующий тела запросов, включая пароли, в консоль**), 48 неиспользуемых shadcn-компонентов, страницы `ReportsPage`/`NotificationsPage`/`POSTransactionListPage` вне роутера | `frontend/src/` |
 | P2-12 | ✅ **Исправлено 20.08.2026** (Р-30). Было шире, чем «нули в статистике»: `App.tsx:147` клал статус как `String(t.status \|\| 'APPROVED').toUpperCase() as any`, а `TransactionStatus` перечислял одиннадцать значений из трёх чужих словарей — без `SUCCESS` и `AUTHORIZED` вовсе. Из-за этого блок статистики всегда показывал нули, фильтр по статусу не находил ничего, цвета и подписи в таблице не срабатывали, а `PayByLinkDetailPage:303` переводил настоящий `FAILED` обратно в выдуманный `3d-failed`. Стало: в типе ровно шесть значений бэкенда, `parseTransactionStatus` / `parsePaymentMethod` на границе (незнакомое → `null` + предупреждение, никакой подстановки), `as any` снят — расхождение теперь ловит `tsc -b` | `types/transaction.ts`, `App.tsx`, `StatsOverview.tsx`, `TransactionTable.tsx`, `FilterPanel.tsx`, `TransactionDetailPage.tsx`, `PayByLinkDetailPage.tsx`, `HomePage.tsx`, `statusColors.ts`, `mockData.ts`, `i18n/translations.ts` |
 
 ---
@@ -516,16 +580,28 @@ private void validateWriteAccessToCompany(String targetCompanyId, String actorRo
 
   > ✅ **Исправлено 24.08.2026 (P3-3).** Обёртки в `auth/`, `directory/`, `pbl/` (12 файлов) удалены с диска и из git — `settings.gradle` подключает модули из корня, ими не пользовалось ничто (проверено по скриптам, workflow и документам: везде корневой `./gradlew :модуль:задача`). Корневые `gradlew`/`gradlew.bat`/`gradle/wrapper/` остались; `./gradlew cleanTest test` после удаления зелёный. Заодно добавлен `.gitattributes` (`* text=auto eol=lf`, `*.bat eol=crlf`, бинарные типы) и индекс нормализован — `gradlew.bat` перестал показывать фантомное изменение всех 164 строк из-за CRLF/LF.
 - **`directory/settings.gradle`** с `rootProject.name = 'directory'` внутри подпроекта монорепо — сбивает с толку и мешает IDE.
+
+  > ⏳ **Не исправлено на 13.09.2026** — в списке `AGENTS.md` §10, «Известные ограничения».
 - **`directory/build.gradle:8`** объявляет `springBootVersion = '3.1.0'`, который нигде не используется (реальная версия — 3.2.5 из корня).
+
+  > ⏳ **Не исправлено на 13.09.2026** — в списке `AGENTS.md` §10, «Известные ограничения».
 - **`RestTemplate` bean** объявлен, но не используется (везде `RestClient`) — `RestTemplateConfig.java:14-20`.
+
+  > ⏳ **Не исправлено на 13.09.2026** — в списке `AGENTS.md` §10, «Известные ограничения».
 - **`PaymentLink.currentPaymentsCount`** помечен в коде как legacy («count is computed dynamically»), но остаётся `nullable = false` и обновляется в трёх местах непоследовательно.
 
   > ✅ **Исправлено 24.08.2026 (P2-16, Р-49, Р-50).** Поле перестало быть legacy и получило смысл: «сколько раз ссылкой воспользовались», по `TransactionStatus.PAID_STATUSES` (`SUCCESS` + `REFUNDED` + `PARTIALLY_REFUNDED`). Колонка при каждом расчёте (`completeDms`, `refreshStatus`) получает то же число, что уходит в ответ API; `refund()` её не трогает и не должен — возврат не выводит статус из набора, база и ответ сходятся сами (сторож `columnAndResponse_agreeThroughPaymentsAndRefunds`). Заодно возврат перестал освобождать слот использования, а карточка получила `refundedPaymentsCount`. Подробности — `AGENTS.md` §10, P2-16; `problems.md` §16.
 - **`ConflictException`** объявлен и обрабатывается в `GlobalExceptionHandler`, но не бросается нигде.
+
+  > ✅ **Неактуально с 17.08.2026 (P1-5).** `OpenLinkService` бросает `ConflictException` (409) на втором одновременном открытии ссылки.
 - **`InvalidStateException` → 403 FORBIDDEN** — неочевидный маппинг: класс называется «неверное состояние», а используется для отказа в доступе.
+
+  > ⏳ **Не менялось** — «`InvalidStateException` = 403» записано как соглашение проекта в `AGENTS.md` §5 и §10.
 - **`README.md`** — две строки `# merchant-portal-mk`. `frontend/package.json` называется `@figma/my-make-file`.
 
   > ✅ **Частично исправлено 24.08.2026 (P3-3).** README заменён: что за система, четыре модуля с портами, запуск (переменные окружения без значений, со ссылкой на новый `.env.example`), тесты, ссылки на документы. Имя `@figma/my-make-file` в `frontend/package.json` **не** менялось — в ТЗ P3-3 этого шага не было; пункт остаётся на нём.
+  >
+  > ✅ **Хвост закрыт:** на 13.09.2026 `frontend/package.json` называется `merchant-portal-frontend`.
 - **Перечисление аккаунтов**: `AuthService.java:46` возвращает `"User account is " + status` — раскрывает существование пользователя и его статус до проверки пароля (при этом сам ответ на неверный пароль — корректно обезличенный).
 
   > ✅ **Исправлено 19.08.2026 (P3-Auth).** Пароль проверяется первым; несуществующий пользователь и неверный пароль дают одинаковые код и тело, и одинаковое время — для несуществующего пользователя пароль сравнивается с фиксированным bcrypt-хэшем-заглушкой, иначе разницу в ~80 мс видно и при одинаковых текстах. Статус аккаунта в ответе больше не называется («Account is not active. Please contact your administrator.»). Остаточная утечка — верный пароль для заблокированного аккаунта отличим — принята сознательно, `problems.md` §7.
@@ -537,6 +613,10 @@ private void validateWriteAccessToCompany(String targetCompanyId, String actorRo
 ---
 
 ## 6. Расхождения документации и кода
+
+> ✅ **Закрыто 13.09.2026.** Сделанное — сделано задачами P0-1…P2-14 (refresh и logout, изоляция компаний,
+> IP в журнале, срок жизни ссылок, порядок миграций, тесты); чего в системе нет (Void), убрано из
+> `technical_handover.md` при его переписывании по коду 13.09.2026.
 
 `technical_handover.md` описывает систему точнее, чем она есть. Перед сдачей заказчику это стоит выровнять — иначе приёмка пройдёт по документу, а эксплуатация столкнётся с другим продуктом.
 
@@ -577,22 +657,22 @@ private void validateWriteAccessToCompany(String targetCompanyId, String actorRo
 
 **Спринт 0 — до любого выхода на прод (блокеры):**
 
-1. P0-1, P0-2, P0-4 — закрыть три дыры в изоляции данных `pbl`; добавить интеграционные тесты на межтенантный доступ для каждого эндпоинта.
-2. P0-3 — переделать кэширование в `directory` (проверка прав вне кэша).
-3. P0-5 — ротировать JWT-ключ, вынести в env, вычистить историю git.
-4. P0-6 — убрать дефолтного админа из прод-миграции.
-5. P0-7, P0-8 — снять `@Retry` с денежных операций, передавать `amount` в clearing, запретить повторный capture.
+1. ✅ P0-1, P0-2, P0-4 — закрыть три дыры в изоляции данных `pbl`; добавить интеграционные тесты на межтенантный доступ для каждого эндпоинта. Сделано 15–16.08.2026.
+2. ✅ P0-3 — переделать кэширование в `directory` (проверка прав вне кэша). Сделано 17.08.2026: кэш снят совсем (Р-9).
+3. ✅ P0-5 — ротировать JWT-ключ, вынести в env, вычистить историю git. Сделано 17.08.2026; историю git не переписывали (Р-15).
+4. ✅ P0-6 — убрать дефолтного админа из прод-миграции. Сделано 17.08.2026.
+5. ✅ P0-7, P0-8 — снять `@Retry` с денежных операций, передавать `amount` в clearing, запретить повторный capture. Сделано 17.08.2026.
 6. ✅ P0-9 — сделано 19.08.2026 (логи и хранение): адреса логируются без query-строки, пароля нет ни в логах, ни в `provider_response`. Из URL к эквайеру пароль пока не убран (Р-25, `problems.md` §5).
 
 **Спринт 1 — работоспособность:**
 
-7. P1-1 — привести Spring Security в нормальный вид: `authenticated()` по умолчанию, `@PreAuthorize` на контроллерах, закрыть actuator и swagger.
-8. P1-3, P1-4 — реализовать callback-эндпоинт с проверкой подписи + фоновую реконсиляцию зависших `PENDING`.
+7. ✅ P1-1 — привести Spring Security в нормальный вид: `authenticated()` по умолчанию, `@PreAuthorize` на контроллерах, закрыть actuator и swagger. Сделано 17.08.2026; `@PreAuthorize` не вводили.
+8. ✅ P1-3, P1-4 — реализовать callback-эндпоинт с проверкой подписи + фоновую реконсиляцию зависших `PENDING`. Сделано 15–16.08.2026 иначе: callback не делается (Р-7), страница возврата сама опрашивает эквайера (Р-3, Р-6), зависшие `PENDING` дожимает фоновая сверка.
 9. ✅ P1-5, P1-6, P1-7 — сделано 17.08.2026: одна транзакция + пессимистичная блокировка ссылки, `AUTHORIZED` не гасится и занимает слот, `+1` убран.
-10. P1-10, P1-11 — вынести все URL и пароли в env, перевести `api-base-url` на HTTPS.
+10. ✅ P1-10, P1-11 — вынести все URL и пароли в env, перевести `api-base-url` на HTTPS. Сделано 17–18.08.2026; HTTP у адреса эквайера — предупреждение, а не запрет (Р-17).
 11. ✅ P1-14 — сделано 18.08.2026: TypeScript 7 установлен, `tsc -b` перед `vite build`, `VITE_API_BASE_URL`, мёртвый код фронта удалён.
-11a. P1-15 — ограничить запись в терминалы по роли (сейчас проверяется только `companyId`).
-12. P0-4 / P2-7 — ввести `enum Role`, убрать строковые литералы.
+11a. ✅ P1-15 — ограничить запись в терминалы по роли (сейчас проверяется только `companyId`). Сделано 17.08.2026.
+12. ✅ P0-4 / P2-7 — ввести `enum Role`, убрать строковые литералы. Сделано 16.08.2026.
 
 **Спринт 2 — техдолг:**
 
@@ -617,9 +697,9 @@ private void validateWriteAccessToCompany(String targetCompanyId, String actorRo
 14b. ✅ P2-14 — сделано 22.08.2026 (Р-41…Р-43): машинерия журнала переехала в `common`, аудит
     появился в `auth` (учётные записи и входы, включая неудачные) и в `pbl` (ссылки, списания
     холдов, возвраты и операции с неизвестным исходом); журнал — только на дозапись.
-15. Docker-образы, `docker-compose.yml`, CI — как и планировалось в `problems.md`.
+15. ⏳ Docker-образы, `docker-compose.yml`, CI — как и планировалось в `problems.md`. Не сделано на 13.09.2026 — в списке `AGENTS.md` §10.
 16. ✅ Чистка репозитория — закрыта в два приёма: мёртвый фронтенд-код удалён 18.08.2026 (P1-14); `build/`, `.gradle/`, `.idea/` раскоммичены, дублирующие обёртки удалены, `.gitattributes` и README добавлены 24.08.2026 (P3-3). Хвосты (`directory/settings.gradle`, `springBootVersion` в `directory/build.gradle`, имя `frontend/package.json`) остаются в §5 открытыми.
-17. Обновить `technical_handover.md` под реальность.
+17. ✅ Обновить `technical_handover.md` под реальность. Сделано 13.09.2026.
 
 ---
 
