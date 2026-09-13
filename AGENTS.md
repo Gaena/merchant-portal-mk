@@ -72,7 +72,7 @@ mp/
 | SpringDoc OpenAPI | 2.5.0 | `common/build.gradle` |
 | Caffeine | 3.1.8 — только счётчики лимита входа (`LoginRateLimiter`) | `common/build.gradle` |
 | Liquibase | из BOM | — |
-| PostgreSQL | runtime; в тестах H2 и PostgreSQL 16 в контейнере (§11) | — |
+| PostgreSQL | **16** — в проде и в тестовом контейнере (Р-73); часть тестов на H2 (§11) | `project_docs/deployment_guide.md` §4.5, `PostgresTestContainer` |
 | Oracle JDBC | `ojdbc11` 23.4, только `ecom` | `ecom/build.gradle` |
 | Testcontainers | 1.20.6 — выше BOM Boot, причина в §11 | `build.gradle` |
 | Gradle wrapper | 8.5 | `gradle/wrapper/gradle-wrapper.properties` |
@@ -554,8 +554,7 @@ Authentication» под формой — ложное утверждение о 
   `TransactionDetailPage` рядом с переведёнными диалогами.
 - **Выписка `ecom` — на предварительном SQL**, словаря статусов провайдера нет: статус выводится из
   сумм одобренных операций, `void`, `refund` и chargeback не различаются.
-- **Тесты.** Часть интеграционных тестов по-прежнему на H2 (§11). Контейнер тестов — PostgreSQL 16,
-  а `deployment_guide.md` ставит PostgreSQL 15: какая версия в проде, надо решить и свести.
+- **Тесты.** Часть интеграционных тестов по-прежнему на H2 (§11).
 - **Гигиена, до которой не дошли:** `directory/settings.gradle` с собственным `rootProject.name`,
   мёртвая `springBootVersion` в `directory/build.gradle`, неиспользуемый бин `RestTemplate` в `pbl`.
   Docker-образов, `docker-compose.yml` и конфигурации CI в репозитории нет.
@@ -723,7 +722,8 @@ Authentication» под формой — ложное утверждение о 
 ## 11. Тесты
 
 **Где идут.** По умолчанию — H2 в режиме `MODE=PostgreSQL`. Там, где вопрос теста в поведении
-СУБД, — настоящая PostgreSQL 16 в контейнере (Р-68); таким тестам нужен запущенный Docker:
+СУБД, — настоящая PostgreSQL 16 в контейнере (Р-68), та же версия, что в проде (Р-73); таким тестам
+нужен запущенный Docker:
 
 | Модуль | Тесты на PostgreSQL |
 |:---|:---|
@@ -734,7 +734,9 @@ Authentication» под формой — ложное утверждение о 
 Остальные тесты с базой на H2 намеренно: там база просто хранилище.
 
 **Контейнер:**
-- Объявлен один раз — `common` testFixtures, `PostgresTestContainer`: статичный, один на JVM.
+- Объявлен один раз — `common` testFixtures, `PostgresTestContainer`: статичный, один на JVM. Образ
+  `postgres:16-alpine` прибит и совпадает с продовой версией: меняется одна — меняется и другая
+  (`project_docs/deployment_guide.md` §4.5).
   Подключается `@Import(PostgresTestContainer.class)` рядом с `@SpringBootTest`; тестам без Spring
   доступен через `instance()`, и в `SharedSchemaMigrationTest` каждый метод работает в своей схеме.
 - Помечен `@TestConfiguration`, **а не `@Configuration`**: сервисы сканируют `az.millikart` целиком,

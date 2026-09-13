@@ -18,7 +18,7 @@ PostgreSQL плюс React-фронтенд.
 
 ## Запуск
 
-Нужны JDK 21, Node 18+, PostgreSQL. Конфигурация — только через переменные окружения:
+Нужны JDK 21, Node 18+, PostgreSQL 16. Конфигурация — только через переменные окружения:
 как минимум `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` и `JWT_SECRET` (один и тот же секрет
 для всех четырёх сервисов); полный перечень с пояснениями — в [.env.example](.env.example)
 и в `project_docs/deployment_guide.md`. Значений в репозитории нет и быть не должно.

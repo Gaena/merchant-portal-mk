@@ -168,7 +168,10 @@ node -v    # Должно быть v20.x.x
 npm -v     # Должно быть 10.x.x
 ```
 
-### 4.5. Установка PostgreSQL 15
+### 4.5. Установка PostgreSQL 16
+
+> Версия 16 выбрана для прода (решение Р-73) и совпадает с той, на которой идут тесты
+> (`postgres:16-alpine` в `PostgresTestContainer`). Меняется одна — меняется и другая.
 
 ```bash
 # Добавляем официальный репозиторий PostgreSQL
@@ -177,7 +180,7 @@ curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearm
 sudo apt update
 
 # Устанавливаем PostgreSQL
-sudo apt install -y postgresql-15
+sudo apt install -y postgresql-16
 
 # Проверяем, что PostgreSQL запущен
 sudo systemctl status postgresql
@@ -282,7 +285,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 Откройте конфигурационный файл PostgreSQL:
 
 ```bash
-sudo nano /etc/postgresql/15/main/pg_hba.conf
+sudo nano /etc/postgresql/16/main/pg_hba.conf
 ```
 
 Найдите строку (ближе к концу файла):
