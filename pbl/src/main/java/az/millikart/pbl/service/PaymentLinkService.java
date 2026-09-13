@@ -868,7 +868,7 @@ public class PaymentLinkService {
             log.warn("Reconciliation is leaving transaction {} PENDING: the acquirer reports a final state "
                             + "reached outside this service (reversal, refund or closed order). That is not "
                             + "an abandoned payment, so it will not be marked FAILED by age; the money side "
-                            + "must be reviewed by hand (order.trans[] — problems.md §6).",
+                            + "must be reviewed by hand (order.trans[] — AGENTS.md §10).",
                     transactionId);
             return;
         }
@@ -985,17 +985,17 @@ public class PaymentLinkService {
                 // Реверсал, возврат или закрытие сделаны на стороне эквайера, мимо портала. Статус
                 // намеренно не трогаем: сумм мы не знаем, и REFUNDED положил бы в refunded_amount
                 // число, которого никто не видел. Разбор order.trans[] — отдельная задача
-                // (problems.md §6); до неё строка разбирается руками.
+                // (AGENTS.md §10); до неё строка разбирается руками.
                 log.warn("Acquirer reports order status \"{}\" for transaction {} (providerOrderId {}): the "
                                 + "order was changed outside this service (reversal, refund or closed). Local "
                                 + "status stays {} and reconciliation will NOT mark it FAILED; the money side "
-                                + "needs a manual review — see pbl/TXPG-client-side-integration.md §5.8.8.",
+                                + "needs a manual review — see project_docs/TXPG-client-side-integration.md §5.8.8.",
                         raw, transactionId, tx.getProviderOrderId(), tx.getStatus());
             case UNKNOWN ->
                 log.warn("Acquirer returned an order status this service does not know: \"{}\" "
                                 + "(transaction {}, providerOrderId {}). The transaction stays {} and will NOT be "
                                 + "marked FAILED by reconciliation. If this status is legitimate, add it to "
-                                + "ProviderOrderStatus — see pbl/TXPG-client-side-integration.md §5.8.8.",
+                                + "ProviderOrderStatus — see project_docs/TXPG-client-side-integration.md §5.8.8.",
                         raw, transactionId, tx.getProviderOrderId(), tx.getStatus());
         }
 

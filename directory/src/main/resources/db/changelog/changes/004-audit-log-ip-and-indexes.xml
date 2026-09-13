@@ -7,7 +7,7 @@
 
     <!-- P2-2 / P2-5 / P2-6: client address and outcome on every audit record, plus the three
          indexes the queries actually run on. Changeset ids carry the module name because all
-         three services share one DATABASECHANGELOG table (problems.md) — an id that repeats in
+         three services share one DATABASECHANGELOG table (AGENTS.md §10) — an id that repeats in
          another module would be silently skipped. Each change guards itself with a precondition,
          same as after P1-2: a database restored without its DATABASECHANGELOG must skip what is
          already there and still add what is missing. -->

@@ -126,7 +126,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
         // Р-25: пароль заказа уходит в query-строке, поэтому URL нельзя логировать иначе как через
         // ProviderPayloads.urlForLog (P0-9). По контракту пароль в адресе нужен только для
         // GET /order/{id}; для exec-tran его добавили мы, но убирать нельзя без прогона на стенде —
-        // это денежный путь (problems.md §5).
+        // это денежный путь (AGENTS.md §10).
         String url = UriComponentsBuilder.fromUriString(apiBaseUrl)
                 .path(execTranPath)
                 .queryParam("password", password)
@@ -376,7 +376,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
             throw new PaymentOutcomeUnknownException(
                     "Acquirer accepted the " + action + " but did not confirm it: the response has no "
                             + "tran.match.ridByPmo, so the operation may or may not have executed. "
-                            + "Expected shape — see pbl/TXPG-client-side-integration.md §5.5-5.7.");
+                            + "Expected shape — see project_docs/TXPG-client-side-integration.md §5.5-5.7.");
         }
 
         String approvalCode = ProviderPayloads.scalarText(tran.get("approvalCode"));

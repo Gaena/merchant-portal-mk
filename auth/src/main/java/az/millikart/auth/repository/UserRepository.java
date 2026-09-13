@@ -15,7 +15,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByUsername(String username);
 
     // Нативный SQL: сущности companies в auth нет — поиск по названию компании читает таблицу
-    // модуля directory (осознанный долг общей базы, problems.md §18). LEFT JOIN — иначе из списка
+    // модуля directory (осознанный долг общей базы, AGENTS.md §10). LEFT JOIN — иначе из списка
     // выпадет админ без компании. ORDER BY username, id: id — уникальный тайбрейкер (P2-1). Каждый
     // LIKE обязан идти с ESCAPE: без него введённый пользователем % вернёт всю таблицу (P3-1).
     @Query(value = """

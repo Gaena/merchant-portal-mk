@@ -13,7 +13,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 // P1-8b: чтение причины отказа эквайера из custAttrs, без Spring. Порядок поиска повторяет
-// pbl/TXPG-client-side-integration.md §5.8.7; исключение для Approved — из §5.8.3, где успешный
+// project_docs/TXPG-client-side-integration.md §5.8.7; исключение для Approved — из §5.8.3, где успешный
 // заказ несёт PmoResultCode: Approved.
 class ProviderDeclineReasonTest {
 

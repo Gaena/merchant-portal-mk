@@ -41,7 +41,7 @@ public class UrlConfigurationCheck {
               as the address the payer is returned to after paying; the two provider addresses decide
               which acquirer receives the payments. A wrong value does not stop the service — it stops
               the payments — so an unset value stops the service instead.
-              See .env.example and deployment_guide.md, section 8.3.""";
+              See .env.example and project_docs/deployment_guide.md, section 8.3.""";
 
     public UrlConfigurationCheck(
             @Value("${pbl.base-url}") String baseUrl,
@@ -164,7 +164,7 @@ public class UrlConfigurationCheck {
                           payer to after paying (hppRedirectUrl). Over plain HTTP the payer's session and the
                           payment reference in the return redirect are readable on the way, and the acquirer
                           may refuse a non-HTTPS return address altogether. In production put the service behind
-                          HTTPS (deployment_guide.md, section 12) and set {} to the https:// address.
+                          HTTPS (project_docs/deployment_guide.md, section 12) and set {} to the https:// address.
                           Only http://localhost, http://127.0.0.1 and http://[::1] are exempt from this warning.
                         {}""",
                 FRAME, BASE_URL_VARIABLE, uri, BASE_URL_VARIABLE, FRAME);

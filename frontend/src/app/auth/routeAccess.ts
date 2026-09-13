@@ -7,7 +7,7 @@
  * `AuditLogService` и т.д.); клиентские guard'ы лишь прячут то, что сервер всё равно вернёт
  * с 403. Любой пользователь может обойти их в DevTools — и ничего не получит.
  *
- * Раскладка повторяет матрицу из AGENTS.md §6 (по коду, не по `technical_handover.md`):
+ * Раскладка повторяет матрицу из AGENTS.md §6 (по коду, не по `project_docs/technical_handover.md`):
  * `/users` — `POST/GET/PATCH/DELETE /users`; `/companies` — `GET /companies` (список);
  * `/audit-logs` — `GET /audit-logs`. Маршрут, которого здесь нет, открыт всем вошедшим
  * (`/terminals`, `/settings`, транзакции, pay-by-link).

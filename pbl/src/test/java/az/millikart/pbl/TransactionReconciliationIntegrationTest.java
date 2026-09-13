@@ -243,7 +243,7 @@ class TransactionReconciliationIntegrationTest {
     // Refused = возвращён целиком, PartPaid = частично отменён или возвращён (§5.8.8): деньги
     // двигались вне портала. Это не «брошено плательщиком», поэтому не FAILED — и не REFUNDED,
     // потому что сумма локально неизвестна (её разбор из order.trans[] — отдельная задача,
-    // problems.md §6).
+    // AGENTS.md §10).
     @Test
     void reconcile_olderThanMaxAge_providerSaysRefused_staysPending() {
         Transaction tx = agedTransaction("REFUSED", TransactionStatus.PENDING, MAX_AGE.plusHours(1));

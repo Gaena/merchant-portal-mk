@@ -53,7 +53,7 @@ public class SecurityConfig {
                 // которой можно подделать запрос, тоже нет.
                 .csrf(AbstractHttpConfigurer::disable)
                 // CORS выключен намеренно, это не недосмотр: SPA отдаётся с того же origin, что и
-                // API, через nginx (deployment_guide.md), кросс-доменных запросов не бывает.
+                // API, через nginx (project_docs/deployment_guide.md), кросс-доменных запросов не бывает.
                 // Включить CORS — значит начать пускать origin'ы, которым сейчас до API не дойти.
                 .cors(AbstractHttpConfigurer::disable)
                 // Между запросами не хранится ничего, личность несёт токен. Без этого Spring

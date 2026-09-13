@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
 // Пишет в payment_links — таблицу модуля pbl: осознанный кросс-модульный долг, брокера сообщений
-// нет (Р-39, problems.md §1). PaymentLink не мапится как entity: второй JPA-маппинг чужой таблицы
+// нет (Р-39, AGENTS.md §10). PaymentLink не мапится как entity: второй JPA-маппинг чужой таблицы
 // молча разойдётся с ней. Каждый метод — один UPDATE в транзакции вызывающего вместе со сменой
 // статуса: заблокированного терминала с оплачиваемыми ссылками не должно быть ни мгновения.
 @Repository

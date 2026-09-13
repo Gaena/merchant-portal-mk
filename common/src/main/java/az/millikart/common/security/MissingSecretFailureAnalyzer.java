@@ -24,7 +24,7 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
             "Generate a signing key and export it before starting the service:\n"
                     + "\texport JWT_SECRET=\"$(openssl rand -base64 48)\"\n"
                     + SAME_KEY_EVERYWHERE + "\n"
-                    + "See .env.example and deployment_guide.md, \"Первый запуск и ротация ключа\".";
+                    + "See .env.example and project_docs/deployment_guide.md, \"Первый запуск и ротация ключа\".";
 
     private static final String DB_PASSWORD_ACTION =
             """
@@ -46,21 +46,21 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
                     + "acquirer returns the payer to after paying:\n"
                     + "\texport PBL_BASE_URL='https://<your domain>/'\n"
                     + "For a local run: export PBL_BASE_URL='http://localhost:8080/'\n"
-                    + "See .env.example and deployment_guide.md, section 8.3.";
+                    + "See .env.example and project_docs/deployment_guide.md, section 8.3.";
 
     private static final String PBL_PROVIDER_GATEWAY_BASE_URL_ACTION =
             """
                     Export the address of the acquiring (TXPG) gateway that hosts the payment page:
                     \texport PBL_PROVIDER_GATEWAY_BASE_URL='https://<gateway host>:<port>/'
                     The value comes from MilliKart and differs between the test stand and production.
-                    See .env.example and deployment_guide.md, section 8.3.""";
+                    See .env.example and project_docs/deployment_guide.md, section 8.3.""";
 
     private static final String PBL_PROVIDER_API_BASE_URL_ACTION =
             """
                     Export the address of the acquirer's e-commerce API (order status, capture, refund):
                     \texport PBL_PROVIDER_API_BASE_URL='https://<api host>:<port>/'
                     The value comes from MilliKart and differs between the test stand and production.
-                    See .env.example and deployment_guide.md, section 8.3.""";
+                    See .env.example and project_docs/deployment_guide.md, section 8.3.""";
 
     private static final Map<String, String> ACTIONS_BY_VARIABLE = new LinkedHashMap<>();
 

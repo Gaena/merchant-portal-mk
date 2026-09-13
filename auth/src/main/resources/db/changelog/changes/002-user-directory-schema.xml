@@ -73,7 +73,7 @@
     <!-- No admin is seeded here. A migration cannot hold a password that is both secret and
          known to the operator, so the first SYSTEM_ADMIN is created by AdminBootstrapRunner
          from BOOTSTRAP_ADMIN_USERNAME / BOOTSTRAP_ADMIN_PASSWORD on a single start with
-         AUTH_BOOTSTRAP_ENABLED=true. See deployment_guide.md, "Первый запуск и ротация ключа". -->
+         AUTH_BOOTSTRAP_ENABLED=true. See project_docs/deployment_guide.md, "Первый запуск и ротация ключа". -->
 
     <!-- Add foreign key constraint from users to companies.
          onFail="CONTINUE", not MARK_RAN: a skipped changeset must stay retryable. Both tables are

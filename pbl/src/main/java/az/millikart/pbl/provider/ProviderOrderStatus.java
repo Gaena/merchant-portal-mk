@@ -27,7 +27,7 @@ public final class ProviderOrderStatus {
 
     // Cleared (списание холда) и Authorized (холд поставлен) взяты из исходников: контракт
     // описывает только SMS, DMS (Order_DMS) в нём не описан вовсе, и эти статусы им НЕ подтверждены
-    // (problems.md §4). Оставлены, чтобы не сломать работающий DMS-поток; ждут подтверждения
+    // (AGENTS.md §10). Оставлены, чтобы не сломать работающий DMS-поток; ждут подтверждения
     // от MilliKart.
     private static final String CLEARED = "Cleared";
 

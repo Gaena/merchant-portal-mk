@@ -11,8 +11,8 @@ import org.junit.jupiter.api.Test;
 
 // Р-42: журнал append-only, и первая половина правила держится в Java — у репозитория нет
 // способа удалить или заменить запись, у сущности нет способа изменить прочитанную. Вторая
-// половина — грант в базе (deployment_guide.md), бесполезный, пока сервисы ходят под postgres
-// (problems.md). Отменяется всё это случайно: extends JpaRepository "ради findAll" дарит deleteAll.
+// половина — грант в базе (project_docs/deployment_guide.md), бесполезный, пока сервисы ходят под postgres
+// (AGENTS.md §10). Отменяется всё это случайно: extends JpaRepository "ради findAll" дарит deleteAll.
 @DisplayName("the audit journal cannot be edited or deleted from the application (Р-42)")
 class AuditLogAppendOnlyTest {
 
