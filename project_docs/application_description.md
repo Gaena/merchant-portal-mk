@@ -167,8 +167,8 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 | Пакет | Что внутри |
 |:---|:---|
 | `config` | `TxpgDataSourceConfig` — второй источник данных (база шлюза) рядом с основной PostgreSQL, `TxpgProperties` |
-| `controller` | `EcomTransactionController` (выписка, статистика, терминалы периода, операции заказа), `ProviderTerminalController` (справочник терминалов провайдера и его ручное обновление) |
-| `service` | `EcomTransactionService`, `EcomScopeService` (чьи платежи видит пользователь), `EcomStatusResolver`, `ProviderTerminalSyncService`, `ProviderTerminalSource` |
+| `controller` | `EcomTransactionController` (выписка, итоги периода, терминалы для фильтра, карточка заказа), `ProviderTerminalController` (справочник терминалов провайдера и его ручное обновление) |
+| `service` | `EcomTransactionService`, `EcomScopeService` (чьи платежи видит пользователь), `EcomOrderAssembler` (строки шлюза → заказы и их деньги), `EcomOperationKind`, `EcomStatusResolver`, `EcomStatsAccumulator` (итоги периода), `ProviderTerminalSyncService`, `ProviderTerminalSource` |
 | `repository` | SQL к базе шлюза — `TxpgTransactionRepository`, `TxpgProviderTerminalSource`; в PostgreSQL — `ProviderTerminalRepository`, `TerminalRepository` (только чтение) |
 | `scheduler` | `ProviderTerminalSyncScheduler` |
 
@@ -491,9 +491,11 @@ sequenceDiagram
 - **Два источника данных в одном процессе.** Основная PostgreSQL помечена `@Primary` — ей
   достаются JPA и Liquibase. База шлюза подключается отдельным маленьким пулом только на чтение,
   без транзакционного менеджера (`TxpgDataSourceConfig`).
-- **Выписка** читается из базы шлюза синхронно на каждый запрос, одна строка на заказ, страница
-  курсорная; кто что видит и какие поля отдаются — `ecom.md` §2. Запрос к базе шлюза
-  предварительный: ждёт окончательного SQL и сопоставления полей от провайдера.
+- **Выписка** читается из базы шлюза синхронно на каждый запрос, двумя запросами: страница номеров
+  заказов (окно по `tran.id`, период по дате создания заказа), затем все операции этих заказов. В
+  заказы с историей их склеивает `EcomOrderAssembler` (Р-74, Р-75); итоги периода — тот же разбор
+  по потоку строк. Запросы собраны по SQL провайдера от 14.09.2026; кто что видит, какие поля и
+  как считается статус — `ecom.md` §2.
 - **Справочник терминалов провайдера** обновляется в `provider_terminals` по расписанию и по кнопке
   (`ecom.md` §3); по нему `directory` сверяет статусы наших терминалов (§6).
 - **Экран.** Вкладка `/transactions/ecommerce` к API `ecom` ещё не подключена.

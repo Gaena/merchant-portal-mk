@@ -27,6 +27,9 @@ ecom:
     max-page-size: ${ECOM_TXPG_MAX_PAGE_SIZE:200}
     query-timeout: ${ECOM_TXPG_QUERY_TIMEOUT:PT30S}
     fetch-size: ${ECOM_TXPG_FETCH_SIZE:200}
+    # Даты в базе шлюза хранятся местным временем без пояса; этим поясом они читаются и
+    # в нём же режутся границы периода. Ошибка сдвигает всю выписку на разницу поясов.
+    zone: ${ECOM_TXPG_ZONE:Asia/Baku}
     # Сколько опросов подряд терминал должен не приходить, прежде чем считаться выключенным.
     missing-runs-before-disable: ${ECOM_TXPG_MISSING_RUNS:3}
     datasource:

@@ -4,111 +4,139 @@ import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.ResourceNotFoundException;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.ecom.config.TxpgProperties;
+import az.millikart.ecom.domain.ProviderTerminal;
 import az.millikart.ecom.dto.CursorPage;
-import az.millikart.ecom.dto.EcomOperationResponse;
 import az.millikart.ecom.dto.EcomStatsResponse;
 import az.millikart.ecom.dto.EcomTerminalResponse;
 import az.millikart.ecom.dto.EcomTransactionFilter;
 import az.millikart.ecom.dto.EcomTransactionResponse;
+import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.repository.TxpgTransactionRepository;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-/**
- * Выписка по эквайринговым платежам мерчанта.
- *
- * Весь скоуп собирается здесь и только здесь: репозиторий получает уже готовый список RID и
- * подставляет его в каждый запрос. Пустой список означает пустую выписку — мерчант, которому
- * не завели ни одной привязки, видит пустой экран, а не чужие платежи.
- */
+// Выписка по эквайринговым платежам мерчанта. Скоуп собирается здесь и только здесь: репозиторий
+// получает готовый список мерчантов и подставляет его в каждый запрос. Пустой список — пустая
+// выписка без похода в шлюз, а не чужие платежи (AGENTS.md §10).
 @Service
 public class EcomTransactionService {
 
     private static final Logger log = LoggerFactory.getLogger(EcomTransactionService.class);
 
+    private static final int DEFAULT_PAGE_SIZE = 25;
+
     private final TxpgTransactionRepository repository;
     private final EcomScopeService scope;
+    private final ProviderTerminalRepository providerTerminals;
     private final TxpgProperties properties;
 
     public EcomTransactionService(TxpgTransactionRepository repository,
                                   EcomScopeService scope,
+                                  ProviderTerminalRepository providerTerminals,
                                   TxpgProperties properties) {
         this.repository = repository;
         this.scope = scope;
+        this.providerTerminals = providerTerminals;
         this.properties = properties;
     }
 
-    public CursorPage<EcomTransactionResponse> list(Instant dateFrom, Instant dateTo,
-                                                    List<String> terminalIds,
-                                                    BigDecimal minAmount, BigDecimal maxAmount,
-                                                    String query, String cursor, Integer size,
-                                                    UserPrincipal principal) {
-        List<String> rids = scope.merchantRidsFor(principal);
+    public CursorPage<EcomTransactionResponse> list(Instant dateFrom, Instant dateTo, List<String> merchantRids,
+                                                    BigDecimal minAmount, BigDecimal maxAmount, String query,
+                                                    String cursor, Integer size, UserPrincipal principal) {
+        List<String> rids = narrow(scope.merchantRidsFor(principal), merchantRids);
         if (rids.isEmpty()) {
-            log.info("No provider terminals are linked for this caller; returning an empty statement");
+            log.info("No provider terminals in scope for this request; returning an empty statement");
             return new CursorPage<>(List.of(), null);
         }
-
+        requireWindow(dateFrom, dateTo);
         int pageSize = pageSize(size);
         EcomTransactionFilter filter = new EcomTransactionFilter(
-                rids, dateFrom, window(dateFrom, dateTo), terminalIds,
-                minAmount, maxAmount, query, cursor, pageSize + 1);
+                rids, dateFrom, dateTo, minAmount, maxAmount, blankToNull(query));
 
-        List<EcomTransactionResponse> rows = repository.findPage(filter, decodeCursor(cursor));
+        // Лишний номер запрошен ради одного вопроса: есть ли что-то дальше.
+        List<Long> orderIds = repository.findOrderIds(filter, decodeCursor(cursor), pageSize + 1);
+        boolean hasMore = orderIds.size() > pageSize;
+        List<Long> pageIds = hasMore ? orderIds.subList(0, pageSize) : orderIds;
 
-        // Лишняя строка запрошена ради одного вопроса: есть ли что-то дальше. Иначе последняя
-        // страница отличалась бы от полной только на глаз, и «дальше» предлагалось бы в пустоту.
-        boolean hasMore = rows.size() > pageSize;
-        List<EcomTransactionResponse> content = hasMore ? rows.subList(0, pageSize) : rows;
-        String nextCursor = hasMore ? encodeCursor(content.get(content.size() - 1)) : null;
-
-        return new CursorPage<>(List.copyOf(content), nextCursor);
+        List<EcomTransactionResponse> orders =
+                EcomOrderAssembler.assemble(repository.findRows(pageIds, rids, dateFrom));
+        // Курсор — последний номер страницы, а не последней собранной строки: заказ, пропавший
+        // между двумя запросами, не должен сдвинуть следующую страницу.
+        String nextCursor = hasMore ? encodeCursor(pageIds.get(pageIds.size() - 1)) : null;
+        return new CursorPage<>(orders, nextCursor);
     }
 
-    public EcomStatsResponse stats(Instant dateFrom, Instant dateTo, UserPrincipal principal) {
-        List<String> rids = scope.merchantRidsFor(principal);
+    public EcomStatsResponse stats(Instant dateFrom, Instant dateTo, List<String> merchantRids,
+                                   UserPrincipal principal) {
+        List<String> rids = narrow(scope.merchantRidsFor(principal), merchantRids);
+        EcomStatsAccumulator accumulator = new EcomStatsAccumulator();
         if (rids.isEmpty()) {
-            return new EcomStatsResponse(0, 0, 0, 0, BigDecimal.ZERO, BigDecimal.ZERO, null);
+            return accumulator.result();
         }
-        return repository.findStats(new EcomTransactionFilter(
-                rids, dateFrom, window(dateFrom, dateTo), null, null, null, null, null, 0));
+        requireWindow(dateFrom, dateTo);
+        repository.streamPeriodRows(
+                new EcomTransactionFilter(rids, dateFrom, dateTo, null, null, null), accumulator);
+        return accumulator.result();
     }
 
-    public List<EcomTerminalResponse> terminals(Instant dateFrom, Instant dateTo, UserPrincipal principal) {
-        List<String> rids = scope.merchantRidsFor(principal);
+    // Источник фильтра — терминалы скоупа из нашей базы, без похода в шлюз: у провайдера терминал
+    // и мерчант одно, и список «кто мог платить» и есть список терминалов компании.
+    public List<EcomTerminalResponse> terminals(UserPrincipal principal) {
+        List<String> rids = scope.merchantRidsFor(principal).stream().distinct().toList();
         if (rids.isEmpty()) {
             return List.of();
         }
-        return repository.findTerminals(new EcomTransactionFilter(
-                rids, dateFrom, window(dateFrom, dateTo), null, null, null, null, null, 0));
+        Map<String, ProviderTerminal> known = providerTerminals.findAllById(rids).stream()
+                .collect(Collectors.toMap(ProviderTerminal::getRid, Function.identity()));
+        return rids.stream()
+                .map(rid -> {
+                    ProviderTerminal terminal = known.get(rid);
+                    return terminal != null
+                            ? new EcomTerminalResponse(rid, terminal.getTitle(), terminal.getLogin())
+                            : new EcomTerminalResponse(rid, null, null);
+                })
+                .sorted(Comparator.comparing(EcomTerminalResponse::title, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(EcomTerminalResponse::merchantRid))
+                .toList();
     }
 
-    public List<EcomOperationResponse> operations(String orderId, UserPrincipal principal) {
+    public EcomTransactionResponse order(String orderId, UserPrincipal principal) {
         List<String> rids = scope.merchantRidsFor(principal);
-        if (rids.isEmpty()) {
-            // Не «пустая история», а «такого заказа для вас нет»: подобранный номер не должен
-            // отличаться на экране от заказа, который существует, но принадлежит другому.
-            throw new ResourceNotFoundException("Transaction not found: " + orderId);
+        Long id = parseOrderId(orderId);
+        // Чужой, несуществующий и незавершённый заказ неотличимы: подобранный номер не должен
+        // подтверждать, что такой заказ у провайдера есть.
+        List<EcomTransactionResponse> orders = rids.isEmpty() || id == null
+                ? List.of()
+                : EcomOrderAssembler.assemble(repository.findRows(List.of(id), rids, null));
+        if (orders.isEmpty()) {
+            // Номер из адреса отражается в ответ, только когда это число.
+            throw new ResourceNotFoundException(id != null ? "Transaction not found: " + id : "Transaction not found");
         }
-        List<EcomOperationResponse> operations = repository.findOperations(rids, orderId);
-        if (operations.isEmpty()) {
-            throw new ResourceNotFoundException("Transaction not found: " + orderId);
-        }
-        return operations;
+        return orders.get(0);
     }
 
-    /**
-     * Период обязателен и ограничен сверху. Выписка «за всё время» по операционной базе шлюза —
-     * это полный скан на инстансе, который в этот момент проводит авторизации.
-     */
-    private Instant window(Instant dateFrom, Instant dateTo) {
+    // Фильтр сужает скоуп и никогда его не расширяет: мерчант вне скоупа из запроса просто выпадает.
+    private static List<String> narrow(List<String> scopeRids, List<String> requested) {
+        if (requested == null || requested.isEmpty()) {
+            return scopeRids;
+        }
+        return scopeRids.stream().filter(requested::contains).distinct().toList();
+    }
+
+    // Период обязателен и ограничен сверху: выписка «за всё время» — полный скан операционной
+    // базы шлюза на инстансе, который в этот момент проводит авторизации.
+    private void requireWindow(Instant dateFrom, Instant dateTo) {
         if (dateFrom == null || dateTo == null) {
             throw new BusinessException("dateFrom and dateTo are required");
         }
@@ -119,43 +147,47 @@ public class EcomTransactionService {
         if (Duration.between(dateFrom, dateTo).compareTo(max) > 0) {
             throw new BusinessException("The requested period exceeds the maximum of " + max.toDays() + " days");
         }
-        return dateTo;
     }
 
     private int pageSize(Integer requested) {
-        int fallback = 25;
-        int value = requested != null ? requested : fallback;
+        int value = requested != null ? requested : DEFAULT_PAGE_SIZE;
         return Math.clamp(value, 1, properties.getMaxPageSize());
     }
 
-    /**
-     * Курсор — это позиция, а не секрет: время последней операции и номер заказа последней
-     * отданной строки. Base64 здесь лишь затем, чтобы значение пережило строку запроса, и
-     * подделка курсора не даёт ничего — скоуп по мерчанту в запрос подставляется отдельно.
-     */
-    private String encodeCursor(EcomTransactionResponse last) {
-        String raw = last.lastOperationAt() + "|" + last.orderId();
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private TxpgTransactionRepository.Cursor decodeCursor(String cursor) {
+    private static Long parseOrderId(String value) {
+        if (value == null || value.isBlank() || value.length() > 18 || !value.chars().allMatch(Character::isDigit)) {
+            return null;
+        }
+        long id = Long.parseLong(value);
+        return id > 0 ? id : null;
+    }
+
+    // Курсор — позиция, а не секрет: номер последнего заказа страницы. Base64 — чтобы клиент не
+    // собирал его сам; подделка не даёт ничего, скоуп подставляется в запрос отдельно.
+    private static String encodeCursor(long orderId) {
+        return Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(Long.toString(orderId).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static Long decodeCursor(String cursor) {
         if (cursor == null || cursor.isBlank()) {
             return null;
         }
+        Long orderId;
         try {
-            String raw = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
-            int separator = raw.lastIndexOf('|');
-            if (separator < 0) {
-                throw new IllegalArgumentException("no separator");
-            }
-            return new TxpgTransactionRepository.Cursor(
-                    Instant.parse(raw.substring(0, separator)),
-                    raw.substring(separator + 1));
-        } catch (RuntimeException e) {
-            // Битый курсор — это 400, а не 500: его правит клиент, а не мы. Значение в сообщение
-            // не попадает, чтобы не отражать в ответ произвольную строку из запроса.
-            log.warn("Rejecting an unreadable statement cursor: {}", e.getMessage());
+            orderId = parseOrderId(new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8));
+        } catch (IllegalArgumentException e) {
+            orderId = null;
+        }
+        if (orderId == null) {
+            // 400, а не 500: курсор правит клиент. Само значение в ответ не отражается.
+            log.warn("Rejecting an unreadable statement cursor");
             throw new BusinessException("Invalid page cursor");
         }
+        return orderId;
     }
 }

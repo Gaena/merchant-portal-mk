@@ -2,154 +2,84 @@ package az.millikart.ecom.repository;
 
 import az.millikart.ecom.config.TxpgDataSourceConfig;
 import az.millikart.ecom.config.TxpgProperties;
-import az.millikart.ecom.dto.EcomOperationResponse;
-import az.millikart.ecom.dto.EcomStatsResponse;
-import az.millikart.ecom.dto.EcomTerminalResponse;
 import az.millikart.ecom.dto.EcomTransactionFilter;
-import az.millikart.ecom.dto.EcomTransactionResponse;
-import az.millikart.ecom.service.EcomStatusResolver;
-import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Consumer;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-/**
- * Чтение платежей из схемы шлюза провайдера.
- *
- * Четыре правила, на которых держится всё остальное:
- *
- * 1. **Одна строка на заказ.** `tran` даёт строку на операцию, у DMS-платежа их минимум две.
- *    Поэтому операции сворачиваются группировкой по `orderid`, а не отдаются как есть.
- * 2. **Токен свёрнут подзапросом.** Токен привязан к заказу, а не к операции: клиент, попробовавший
- *    две карты, оставляет два токена, и прямой join размножил бы каждую операцию вдвое.
- * 3. **Скоуп обязателен.** `m.rid in (:merchant_rids)` стоит в запросе всегда, список приходит из
- *    таблицы привязок. Ни одного пути, на котором этот фильтр можно не подставить, здесь нет.
- * 4. **`merchant` через inner join.** Условие на таблицу из LEFT JOIN, вынесенное в WHERE, и так
- *    превращает его в INNER — но написанное явно оно не станет миной для того, кто через полгода
- *    снимет фильтр по мерчанту и не поймёт, куда делись заказы.
- *
- * Окно по `tr.id` — их собственный приём: идентификатор монотонно растёт по времени, и
- * `getLowIdForTime` / `getHighIdForTime` сужают скан по первичному ключу вместо диапазона по
- * времени. Быстро, но это контракт, которого нет в документации, и его гарантии надо получить
- * письменно.
- *
- * Следствие окна: заказ, по которому в периоде не было ни одной операции, сюда не попадает.
- * Созданный, но не оплаченный платёж в выписке за период не виден — намеренно, потому что
- * объединять его вторым запросом по `o.createtime` без утверждённого словаря статусов значит
- * гадать, чем такой заказ кончился.
- *
- * Секретов в выборке нет: `o.password` — это то, чем подписываются обращения к заказу, и пара
- * «номер заказа плюс пароль» даёт доступ к чужим операциям. В выписку, в экспорт и в логи он
- * не попадает никогда.
- */
-// ОБЯЗАТЕЛЬНО при замене запроса на присланный провайдером: выписка берёт **только завершённые**
-// заказы. Кнопка «Тест» у терминала заводит у провайдера настоящий неоплаченный заказ
-// (TerminalCheckService в pbl), и без этого фильтра каждое её нажатие появилось бы у мерчанта
-// строкой в выписке.
+// Выписка из схемы шлюза. Колонки — только из SQL провайдера (14.09.2026): одна отсутствующая
+// в схеме колонка роняет всю выписку. o.password не выбирается никогда (AGENTS.md §10).
 @Repository
 public class TxpgTransactionRepository {
 
+    // Р-71: только завершённые заказы. Перечислено незавершённое, а не завершённое: заказ с
+    // незнакомым статусом виден с кодом провайдера — пропавший из выписки платёж хуже лишней строки.
+    // Исключение для Authorized со списанием — finishedOrdersOnly (Р-76).
+    public static final List<String> UNFINISHED_ORDER_STATUSES = List.of("Preparing", "Authorized", "Expired");
+
+    // Первая операция проходит, пока заказ жив (неоплаченный провайдер закрывает через 10 минут),
+    // поэтому заказы периода ищутся по операциям не дальше суток после его конца.
+    static final Duration FIRST_OPERATION_LAG = Duration.ofDays(1);
+
+    private static final String COLUMNS = """
+            select o.id             order_id,
+                   o.ridbymerchant  rid_by_merchant,
+                   o.status         order_status,
+                   o.prevstatus     order_prev_status,
+                   o.description    description,
+                   o.amt            order_amount,
+                   o.ccy            order_ccy,
+                   o.createtime     order_created,
+                   m.rid            merchant_rid,
+                   m.title          merchant_title,
+                   tr.ridbyacq      tran_id,
+                   tr.rrn           rrn,
+                   tr.origtime      tran_time,
+                   tr.pmoresultcode result_code,
+                   tr.tranamt       tran_amount,
+                   tr.clearamt      clear_amount,
+                   tr.tranccy       tran_ccy,
+                   tr.trantype      tran_type,
+                   tr.phase         phase,
+                   tr.voidkind      void_kind,
+                   tr.authkind      auth_kind,
+            """;
+
     private final NamedParameterJdbcTemplate jdbc;
     private final TxpgProperties properties;
+    private final Clock clock;
+    private final RowMapper<TxpgStatementRow> rowMapper = this::mapRow;
 
+    @Autowired
     public TxpgTransactionRepository(@Qualifier(TxpgDataSourceConfig.TXPG_JDBC) NamedParameterJdbcTemplate jdbc,
                                      TxpgProperties properties) {
+        this(jdbc, properties, Clock.systemUTC());
+    }
+
+    TxpgTransactionRepository(NamedParameterJdbcTemplate jdbc, TxpgProperties properties, Clock clock) {
         this.jdbc = jdbc;
         this.properties = properties;
+        this.clock = clock;
     }
 
-    /** Общая часть: окно по id и свёрнутые до заказа операции. */
-    private String aggregateCte() {
-        String schema = properties.getSchema();
-        return """
-                with b as (
-                  select %1$s.RDX_Action.getLowIdForTime (:date_from) lo,
-                         %1$s.RDX_Action.getHighIdForTime(:date_to)   hi
-                    from dual
-                ),
-                t as (
-                  select tr.orderid, tr.terminalid, tr.rrn, tr.ridbypmo, tr.origtime,
-                         tr.trantype, tr.phase, tr.pmoresultcode, tr.tranamt, tr.tranccy
-                    from %1$s.tran tr
-                   cross join b
-                   where tr.id between b.lo and b.hi
-                ),
-                agg as (
-                  select orderid,
-                         min(origtime)                                              first_op_time,
-                         max(origtime)                                              last_op_time,
-                         count(*)                                                   op_count,
-                         max(terminalid) keep (dense_rank first order by origtime)   terminal_id,
-                         max(rrn)        keep (dense_rank first order by origtime)   rrn,
-                         max(tranccy)    keep (dense_rank first order by origtime)   tran_ccy,
-                         sum(case when pmoresultcode = 'Approved'
-                                   and trantype in ('Purchase','Capture')
-                                  then tranamt else 0 end)                          captured_amt,
-                         sum(case when pmoresultcode = 'Approved'
-                                   and trantype in ('Refund','Reversal')
-                                  then tranamt else 0 end)                          refunded_amt,
-                         max(case when pmoresultcode <> 'Approved'
-                                  then pmoresultcode end)                           decline_code,
-                         max(case when pmoresultcode = 'Approved'
-                                   and trantype in ('Authorization','Auth')
-                                  then 1 else 0 end)                                has_approved_auth
-                    from t
-                   group by orderid
-                )
-                """.formatted(schema);
-    }
-
-    public List<EcomTransactionResponse> findPage(EcomTransactionFilter filter, Cursor cursor) {
-        String schema = properties.getSchema();
-        StringBuilder sql = new StringBuilder(aggregateCte());
-        sql.append("""
-                select o.id                order_id,
-                       m.rid               merchant_rid,
-                       m.title             merchant_title,
-                       o.ridbymerchant     rid_by_merchant,
-                       o.status            order_status,
-                       o.prevstatus        order_prev_status,
-                       o.description       description,
-                       o.amt               order_amount,
-                       o.ccy               order_ccy,
-                       o.createtime        order_created,
-                       o.srcemail          src_email,
-                       o.srcmobile         src_mobile,
-                       a.first_op_time,
-                       a.last_op_time,
-                       a.op_count,
-                       a.terminal_id,
-                       a.rrn,
-                       a.captured_amt,
-                       a.refunded_amt,
-                       a.decline_code,
-                       a.has_approved_auth,
-                       tk.displayname      card_mask
-                  from agg a
-                  join %1$s.order_   o on o.id = a.orderid
-                  join %1$s.merchant m on m.id = o.merchantid
-                  left join (
-                        select orderid,
-                               max(displayname) keep (dense_rank first order by id desc) displayname
-                          from %1$s.token
-                         group by orderid
-                  ) tk on tk.orderid = o.id
-                 where m.rid in (:merchant_rids)
-                """.formatted(schema));
-
-        MapSqlParameterSource params = baseParams(filter);
-
-        if (filter.terminalIds() != null && !filter.terminalIds().isEmpty()) {
-            sql.append("   and a.terminal_id in (:terminal_ids)\n");
-            params.addValue("terminal_ids", filter.terminalIds());
-        }
+    // Страница — только номера заказов, от новых к старым; операции забирает findRows. Одним
+    // запросом на странице было бы N операций, а не N заказов (Р-74).
+    public List<Long> findOrderIds(EcomTransactionFilter filter, Long beforeOrderId, int limit) {
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        StringBuilder sql = new StringBuilder(periodOrders(filter, params));
         if (filter.minAmount() != null) {
             sql.append("   and o.amt >= :min_amount\n");
             params.addValue("min_amount", filter.minAmount());
@@ -158,170 +88,163 @@ public class TxpgTransactionRepository {
             sql.append("   and o.amt <= :max_amount\n");
             params.addValue("max_amount", filter.maxAmount());
         }
-        if (filter.query() != null && !filter.query().isBlank()) {
-            // Поиск по тому, чем мерчант оперирует: номер заказа, его собственная ссылка, RRN
-            // и почта плательщика. Ни одного LIKE '%...%' по фактовой таблице: на операционной
-            // базе шлюза это полный скан.
-            sql.append("""
-                       and ( to_char(o.id)     = :query
-                          or o.ridbymerchant   = :query
-                          or a.rrn             = :query
-                          or lower(o.srcemail) = lower(:query) )
-                    """);
-            params.addValue("query", filter.query().trim());
+        if (filter.query() != null) {
+            // Только точное совпадение: LIKE '%...%' по операциям шлюза — это полный скан.
+            sql.append("   and (to_char(o.id) = :query or o.ridbymerchant = :query or tr.rrn = :query)\n");
+            params.addValue("query", filter.query());
         }
-        if (cursor != null) {
-            // Keyset: строго то же выражение, что и в order by, иначе страница поедет.
-            sql.append("   and (a.last_op_time < :cursor_ts"
-                    + " or (a.last_op_time = :cursor_ts and o.id < :cursor_id))\n");
-            params.addValue("cursor_ts", Timestamp.from(cursor.lastOperationAt()));
-            params.addValue("cursor_id", cursor.orderId());
+        if (beforeOrderId != null) {
+            sql.append("   and o.id < :before_order_id\n");
+            params.addValue("before_order_id", beforeOrderId);
         }
-
-        sql.append(" order by a.last_op_time desc, o.id desc\n");
-        sql.append(" fetch first :page_size rows only");
-        params.addValue("page_size", filter.pageSize());
-
-        return jdbc.query(sql.toString(), params, TRANSACTION_MAPPER);
+        sql.append(" group by o.id\n order by o.id desc\n fetch first :limit rows only");
+        params.addValue("limit", limit);
+        return jdbc.query(sql.toString(), params, (rs, rowNum) -> rs.getLong("order_id"));
     }
 
-    public List<EcomOperationResponse> findOperations(List<String> merchantRids, String orderId) {
+    // Все операции заказов, без окна сверху: история полная, даже если клиринг прошёл после
+    // периода. Скоуп и Р-71 повторены — карточка приходит сюда с номером из адреса.
+    public List<TxpgStatementRow> findRows(List<Long> orderIds, List<String> merchantRids, Instant operationsFrom) {
+        if (orderIds.isEmpty()) {
+            return List.of();
+        }
         String schema = properties.getSchema();
-        // Скоуп и здесь: карточка заказа открывается по номеру из адреса, и без проверки мерчанта
-        // подобранный номер показал бы операции чужого платежа.
-        String sql = """
-                select tr.ridbypmo   operation_id,
-                       tr.origtime   at,
-                       tr.trantype   type,
-                       tr.phase      phase,
-                       tr.pmoresultcode result_code,
-                       tr.tranamt    amount,
-                       tr.tranccy    currency,
-                       tr.rrn        rrn,
-                       tr.terminalid terminal_id
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("order_ids", orderIds)
+                .addValue("merchant_rids", merchantRids)
+                .addValue("unfinished_statuses", UNFINISHED_ORDER_STATUSES);
+        // Токен — подзапросом: у покупателя, пробовавшего две карты, их два, и join задвоил бы операции.
+        StringBuilder sql = new StringBuilder(COLUMNS).append("""
+                       tk.displayname   card_mask
+                  from %1$s.order_ o
+                  join %1$s.merchant m on m.id = o.merchantid
+                  join %1$s.tran    tr on tr.orderid = o.id
+                  left join (select orderid, max(displayname) displayname
+                               from %1$s.token
+                              where orderid in (:order_ids)
+                              group by orderid) tk on tk.orderid = o.id
+                 where o.id in (:order_ids)
+                   and m.rid in (:merchant_rids)
+                """.formatted(schema)).append(finishedOrdersOnly());
+        if (operationsFrom != null) {
+            sql.append("   and tr.id >= ").append(lowIdForTime("operations_from")).append('\n');
+            params.addValue("operations_from", local(operationsFrom));
+        }
+        sql.append(" order by o.id desc, tr.origtime, tr.ridbyacq");
+        return jdbc.query(sql.toString(), params, rowMapper);
+    }
+
+    // Итоги периода — по всем его заказам, а не по странице. Строки идут потоком и складываются
+    // теми же правилами, что и страница: второго набора правил в SQL нет и заводить его нельзя.
+    public void streamPeriodRows(EcomTransactionFilter filter, Consumer<TxpgStatementRow> sink) {
+        String schema = properties.getSchema();
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        String sql = COLUMNS + """
+                       null             card_mask
+                  from %1$s.order_ o
+                  join %1$s.merchant m on m.id = o.merchantid
+                  join %1$s.tran    tr on tr.orderid = o.id
+                 where o.id in (
+                """.formatted(schema)
+                + periodOrders(filter, params)
+                + """
+                       )
+                   and m.rid in (:merchant_rids)
+                """
+                + "   and tr.id >= " + lowIdForTime("date_from") + "\n"
+                + " order by o.id desc, tr.origtime, tr.ridbyacq\n";
+        jdbc.query(sql, params, (RowCallbackHandler) rs -> sink.accept(mapRow(rs, 0)));
+    }
+
+    // Заказы периода: созданы в нём (Р-74), у мерчантов скоупа, завершены (Р-71), и операции по
+    // ним были. Окно по tran.id — приём провайдера: id растёт со временем и сужает скан.
+    private String periodOrders(EcomTransactionFilter filter, MapSqlParameterSource params) {
+        String schema = properties.getSchema();
+        StringBuilder sql = new StringBuilder("""
+                select o.id order_id
                   from %1$s.tran tr
                   join %1$s.order_   o on o.id = tr.orderid
                   join %1$s.merchant m on m.id = o.merchantid
-                 where tr.orderid = :order_id
+                """.formatted(schema))
+                .append(" where tr.id >= ").append(lowIdForTime("date_from")).append('\n');
+        // Граница сверху — только у прошедших периодов: у текущего она упёрлась бы в часы базы
+        // (lowIdForTime) и отрезала последние минуты, а скан до сегодня здесь всё равно нужен.
+        Instant scanTo = filter.dateTo().plus(FIRST_OPERATION_LAG);
+        if (scanTo.isBefore(clock.instant())) {
+            sql.append("   and tr.id < ").append(lowIdForTime("scan_to")).append('\n');
+            params.addValue("scan_to", local(scanTo));
+        }
+        sql.append("""
                    and m.rid in (:merchant_rids)
-                 order by tr.origtime
-                """.formatted(schema);
-
-        MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("order_id", orderId)
-                .addValue("merchant_rids", merchantRids);
-
-        return jdbc.query(sql, params, (rs, rowNum) -> new EcomOperationResponse(
-                rs.getString("operation_id"),
-                instant(rs, "at"),
-                rs.getString("type"),
-                rs.getString("phase"),
-                rs.getString("result_code"),
-                rs.getBigDecimal("amount"),
-                rs.getString("currency"),
-                rs.getString("rrn"),
-                rs.getString("terminal_id")
-        ));
-    }
-
-    public EcomStatsResponse findStats(EcomTransactionFilter filter) {
-        String schema = properties.getSchema();
-        String sql = aggregateCte() + """
-                select count(*)                                                    order_count,
-                       sum(a.captured_amt)                                         captured_total,
-                       sum(a.refunded_amt)                                         refunded_total,
-                       count(case when a.captured_amt > 0 then 1 end)              success_count,
-                       count(case when a.captured_amt = 0
-                                   and a.has_approved_auth = 0
-                                   and a.op_count > 0 then 1 end)                  failed_count,
-                       count(case when a.captured_amt = 0
-                                   and a.has_approved_auth = 1 then 1 end)         pending_count,
-                       max(o.ccy)                                                  currency
-                  from agg a
-                  join %1$s.order_   o on o.id = a.orderid
-                  join %1$s.merchant m on m.id = o.merchantid
-                 where m.rid in (:merchant_rids)
-                """.formatted(schema);
-
-        return jdbc.queryForObject(sql, baseParams(filter), (rs, rowNum) -> new EcomStatsResponse(
-                rs.getLong("order_count"),
-                rs.getLong("success_count"),
-                rs.getLong("failed_count"),
-                rs.getLong("pending_count"),
-                zeroIfNull(rs.getBigDecimal("captured_total")),
-                zeroIfNull(rs.getBigDecimal("refunded_total")),
-                rs.getString("currency")
-        ));
-    }
-
-    public List<EcomTerminalResponse> findTerminals(EcomTransactionFilter filter) {
-        String schema = properties.getSchema();
-        String sql = aggregateCte() + """
-                select a.terminal_id, count(*) order_count
-                  from agg a
-                  join %1$s.order_   o on o.id = a.orderid
-                  join %1$s.merchant m on m.id = o.merchantid
-                 where m.rid in (:merchant_rids)
-                   and a.terminal_id is not null
-                 group by a.terminal_id
-                 order by a.terminal_id
-                """.formatted(schema);
-
-        return jdbc.query(sql, baseParams(filter), (rs, rowNum) -> new EcomTerminalResponse(
-                rs.getString("terminal_id"),
-                rs.getLong("order_count")
-        ));
-    }
-
-    private MapSqlParameterSource baseParams(EcomTransactionFilter filter) {
-        return new MapSqlParameterSource()
+                   and o.createtime >= :date_from
+                   and o.createtime <  :date_to
+                """).append(finishedOrdersOnly());
+        params.addValue("date_from", local(filter.dateFrom()))
+                .addValue("date_to", local(filter.dateTo()))
                 .addValue("merchant_rids", filter.merchantRids())
-                .addValue("date_from", Timestamp.from(filter.dateFrom()))
-                .addValue("date_to", Timestamp.from(filter.dateTo()));
+                .addValue("unfinished_statuses", UNFINISHED_ORDER_STATUSES);
+        return sql.toString();
     }
 
-    /** Позиция в выписке: время последней операции заказа и его номер. Второе разрешает совпадения. */
-    public record Cursor(Instant lastOperationAt, String orderId) {
+    // getLowIdForTime на будущем времени не работает (провайдер, 14.09.2026), а наши часы и пояс
+    // (ecom.txpg.zone) с часами базы могут разойтись. Аргумент прижимается к sysdate самой базы с
+    // запасом: окно снизу от этого только шире, а будущего времени функции не достаётся никогда.
+    private String lowIdForTime(String parameter) {
+        return "(select %s.RDX_Action.getLowIdForTime(least(cast(:%s as date), sysdate - interval '5' minute)) from dual)"
+                .formatted(properties.getSchema(), parameter);
     }
 
-    private static final RowMapper<EcomTransactionResponse> TRANSACTION_MAPPER = (rs, rowNum) -> {
-        BigDecimal captured = zeroIfNull(rs.getBigDecimal("captured_amt"));
-        BigDecimal refunded = zeroIfNull(rs.getBigDecimal("refunded_amt"));
-        int operations = rs.getInt("op_count");
-        boolean approvedAuth = rs.getInt("has_approved_auth") == 1;
+    // Р-76: при мультиклиринге заказ остаётся Authorized и после списания (175195: 30 из 50), и без
+    // исключения списанные деньги ждали бы финального статуса до N дней. Признак списания — тот же,
+    // что у EcomOperationKind.CAPTURE; поменяешь один — меняй и другой.
+    private String finishedOrdersOnly() {
+        return """
+                   and (o.status not in (:unfinished_statuses)
+                        or (o.status = 'Authorized'
+                            and exists (select 1
+                                          from %1$s.tran c
+                                         where c.orderid = o.id
+                                           and c.trantype = 'Purchase'
+                                           and c.phase = 'Clearing'
+                                           and c.voidkind is null
+                                           and c.pmoresultcode = 'Approved')))
+                """.formatted(properties.getSchema());
+    }
 
-        return new EcomTransactionResponse(
+    private TxpgStatementRow mapRow(ResultSet rs, int rowNum) throws SQLException {
+        return new TxpgStatementRow(
                 rs.getString("order_id"),
-                rs.getString("merchant_rid"),
-                rs.getString("merchant_title"),
                 rs.getString("rid_by_merchant"),
-                EcomStatusResolver.resolve(captured, refunded, approvedAuth, operations).name(),
                 rs.getString("order_status"),
                 rs.getString("order_prev_status"),
-                rs.getBigDecimal("order_amount"),
-                captured,
-                refunded,
-                rs.getString("order_ccy"),
                 rs.getString("description"),
+                rs.getBigDecimal("order_amount"),
+                rs.getString("order_ccy"),
                 instant(rs, "order_created"),
-                instant(rs, "first_op_time"),
-                instant(rs, "last_op_time"),
-                operations,
-                rs.getString("terminal_id"),
+                rs.getString("merchant_rid"),
+                rs.getString("merchant_title"),
                 rs.getString("card_mask"),
+                rs.getString("tran_id"),
                 rs.getString("rrn"),
-                rs.getString("decline_code"),
-                rs.getString("src_email"),
-                rs.getString("src_mobile")
-        );
-    };
-
-    private static Instant instant(ResultSet rs, String column) throws SQLException {
-        Timestamp value = rs.getTimestamp(column);
-        return value != null ? value.toInstant() : null;
+                instant(rs, "tran_time"),
+                rs.getString("result_code"),
+                rs.getBigDecimal("tran_amount"),
+                rs.getBigDecimal("clear_amount"),
+                rs.getString("tran_ccy"),
+                rs.getString("tran_type"),
+                rs.getString("phase"),
+                rs.getString("void_kind"),
+                rs.getString("auth_kind"));
     }
 
-    private static BigDecimal zeroIfNull(BigDecimal value) {
-        return value != null ? value : BigDecimal.ZERO;
+    // Даты шлюза — местное время без пояса: в параметры уходит местное время, из колонок оно же
+    // читается в поясе ecom.txpg.zone. Instant в параметре сдвинул бы период на пояс JVM.
+    private LocalDateTime local(Instant value) {
+        return LocalDateTime.ofInstant(value, properties.getZone());
+    }
+
+    private Instant instant(ResultSet rs, String column) throws SQLException {
+        Timestamp value = rs.getTimestamp(column);
+        return value != null ? value.toLocalDateTime().atZone(properties.getZone()).toInstant() : null;
     }
 }

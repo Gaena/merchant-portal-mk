@@ -3,24 +3,23 @@ package az.millikart.ecom.dto;
 import java.math.BigDecimal;
 import java.time.Instant;
 
-/**
- * Одна операция по заказу — авторизация, списание, возврат, отмена.
- *
- * Отдаётся только на карточке заказа и служит её историей: в отличие от платёжных ссылок, где
- * историю приходится собирать из своих же меток, здесь она есть у провайдера в готовом виде.
- *
- * Коды операции уходят сырыми. Словарь `trantype` / `phase` / `pmoresultcode` провайдер не
- * утверждал, и переводить незнакомое значение в свой словарь значило бы выдумывать.
- */
+// Операция заказа — строка его истории. kind — наш разбор, рядом сырые коды провайдера: их словарь
+// не утверждён, и расхождение разбора с кодами должно быть видно, а не спрятано.
 public record EcomOperationResponse(
-        String operationId,
+        // tran.ridbyacq: 18 цифр, только строкой — в double последние знаки выдумываются.
+        String tranId,
         Instant at,
+        // AUTHORIZATION, CAPTURE, PURCHASE, REVERSAL, REFUND или UNKNOWN (EcomOperationKind).
+        String kind,
         String type,
         String phase,
+        String voidKind,
+        String authKind,
         String resultCode,
         BigDecimal amount,
+        // Сколько операция списала: у авторизации и реверсала холда 0, у возврата и реверсала покупки — с минусом.
+        BigDecimal clearAmount,
         String currency,
-        String rrn,
-        String terminalId
+        String rrn
 ) {
 }
