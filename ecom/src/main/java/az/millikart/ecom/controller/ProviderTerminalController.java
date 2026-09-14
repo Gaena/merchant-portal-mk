@@ -15,13 +15,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * Терминалы провайдера: то, из чего администратор выбирает, заводя наш терминал.
- *
- * Отдаётся слепок из нашей базы, а не живой запрос к шлюзу: форма заведения терминала не должна
- * ждать чужую базу и падать вместе с ней. Слепок обновляет расписание, а кнопка ниже позволяет
- * администратору обновить его прямо сейчас, когда он знает, что у провайдера что-то поменялось.
- */
+// Справочник терминалов провайдера для формы заведения нашего, только SYSTEM_ADMIN. Отдаётся слепок
+// из нашей базы, а не живой запрос к шлюзу: форма не должна ждать чужую базу и падать вместе с ней.
 @RestController
 @RequestMapping("/api/v1/ecom/provider-terminals")
 public class ProviderTerminalController {
@@ -35,11 +30,8 @@ public class ProviderTerminalController {
         this.syncService = syncService;
     }
 
-    /**
-     * Список для формы заведения терминала. По умолчанию только активные: заводить наш терминал
-     * поверх снятого с обслуживания у провайдера незачем. `includeInactive` — для разбора, когда
-     * админ выясняет, куда делся знакомый ему терминал.
-     */
+    // По умолчанию только активные: заводить терминал поверх снятого у провайдера незачем.
+    // includeInactive — для разбора, куда делся знакомый администратору терминал.
     @GetMapping
     public List<ProviderTerminalResponse> list(
             @RequestParam(defaultValue = "false") boolean includeInactive,

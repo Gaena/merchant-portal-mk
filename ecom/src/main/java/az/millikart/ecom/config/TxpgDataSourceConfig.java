@@ -11,21 +11,9 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
-/**
- * Два источника данных в одном процессе, и их нельзя путать.
- *
- * `spring.datasource` — наша PostgreSQL: привязки мерчантов, журнал аудита, Liquibase. Помечена
- * `@Primary`, поэтому JPA, Liquibase и всё, что просит `DataSource` без уточнения, достаётся ей.
- * Иначе Spring выбрал бы любой из двух, и миграции однажды уехали бы в чужую базу.
- *
- * `ecom.txpg.datasource` — схема шлюза. Отдельный пул намеренно маленький: отчётный запрос по
- * операционной базе конкурирует с авторизациями, и ограничение пула — единственное, чем мы можем
- * ограничить свой вред, пока провайдер не выдаст читающую реплику.
- *
- * Транзакционного менеджера у второго источника нет и не будет: сюда ходят голым
- * `NamedParameterJdbcTemplate`, соединение read-only, и ни одна наша запись в чужую базу
- * невозможна просто потому, что писать нечем.
- */
+// Два источника данных. Наша PostgreSQL помечена @Primary: без этого Spring выбрал бы любой из двух,
+// и миграции однажды уехали бы в чужую базу. Пул к шлюзу маленький — отчёты конкурируют с
+// авторизациями — и без транзакционного менеджера: писать в чужую базу нечем (AGENTS.md §10).
 @Configuration
 public class TxpgDataSourceConfig {
 
@@ -53,10 +41,7 @@ public class TxpgDataSourceConfig {
         return new DataSourceProperties();
     }
 
-    /**
-     * Пул к шлюзу. `read-only` ставится на соединения пулом, а не надеждой на то, что в коде
-     * не появится INSERT: права учётки — второй рубеж, а не первый.
-     */
+    // read-only ставит пул, а не надежда, что в коде не появится INSERT; права учётки — второй рубеж.
     @Bean("txpgDataSource")
     @ConfigurationProperties("ecom.txpg.datasource.hikari")
     public DataSource txpgDataSource(@Qualifier("txpgDataSourceProperties") DataSourceProperties properties) {

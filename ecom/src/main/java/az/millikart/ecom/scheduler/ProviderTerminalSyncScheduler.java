@@ -7,14 +7,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/**
- * Периодическое обновление слепка терминалов провайдера.
- *
- * Расписанием, а не входом администратора. Вход — событие случайное: администратор не заходил
- * неделю, и неделю ничего не обновлялось; зато аутентификация начинала зависеть от доступности
- * чужой базы, и недоступный шлюз означал бы, что в портал никто не войдёт. Обновить слепок
- * прямо сейчас администратор может кнопкой — осознанно и не платя за это входом.
- */
+// Слепок терминалов обновляется расписанием, а не входом администратора (Р-66): иначе вход зависел
+// бы от доступности чужой базы, и недоступный шлюз не пускал бы в портал никого.
 @Component
 @ConditionalOnProperty(name = "ecom.terminal-sync.enabled", havingValue = "true", matchIfMissing = true)
 public class ProviderTerminalSyncScheduler {
