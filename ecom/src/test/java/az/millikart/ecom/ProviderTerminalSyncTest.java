@@ -16,13 +16,12 @@ import java.util.List;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
-/**
- * Слепок терминалов провайдера: что бы ни ответил шлюз, живые терминалы не должны гаснуть
- * от одного сбоя. Выключенный терминал приостанавливает платёжные ссылки под ним, поэтому
- * цена ошибки здесь — остановленный приём платежей.
- */
+// Слепок терминалов провайдера: что бы ни ответил шлюз, живые терминалы не должны гаснуть от одного
+// сбоя. Выключенный терминал приостанавливает платёжные ссылки под ним, поэтому цена ошибки здесь —
+// остановленный приём платежей.
 class ProviderTerminalSyncTest {
 
     private ProviderTerminalSource source;
@@ -128,6 +127,59 @@ class ProviderTerminalSyncTest {
 
         Assertions.assertEquals("New name", terminal.getTitle());
         Assertions.assertEquals("new-login", terminal.getLogin());
+    }
+
+    // Одинаковые строки одного мерчанта — это один терминал (например, две привязки PBY), а не
+    // неоднозначность: применяются как одна.
+    @Test
+    void identicalRowsForOneMerchant_countAsOne() {
+        when(source.fetchActive()).thenReturn(List.of(
+                new ProviderTerminalRow("E1120020", "BazarStore", "BS00001"),
+                new ProviderTerminalRow("E1120020", "BazarStore", "BS00001")));
+
+        ProviderTerminalSyncService.SyncOutcome outcome = service.sync();
+
+        Assertions.assertEquals(1, outcome.seen());
+        Assertions.assertEquals(0, outcome.ambiguous());
+        ArgumentCaptor<ProviderTerminal> saved = ArgumentCaptor.forClass(ProviderTerminal.class);
+        verify(repository).save(saved.capture());
+        Assertions.assertEquals("BS00001", saved.getValue().getLogin());
+    }
+
+    // Р-79: у мерчанта одна строка. Пришли два разных логина — какой из них наш, неизвестно: логин
+    // не меняется, но мерчант у провайдера есть, и гасить наш терминал из-за этого нельзя.
+    @Test
+    void differentLoginsForOneMerchant_areNotAppliedAndNeverDisableIt() {
+        ProviderTerminal terminal = ProviderTerminal.builder()
+                .rid("E1120020").title("BazarStore").login("BS00001").active(true).missingRuns(2).build();
+        stored.add(terminal);
+        when(source.fetchActive()).thenReturn(List.of(
+                new ProviderTerminalRow("E1120020", "BazarStore", "BS00001"),
+                new ProviderTerminalRow("E1120020", "BazarStore", "BS00009")));
+
+        for (int run = 0; run < 3; run++) {
+            ProviderTerminalSyncService.SyncOutcome outcome = service.sync();
+            Assertions.assertEquals(1, outcome.ambiguous());
+            Assertions.assertEquals(0, outcome.disabled());
+        }
+
+        Assertions.assertEquals("BS00001", terminal.getLogin());
+        Assertions.assertEquals(0, terminal.getMissingRuns());
+        Assertions.assertTrue(terminal.isActive());
+    }
+
+    // Нового мерчанта с двумя логинами не заводим: админ выбрал бы его и получил чужой логин.
+    @Test
+    void anAmbiguousNewMerchant_isNotCreated() {
+        when(source.fetchActive()).thenReturn(List.of(
+                new ProviderTerminalRow("NEW", "New shop", "PBY-1"),
+                new ProviderTerminalRow("NEW", "New shop", "PBY-2")));
+
+        ProviderTerminalSyncService.SyncOutcome outcome = service.sync();
+
+        Assertions.assertTrue(outcome.applied());
+        Assertions.assertEquals(1, outcome.ambiguous());
+        verify(repository, never()).save(any());
     }
 
     // Строка без идентификатора не с чем сопоставить — она пропускается, а проход продолжается.

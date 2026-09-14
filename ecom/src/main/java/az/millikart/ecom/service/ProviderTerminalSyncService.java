@@ -5,31 +5,19 @@ import az.millikart.ecom.domain.ProviderTerminal;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Обновление слепка терминалов провайдера.
- *
- * Три правила, и все три — про то, чтобы чужой сбой не выключил наши терминалы.
- *
- * 1. **Неудачный опрос не применяется вовсе.** Исключение из источника означает «спросить не
- *    удалось», и слепок остаётся прежним. Считать недоступность провайдера сообщением о том,
- *    что терминалов больше нет, нельзя.
- * 2. **Пустой ответ не применяется тоже.** Список без единого терминала технически валиден, но
- *    у работающего эквайринга его не бывает: это признак оборванной выборки или сменившегося
- *    фильтра на их стороне, а ценой ошибки здесь будет остановленный приём платежей.
- * 3. **Гасим после подтверждения.** Терминал выключается не первым пропаданием, а после
- *    `missingRunsBeforeDisable` опросов подряд. При периоде в пятнадцать минут это значит, что
- *    сбой должен продержаться три четверти часа, прежде чем что-то изменится.
- *
- * Статусы **наших** терминалов этот сервис не трогает. Сверкой занимается `directory`, где смена
- * статуса уже умеет приостанавливать и восстанавливать платёжные ссылки и писать в журнал аудита.
- */
+// Обновление слепка терминалов провайдера (Р-66). Все правила — про то, чтобы чужой сбой не выключил
+// наши терминалы: неудачный и пустой опрос не применяются, гасится терминал только после
+// missingRunsBeforeDisable пропаданий подряд. Статусы наших терминалов сверяет directory.
 @Service
 public class ProviderTerminalSyncService {
 
@@ -47,11 +35,12 @@ public class ProviderTerminalSyncService {
         this.properties = properties;
     }
 
-    /** Что сделал один проход. Возвращается наружу ради журнала и ручного запуска админом. */
-    public record SyncOutcome(boolean applied, int seen, int disabled, String skippedBecause) {
+    // Итог одного прохода — для журнала и ответа админу на ручной запуск. ambiguous — мерчанты,
+    // пришедшие несколькими разными строками: их в этом проходе не обновили, но и не гасили.
+    public record SyncOutcome(boolean applied, int seen, int ambiguous, int disabled, String skippedBecause) {
 
         public static SyncOutcome skipped(String reason) {
-            return new SyncOutcome(false, 0, 0, reason);
+            return new SyncOutcome(false, 0, 0, 0, reason);
         }
     }
 
@@ -66,6 +55,8 @@ public class ProviderTerminalSyncService {
             return SyncOutcome.skipped("gateway unavailable");
         }
 
+        // У работающего эквайринга не бывает нуля терминалов: пустой ответ — оборванная выборка
+        // или сменившийся фильтр, и действовать по нему значит остановить приём платежей всем.
         if (rows == null || rows.isEmpty()) {
             log.error("Provider terminal sync skipped: the gateway returned no terminals at all. "
                     + "An acquiring provider without a single terminal is a broken answer, not news, "
@@ -73,27 +64,40 @@ public class ProviderTerminalSyncService {
             return SyncOutcome.skipped("empty response");
         }
 
+        // Одна строка на мерчанта (Р-67, Р-79). Одинаковые строки — это одна (например, две привязки
+        // PBY у терминала); разные логины или названия у одного мерчанта сопоставить не с чем.
+        Map<String, Set<ProviderTerminalSource.ProviderTerminalRow>> byRid = new LinkedHashMap<>();
+        for (ProviderTerminalSource.ProviderTerminalRow row : rows) {
+            if (row.rid() == null || row.rid().isBlank()) {
+                log.warn("Provider returned a terminal without a rid; the row is ignored");
+                continue;
+            }
+            byRid.computeIfAbsent(row.rid(), rid -> new LinkedHashSet<>()).add(row);
+        }
+
         Instant now = Instant.now();
         Map<String, ProviderTerminal> known = new HashMap<>();
         repository.findAll().forEach(terminal -> known.put(terminal.getRid(), terminal));
 
         int seen = 0;
-        for (ProviderTerminalSource.ProviderTerminalRow row : rows) {
-            if (row.rid() == null || row.rid().isBlank()) {
-                // Строка без идентификатора не с чем сопоставить: ни завести, ни обновить.
-                log.warn("Provider returned a terminal without a rid; the row is ignored");
+        int ambiguous = 0;
+        for (Map.Entry<String, Set<ProviderTerminalSource.ProviderTerminalRow>> entry : byRid.entrySet()) {
+            seen++;
+            ProviderTerminal terminal = known.remove(entry.getKey());
+            if (entry.getValue().size() > 1) {
+                ambiguous++;
+                keepAliveWithoutUpdating(entry.getKey(), entry.getValue().size(), terminal, now);
                 continue;
             }
-            seen++;
-            ProviderTerminal terminal = known.remove(row.rid());
+            ProviderTerminalSource.ProviderTerminalRow row = entry.getValue().iterator().next();
             if (terminal == null) {
                 terminal = ProviderTerminal.builder()
                         .rid(row.rid())
                         .firstSeenAt(now)
                         .build();
             }
-            // Логин и название всегда берутся у провайдера: он их хозяин. Сменил логин —
-            // сменился и у нас, иначе терминал однажды перестанет ходить в шлюз.
+            // Логин и название всегда берутся у провайдера: он их хозяин. Сменил логин — сменился
+            // и у нас, иначе терминал однажды перестанет ходить в шлюз.
             terminal.setTitle(row.title());
             terminal.setLogin(row.login());
             terminal.setActive(true);
@@ -103,7 +107,7 @@ public class ProviderTerminalSyncService {
             repository.save(terminal);
         }
 
-        // Всё, что осталось в `known`, в этой выгрузке не пришло.
+        // Всё, что осталось в known, в этой выгрузке не пришло.
         int disabled = 0;
         int threshold = properties.getMissingRunsBeforeDisable();
         for (ProviderTerminal missing : known.values()) {
@@ -125,7 +129,22 @@ public class ProviderTerminalSyncService {
             repository.save(missing);
         }
 
-        log.info("Provider terminal sync applied: {} terminals seen, {} marked inactive", seen, disabled);
-        return new SyncOutcome(true, seen, disabled, null);
+        log.info("Provider terminal sync applied: {} terminals seen, {} ambiguous, {} marked inactive",
+                seen, ambiguous, disabled);
+        return new SyncOutcome(true, seen, ambiguous, disabled, null);
+    }
+
+    // Мерчант у провайдера есть, так что гасить его нельзя; но какой из логинов наш — неизвестно,
+    // поэтому ни логин, ни название, ни флаг активности не трогаются, а новый не заводится вовсе.
+    private void keepAliveWithoutUpdating(String rid, int variants, ProviderTerminal terminal, Instant now) {
+        log.warn("Provider returned {} different rows for merchant {}; it is not updated in this run. "
+                + "One merchant is expected to have exactly one e-commerce terminal login", variants, rid);
+        if (terminal == null) {
+            return;
+        }
+        terminal.setMissingRuns(0);
+        terminal.setLastSeenAt(now);
+        terminal.setSyncedAt(now);
+        repository.save(terminal);
     }
 }

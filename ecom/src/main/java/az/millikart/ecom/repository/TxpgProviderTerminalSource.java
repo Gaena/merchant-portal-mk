@@ -9,23 +9,15 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-/**
- * Список терминалов провайдера из схемы шлюза.
- *
- * ВНИМАНИЕ: запрос ниже — **предварительный**. Он собран по разбору стенда (`txpg_query_review.md`,
- * §«Диагностика»: `select rid, title from txpg.merchant`) и ждёт замены на SQL, который пришлёт
- * провайдер. Достоверно из разбора известны только `rid` и `title`; где лежит логин терминала и
- * чем отличается активный от снятого с обслуживания — предстоит уточнить.
- *
- * Поэтому здесь нет ни одной подстановки «по смыслу»: чего в ответе нет, то приезжает пустым и
- * дальше по цепочке видно как пустое. Выдуманный логин не проще починить, чем отсутствующий, —
- * он молча не сойдётся с тем, чем терминал ходит в шлюз, и выяснится это на первом платеже.
- *
- * Всё, что вокруг этого класса — правила гашения, подтверждение пропаданием, сверка с нашими
- * терминалами — от формы запроса не зависит и при его замене переписываться не должно.
- */
+// Справочник терминалов провайдера — по SQL провайдера от 14.09.2026 (Р-79): e-commerce терминалы
+// процессинга 70 (TID на PBY), у которых активны и логин, и терминал. Выключенный у провайдера
+// пропадает из выгрузки, и через три опроса гаснет наш терминал со ссылками (Р-66).
 @Repository
 public class TxpgProviderTerminalSource implements ProviderTerminalSource {
+
+    // Процессинг и префикс TID из запроса провайдера: терминалы других PMO и TID порталу не принадлежат.
+    static final String PMO_RID = "70";
+    static final String TID_PATTERN = "PBY%";
 
     private final NamedParameterJdbcTemplate jdbc;
     private final TxpgProperties properties;
@@ -36,19 +28,30 @@ public class TxpgProviderTerminalSource implements ProviderTerminalSource {
         this.properties = properties;
     }
 
+    // Ключ — merchant.rid: по нему выписка находит заказы, и у провайдера один терминал — один мерчант
+    // (Р-67). Название — мерчанта, как в выписке. Исключение наружу не гасится: вызывающий обязан
+    // отличить «терминалов нет» от «спросить не удалось».
     @Override
     public List<ProviderTerminalRow> fetchActive() {
         String sql = """
                 select m.rid   rid,
                        m.title title,
-                       m.login login
-                  from %s.merchant m
-                 order by m.title
+                       l.login login
+                  from %1$s.login l
+                  join %1$s.terminal    t  on t.id = l.terminalid
+                  join %1$s.terminalpmo tp on tp.terminalid = t.id
+                  join %1$s.merchant    m  on m.id = t.merchantid
+                 where tp.pmorid = :pmo_rid
+                   and tp.tid like :tid_pattern
+                   and l.status = 'Active'
+                   and t.status = 'Active'
+                 order by m.rid, l.login
                 """.formatted(properties.getSchema());
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("pmo_rid", PMO_RID)
+                .addValue("tid_pattern", TID_PATTERN);
 
-        // Исключение наружу не гасится намеренно: вызывающий обязан отличить «провайдер сказал,
-        // что терминалов нет» от «спросить не удалось», и сделать это можно только так.
-        return jdbc.query(sql, new MapSqlParameterSource(), (rs, rowNum) -> new ProviderTerminalRow(
+        return jdbc.query(sql, params, (rs, rowNum) -> new ProviderTerminalRow(
                 rs.getString("rid"),
                 rs.getString("title"),
                 rs.getString("login")
