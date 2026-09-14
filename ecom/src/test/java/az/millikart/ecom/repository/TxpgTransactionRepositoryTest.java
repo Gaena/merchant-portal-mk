@@ -37,7 +37,7 @@ import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 @SuppressWarnings("unchecked")
 class TxpgTransactionRepositoryTest {
 
-    private static final List<String> SCOPE = List.of("M-1", "M-2");
+    private static final List<String> LOGINS = List.of("BS00001", "BS00002");
     private static final Instant NOW = Instant.parse("2026-09-14T10:00:00Z");
 
     private NamedParameterJdbcTemplate jdbc;
@@ -50,24 +50,47 @@ class TxpgTransactionRepositoryTest {
         repository = new TxpgTransactionRepository(jdbc, new TxpgProperties(), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
+    // Скоуп — по запросу выписки от 15.09.2026: мерчанты логинов TerminalSys, и операция того же
+    // мерчанта, что и заказ. Без фильтра по терминалу сужения по merchant.rid нет.
     @Test
-    void everyQueryCarriesTheMerchantScopeAndTheFinishedOrdersRule() {
+    void everyQueryCarriesTheLoginScopeAndTheFinishedOrdersRule() {
         EcomTransactionFilter filter = filter(Instant.parse("2026-09-01T00:00:00Z"), NOW);
 
         repository.findOrderIds(filter, null, 26);
-        repository.findRows(List.of(175533L), SCOPE, filter.dateFrom());
+        repository.findRows(List.of(175533L), LOGINS, filter.dateFrom());
         repository.streamPeriodRows(filter, row -> { });
 
         List<Captured> queries = capturedQueries();
         Assertions.assertEquals(3, queries.size());
         for (Captured query : queries) {
-            Assertions.assertTrue(query.sql().contains("m.rid in (:merchant_rids)"), query.sql());
-            Assertions.assertTrue(query.sql().contains("o.status not in (:unfinished_statuses)"), query.sql());
+            String sql = query.sql().replaceAll("\\s+", " ");
+            Assertions.assertTrue(sql.contains("and tr.merchantid in (select l.merchantid from TXPG.login l "
+                    + "where l.ownerkind = 'TerminalSys' and l.login in (:logins))"), sql);
+            Assertions.assertTrue(sql.contains("join TXPG.merchant m on m.id = o.merchantid and m.id = tr.merchantid"), sql);
+            Assertions.assertFalse(sql.contains(":merchant_rids"), sql);
+            Assertions.assertTrue(sql.contains("o.status not in (:unfinished_statuses)"), sql);
             // Р-76: исключение для Authorized со списанием — во всех трёх, иначе итоги разойдутся со страницей.
-            Assertions.assertTrue(query.sql().contains("o.status = 'Authorized'"), query.sql());
-            Assertions.assertEquals(SCOPE, query.params().getValue("merchant_rids"));
+            Assertions.assertTrue(sql.contains("o.status = 'Authorized'"), sql);
+            Assertions.assertEquals(LOGINS, query.params().getValue("logins"));
             Assertions.assertEquals(List.of("Preparing", "Authorized", "Expired"),
                     query.params().getValue("unfinished_statuses"));
+        }
+    }
+
+    // Фильтр по терминалу сужает выбор заказов и в итогах, и на странице; скоуп по логинам остаётся.
+    @Test
+    void theTerminalFilterNarrowsTheOrdersOnTopOfTheLoginScope() {
+        Instant from = Instant.parse("2026-09-01T00:00:00Z");
+        EcomTransactionFilter narrowed = new EcomTransactionFilter(LOGINS, List.of("M-1"), from, NOW, null, null, null);
+
+        repository.findOrderIds(narrowed, null, 26);
+        repository.streamPeriodRows(narrowed, row -> { });
+
+        for (Captured query : capturedQueries()) {
+            Assertions.assertTrue(query.sql().contains("and m.rid in (:merchant_rids)"), query.sql());
+            Assertions.assertTrue(query.sql().contains("l.login in (:logins)"), query.sql());
+            Assertions.assertEquals(List.of("M-1"), query.params().getValue("merchant_rids"));
+            Assertions.assertEquals(LOGINS, query.params().getValue("logins"));
         }
     }
 
@@ -77,9 +100,9 @@ class TxpgTransactionRepositoryTest {
     void onlyColumnsFromTheProviderQueryAreRead() {
         EcomTransactionFilter filter = filter(Instant.parse("2026-09-01T00:00:00Z"), NOW);
 
-        repository.findOrderIds(new EcomTransactionFilter(SCOPE, filter.dateFrom(), filter.dateTo(),
+        repository.findOrderIds(new EcomTransactionFilter(LOGINS, List.of("M-1"), filter.dateFrom(), filter.dateTo(),
                 BigDecimal.ONE, BigDecimal.TEN, "175533"), 175600L, 26);
-        repository.findRows(List.of(175533L), SCOPE, null);
+        repository.findRows(List.of(175533L), LOGINS, null);
         repository.streamPeriodRows(filter, row -> { });
 
         for (Captured query : capturedQueries()) {
@@ -152,7 +175,7 @@ class TxpgTransactionRepositoryTest {
         EcomTransactionFilter future = filter(NOW.plus(1, ChronoUnit.DAYS), NOW.plus(2, ChronoUnit.DAYS));
 
         repository.findOrderIds(future, null, 26);
-        repository.findRows(List.of(175533L), SCOPE, future.dateFrom());
+        repository.findRows(List.of(175533L), LOGINS, future.dateFrom());
         repository.streamPeriodRows(future, row -> { });
         repository.findOrderIds(filter(Instant.parse("2026-07-01T00:00:00Z"), Instant.parse("2026-08-01T00:00:00Z")),
                 null, 26);
@@ -181,19 +204,19 @@ class TxpgTransactionRepositoryTest {
     // Карточка открывается по номеру без периода: окна по операциям у неё нет, история полная.
     @Test
     void theOrderCardReadsTheWholeHistory() {
-        repository.findRows(List.of(175533L), SCOPE, null);
+        repository.findRows(List.of(175533L), LOGINS, null);
 
         Assertions.assertFalse(capturedQueries().get(0).sql().contains(":operations_from"));
     }
 
     @Test
     void anEmptyPage_doesNotGoToTheGateway() {
-        Assertions.assertTrue(repository.findRows(List.of(), SCOPE, NOW).isEmpty());
+        Assertions.assertTrue(repository.findRows(List.of(), LOGINS, NOW).isEmpty());
         verifyNoInteractions(jdbc);
     }
 
     private static EcomTransactionFilter filter(Instant from, Instant to) {
-        return new EcomTransactionFilter(SCOPE, from, to, null, null, null);
+        return new EcomTransactionFilter(LOGINS, null, from, to, null, null, null);
     }
 
     private record Captured(String sql, MapSqlParameterSource params) {

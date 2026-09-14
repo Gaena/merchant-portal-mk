@@ -106,7 +106,8 @@ export const CompaniesPage: React.FC = () => {
 
   const applyStatus = async (company: CompanyDto, newStatus: 'ACTIVE' | 'INACTIVE') => {
     try {
-      await apiClient.patch(`/api/v1/companies/${company.id}`, { name: company.name, status: newStatus });
+      // Только статус: PATCH с прежним названием бэкенд записывал в аудит как «Name changed from X to X».
+      await apiClient.patch(`/api/v1/companies/${company.id}`, { status: newStatus });
       setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, status: newStatus } : c));
       setSnackbar(`Company status updated to ${newStatus}`);
     } catch (err: any) {

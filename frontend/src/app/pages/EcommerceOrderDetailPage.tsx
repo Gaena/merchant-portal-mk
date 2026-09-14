@@ -19,8 +19,8 @@ import {
 import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
 import { useLanguage } from '../context/LanguageContext';
 import type { EcomOrder, EcomTerminal } from '../types/ecom';
-import { ecomTerminalLabel, fetchEcomOrder, fetchEcomTerminals } from '../utils/ecom';
-import { formatCurrency } from '../utils/mockData';
+import { ecomTerminalLabel, fetchEcomOrder, fetchEcomTerminals, operationApproved } from '../utils/ecom';
+import { formatCurrency } from '../utils/format';
 import { getStatusColorScheme } from '../utils/statusColors';
 
 // Время операций — до секунд: авторизация и списание нередко идут в одну минуту.
@@ -192,7 +192,7 @@ export const EcommerceOrderDetailPage: React.FC = () => {
             </TableHead>
             <TableBody>
               {order.operations.map((operation, index) => {
-                const approved = operation.resultCode === 'Approved';
+                const approved = operationApproved(operation);
                 const currency = operation.currency ?? order.currency;
                 return (
                   <TableRow key={operation.tranId ?? index}>
@@ -206,7 +206,7 @@ export const EcommerceOrderDetailPage: React.FC = () => {
                       <Chip
                         size="small"
                         label={operation.resultCode || '—'}
-                        color={approved ? 'success' : 'error'}
+                        color={approved === null ? 'default' : approved ? 'success' : 'error'}
                         variant={approved ? 'outlined' : 'filled'}
                         sx={{ fontWeight: 600 }}
                       />

@@ -1,7 +1,6 @@
 import type { StatusHistoryEntry, Transaction } from '../types/transaction';
 import { parsePaymentMethod, parseTransactionStatus } from '../types/transaction';
 import type { TerminalOptionDto } from '../types/dto';
-import { terminalLabel } from './terminals';
 
 /**
  * Разбор одной операции из ответа `/api/v1/transactions*` в её экранный вид.
@@ -34,49 +33,49 @@ const mapStatusHistory = (raw: unknown): StatusHistoryEntry[] => {
     }));
 };
 
+const optionalText = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.length > 0 ? value : undefined;
+
+/**
+ * Ничего не подставляется (Р-48): нет `createdAt` — нет даты (а не «сейчас»), нет имени —
+ * пусто (а не «Customer»), нет валюты — пусто (а не AZN). Комиссии в ответе нет — нет и поля.
+ */
 export const mapTransaction = (
   raw: any,
   terminalIndex: Record<number, TerminalOptionDto>
 ): Transaction => {
   const terminal = raw.terminalId ? terminalIndex[raw.terminalId] : undefined;
-  const label = terminalLabel({
-    terminalLogin: terminal?.login,
-    terminalName: terminal?.name,
-    terminalId: raw.terminalId
-  });
 
   return {
     id: raw.id,
     paymentLinkId: raw.paymentLinkId,
-    timestamp: raw.createdAt ? new Date(raw.createdAt) : new Date(),
-    customer: raw.customerName || raw.customerEmail || 'Customer',
-    customerEmail: raw.customerEmail || 'N/A',
-    customerPhone: raw.customerPhone,
-    amount: raw.amount,
-    capturedAmount: raw.capturedAmount,
-    refundedAmount: raw.refundedAmount,
-    currency: raw.currency || 'AZN',
+    timestamp: raw.createdAt ? new Date(raw.createdAt) : undefined,
+    customer: optionalText(raw.customerName) ?? '',
+    customerEmail: optionalText(raw.customerEmail) ?? '',
+    customerPhone: optionalText(raw.customerPhone),
+    amount: Number(raw.amount),
+    capturedAmount: raw.capturedAmount === null || raw.capturedAmount === undefined ? undefined : Number(raw.capturedAmount),
+    refundedAmount: raw.refundedAmount === null || raw.refundedAmount === undefined ? undefined : Number(raw.refundedAmount),
+    currency: optionalText(raw.currency) ?? '',
     // Разбор — только через parse*: нераспознанное значение даёт null и показывается как есть.
     // Прежнее `String(t.status || 'APPROVED') as any` превращало любой неизвестный статус
     // в «успешный» и прятало расхождение от компилятора (P2-12).
     status: parseTransactionStatus(raw.status),
     statusRaw: raw.status === null || raw.status === undefined ? undefined : String(raw.status),
     paymentMethod: parsePaymentMethod(raw.paymentType),
-    description: raw.description || raw.merchantOrderId || 'Transaction',
-    cardNumberMasked: raw.cardNumberMasked,
+    description: optionalText(raw.description) ?? '',
+    cardNumberMasked: optionalText(raw.cardNumberMasked),
     cardLast4: raw.cardNumberMasked ? String(raw.cardNumberMasked).slice(-4) : undefined,
-    rrn: raw.rrn,
-    approvalCode: raw.approvalCode,
-    ridByMerchant: raw.ridByMerchant,
-    providerOrderId: raw.providerOrderId || raw.provider_order_id,
+    rrn: optionalText(raw.rrn),
+    approvalCode: optionalText(raw.approvalCode),
+    ridByMerchant: optionalText(raw.ridByMerchant),
+    providerOrderId: optionalText(raw.providerOrderId),
     terminalId: raw.terminalId,
     terminalLogin: terminal?.login,
     terminalName: terminal?.name,
-    clientIp: raw.clientIp,
-    userAgent: raw.userAgent,
-    fee: 0,
+    clientIp: optionalText(raw.clientIp),
+    userAgent: optionalText(raw.userAgent),
+    failureReason: optionalText(raw.failureReason),
     statusHistory: mapStatusHistory(raw.statusHistory),
-    terminalRid: label,
-    channel: 'ecommerce'
   };
 };
