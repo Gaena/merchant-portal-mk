@@ -452,7 +452,8 @@ axios-клиент, shadcn/Radix, страницы на моках) и зави�
 `src/assets/*`, `frontend/default_shadcn_theme.css` — кандидаты на уборку.
 
 **Маршруты** (`src/app/routes.tsx`): `/login`, `/` (HomePage), `/transactions`,
-`/transactions/ecommerce`, `/transactions/:id`, `/pay-by-link`, `/pay-by-link/:id`, `/companies`,
+`/transactions/ecommerce`, `/transactions/ecommerce/:orderId`, `/transactions/:id`, `/pay-by-link`,
+`/pay-by-link/:id`, `/companies`,
 `/terminals`, `/users`, `/audit-logs`, `/settings`, `*` (`NotFoundPage`). На `/` и `/login` стоит
 `errorElement` (`RouteErrorPage`).
 
@@ -486,6 +487,14 @@ axios-клиент, shadcn/Radix, страницы на моках) и зави�
 первыми, внутренний UUID — вторым. Терминал подписывается логином, имя — пояснением; порядок живёт
 только в `utils/terminals.ts`, разбор операции из ответа — только в `utils/mapTransaction.ts`.
 `merchantReference` на экранах не показывается (Р-60).
+
+**Вкладка E-commerce — выписка сервиса `ecom`, а не операции портала** (Р-65, Р-80). Свои запросы и
+разбор — `utils/ecom.ts`, восемь статусов — `types/ecom.ts` (к шести статусам ссылок добавлены
+`PARTIALLY_PAID` и `CANCELED`), своя карточка заказа по номеру у провайдера. Общий список операций
+из `App` в неё не передаётся; фильтровать и считать итоги на экране нельзя — это делает сервер.
+
+**Форма заведения терминала** (Р-80): `SYSTEM_ADMIN` выбирает терминал из справочника провайдера и
+вводит пароль (`merchantRid`); остальным справочник недоступен, у них ручной ввод названия и логина.
 
 **Списки терминалов — два разных запроса.** Экрану управления — постраничный `GET /api/v1/terminals`;
 всем, кому нужна подпись или выпадающий список, — лёгкий `GET /api/v1/terminals/options` со всеми

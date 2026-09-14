@@ -27,6 +27,7 @@ import {
   TablePagination,
   Tooltip,
   InputAdornment,
+  Autocomplete,
 } from '@mui/material';
 import {
   PointOfSale as POSIcon,
@@ -39,6 +40,7 @@ import {
   Search as SearchIcon,
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
+  Sync as SyncIcon,
 } from '@mui/icons-material';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -50,7 +52,13 @@ import {
   type TerminalCheckResponse,
 } from '../utils/terminalCheck';
 import { isTerminalActive } from '../types/dto';
-import type { TerminalDto, CompanyDto, TerminalStatus } from '../types/dto';
+import type {
+  TerminalDto,
+  CompanyDto,
+  TerminalStatus,
+  ProviderTerminalDto,
+  ProviderTerminalSyncOutcome,
+} from '../types/dto';
 
 export const TerminalsPage: React.FC = () => {
   const { tObj } = useLanguage();
@@ -95,6 +103,13 @@ export const TerminalsPage: React.FC = () => {
   // Проверка в форме заведения: ключ ещё не сохранён.
   const [formCheck, setFormCheck] = useState<TerminalCheckResponse | null>(null);
   const [formChecking, setFormChecking] = useState(false);
+  // Справочник терминалов провайдера для формы заведения (Р-67, Р-79). Его видит только
+  // SYSTEM_ADMIN; у остальных ролей форма остаётся с ручным вводом названия и логина.
+  const [providerTerminals, setProviderTerminals] = useState<ProviderTerminalDto[]>([]);
+  const [providerState, setProviderState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [selectedProvider, setSelectedProvider] = useState<ProviderTerminalDto | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<ProviderTerminalSyncOutcome | null>(null);
   // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
   // чтобы не слать запрос на каждую букву.
   const debouncedSearch = useDebounced(searchQuery, 300);
@@ -164,11 +179,45 @@ export const TerminalsPage: React.FC = () => {
     fetchCompanies();
   }, []);
 
+  const loadProviderTerminals = async () => {
+    setProviderState('loading');
+    try {
+      const res = await apiClient.get('/api/v1/ecom/provider-terminals');
+      setProviderTerminals(Array.isArray(res.data) ? res.data : []);
+      setProviderState('ready');
+    } catch {
+      setProviderTerminals([]);
+      setProviderState('failed');
+    }
+  };
+
+  // Обновить справочник прямо сейчас, не дожидаясь расписания: нужен, когда терминал только что
+  // завели у провайдера или плановое обновление ещё не проходило.
+  const handleSyncDirectory = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await apiClient.post<ProviderTerminalSyncOutcome>('/api/v1/ecom/provider-terminals/sync');
+      setSyncResult(res.data);
+      await loadProviderTerminals();
+    } catch (err: any) {
+      setError(err.response?.data?.message || tObj.terminals.providerTerminalLoadFailed);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleOpenCreate = () => {
     fetchCompanies();
     setError('');
     setEditingTerminalId(null);
     setForm({ id: '', name: '', login: '', password: '', companyId: companies[0]?.id || '' });
+    setSelectedProvider(null);
+    setSyncResult(null);
+    setFormCheck(null);
+    if (canSeePassword) {
+      loadProviderTerminals();
+    }
     setCreateOpen(true);
   };
 
@@ -187,19 +236,30 @@ export const TerminalsPage: React.FC = () => {
   };
 
   const handleCreate = async () => {
-    if (!form.id || !form.name.trim() || !form.login.trim() || !form.password.trim() || !form.companyId) {
+    // Администратор заводит терминал выбором из справочника: название и логин сервер берёт оттуда
+    // по merchantRid и введённые руками игнорирует (TerminalService.createTerminal).
+    const fromDirectory = canSeePassword;
+    const identityMissing = fromDirectory ? !selectedProvider : !form.name.trim() || !form.login.trim();
+    if (!form.id || identityMissing || !form.password.trim() || !form.companyId) {
       setError('All fields including Company selection are required');
       return;
     }
     setError('');
     try {
-      const payload = {
-        id: Number(form.id),
-        name: form.name.trim(),
-        login: form.login.trim(),
-        password: form.password.trim(),
-        companyId: form.companyId,
-      };
+      const payload = fromDirectory
+        ? {
+            id: Number(form.id),
+            password: form.password.trim(),
+            companyId: form.companyId,
+            merchantRid: selectedProvider?.rid,
+          }
+        : {
+            id: Number(form.id),
+            name: form.name.trim(),
+            login: form.login.trim(),
+            password: form.password.trim(),
+            companyId: form.companyId,
+          };
       await apiClient.post('/api/v1/terminals', payload);
       // Не дописываем строку в массив: список постраничный и отсортирован сервером по имени —
       // новый терминал может принадлежать другой странице.
@@ -235,12 +295,15 @@ export const TerminalsPage: React.FC = () => {
     }
   };
 
+  // Логин, который уйдёт в проверку и в терминал: у администратора — из выбранной строки справочника.
+  const formLogin = (canSeePassword ? selectedProvider?.login ?? '' : form.login).trim();
+
   const runFormCheck = async () => {
     setFormCheck(null);
     setFormChecking(true);
     setError('');
     try {
-      setFormCheck(await checkNewTerminal(form.login.trim(), form.password));
+      setFormCheck(await checkNewTerminal(formLogin, form.password));
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to check the terminal');
     } finally {
@@ -601,10 +664,9 @@ export const TerminalsPage: React.FC = () => {
             <TextField
               select
               fullWidth
-              label="Assigned Company *"
+              label={`${tObj.terminals.company} *`}
               value={form.companyId || (companies[0]?.id ?? '')}
               onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}
-              helperText="Выберите компанию, к которой относится создаваемый терминал"
             >
               {companies.map((comp) => (
                 <MenuItem key={comp.id} value={comp.id}>
@@ -614,28 +676,97 @@ export const TerminalsPage: React.FC = () => {
             </TextField>
 
             <TextField
-              label="Terminal ID (Numeric) *"
+              label={`${tObj.terminals.terminalId} *`}
               type="number"
               value={form.id}
               onChange={e => setForm(f => ({ ...f, id: e.target.value }))}
               placeholder="e.g. 1"
               fullWidth
-              helperText="Числовой ID терминала в эквайринговой системе"
+              helperText={tObj.terminals.terminalIdHint}
             />
-            <TextField
-              label="Terminal Name *"
-              value={form.name}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              placeholder="e.g. Main Online E-commerce Terminal"
-              fullWidth
-            />
-            <TextField
-              label="Terminal Login *"
-              value={form.login}
-              onChange={e => { setForm(f => ({ ...f, login: e.target.value })); setFormCheck(null); }}
-              placeholder="e.g. term_login_001"
-              fullWidth
-            />
+            {canSeePassword ? (
+              <Box>
+                {/* Название и логин — от провайдера (Р-67): выбирается строка справочника, руками
+                    вводится только пароль. Один терминал провайдера — одна компания: занятый
+                    сервер отклонит с объяснением. */}
+                <Autocomplete
+                  options={providerTerminals}
+                  value={selectedProvider}
+                  loading={providerState === 'loading'}
+                  onChange={(_, value) => { setSelectedProvider(value); setFormCheck(null); }}
+                  getOptionLabel={option => [option.login, option.title].filter(Boolean).join(' — ') || option.rid}
+                  isOptionEqualToValue={(option, value) => option.rid === value.rid}
+                  renderOption={({ key, ...optionProps }, option) => (
+                    <li key={key} {...optionProps}>
+                      <Box>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                          {option.login || '—'}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {option.title || '—'} · {option.rid}
+                        </Typography>
+                      </Box>
+                    </li>
+                  )}
+                  renderInput={params => (
+                    <TextField
+                      {...params}
+                      label={`${tObj.terminals.providerTerminal} *`}
+                      helperText={tObj.terminals.providerTerminalHint}
+                    />
+                  )}
+                />
+                {selectedProvider && (
+                  <Box sx={{ mt: 1.5, p: 1.5, borderRadius: 1, bgcolor: 'action.hover' }}>
+                    <Typography variant="body2">
+                      {tObj.terminals.name}: <b>{selectedProvider.title || '—'}</b>
+                    </Typography>
+                    <Typography variant="body2">
+                      {tObj.terminals.login}: <b style={{ fontFamily: 'monospace' }}>{selectedProvider.login || '—'}</b>
+                    </Typography>
+                  </Box>
+                )}
+                {providerState === 'failed' && (
+                  <Alert severity="error" sx={{ mt: 1.5 }}>{tObj.terminals.providerTerminalLoadFailed}</Alert>
+                )}
+                {providerState === 'ready' && providerTerminals.length === 0 && (
+                  <Alert severity="info" sx={{ mt: 1.5 }}>{tObj.terminals.providerTerminalEmpty}</Alert>
+                )}
+                {syncResult && (
+                  <Alert severity={syncResult.applied ? 'success' : 'warning'} sx={{ mt: 1.5 }}>
+                    {syncResult.applied
+                      ? `${tObj.terminals.syncApplied}: ${syncResult.seen}`
+                      : `${tObj.terminals.syncSkipped}: ${syncResult.skippedBecause ?? '—'}`}
+                  </Alert>
+                )}
+                <Button
+                  size="small"
+                  startIcon={<SyncIcon />}
+                  disabled={syncing}
+                  onClick={handleSyncDirectory}
+                  sx={{ mt: 1 }}
+                >
+                  {syncing ? tObj.common.loading : tObj.terminals.syncDirectory}
+                </Button>
+              </Box>
+            ) : (
+              <>
+                <TextField
+                  label={`${tObj.terminals.name} *`}
+                  value={form.name}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="e.g. Main Online E-commerce Terminal"
+                  fullWidth
+                />
+                <TextField
+                  label={`${tObj.terminals.login} *`}
+                  value={form.login}
+                  onChange={e => { setForm(f => ({ ...f, login: e.target.value })); setFormCheck(null); }}
+                  placeholder="e.g. term_login_001"
+                  fullWidth
+                />
+              </>
+            )}
             <TextField
               label={`${tObj.terminals.password} *`}
               type="password"
@@ -651,7 +782,7 @@ export const TerminalsPage: React.FC = () => {
               <Box>
                 <Button
                   variant="outlined"
-                  disabled={formChecking || !form.login.trim() || !form.password}
+                  disabled={formChecking || !formLogin || !form.password}
                   onClick={runFormCheck}
                 >
                   {formChecking ? tObj.common.loading : tObj.terminals.testAction}

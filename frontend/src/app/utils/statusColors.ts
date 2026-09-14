@@ -1,4 +1,5 @@
 import type { TransactionStatus } from '../types/transaction';
+import type { EcomStatus } from '../types/ecom';
 
 const colorSchemes = {
   success: {
@@ -31,6 +32,20 @@ const colorSchemes = {
     dark: '#c62828',
     contrastText: '#b71c1c'
   },
+  /** Частичная оплата выписки (Р-78): деньги пришли, но не все — рядом с успехом, но не он. */
+  teal: {
+    main: '#009688',
+    light: '#e0f2f1',
+    dark: '#00695c',
+    contrastText: '#004d40'
+  },
+  /** Отмена в выписке (Р-75, Р-77): одобрено, но денег нет — не отказ и не «неизвестный статус». */
+  slate: {
+    main: '#607d8b',
+    light: '#eceff1',
+    dark: '#455a64',
+    contrastText: '#263238'
+  },
   /** Статус, которого нет в словаре бэкенда: серый, чтобы его нельзя было спутать с реальным. */
   neutral: {
     main: '#9e9e9e',
@@ -45,10 +60,14 @@ const colorSchemes = {
  * ни ветки под чужие словари (`APPROVED`, `DECLINED`, `3D-FAILED`) здесь больше не нужны.
  * `null` — статус вне словаря бэкенда: серый, а не «успешный» по умолчанию.
  */
-export const getStatusColorScheme = (status: TransactionStatus | null | undefined) => {
+export const getStatusColorScheme = (status: TransactionStatus | EcomStatus | null | undefined) => {
   switch (status) {
     case 'SUCCESS':
       return colorSchemes.success;
+    case 'PARTIALLY_PAID':
+      return colorSchemes.teal;
+    case 'CANCELED':
+      return colorSchemes.slate;
     case 'PENDING':
       return colorSchemes.warning;
     case 'AUTHORIZED':

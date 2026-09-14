@@ -47,6 +47,27 @@ export interface TerminalOptionDto {
 export const isTerminalActive = (terminal: Pick<TerminalDto, 'status'>): boolean =>
   terminal.status !== 'BLOCKED';
 
+/**
+ * Терминал из справочника провайдера (`GET /api/v1/ecom/provider-terminals`, только SYSTEM_ADMIN).
+ * `rid` — reference id мерчанта у провайдера, он же `merchantRid` нашего терминала (Р-67, Р-79).
+ */
+export interface ProviderTerminalDto {
+  rid: string;
+  title: string | null;
+  login: string | null;
+  active: boolean;
+  lastSeenAt?: string | null;
+}
+
+/** Итог ручного обновления справочника (`POST /api/v1/ecom/provider-terminals/sync`). */
+export interface ProviderTerminalSyncOutcome {
+  applied: boolean;
+  seen: number;
+  ambiguous: number;
+  disabled: number;
+  skippedBecause: string | null;
+}
+
 export interface UserDto {
   id: string;
   username: string;
