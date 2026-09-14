@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router';
+import axios from 'axios';
 import { apiClient } from '../api/client';
 import {
   Box,
@@ -8,21 +9,11 @@ import {
   Button,
   Divider,
   Chip,
-  Card,
-  CardContent,
   Alert,
   AlertTitle,
   Stack,
   CircularProgress
 } from '@mui/material';
-import {
-  Timeline,
-  TimelineItem,
-  TimelineSeparator,
-  TimelineConnector,
-  TimelineContent,
-  TimelineDot
-} from '@mui/lab';
 import {
   ArrowBack as ArrowBackIcon,
   Cancel as CancelIcon,
@@ -38,7 +29,7 @@ import {
   Laptop as LaptopIcon,
 } from '@mui/icons-material';
 import type { StatusHistoryEntry, Transaction } from '../types/transaction';
-import { formatCurrency, formatDateTime, getPaymentMethodLabel } from '../utils/mockData';
+import { formatCurrency, formatDateTime, getPaymentMethodLabel } from '../utils/format';
 import { getStatusColorScheme } from '../utils/statusColors';
 import { buildTerminalIndex, terminalLabel, terminalSubLabel } from '../utils/terminals';
 import { mapTransaction } from '../utils/mapTransaction';
@@ -46,12 +37,10 @@ import { readMoneyOperationFailure, type MoneyOperationFailure } from '../utils/
 import type { TerminalOptionDto } from '../types/dto';
 
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import { canRefund, canWriteLinks } from '../auth/actionAccess';
 import { statusLabel, type TranslationDictionary } from '../i18n/translations';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-
-interface TransactionDetailPageProps {
-  transactions: Transaction[];
-}
 
 /**
  * Что ещё можно вернуть по операции — те же три правила, по которым решает
@@ -67,7 +56,25 @@ interface TransactionDetailPageProps {
  * но узнавать о них нажатием кнопки, которой не должно было быть, мерчанту незачем.
  */
 const refundableLeftOf = (tx: Transaction): number =>
-  Math.max(0, Number(tx.capturedAmount ?? tx.amount) - Number(tx.refundedAmount ?? 0));
+  Math.max(0, toMinorUnits(tx.capturedAmount ?? tx.amount) - toMinorUnits(tx.refundedAmount ?? 0)) / 100;
+
+/**
+ * Суммы считаются в копейках. `10.10 - 9.80` в double даёт `0.29999999999999893`, и бэкенд
+ * такой возврат отвергает («more than two decimal places»), хотя в окне показано `0.30`.
+ * Целые копейки вычитаются точно, а `k / 100` сериализуется ровно двумя знаками.
+ */
+const toMinorUnits = (amount: unknown): number => Math.round(Number(amount ?? 0) * 100);
+
+/**
+ * Перечитанная операция объясняет неподтверждённый исход, только если в ней видно движение
+ * денег: сменился статус, выросла сумма возврата или появилось списание. Ответ без изменений
+ * ничего не доказывает: по операции в терминальном статусе бэкенд эквайера не спрашивает, а по
+ * холду «всё ещё AUTHORIZED» не отличим от «не спросили». Запрет на повтор остаётся.
+ */
+const moneyMoved = (before: Transaction, after: Transaction): boolean =>
+  before.status !== after.status
+  || toMinorUnits(before.refundedAmount) !== toMinorUnits(after.refundedAmount)
+  || toMinorUnits(before.capturedAmount) !== toMinorUnits(after.capturedAmount);
 
 /**
  * Подпись события на шкале. У денежных событий она называет **действие** — списание холда,
@@ -84,12 +91,17 @@ const eventLabel = (tObj: TranslationDictionary, entry: StatusHistoryEntry): str
 const isRefundable = (tx: Transaction): boolean =>
   (tx.status === 'SUCCESS' || tx.status === 'PARTIALLY_REFUNDED') && refundableLeftOf(tx) > 0;
 
-export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ transactions }) => {
+export const TransactionDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const { tObj } = useLanguage();
-  const stateTx = location.state?.transaction as Transaction | undefined;
+  const { user } = useAuth();
+  // Кнопки денежных действий — только ролям, которым бэкенд их примет (Р-62): возврат —
+  // `REFUND_ROLES`, списание холда — `LINK_WRITE_ROLES`. Аудитор и сотрудник видели обе кнопки
+  // и получали 403 уже в окне подтверждения.
+  const mayRefund = canRefund(user?.role);
+  const mayCapture = canWriteLinks(user?.role);
 
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -100,16 +112,29 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
   const [actionError, setActionError] = useState<MoneyOperationFailure | null>(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [statusChecked, setStatusChecked] = useState(false);
-  const [fetchedTx, setFetchedTx] = useState<Transaction | null>(null);
-  const [loadingTx, setLoadingTx] = useState(false);
-  const [terminalIndex, setTerminalIndex] = useState<Record<number, TerminalOptionDto>>({});
+  /** Сбой самой проверки статуса. Не исход денежной операции — `actionError` не трогает. */
+  const [checkError, setCheckError] = useState<string | null>(null);
+  /** Перечитали, а операция не изменилась: неподтверждённый исход так и остался неподтверждённым. */
+  const [stillUnresolved, setStillUnresolved] = useState(false);
   /**
-   * Операция, перечитанная у эквайера кнопкой проверки статуса. Стоит впереди всех прочих
-   * источников: это единственное состояние, про которое известно, что оно свежее.
+   * Сырой ответ `GET /api/v1/transactions/{id}` — единственный источник карточки. Списка операций
+   * в `App` больше нет (Р-65), и это к лучшему: копия из списка переживала возврат и снова
+   * предлагала вернуть уже возвращённое. Разбор — в `useMemo`, чтобы подпись терминала
+   * подтянулась, когда придёт индекс терминалов, без второго запроса операции.
    */
-  const [refreshedTx, setRefreshedTx] = useState<Transaction | null>(null);
+  const [rawTx, setRawTx] = useState<unknown>(null);
+  const [loadingTx, setLoadingTx] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [terminalIndex, setTerminalIndex] = useState<Record<number, TerminalOptionDto>>({});
 
-  const transaction = refreshedTx || stateTx || transactions.find(t => t.id === id) || fetchedTx || undefined;
+  const transaction = useMemo(
+    () => (rawTx ? mapTransaction(rawTx, terminalIndex) : undefined),
+    [rawTx, terminalIndex]
+  );
+
+  // Назад — туда, откуда пришли (главная, карточка ссылки, журнал аудита); прямой заход по
+  // адресу истории не имеет, тогда на главную. Списка `/transactions` больше нет.
+  const goBack = () => (location.key === 'default' ? navigate('/') : navigate(-1));
 
   /**
    * Исход последней денежной операции не подтверждён. Пока это так, повтор закрыт: эквайер мог
@@ -131,22 +156,36 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
   }, []);
 
   useEffect(() => {
-    if (!stateTx && !transactions.find(t => t.id === id) && id) {
-      setLoadingTx(true);
-      apiClient.get(`/api/v1/transactions/${id}`)
-        .then(res => {
-          if (res.data) {
-            setFetchedTx(mapTransaction(res.data, terminalIndex));
-          }
-        })
-        .catch(() => {
-          setFetchedTx(null);
-        })
-        .finally(() => {
-          setLoadingTx(false);
-        });
+    if (!id) return;
+    const controller = new AbortController();
+    setLoadingTx(true);
+    setLoadFailed(false);
+    setRawTx(null);
+    setActionError(null);
+    setCancelSuccess(false);
+    setCompleteSuccess(false);
+    apiClient.get(`/api/v1/transactions/${id}`, { signal: controller.signal })
+      .then(res => setRawTx(res.data ?? null))
+      .catch(err => {
+        if (axios.isCancel(err)) return;
+        setLoadFailed(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingTx(false);
+      });
+    return () => controller.abort();
+  }, [id]);
+
+  /** Перечитать операцию после денежного действия: статус и суммы на карточке — с сервера. */
+  const reload = async () => {
+    if (!id) return;
+    try {
+      const res = await apiClient.get(`/api/v1/transactions/${id}`);
+      if (res.data) setRawTx(res.data);
+    } catch (error) {
+      console.warn('[transactions] не удалось перечитать операцию после действия:', error);
     }
-  }, [id, stateTx, transactions, terminalIndex]);
+  };
 
   /**
    * Отказ денежной операции остаётся **в окне подтверждения**, а не уезжает алертом наверх
@@ -169,9 +208,8 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       });
       setCancelSuccess(true);
       setCancelDialogOpen(false);
-      setTimeout(() => {
-        navigate('/transactions');
-      }, 2000);
+      // Остаёмся на карточке и перечитываем её: статус, возвращённая сумма и кнопки — с сервера.
+      await reload();
     } catch (err: unknown) {
       setActionError(readMoneyOperationFailure(err, 'Failed to refund transaction on server'));
     } finally {
@@ -189,6 +227,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       });
       setCompleteSuccess(true);
       setCompleteDialogOpen(false);
+      await reload();
     } catch (err: unknown) {
       setActionError(readMoneyOperationFailure(err, 'Failed to complete DMS transaction on server'));
     } finally {
@@ -197,24 +236,43 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
   };
 
   /**
-   * Спрашивает эквайера о судьбе операции и **показывает ответ**. Прежде ответ выбрасывался:
-   * `await` без присваивания, экран оставался прежним, и кнопка «обновить» ничего не обновляла.
-   * Это и есть предписанный следующий шаг после неподтверждённого исхода, поэтому удачная
-   * проверка снимает запрет на повтор.
+   * Перечитывает операцию и **показывает ответ**. Прежде ответ выбрасывался: `await` без
+   * присваивания, экран оставался прежним, и кнопка «обновить» ничего не обновляла.
+   *
+   * Это предписанный следующий шаг после неподтверждённого исхода, но запрет на повтор снимает
+   * не сама проверка, а её результат: только если в перечитанной операции видно движение денег
+   * (`moneyMoved`). Раньше запрет снимался любым ответом 200 — а по операции в терминальном
+   * статусе бэкенд отдаёт строку, не спрашивая эквайера, то есть после 502 на возврате «проверка»
+   * тут же открывала повторный возврат той же суммы. Сбой проверки — свой `checkError`: 5xx на
+   * `/status` не означает «исход неизвестен», а 4xx не означает «отказано», и `actionError`
+   * он не трогает ни в какую сторону.
    */
   const handleCheckStatus = async () => {
     if (!transaction) return;
+    const before = transaction;
     setCheckingStatus(true);
-    setActionError(null);
     setStatusChecked(false);
+    setStillUnresolved(false);
+    setCheckError(null);
     try {
       const res = await apiClient.get(`/api/v1/transactions/${transaction.id}/status`);
-      if (res.data) {
-        setRefreshedTx(mapTransaction(res.data, terminalIndex));
+      if (!res.data) {
+        setCheckError(tObj.transactions.detail.checkStatusFailed);
+        return;
       }
+      const after = mapTransaction(res.data, terminalIndex);
+      setRawTx(res.data);
+      if (outcomeUnresolved && !moneyMoved(before, after)) {
+        setStillUnresolved(true);
+        return;
+      }
+      setActionError(null);
       setStatusChecked(true);
     } catch (err: unknown) {
-      setActionError(readMoneyOperationFailure(err, 'Failed to check status from gateway'));
+      const serverMessage = axios.isAxiosError(err) ? err.response?.data?.message : undefined;
+      setCheckError(typeof serverMessage === 'string' && serverMessage
+        ? serverMessage
+        : tObj.transactions.detail.checkStatusFailed);
     } finally {
       setCheckingStatus(false);
     }
@@ -233,17 +291,15 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       <Box sx={{ p: 4 }}>
         <Paper sx={{ p: 4, textAlign: 'center' }}>
           <Typography variant="h5" color="text.secondary" gutterBottom>
-            Transaction Not Found
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            The transaction you're looking for doesn't exist or has been removed.
+            {loadFailed ? tObj.common.loadFailed : tObj.errors.notFoundTitle}
           </Typography>
           <Button
             variant="contained"
             startIcon={<ArrowBackIcon />}
-            onClick={() => navigate('/transactions')}
+            onClick={goBack}
+            sx={{ mt: 2 }}
           >
-            Back to Transactions
+            {tObj.common.back}
           </Button>
         </Paper>
       </Box>
@@ -253,11 +309,12 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
   // DMS-холд, который ещё можно захватить. Значения уже разобраны на границе, поэтому
   // сравниваем напрямую — без `String(...).toUpperCase()` (P2-12).
   const isCompletableDms =
+    mayCapture &&
     transaction.paymentMethod === 'DMS' &&
     (transaction.status === 'PENDING' || transaction.status === 'AUTHORIZED');
 
   const refundableLeft = refundableLeftOf(transaction);
-  const refundable = isRefundable(transaction);
+  const refundable = mayRefund && isRefundable(transaction);
   const refundedSoFar = Number(transaction.refundedAmount ?? 0);
 
   // Один и тот же блок отказа для обоих окон: правило «ошибка остаётся там, куда смотрят»
@@ -276,13 +333,18 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
     <Box sx={{ p: 4 }}>
       {/* Success / Error Alerts */}
       {cancelSuccess && (
-        <Alert severity="success" sx={{ mb: 3 }}>
-          Transaction refund initiated successfully. Redirecting...
+        <Alert severity="success" sx={{ mb: 3 }} onClose={() => setCancelSuccess(false)}>
+          {tObj.transactions.detail.eventRefunded}
         </Alert>
       )}
       {statusChecked && (
         <Alert severity="info" sx={{ mb: 3 }} onClose={() => setStatusChecked(false)}>
           {tObj.transactions.detail.statusChecked}
+        </Alert>
+      )}
+      {checkError && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setCheckError(null)}>
+          {checkError}
         </Alert>
       )}
       {/* Тот же отказ, что и в окне подтверждения: окно закрыли — след на странице остался.
@@ -298,6 +360,11 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
           )}
           {actionError.message}
           {outcomeUnresolved && ` ${tObj.transactions.detail.unresolvedHint}`}
+          {stillUnresolved && (
+            <Typography variant="body2" sx={{ mt: 1, fontWeight: 600 }}>
+              {tObj.transactions.detail.statusStillUnresolved}
+            </Typography>
+          )}
         </Alert>
       )}
 
@@ -305,7 +372,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Button
           startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/transactions')}
+          onClick={goBack}
           variant="outlined"
         >
           {tObj.common.back}
@@ -486,7 +553,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
             </Typography>
             <Box sx={{
               display: 'grid',
-              gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: `repeat(${refundedSoFar > 0 ? 4 : 3}, 1fr)` },
+              gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(auto-fit, minmax(160px, 1fr))' },
               gap: 2
             }}>
               <Box>
@@ -504,47 +571,28 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                   color: 'text.primary',
                   mt: 0.5
                 }}>
-                  {transaction.currency}
+                  {transaction.currency || '—'}
                 </Typography>
               </Box>
 
-              <Box>
-                <Typography variant="caption" sx={{
-                  color: 'text.secondary',
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  fontSize: '0.7rem',
-                  letterSpacing: 0.5
-                }}>
-                  Processing Fee
-                </Typography>
-                <Typography variant="h6" sx={{
-                  fontWeight: 700,
-                  color: 'text.primary',
-                  mt: 0.5
-                }}>
-                  {formatCurrency(transaction.fee, transaction.currency)}
-                </Typography>
-              </Box>
-
-              <Box>
-                <Typography variant="caption" sx={{
-                  color: 'text.secondary',
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  fontSize: '0.7rem',
-                  letterSpacing: 0.5
-                }}>
-                  Net Amount
-                </Typography>
-                <Typography variant="h6" sx={{
-                  fontWeight: 700,
-                  color: 'success.dark',
-                  mt: 0.5
-                }}>
-                  {formatCurrency(transaction.amount - transaction.fee, transaction.currency)}
-                </Typography>
-              </Box>
+              {/* Строк «комиссия» и «к получению» здесь нет: поля комиссии в системе нет, а нулём
+                  она была выдумана (Р-48). Склиренная сумма показывается, когда она отличается. */}
+              {transaction.capturedAmount !== undefined && transaction.capturedAmount !== transaction.amount && (
+                <Box>
+                  <Typography variant="caption" sx={{
+                    color: 'text.secondary',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    fontSize: '0.7rem',
+                    letterSpacing: 0.5
+                  }}>
+                    {tObj.transactions.detail.captureAmount}
+                  </Typography>
+                  <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary', mt: 0.5 }}>
+                    {formatCurrency(transaction.capturedAmount, transaction.currency)}
+                  </Typography>
+                </Box>
+              )}
 
               {/* Сколько уже вернули. Без этой цифры исчезнувшая кнопка возврата выглядит
                   поломкой: карточка обязана сказать, что возвращать больше нечего. */}
@@ -663,7 +711,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                   Card Number
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 700, fontFamily: 'monospace', color: 'text.primary' }}>
-                  {transaction.cardLast4 ? `*${transaction.cardLast4}` : 'N/A'}
+                  {transaction.cardLast4 ? `*${transaction.cardLast4}` : '—'}
                 </Typography>
               </Box>
 
@@ -680,10 +728,14 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                   Description
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 600, color: 'text.primary' }}>
-                  {transaction.description}
+                  {transaction.description || '—'}
                 </Typography>
               </Box>
             </Box>
+            {/* Причина отказа словами эквайера — только когда бэкенд её прислал. */}
+            {transaction.failureReason && (
+              <Alert severity="error" sx={{ mt: 3 }}>{transaction.failureReason}</Alert>
+            )}
           </Box>
 
           <Divider sx={{ my: 4 }} />
@@ -714,7 +766,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                   Customer Name
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 600, color: 'text.primary' }}>
-                  {transaction.customer}
+                  {transaction.customer || '—'}
                 </Typography>
               </Box>
 
@@ -731,7 +783,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
                   Customer Email
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 600, color: 'text.primary', wordBreak: 'break-word' }}>
-                  {transaction.customerEmail}
+                  {transaction.customerEmail || '—'}
                 </Typography>
               </Box>
 
@@ -801,50 +853,10 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
         </Box>
       </Paper>
 
-      {/* Cancelation Information - Show if canceled */}
-      {transaction.status === 'FAILED' && transaction.canceledBy && (
-        <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: 'rgba(3, 169, 244, 0.08)', border: '1px solid', borderColor: 'rgba(3, 169, 244, 0.2)' }}>
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
-            <CancelIcon sx={{ color: 'info.main', mt: 0.5 }} />
-            <Box sx={{ flex: 1 }}>
-              <Typography variant="h6" sx={{ mb: 1, fontWeight: 600, color: 'info.dark' }}>
-                Transaction Canceled
-              </Typography>
-              {transaction.canceledBy === 'api' ? (
-                <Typography variant="body2" sx={{ color: 'info.dark' }}>
-                  This transaction was canceled via API integration.
-                </Typography>
-              ) : (
-                <Box>
-                  <Typography variant="body2" sx={{ color: 'info.dark', mb: 1 }}>
-                    This transaction was canceled by the customer.
-                  </Typography>
-                  <Box sx={{ mt: 2, p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
-                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', mb: 0.5 }}>
-                      Customer Details:
-                    </Typography>
-                    <Stack spacing={0.5}>
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        <PersonIcon sx={{ fontSize: 14, mr: 0.5, verticalAlign: 'middle' }} />
-                        {transaction.canceledByCustomerName}
-                      </Typography>
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        <EmailIcon sx={{ fontSize: 14, mr: 0.5, verticalAlign: 'middle' }} />
-                        {transaction.canceledByCustomerEmail}
-                      </Typography>
-                    </Stack>
-                  </Box>
-                </Box>
-              )}
-            </Box>
-          </Box>
-        </Paper>
-      )}
-
       {/* Действия видны, только когда бэкенд их примет: условием было «любой статус, кроме
           FAILED», и у возвращённой операции кнопка возврата предлагала то, на что сервер
           отвечает отказом. Правила — в `isRefundable` / `isCompletableDms` наверху файла. */}
-      {transaction.channel !== 'pos' && (refundable || isCompletableDms || outcomeUnresolved) && (
+      {(refundable || isCompletableDms || outcomeUnresolved) && (
         <Paper elevation={2} sx={{ p: 3, mb: 3, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 3 }}>
             <Box sx={{ flex: 1 }}>
@@ -876,7 +888,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({ tr
               {/* Кнопки выше погашены, и экран обязан сказать почему, иначе это выглядит поломкой. */}
               {outcomeUnresolved && (
                 <Typography variant="body2" color="warning.dark" sx={{ mt: 1, fontWeight: 600 }}>
-                  {tObj.transactions.detail.unresolvedHint}
+                  {stillUnresolved ? tObj.transactions.detail.statusStillUnresolved : tObj.transactions.detail.unresolvedHint}
                 </Typography>
               )}
             </Box>

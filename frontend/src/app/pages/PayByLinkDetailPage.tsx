@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router';
+import axios from 'axios';
 import { apiClient } from '../api/client';
 import {
   Box,
+  CircularProgress,
   Paper,
   Typography,
   Button,
@@ -52,10 +54,16 @@ import {
   formatTimeLeft,
   expiryPercent,
   getLinkStatusColors,
+  mailtoHref,
   parseLinkStatus,
   parseLinkUsageType,
   parsePaymentType,
+  whatsAppHref,
 } from '../utils/payByLinkData';
+import { formatCurrency } from '../utils/format';
+import { parseTransactionStatus } from '../types/transaction';
+import { getStatusColorScheme } from '../utils/statusColors';
+import { statusLabel } from '../i18n/translations';
 import type { PaymentLink } from '../utils/payByLinkData';
 import type { TerminalOptionDto } from '../types/dto';
 import { buildTerminalIndex, terminalLabel, terminalSubLabel } from '../utils/terminals';
@@ -132,7 +140,7 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
       time: formatDateTime(link.paidAt),
       icon: <CheckCircleIcon sx={{ fontSize: 16 }} />,
       color: '#2e7d32',
-      detail: `₼${link.amount.toFixed(2)}${card}`,
+      detail: `${formatCurrency(link.amount, link.currency)}${card}`,
     });
     // Событие «Customer Redirected» отсюда удалено вместе с P2-15 (Р-48). Времени у него не
     // было: оно бралось как «оплата + 3 секунды». Придуманная отметка времени события в
@@ -182,17 +190,23 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
   const navigate = useNavigate();
   const { tObj } = useLanguage();
   const [transactions, setTransactions] = useState<any[]>([]);
+  // Отказ загрузки — отдельно от «платежей ещё нет»: 403 или 500 не значит, что никто не платил.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
-    if (link.id) {
-      apiClient.get(`/api/v1/payment-links/${link.id}/transactions`)
-        .then(res => {
-          if (Array.isArray(res.data)) {
-            setTransactions(res.data);
-          }
-        })
-        .catch(() => {});
-    }
+    if (!link.id) return;
+    const controller = new AbortController();
+    setLoadFailed(false);
+    apiClient.get(`/api/v1/payment-links/${link.id}/transactions`, { signal: controller.signal })
+      .then(res => {
+        setTransactions(Array.isArray(res.data) ? res.data : []);
+      })
+      .catch(err => {
+        if (axios.isCancel(err)) return;
+        setTransactions([]);
+        setLoadFailed(true);
+      });
+    return () => controller.abort();
   }, [link.id]);
 
   const displayTxns = transactions;
@@ -207,7 +221,9 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
         <Chip label={displayTxns.length} size="small" sx={{ ml: 0.5, height: 18, fontSize: '0.7rem' }} />
       </Box>
 
-      {displayTxns.length === 0 ? (
+      {loadFailed ? (
+        <Alert severity="error" sx={{ m: 2 }}>{tObj.common.loadFailed}</Alert>
+      ) : displayTxns.length === 0 ? (
         <Box sx={{ py: 5, textAlign: 'center' }}>
           <ReceiptIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
           <Typography variant="body2" color="text.secondary">
@@ -231,16 +247,11 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
             </TableHead>
             <TableBody>
               {displayTxns.map((txn: any) => {
-                const status = String(txn.status ?? 'PENDING').toUpperCase();
-                const statusColors: Record<string, { label: string; color: any; bgcolor: string }> = {
-                  SUCCESS: { label: 'SUCCESS', color: 'success', bgcolor: 'rgba(46,125,50,0.1)' },
-                  AUTHORIZED: { label: 'AUTHORIZED', color: 'warning', bgcolor: 'rgba(230,81,0,0.1)' },
-                  PENDING: { label: 'PENDING', color: 'info', bgcolor: 'rgba(2,136,209,0.1)' },
-                  FAILED: { label: 'FAILED', color: 'error', bgcolor: 'rgba(198,40,40,0.1)' },
-                  PARTIALLY_REFUNDED: { label: 'PARTIALLY REFUNDED', color: 'default', bgcolor: 'rgba(84,110,122,0.1)' },
-                  REFUNDED: { label: 'REFUNDED', color: 'default', bgcolor: 'rgba(84,110,122,0.1)' },
-                };
-                const sc = statusColors[status] || { label: status, color: 'default', bgcolor: 'rgba(0,0,0,0.05)' };
+                // Статус — тем же разбором, что и везде (P2-12): незнакомое значение серое и
+                // как есть, а не «PENDING» по умолчанию.
+                const status = parseTransactionStatus(txn.status);
+                const statusRaw = txn.status === null || txn.status === undefined ? undefined : String(txn.status);
+                const scheme = getStatusColorScheme(status);
 
                 return (
                   <TableRow
@@ -256,17 +267,17 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                   >
                     <TableCell>
                       <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                        {txn.providerOrderId || txn.provider_order_id || '—'}
+                        {txn.providerOrderId || '—'}
                       </Typography>
                     </TableCell>
                     <TableCell>
                       <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                        {txn.ridByMerchant || txn.rid_by_merchant || '—'}
+                        {txn.ridByMerchant || '—'}
                       </Typography>
                     </TableCell>
                     <TableCell>
                       <Typography variant="caption" color="text.secondary">
-                        {formatDateTime(txn.createdAt ? new Date(txn.createdAt) : txn.timestamp)}
+                        {txn.createdAt ? formatDateTime(new Date(txn.createdAt)) : '—'}
                       </Typography>
                     </TableCell>
                     {/* Адрес и устройство плательщика бэкенд заполняет не всегда. Пусто — это
@@ -285,16 +296,15 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                     </TableCell>
                     <TableCell align="right">
                       <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                        ₼{(txn.amount ?? link.amount).toFixed(2)}
+                        {formatCurrency(Number(txn.amount), txn.currency || link.currency)}
                       </Typography>
                     </TableCell>
                     <TableCell>
                       <Chip
-                        label={sc.label}
+                        label={statusLabel(tObj, status, statusRaw)}
                         size="small"
-                        color={sc.color}
                         variant="outlined"
-                        sx={{ fontWeight: 700, fontSize: '0.68rem', bgcolor: sc.bgcolor }}
+                        sx={{ fontWeight: 700, fontSize: '0.68rem', bgcolor: scheme.light, color: scheme.contrastText }}
                       />
                     </TableCell>
                     <TableCell>
@@ -329,6 +339,10 @@ export const PayByLinkDetailPage: React.FC = () => {
   const stateLink = location.state?.link as PaymentLink | undefined;
 
   const [link, setLink] = useState<PaymentLink | null>(stateLink || null);
+  // «Не найдена» показывается только после ответа сервера. Пока запрос идёт — загрузка; при
+  // отказе (403, 500, сеть) — его текст, а не «ссылка не найдена».
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [loadError, setLoadError] = useState<string | null>(null);
   // Терминалы берутся все, включая заблокированные: ссылка, созданная на снятом с обслуживания
   // терминале, должна сохранить его подпись.
   const [terminalIndex, setTerminalIndex] = useState<Record<number, TerminalOptionDto>>({});
@@ -341,9 +355,9 @@ export const PayByLinkDetailPage: React.FC = () => {
     return () => controller.abort();
   }, []);
 
-  const fetchLink = useCallback(() => {
+  const fetchLink = useCallback((signal?: AbortSignal) => {
     if (!id) return;
-    apiClient.get(`/api/v1/payment-links/${id}`)
+    apiClient.get(`/api/v1/payment-links/${id}`, { signal })
       .then(res => {
         const l = res.data;
         if (l && l.id) {
@@ -355,10 +369,12 @@ export const PayByLinkDetailPage: React.FC = () => {
             statusRaw: l.status === null || l.status === undefined ? undefined : String(l.status),
             amount: l.amount,
             currency: l.currency || 'AZN',
-            description: l.description || 'Payment Link',
-            customerName: l.customer?.fullName || l.customerName || 'N/A',
-            customerEmail: l.customer?.email || l.customerEmail || 'N/A',
-            customerPhone: l.customer?.phone || l.customerPhone || 'N/A',
+            description: l.description || '',
+            // Пусто — значит не указано (Р-48): подстановка «N/A» делала ветку «клиент не указан»
+            // недостижимой, а кнопки письма и WhatsApp — всегда активными с адресом «N/A».
+            customerName: l.customer?.fullName || l.customerName || '',
+            customerEmail: l.customer?.email || l.customerEmail || '',
+            customerPhone: l.customer?.phone || l.customerPhone || '',
             usageType: parseLinkUsageType(l.usageType),
             maxUses: l.maxPayments || 1,
             usedCount: l.currentPaymentsCount || 0,
@@ -376,12 +392,20 @@ export const PayByLinkDetailPage: React.FC = () => {
             terminalId: typeof l.terminal === 'number' ? l.terminal : undefined,
           });
         }
+        setLoadState('ready');
+        setLoadError(null);
       })
-      .catch(() => {});
+      .catch(err => {
+        if (axios.isCancel(err)) return;
+        setLoadState('failed');
+        setLoadError(axios.isAxiosError(err) ? (err.response?.data?.message ?? null) : null);
+      });
   }, [id]);
 
   useEffect(() => {
-    fetchLink();
+    const controller = new AbortController();
+    fetchLink(controller.signal);
+    return () => controller.abort();
   }, [fetchLink]);
 
   const [snackbar, setSnackbar] = useState<{ text: string; error?: boolean } | null>(null);
@@ -405,8 +429,16 @@ export const PayByLinkDetailPage: React.FC = () => {
   if (!link) {
     return (
       <Box sx={{ textAlign: 'center', py: 10 }}>
-        <Typography variant="h6" color="text.secondary">Payment link not found</Typography>
-        <Button sx={{ mt: 2 }} onClick={() => navigate('/pay-by-link')}>Back to Pay by Link</Button>
+        {loadState === 'loading' ? (
+          <CircularProgress />
+        ) : (
+          <>
+            <Typography variant="h6" color="text.secondary">
+              {loadState === 'failed' ? (loadError ?? tObj.common.loadFailed) : tObj.errors.notFoundTitle}
+            </Typography>
+            <Button sx={{ mt: 2 }} onClick={() => navigate('/pay-by-link')}>{tObj.payByLinkDetail.backToLinks}</Button>
+          </>
+        )}
       </Box>
     );
   }
@@ -517,8 +549,7 @@ export const PayByLinkDetailPage: React.FC = () => {
                 startIcon={<ShareIcon />}
                 disabled={!isActive}
                 onClick={() => {
-                  const text = encodeURIComponent(`Hi ${link.customerName}, please complete your payment of ₼${link.amount.toFixed(2)}: ${link.url}`);
-                  window.open(`https://wa.me/${link.customerPhone.replace(/\D/g, '')}?text=${text}`, '_blank');
+                  window.open(whatsAppHref(link, tObj.payByLink.messageText), '_blank', 'noopener');
                 }}
               >
                 Share
@@ -571,7 +602,7 @@ export const PayByLinkDetailPage: React.FC = () => {
                     {link.status === 'COMPLETED' ? 'Amount Received' : 'Amount Requested'}
                   </Typography>
                   <Typography variant="h3" sx={{ fontWeight: 800, mt: 0.25, lineHeight: 1 }}>
-                    ₼{link.amount.toFixed(2)}
+                    {formatCurrency(link.amount, link.currency)}
                   </Typography>
                   <Typography variant="body2" sx={{ opacity: 0.85, mt: 0.75 }}>{link.description}</Typography>
                 </Box>
@@ -699,7 +730,7 @@ export const PayByLinkDetailPage: React.FC = () => {
                 <Divider sx={{ opacity: 0.5 }} />
                 <InfoRow label="Paid At" value={formatDateTime(link.paidAt)} />
                 <Divider sx={{ opacity: 0.5 }} />
-                <InfoRow label="Amount" value={`₼${link.amount.toFixed(2)} ${link.currency}`} />
+                <InfoRow label="Amount" value={formatCurrency(link.amount, link.currency)} />
               </Paper>
             )}
 
@@ -906,7 +937,7 @@ export const PayByLinkDetailPage: React.FC = () => {
                           variant="outlined"
                           size="small"
                           startIcon={<EmailIcon />}
-                          href={`mailto:${link.customerEmail}?subject=Payment Request — ₼${link.amount.toFixed(2)}&body=Hi ${link.customerName},%0A%0APlease complete your payment using the link below:%0A${link.url}%0A%0AAmount: ₼${link.amount.toFixed(2)}%0ADescription: ${link.description}%0A%0AThank you.`}
+                          href={mailtoHref(link, tObj.payByLink.emailSubject, tObj.payByLink.messageText)}
                           disabled={!link.customerEmail}
                         >
                           Send by Email
@@ -917,10 +948,9 @@ export const PayByLinkDetailPage: React.FC = () => {
                           size="small"
                           color="success"
                           startIcon={<WhatsAppIcon />}
-                          onClick={() => {
-                            const txt = encodeURIComponent(`Hi ${link.customerName}, please pay ₼${link.amount.toFixed(2)} using this link: ${link.url}`);
-                            window.open(`https://wa.me/${link.customerPhone.replace(/\D/g, '')}?text=${txt}`, '_blank');
-                          }}
+                          href={whatsAppHref(link, tObj.payByLink.messageText)}
+                          target="_blank"
+                          rel="noopener"
                           disabled={!link.customerPhone}
                         >
                           Send via WhatsApp
@@ -999,7 +1029,7 @@ export const PayByLinkDetailPage: React.FC = () => {
                     {/* Подсказка называет кнопку её настоящей подписью (P3-5a): подпись
                         теперь переводится, а зашитое «Finalize Payment» указывало бы на
                         кнопку, которой на азербайджанском и русском экране нет. */}
-                    ₼{link.amount.toFixed(2)} is reserved on the customer's card. Press <strong>{tObj.payByLinkDetail.finalizeDMS}</strong> to capture the funds.
+                    {formatCurrency(link.amount, link.currency)} is reserved on the customer's card. Press <strong>{tObj.payByLinkDetail.finalizeDMS}</strong> to capture the funds.
                   </Typography>
                 </Alert>
               )}
@@ -1074,7 +1104,7 @@ export const PayByLinkDetailPage: React.FC = () => {
             {tObj.transactions.detail.captureAmount}
           </Typography>
           <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            ₼{link.amount.toFixed(2)}
+            {formatCurrency(link.amount, link.currency)}
           </Typography>
         </Box>
         {finalizeError && (
@@ -1113,7 +1143,7 @@ export const PayByLinkDetailPage: React.FC = () => {
             {tObj.payByLink.table.amount}
           </Typography>
           <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            ₼{link.amount.toFixed(2)}
+            {formatCurrency(link.amount, link.currency)}
           </Typography>
         </Box>
       </ConfirmDialog>

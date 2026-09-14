@@ -66,9 +66,6 @@ export const parsePaymentMethod = (raw: unknown): PaymentMethod | null => {
   return null;
 };
 
-export type TransactionChannel = 'ecommerce' | 'pos';
-export type POSPaymentType = 'chip' | 'contactless' | 'swipe' | 'manual';
-
 /**
  * Записанное событие жизни операции — из поля `statusHistory` ответа по операции.
  *
@@ -91,10 +88,18 @@ export interface StatusHistoryEntry {
   note?: string;
 }
 
+/**
+ * Операция портала в экранном виде. Здесь только то, что отдаёт `TransactionResponse`:
+ * комиссии (`fee`), канала (`pos`/`ecommerce`), причины отмены и POS-полей в системе нет,
+ * и раньше они заполнялись выдуманными значениями (нулевая комиссия, «Customer», «сейчас»
+ * вместо отсутствующей даты) — на денежной карточке это ложь, а не заглушка (Р-48).
+ */
 export interface Transaction {
   id: string;
   paymentLinkId?: string;
-  timestamp: Date;
+  /** `createdAt` из ответа; пусто, если бэкенд его не прислал, — «сейчас» не подставляется. */
+  timestamp?: Date;
+  /** Имя плательщика; пусто — не записано. */
   customer: string;
   customerEmail: string;
   customerPhone?: string;
@@ -129,39 +134,8 @@ export interface Transaction {
   terminalLogin?: string;
   clientIp?: string;
   userAgent?: string;
-  fee: number;
+  /** Причина отказа словами эквайера (`failureReason`); только у FAILED с известной причиной. */
+  failureReason?: string;
   statusHistory: StatusHistoryEntry[];
-  /** Ключ фильтра по терминалу: тот же логин, что и в `terminalLogin`, — по нему фильтрует `FilterPanel`. */
-  terminalRid: string;
   terminalName?: string;
-  canceledBy?: 'customer' | 'api';
-  canceledByCustomerName?: string;
-  canceledByCustomerEmail?: string;
-  channel: TransactionChannel;
-  // POS-specific fields
-  posPaymentType?: POSPaymentType;
-  cashierName?: string;
-  cashierId?: string;
-  receiptNumber?: string;
-  batchId?: string;
-  locationName?: string;
-  shiftId?: string;
-  isOffline?: boolean;
-}
-
-export interface TransactionFilters {
-  dateFrom: Date | null;
-  dateTo: Date | null;
-  status: TransactionStatus | 'all';
-  paymentMethod: PaymentMethod | 'all';
-  minAmount: string;
-  maxAmount: string;
-  searchQuery: string;
-  /** Выбранные логины терминалов; сверяется с `Transaction.terminalRid`. */
-  terminalRid: string[];
-  // POS-specific filters
-  posPaymentType?: POSPaymentType | 'all';
-  cashierId?: string | 'all';
-  locationName?: string | 'all';
-  batchId?: string | 'all';
 }

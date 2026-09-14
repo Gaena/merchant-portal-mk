@@ -78,7 +78,8 @@ export const mapEcomOrder = (raw: any): EcomOrder => ({
   amount: amount(raw?.amount),
   capturedAmount: amount(raw?.capturedAmount) ?? 0,
   refundedAmount: amount(raw?.refundedAmount) ?? 0,
-  currency: text(raw?.currency) ?? 'AZN',
+  // Валюта заказа — сырая колонка провайдера, бывает пустой; подставлять AZN нельзя (Р-48).
+  currency: text(raw?.currency),
   description: text(raw?.description),
   createdAt: date(raw?.createdAt),
   lastOperationAt: date(raw?.lastOperationAt),
@@ -155,6 +156,13 @@ export const fetchEcomOrder = async (orderId: string, signal?: AbortSignal): Pro
   const res = await apiClient.get(`/api/v1/ecom/transactions/${encodeURIComponent(orderId)}`, { signal });
   return mapEcomOrder(res.data);
 };
+
+/**
+ * Одобрена ли операция выписки. Слово провайдера — `Approved` (`EcomOrderAssembler.APPROVED`);
+ * разбор здесь, а не в странице. `null` — код не пришёл: это «неизвестно», а не отказ.
+ */
+export const operationApproved = (operation: Pick<EcomOperation, 'resultCode'>): boolean | null =>
+  operation.resultCode === null ? null : operation.resultCode === 'Approved';
 
 /**
  * Подпись терминала заказа — тот же порядок, что у операций портала (Р-59): логин, под ним название.

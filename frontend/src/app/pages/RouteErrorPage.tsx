@@ -24,7 +24,18 @@ export const RouteErrorPage: React.FC = () => {
     );
   }
 
-  const detail = error instanceof Error ? error.message : undefined;
+  // Упавший `lazy()`-чанк — это старая вкладка после деплоя: адрес чанка пользователю ни к чему,
+  // а «на главную» без перезагрузки привёл бы к той же ошибке. Перезагружаем страницу целиком.
+  const chunkFailed = error instanceof Error && /dynamically imported module|Loading chunk|Importing a module script failed/i.test(error.message);
+  const detail = error instanceof Error && !chunkFailed ? error.message : undefined;
   console.error('[router] unhandled error', error);
-  return <StatusPage code="!" title={tObj.errors.unexpectedTitle} text={tObj.errors.unexpectedText} detail={detail} />;
+  return (
+    <StatusPage
+      code="!"
+      title={tObj.errors.unexpectedTitle}
+      text={tObj.errors.unexpectedText}
+      detail={detail}
+      onHome={chunkFailed ? () => window.location.assign('/') : undefined}
+    />
+  );
 };

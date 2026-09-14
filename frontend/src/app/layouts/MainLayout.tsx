@@ -7,11 +7,7 @@ import { Sidebar } from '../components/Sidebar';
 const DRAWER_WIDTH = 260;
 const MINI_DRAWER_WIDTH = 72;
 
-interface MainLayoutProps {
-  newTransactionCount: number;
-}
-
-export const MainLayout: React.FC<MainLayoutProps> = ({ newTransactionCount }) => {
+export const MainLayout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [desktopOpen, setDesktopOpen] = useState(true);
 
@@ -25,8 +21,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ newTransactionCount }) =
 
   return (
     <Box sx={{ display: 'flex' }}>
-      <Header 
-        newTransactionCount={newTransactionCount} 
+      <Header
         onMenuClick={handleDrawerToggle}
         onDesktopDrawerToggle={handleDesktopDrawerToggle}
       />

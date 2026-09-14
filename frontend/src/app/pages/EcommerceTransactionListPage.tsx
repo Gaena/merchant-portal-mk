@@ -38,7 +38,7 @@ import {
   periodProblem,
 } from '../utils/ecom';
 import { exportEcomOrdersToExcel } from '../utils/exportExcel';
-import { formatCurrency, formatDateTime } from '../utils/mockData';
+import { formatCurrency, formatDateTime } from '../utils/format';
 import { getStatusColorScheme } from '../utils/statusColors';
 
 const PAGE_SIZES = [25, 50, 100];
@@ -132,8 +132,12 @@ export const EcommerceTransactionListPage: React.FC = () => {
   useEffect(() => {
     generation.current += 1;
     if (!query) {
+      // Период невалиден: запроса не будет, и спиннер от прерванного предыдущего запроса
+      // нужно погасить здесь — его `finally` при отмене этого не делает.
       setOrders([]);
       setNextCursor(null);
+      setLoading(false);
+      setError(null);
       return;
     }
     const controller = new AbortController();
@@ -322,13 +326,13 @@ export const EcommerceTransactionListPage: React.FC = () => {
                 <Box>
                   <Typography variant="body2" color="text.secondary">{t.stats.captured}</Typography>
                   <Typography variant="h5" sx={{ fontWeight: 700, color: 'success.dark' }}>
-                    {formatCurrency(total.capturedAmount, total.currency ?? 'AZN')}
+                    {formatCurrency(total.capturedAmount, total.currency)}
                   </Typography>
                 </Box>
                 <Box>
                   <Typography variant="body2" color="text.secondary">{t.stats.refunded}</Typography>
                   <Typography variant="h5" sx={{ fontWeight: 700, color: 'secondary.dark' }}>
-                    {formatCurrency(total.refundedAmount, total.currency ?? 'AZN')}
+                    {formatCurrency(total.refundedAmount, total.currency)}
                   </Typography>
                 </Box>
               </Stack>
