@@ -86,7 +86,6 @@ mp/
 | **Vite** | **6.3.5** |
 | MUI | 7.3.5 (`@mui/lab` 7.0.1-beta.19 — единственная beta с peer ровно `^7.3.5`; обновлять парой) |
 | **react-router** | **7.13.0** (пакет `react-router`, НЕ `react-router-dom`) |
-| Tailwind CSS | 4.1.12 — подключён, классы только в двух файлах; конвенция — MUI, новых классов не добавлять |
 | axios | `^1.7.9` · recharts 2.15.2 · xlsx `^0.18.5` |
 | **TypeScript** | **7.0.2**. `strict` выключен **явно** в `tsconfig.app.json` (TS ≥ 7 включает его по умолчанию) |
 | oxlint | 1.16.0, конфиг `.oxlintrc.json` |
@@ -423,8 +422,8 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
 **Frontend**
 
 - Импорты роутера — из `react-router` (v7), не из `react-router-dom`.
-- UI — **только MUI**. Tailwind подключён, но живых классов два (§3); shadcn/Radix удалены —
-  не добавляй ни того, ни другого.
+- UI — **только MUI**. Tailwind и shadcn/Radix удалены (14.09.2026) — не добавляй ни того,
+  ни другого; стили — `sx` и `CssBaseline`, своих CSS-файлов нет.
 - API — единственный клиент `src/app/api/client.ts` (`baseURL` из `VITE_API_BASE_URL`, §4).
   Второго клиента с логированием тел запросов больше нет — не заводить. Токены — только через
   `src/app/auth/session.ts`: access в памяти, refresh в `localStorage` (`mp_refresh_token`);
@@ -447,15 +446,21 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
 
 **Точка входа:** `src/main.tsx` → `src/app/App.tsx`, живо всё дерево `src/app/**`.
 **Перед правкой файла проверь, что он достижим из `routes.tsx`.** Удалённый мёртвый код (второй
-axios-клиент, shadcn/Radix, страницы на моках) и зависимости генератора не возвращать. Не
-используются, но лежат: `components/figma/ImageWithFallback.tsx`, `src/index.css`,
-`src/assets/*`, `frontend/default_shadcn_theme.css` — кандидаты на уборку.
+axios-клиент, shadcn/Radix, Tailwind, страницы на моках, страница списка операций `/transactions`
+с `FilterPanel`/`StatsOverview`/`TransactionTable`, OTP-диалог на входе) и зависимости генератора
+не возвращать.
 
-**Маршруты** (`src/app/routes.tsx`): `/login`, `/` (HomePage), `/transactions`,
+**Роутер создаётся один раз, на уровне модуля** (`routes.tsx` экспортирует `router`). Общего
+состояния данных в `App.tsx` нет: каждая страница грузит своё. Пересоздание `createBrowserRouter`
+в `useMemo` от состояния оставляло по `popstate`-listener'у на каждый рендер.
+
+**Маршруты** (`src/app/routes.tsx`): `/login`, `/` (HomePage),
 `/transactions/ecommerce`, `/transactions/ecommerce/:orderId`, `/transactions/:id`, `/pay-by-link`,
 `/pay-by-link/:id`, `/companies`,
 `/terminals`, `/users`, `/audit-logs`, `/settings`, `*` (`NotFoundPage`). На `/` и `/login` стоит
-`errorElement` (`RouteErrorPage`).
+`errorElement` (`RouteErrorPage`). Списка операций портала нет (Р-65): операции показываются на
+главной и под ссылками, карточка `/transactions/:id` грузит себя сама (`GET /transactions/{id}`)
+и после возврата или списания перечитывает.
 
 **Авторизация во фронтенде:**
 
@@ -465,7 +470,8 @@ axios-клиент, shadcn/Radix, страницы на моках) и зави�
 | `src/app/api/client.ts` | request-интерсептор берёт токен из памяти (к `/api/v1/auth/*` не прикладывает); response-интерсептор на 401: `/login`, `/refresh`, `/logout` — не трогать; уже повторяли — `clearSession`; иначе `refreshSession()` (**single-flight**, один промис на все параллельные 401) и повтор запроса. 401 от `/refresh` и нераспознанная роль сбрасывают сессию, сетевая ошибка — нет |
 | `src/app/context/AuthContext.tsx` | `AuthProvider`: при загрузке с refresh-токеном показывает загрузку и зовёт `/refresh` (сессия восстанавливается без формы логина); `login` → `applyLoginResponse`; `logout` — сброс состояния сразу, `POST /logout` вдогонку (ошибка логируется). `isAuthenticated` — по access-токену в памяти |
 | `src/app/auth/routeAccess.ts` | **единственная** раскладка «маршрут → роли» (`/users`: `SYSTEM_ADMIN`, `COMPANY_HEAD`; `/companies`: `SYSTEM_ADMIN`, `AUDITOR`; `/audit-logs`: `SYSTEM_ADMIN`, `AUDITOR`, `COMPANY_HEAD`, `COMPANY_MANAGER`; остальное — всем вошедшим). Читают `RoleRoute` и `Sidebar` |
-| `src/app/auth/guards.tsx` | `ProtectedRoute` (→ `/login`), `PublicOnlyRoute` (→ `/`), `RoleRoute` (роль не подходит → `ForbiddenPage`, не редирект и не белый экран) |
+| `src/app/auth/actionAccess.ts` | роли **действий**, зеркало констант сервисов: `TERMINAL_WRITE_ROLES` (`TerminalService`), `LINK_WRITE_ROLES` и `REFUND_ROLES` (`PaymentLinkService`). Кнопка видна ровно тогда, когда бэкенд её примет (Р-62); меняешь набор на бэкенде — меняй и здесь |
+| `src/app/auth/guards.tsx` | `ProtectedRoute` (→ `/login`, адрес кладётся в `state.from`), `PublicOnlyRoute` (→ `state.from` или `/`; `returnPathFrom` принимает только свой относительный путь), `RoleRoute` (роль не подходит → `ForbiddenPage`, не редирект и не белый экран) |
 
 Клиентские guard'ы — **UX, а не безопасность**: права проверяет бэкенд. Эндпоинта `/me` нет —
 вместо имени показывается email.
@@ -519,9 +525,24 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 `/api/v1/transactions`, `/api/v1/dashboard`, `/api/v1/acquiring` → 8080 · `/api/v1/ecom` → 8083.
 Новый префикс — сюда и в конфиг nginx (`project_docs/deployment_guide.md` §11).
 
-**Что на моках:** блок 2FA на `LoginPage` — диалог мёртв, а подпись «Secured with 2-Factor
-Authentication» под формой — ложное утверждение о безопасности. Всё остальное — реальный API.
-`utils/mockData.ts` вопреки названию содержит живые форматтеры — не удалять.
+**Моков нет.** Форматтеры сумм и дат — `utils/format.ts` (бывший `mockData.ts`). `formatCurrency`
+без валюты печатает число без знака валюты, а не AZN: у операции портала валюта приходит со
+ссылки, у заказа выписки — сырая колонка провайдера и бывает пустой.
+
+**Компания в формах** (терминалы, пользователи): выбирает только `SYSTEM_ADMIN`; остальные роли
+работают в своей компании из claim `companyId` токена, списка `GET /companies` у них нет (403),
+своя компания читается одиночным `GET /companies/{id}`. Правка терминала шлёт в PATCH только
+изменившиеся поля — иначе журнал аудита пишет «Name changed from X to X».
+
+**Форма ссылки** шлёт `expiresAt` из выбранного срока (1 ч … 30 дней, потолок бэкенда 90) и
+клиента только заполненными полями (`null` вместо пустых). Полей «redirect URL», «заметка»,
+«отправить письмо» на форме нет — бэкенд их не принимает и писем не шлёт. Список ссылок — серверная
+страница с серверным фильтром по статусу; поиска нет, пока его нет в `GET /payment-links`.
+
+**Деньги считаются в копейках.** Остаток к возврату — `refundableLeftOf` в `TransactionDetailPage`:
+`10.10 − 9.80` в double даёт `0.29999999999999893`, бэкенд такой возврат отвергает. Запрет на повтор
+после неподтверждённого исхода (502) снимает не сама проверка статуса, а перечитанная операция, в
+которой видно движение денег (`moneyMoved`); сбой самой проверки — отдельная ошибка, не исход.
 
 ---
 
@@ -557,10 +578,15 @@ Authentication» под формой — ложное утверждение о 
   остановить платежи компании, блокируют её терминалы.
 - **`pbl` отдаёт `page`/`size` в `PageRequest.of` без проверки** в `GET /transactions` и
   `GET /payment-links`: `?size=0` даёт 500, потолка нет.
-- **Карточка ссылки** не показывает карту, номер транзакции и адрес плательщика (полей нет в API);
-  **карточка операции** рисует строку комиссии с нулём — поля `fee` в системе нет.
-- **Английский текст в JSX** остался на `PayByLinkPage`, `PayByLinkDetailPage` и
-  `TransactionDetailPage` рядом с переведёнными диалогами.
+- **Карточка ссылки** не показывает карту, номер транзакции и адрес плательщика (полей нет в API).
+- **Английский текст в JSX** остался на `PayByLinkDetailPage`, `TransactionDetailPage`,
+  `CompaniesPage` и `AuditLogsPage` рядом с переведёнными диалогами.
+- **Запрет на повтор денежной операции после 502 живёт в памяти карточки**: перезагрузка страницы
+  его снимает. `GET /transactions/{id}/status` по операции в терминальном статусе эквайера не
+  спрашивает, поэтому неподтверждённый возврат с экрана не разрешить — только по журналу аудита
+  (запись `UNRESOLVED`).
+- **Поиска по платёжным ссылкам нет**: `GET /payment-links` принимает только `terminal` и `status`;
+  прежний клиентский поиск искал по одной странице и снят.
 - **SQL `ecom` из портала на Oracle провайдера ещё не исполнялся** (Р-74…Р-79, Р-83). Выписка проверена
   тестами на выгрузке стенда (114 заказов во всех статусах, с возвратами и реверсалами) и 15.09.2026
   исполнена на локальном `oracle-free` со схемой `TXPG`, собранной по SQL провайдера, и той же

@@ -14,17 +14,27 @@ const STORAGE_KEY = 'mp_app_language';
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Хранилище может быть недоступно (приватный режим, политика браузера) — тогда язык живёт до
+  // перезагрузки. Без try/catch приложение падало бы на старте, ещё до формы входа.
   const [language, setLanguageState] = useState<Language>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === 'az' || saved === 'ru' || saved === 'en') {
-      return saved as Language;
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved === 'az' || saved === 'ru' || saved === 'en') {
+        return saved as Language;
+      }
+    } catch {
+      // недоступное хранилище — язык по умолчанию
     }
     return 'en';
   });
 
   const setLanguage = (lang: Language) => {
     setLanguageState(lang);
-    localStorage.setItem(STORAGE_KEY, lang);
+    try {
+      localStorage.setItem(STORAGE_KEY, lang);
+    } catch {
+      // недоступное хранилище — выбор не переживёт перезагрузку, но работает сейчас
+    }
   };
 
   useEffect(() => {

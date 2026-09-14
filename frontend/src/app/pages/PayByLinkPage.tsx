@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
@@ -31,12 +31,7 @@ import {
   Snackbar,
   ToggleButton,
   ToggleButtonGroup,
-  FormControlLabel,
-  Switch,
   LinearProgress,
-  Card,
-  CardContent,
-  Grid,
 } from '@mui/material';
 import {
   Link as LinkIcon,
@@ -47,24 +42,22 @@ import {
   CheckCircle as CheckCircleIcon,
   ErrorOutline as ExpiredIcon,
   HelpOutline as UnknownStatusIcon,
-  QrCode as QrCodeIcon,
   WhatsApp as WhatsAppIcon,
   Email as EmailIcon,
   FilterList as FilterIcon,
-  Close as CloseIcon,
-  AttachMoney as AmountIcon,
   Person as PersonIcon,
   AccessTime as TimeIcon,
-  TrendingUp as TrendingUpIcon,
 } from '@mui/icons-material';
 
 import {
   formatDateTime,
   formatTimeLeft,
   getLinkStatusColors,
+  mailtoHref,
   parseLinkStatus,
   parseLinkUsageType,
   parsePaymentType,
+  whatsAppHref,
 } from '../utils/payByLinkData';
 import type {
   PaymentLink,
@@ -73,7 +66,9 @@ import type {
   PaymentType,
 } from '../utils/payByLinkData';
 import { isTerminalActive } from '../types/dto';
+import type { TerminalOptionDto } from '../types/dto';
 import { terminalOptionLabel } from '../utils/terminals';
+import { formatCurrency } from '../utils/format';
 import { linkStatusLabel } from '../i18n/translations';
 import type { TranslationDictionary } from '../i18n/translations';
 
@@ -108,6 +103,55 @@ const getStatusConfig = (link: PaymentLink, tObj: TranslationDictionary) => ({
 const messageFrom = (err: any, fallback: string): string =>
   err?.response?.data?.message || err?.response?.data?.error || fallback;
 
+/**
+ * Срок жизни ссылки из формы — в `expiresAt` запроса. Раньше выбор никуда не уходил и любая
+ * ссылка жила `pbl.link.default-ttl` (24 ч); потолок `pbl.link.max-ttl` — 90 дней, 30 дней в него
+ * укладываются.
+ */
+type ExpiryOption = 'h1' | 'h24' | 'h72' | 'd7' | 'd30';
+const EXPIRY_MS: Record<ExpiryOption, number> = {
+  h1: 3_600_000,
+  h24: 86_400_000,
+  h72: 3 * 86_400_000,
+  d7: 7 * 86_400_000,
+  d30: 30 * 86_400_000,
+};
+const EXPIRY_OPTIONS: ExpiryOption[] = ['h1', 'h24', 'h72', 'd7', 'd30'];
+
+/** Строка ответа списка или карточки — в `PaymentLink`. Одна на список и на ответ создания. */
+const mapLink = (l: any, fallbackTerminal?: number): PaymentLink => ({
+  id: l.id,
+  shortCode: String(l.id).slice(0, 8).toUpperCase(),
+  // `PaymentLinkResponse.link` собран сервером из `pbl.base-url`; в списочном ответе поля нет,
+  // там адрес строится от origin портала.
+  url: typeof l.link === 'string' && l.link ? l.link : `${window.location.origin}/api/v1/payment-links/${l.id}/open`,
+  status: parseLinkStatus(l.status),
+  statusRaw: l.status === null || l.status === undefined ? undefined : String(l.status),
+  amount: Number(l.amount),
+  currency: l.currency || 'AZN',
+  description: l.description || '',
+  // Пусто — значит не указано (Р-48): подстановка «N/A» делала ветку «клиент не указан»
+  // недостижимой, а кнопки письма и WhatsApp — всегда активными с адресом «N/A».
+  customerName: l.customer?.fullName || l.customerName || '',
+  customerEmail: l.customer?.email || l.customerEmail || '',
+  customerPhone: l.customer?.phone || l.customerPhone || '',
+  usageType: parseLinkUsageType(l.usageType),
+  maxUses: l.maxPayments || 1,
+  // Списочный ответ счётчиков не несёт (P2-16) — в списке оба поля всегда 0 и не показываются.
+  usedCount: l.currentPaymentsCount || 0,
+  refundedCount: l.refundedPaymentsCount || 0,
+  createdAt: new Date(l.createdAt),
+  expiresAt: l.expiresAt ? new Date(l.expiresAt) : new Date(Date.now() + 86400000),
+  paymentType: parsePaymentType(l.paymentType),
+  // Дата последнего успешного платежа (P2-15). Для многоразовой ссылки это именно
+  // последний платёж, отсюда `lastPaidAt` на стороне API (Р-46). Пусто — платежей
+  // не было; подставлять сюда что-либо нельзя.
+  paidAt: l.lastPaidAt ? new Date(l.lastPaidAt) : undefined,
+  // Терминал ссылки: карточка подписывает его логином, и без этого поля она ждала бы
+  // собственного запроса, показывая до него прочерк.
+  terminalId: typeof l.terminal === 'number' ? l.terminal : fallbackTerminal,
+});
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export const PayByLinkPage: React.FC = () => {
@@ -124,8 +168,9 @@ export const PayByLinkPage: React.FC = () => {
    */
   const [cancelTarget, setCancelTarget] = useState<PaymentLink | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
+  // Фильтр по статусу — серверный (`GET /payment-links?status=`): клиентский фильтр видел
+  // только текущую страницу. Поиска у списка нет — на бэкенде нет параметра.
   const [statusFilter, setStatusFilter] = useState<LinkStatus | 'all'>('all');
-  const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; error?: boolean }>({ open: false, message: '' });
@@ -140,56 +185,24 @@ export const PayByLinkPage: React.FC = () => {
     customerEmail: '',
     customerPhone: '',
     usageType: 'SINGLE' as LinkUsageType,
-    maxUses: '1',
-    expiry: '24h',
-    redirectUrl: '',
-    note: '',
+    maxUses: '2',
+    expiry: 'h24' as ExpiryOption,
     paymentType: 'SMS' as PaymentType,
-    sendEmail: true,
   });
   const [formError, setFormError] = useState('');
   const [generating, setGenerating] = useState(false);
   const [newlyCreatedLink, setNewlyCreatedLink] = useState<PaymentLink | null>(null);
 
-  // Stats
-  const stats = useMemo(() => {
-    // Оплаченная ссылка приходит с бэкенда как COMPLETED — статуса `paid` там нет (Р-33).
-    const completed = links.filter(l => l.status === 'COMPLETED');
-    return {
-      total: links.length,
-      active: links.filter(l => l.status === 'ACTIVE').length,
-      completed: completed.length,
-      expired: links.filter(l => l.status === 'EXPIRED').length,
-      canceled: links.filter(l => l.status === 'CANCELED').length,
-      totalRevenue: completed.reduce((sum, l) => sum + l.amount, 0),
-      conversionRate: links.length > 0
-        ? ((completed.length / links.length) * 100).toFixed(1)
-        : '0',
-    };
-  }, [links]);
+  // Карточек «активных / завершённых / выручка» здесь больше нет: они считались по одной
+  // серверной странице (десять строк из пятидесяти), а «выручка» складывала суммы поверх валют.
+  // Сводку по ссылкам считает бэкенд — `GET /api/v1/dashboard/summary`, `paymentLinks`.
 
-  // Filtered list
-  const filtered = useMemo(() => {
-    return links.filter(l => {
-      if (statusFilter !== 'all' && l.status !== statusFilter) return false;
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        return (
-          l.shortCode.toLowerCase().includes(q) ||
-          l.customerName.toLowerCase().includes(q) ||
-          l.customerEmail.toLowerCase().includes(q) ||
-          l.description.toLowerCase().includes(q)
-        );
-      }
-      return true;
-    });
-  }, [links, statusFilter, searchQuery]);
-
-  const paginated = filtered.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
-
-  const handleCopy = (url: string, label = 'Link copied to clipboard') => {
-    navigator.clipboard.writeText(url).catch(() => {});
-    setSnackbar({ open: true, message: label });
+  // «Скопировано» — только когда буфер действительно принял текст: в небезопасном контексте
+  // `writeText` отказывает, и прежний код всё равно рапортовал об успехе.
+  const handleCopy = (url: string) => {
+    navigator.clipboard.writeText(url)
+      .then(() => setSnackbar({ open: true, message: tObj.common.copied }))
+      .catch(() => setSnackbar({ open: true, message: tObj.common.error, error: true }));
   };
 
   const handleShare = (link: PaymentLink) => {
@@ -197,45 +210,21 @@ export const PayByLinkPage: React.FC = () => {
     setShareOpen(true);
   };
 
-  const [terminals, setTerminals] = useState<any[]>([]);
+  const [terminals, setTerminals] = useState<TerminalOptionDto[]>([]);
 
   const [totalElements, setTotalElements] = useState(0);
 
+  // Страница приходит с сервера уже нарезанной по `page`/`size`; резать её ещё раз на клиенте
+  // нельзя — так вторая и дальше страницы всегда оказывались пустыми при полном счётчике.
   const fetchPaymentLinks = useCallback(() => {
-    apiClient.get(`/api/v1/payment-links?page=${page}&size=${rowsPerPage}`)
+    const params: Record<string, unknown> = { page, size: rowsPerPage };
+    if (statusFilter !== 'all') params.status = statusFilter;
+    apiClient.get('/api/v1/payment-links', { params })
       .then(res => {
         const rawContent = Array.isArray(res.data) ? res.data : (res.data?.content || []);
         setTotalElements(res.data?.totalElements ?? rawContent.length);
         if (Array.isArray(rawContent)) {
-          const mapped: PaymentLink[] = rawContent.map((l: any) => ({
-            id: l.id,
-            shortCode: l.id.slice(0, 8).toUpperCase(),
-            url: `${window.location.origin}/api/v1/payment-links/${l.id}/open`,
-            status: parseLinkStatus(l.status),
-            statusRaw: l.status === null || l.status === undefined ? undefined : String(l.status),
-            amount: l.amount,
-            currency: l.currency || 'AZN',
-            description: l.description || 'Payment Link',
-            customerName: l.customer?.fullName || l.customerName || 'N/A',
-            customerEmail: l.customer?.email || l.customerEmail || 'N/A',
-            customerPhone: l.customer?.phone || l.customerPhone || 'N/A',
-            usageType: parseLinkUsageType(l.usageType),
-            maxUses: l.maxPayments || 1,
-            usedCount: l.currentPaymentsCount || 0,
-            // Списочный ответ счётчиков не несёт (P2-16) — оба поля выше и ниже здесь всегда 0.
-            refundedCount: l.refundedPaymentsCount || 0,
-            createdAt: new Date(l.createdAt),
-            expiresAt: l.expiresAt ? new Date(l.expiresAt) : new Date(Date.now() + 86400000),
-            paymentType: parsePaymentType(l.paymentType),
-            // Дата последнего успешного платежа (P2-15). Для многоразовой ссылки это именно
-            // последний платёж, отсюда `lastPaidAt` на стороне API (Р-46). Пусто — платежей
-            // не было; подставлять сюда что-либо нельзя.
-            paidAt: l.lastPaidAt ? new Date(l.lastPaidAt) : undefined,
-            // Терминал ссылки: карточка подписывает его логином, и без этого поля она ждала бы
-            // собственного запроса, показывая до него прочерк.
-            terminalId: typeof l.terminal === 'number' ? l.terminal : undefined,
-          }));
-          setLinks(mapped);
+          setLinks(rawContent.map((l: any) => mapLink(l)));
         }
       })
       .catch(err => {
@@ -244,7 +233,7 @@ export const PayByLinkPage: React.FC = () => {
         // не узнали. Пустой список остаётся пустым — на первой загрузке это то же самое.
         console.warn('[pay-by-link] не удалось получить список ссылок:', err);
       });
-  }, [page, rowsPerPage]);
+  }, [page, rowsPerPage, statusFilter]);
 
   /**
    * Отмена ссылки (Р-34). Локальной правки `setLinks` здесь нет намеренно: раньше её делала
@@ -285,85 +274,82 @@ export const PayByLinkPage: React.FC = () => {
       .catch(() => {});
   }, [fetchPaymentLinks]);
 
+  const emptyForm = () => ({
+    terminalId: '', amount: '', currency: 'AZN', description: '', customerName: '',
+    customerEmail: '', customerPhone: '', usageType: 'SINGLE' as LinkUsageType, maxUses: '2',
+    expiry: 'h24' as ExpiryOption, paymentType: 'SMS' as PaymentType,
+  });
+
   const handleGenerate = async () => {
+    if (generating) return;
     const selectedTerminal = form.terminalId ? Number(form.terminalId) : terminals[0]?.id;
     if (!selectedTerminal) {
-      setFormError('В вашей системе нет активных терминалов эквайринга. Зарегистрируйте терминал в Settings перед генерацией ссылки.');
+      setFormError(tObj.payByLink.noActiveTerminals);
       return;
     }
     if (!form.amount || isNaN(Number(form.amount)) || Number(form.amount) <= 0) {
-      setFormError('Please enter a valid amount.');
+      setFormError(tObj.payByLink.invalidAmount);
       return;
     }
     if (!form.description.trim()) {
-      setFormError('Please add a description or invoice reference.');
+      setFormError(tObj.payByLink.descriptionRequired);
+      return;
+    }
+    // Лимит платежей — целое число не меньше единицы, как на бэкенде (`maxPayments > 0`).
+    // Раньше пустое поле и «0» молча превращались в лимит 5.
+    const maxPayments = Number(form.maxUses);
+    if (form.usageType === 'MULTIPLE' && (!Number.isInteger(maxPayments) || maxPayments < 1)) {
+      setFormError(tObj.payByLink.invalidMaxUses);
       return;
     }
     setFormError('');
     setGenerating(true);
 
     try {
-      const payload: any = {
+      const payload: Record<string, unknown> = {
         terminal: selectedTerminal,
         amount: parseFloat(form.amount),
         currency: form.currency || 'AZN',
-        description: form.description,
+        description: form.description.trim(),
         paymentType: form.paymentType,
         usageType: form.usageType,
+        expiresAt: new Date(Date.now() + EXPIRY_MS[form.expiry]).toISOString(),
       };
 
       if (form.usageType === 'MULTIPLE') {
-        payload.maxPayments = parseInt(form.maxUses) || 5;
+        payload.maxPayments = maxPayments;
       }
 
-      if (form.customerName || form.customerEmail || form.customerPhone) {
-        payload.customer = {
-          fullName: form.customerName || 'N/A',
-          email: form.customerEmail || 'customer@example.com',
-          phone: form.customerPhone || '+994500000000',
-        };
+      // Только то, что ввели. Раньше пустые поля клиента заменялись на «N/A»,
+      // «customer@example.com» и «+994500000000» — и это сохранялось в базу, показывалось в
+      // списке и уходило в письмо. `CustomerDto` допускает null в каждом поле.
+      const customer = {
+        fullName: form.customerName.trim() || null,
+        email: form.customerEmail.trim() || null,
+        phone: form.customerPhone.trim() || null,
+      };
+      if (customer.fullName || customer.email || customer.phone) {
+        payload.customer = customer;
       }
 
       const res = await apiClient.post('/api/v1/payment-links', payload);
-      const created = res.data;
+      const newLink = mapLink(res.data, selectedTerminal);
 
-      const newLink: PaymentLink = {
-        id: created.id,
-        shortCode: created.id.slice(0, 8).toUpperCase(),
-        url: `${window.location.origin}/api/v1/payment-links/${created.id}/open`,
-        status: parseLinkStatus(created.status),
-        statusRaw: created.status === null || created.status === undefined ? undefined : String(created.status),
-        amount: created.amount,
-        currency: created.currency || 'AZN',
-        description: created.description,
-        customerName: created.customer?.fullName || created.customerName || 'N/A',
-        customerEmail: created.customer?.email || created.customerEmail || 'N/A',
-        customerPhone: created.customer?.phone || created.customerPhone || 'N/A',
-        usageType: parseLinkUsageType(created.usageType),
-        maxUses: created.maxPayments || 1,
-        usedCount: 0,
-        refundedCount: 0,
-        createdAt: new Date(),
-        expiresAt: created.expiresAt ? new Date(created.expiresAt) : new Date(Date.now() + 86400000),
-        paymentType: parsePaymentType(created.paymentType),
-        terminalId: typeof created.terminal === 'number' ? created.terminal : selectedTerminal,
-      };
-
-      setLinks(prev => [newLink, ...prev]);
       setNewlyCreatedLink(newLink);
-      setGenerating(false);
-      setForm({
-        terminalId: '', amount: '', currency: 'AZN', description: '', customerName: '',
-        customerEmail: '', customerPhone: '', usageType: 'SINGLE', maxUses: '1',
-        expiry: '24h', redirectUrl: '', note: '', sendEmail: true, paymentType: 'SMS',
-      });
+      setForm(emptyForm());
+      // Список перечитывается с сервера, а не дописывается: он постраничный и отсортирован там.
+      fetchPaymentLinks();
     } catch (err: any) {
+      setFormError(messageFrom(err, tObj.payByLink.createFailed));
+    } finally {
       setGenerating(false);
-      setFormError(messageFrom(err, 'Failed to create payment link on backend.'));
     }
   };
 
+  // Пока запрос идёт, окно не закрыть: ответ прилетал в закрытое окно, и следующее открытие
+  // показывало «ссылка создана» про прошлую ссылку.
   const handleCloseCreate = () => {
+    if (generating) return;
     setCreateOpen(false);
     setNewlyCreatedLink(null);
     setFormError('');
@@ -392,101 +378,28 @@ export const PayByLinkPage: React.FC = () => {
         </Button>
       </Box>
 
-      {/* Stats Cards */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        {[
-          {
-            label: 'Active Links',
-            value: stats.active,
-            icon: <LinkIcon sx={{ fontSize: 32 }} />,
-            color: '#1976d2',
-            bgcolor: 'rgba(25, 118, 210, 0.08)',
-            sub: 'Awaiting payment',
-          },
-          {
-            label: 'Completed',
-            value: stats.completed,
-            icon: <CheckCircleIcon sx={{ fontSize: 32 }} />,
-            color: '#2e7d32',
-            bgcolor: 'rgba(46, 125, 50, 0.08)',
-            sub: `Conversion ${stats.conversionRate}%`,
-          },
-          {
-            label: 'Revenue Collected',
-            value: `₼${stats.totalRevenue.toLocaleString('en', { minimumFractionDigits: 2 })}`,
-            icon: <AmountIcon sx={{ fontSize: 32 }} />,
-            color: '#7b1fa2',
-            bgcolor: 'rgba(123, 31, 162, 0.08)',
-            sub: 'From completed links',
-          },
-          {
-            label: 'Total Created',
-            value: stats.total,
-            icon: <TrendingUpIcon sx={{ fontSize: 32 }} />,
-            color: '#e65100',
-            bgcolor: 'rgba(230, 81, 0, 0.08)',
-            sub: `${stats.expired} expired`,
-          },
-        ].map((s) => (
-          <Grid key={s.label} size={{ xs: 12, sm: 6, lg: 3 }}>
-            <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', height: '100%' }}>
-              <CardContent sx={{ p: 3 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                  <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: s.bgcolor, color: s.color }}>
-                    {s.icon}
-                  </Box>
-                </Box>
-                <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.25, color: 'text.primary' }}>
-                  {s.value}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                  {s.label}
-                </Typography>
-                <Typography variant="caption" color="text.disabled">
-                  {s.sub}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-
       {/* Filters & Table */}
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
         {/* Toolbar */}
         <Box sx={{ p: 2.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', borderBottom: '1px solid', borderColor: 'divider' }}>
           <FilterIcon color="action" />
-          <TextField
-            size="small"
-            placeholder="Search by code, customer, description…"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            sx={{ minWidth: 280 }}
-            InputProps={{
-              endAdornment: searchQuery && (
-                <InputAdornment position="end">
-                  <IconButton size="small" onClick={() => setSearchQuery('')}>
-                    <CloseIcon fontSize="small" />
-                  </IconButton>
-                </InputAdornment>
-              ),
-            }}
-          />
+          {/* Без счётчиков в кнопках: они считались по одной странице, а не по всей выборке. */}
           <ToggleButtonGroup
             size="small"
             exclusive
             value={statusFilter}
             onChange={(_, v) => { if (v !== null) { setStatusFilter(v); setPage(0); } }}
           >
-            <ToggleButton value="all">All ({links.length})</ToggleButton>
-            <ToggleButton value="ACTIVE">{tObj.payByLink.statuses.ACTIVE} ({stats.active})</ToggleButton>
-            <ToggleButton value="COMPLETED">{tObj.payByLink.statuses.COMPLETED} ({stats.completed})</ToggleButton>
-            <ToggleButton value="EXPIRED">{tObj.payByLink.statuses.EXPIRED} ({stats.expired})</ToggleButton>
-            <ToggleButton value="CANCELED">{tObj.payByLink.statuses.CANCELED} ({stats.canceled})</ToggleButton>
+            <ToggleButton value="all">{tObj.common.all}</ToggleButton>
+            <ToggleButton value="ACTIVE">{tObj.payByLink.statuses.ACTIVE}</ToggleButton>
+            <ToggleButton value="COMPLETED">{tObj.payByLink.statuses.COMPLETED}</ToggleButton>
+            <ToggleButton value="EXPIRED">{tObj.payByLink.statuses.EXPIRED}</ToggleButton>
+            <ToggleButton value="CANCELED">{tObj.payByLink.statuses.CANCELED}</ToggleButton>
+            <ToggleButton value="SUSPENDED">{tObj.payByLink.statuses.SUSPENDED}</ToggleButton>
           </ToggleButtonGroup>
           <Box sx={{ ml: 'auto' }}>
             <Typography variant="body2" color="text.secondary">
-              {filtered.length} link{filtered.length !== 1 ? 's' : ''}
+              {totalElements}
             </Typography>
           </Box>
         </Box>
@@ -508,7 +421,7 @@ export const PayByLinkPage: React.FC = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {paginated.map(link => {
+              {links.map(link => {
                 const cfg = getStatusConfig(link, tObj);
                 const expiryProgress = link.status === 'ACTIVE'
                   ? Math.max(0, Math.min(100, ((link.expiresAt.getTime() - Date.now()) / (link.expiresAt.getTime() - link.createdAt.getTime())) * 100))
@@ -546,7 +459,7 @@ export const PayByLinkPage: React.FC = () => {
                         </Box>
                       ) : (
                         <Typography variant="body2" color="text.disabled" sx={{ fontStyle: 'italic' }}>
-                          Not specified
+                          {tObj.payByLink.customerNotSpecified}
                         </Typography>
                       )}
                     </TableCell>
@@ -561,7 +474,7 @@ export const PayByLinkPage: React.FC = () => {
                     {/* Amount */}
                     <TableCell align="right">
                       <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                        ₼{link.amount.toFixed(2)}
+                        {formatCurrency(link.amount, link.currency)}
                       </Typography>
                     </TableCell>
 
@@ -590,20 +503,15 @@ export const PayByLinkPage: React.FC = () => {
 
                     {/* Usage */}
                     <TableCell>
+                      {/* В списочном ответе счётчика платежей нет (P2-16): показывается только
+                          лимит, «0 из N» здесь был бы выдумкой. Число использований — на карточке. */}
                       {link.usageType === 'MULTIPLE' ? (
-                        <Box>
-                          <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                            {link.usedCount}/{link.maxUses} uses
-                          </Typography>
-                          <LinearProgress
-                            variant="determinate"
-                            value={(link.usedCount / link.maxUses) * 100}
-                            sx={{ mt: 0.5, height: 4, borderRadius: 2 }}
-                          />
-                        </Box>
+                        <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                          {tObj.payByLink.multipleUse} · {link.maxUses}
+                        </Typography>
                       ) : (
                         <Typography variant="caption" color="text.secondary">
-                          {link.usageType === 'SINGLE' ? 'Single-use' : '—'}
+                          {link.usageType === 'SINGLE' ? tObj.payByLink.singleUse : '—'}
                         </Typography>
                       )}
                     </TableCell>
@@ -643,14 +551,14 @@ export const PayByLinkPage: React.FC = () => {
                     {/* Actions */}
                     <TableCell align="center" onClick={e => e.stopPropagation()}>
                       <Stack direction="row" spacing={0.5} justifyContent="center">
-                        <Tooltip title="Copy link">
+                        <Tooltip title={tObj.payByLink.copyLink}>
                           <span>
                             <IconButton size="small" onClick={() => handleCopy(link.url)} disabled={link.status !== 'ACTIVE'}>
                               <CopyIcon fontSize="small" />
                             </IconButton>
                           </span>
                         </Tooltip>
-                        <Tooltip title="Share">
+                        <Tooltip title={tObj.payByLink.share}>
                           <span>
                             <IconButton size="small" onClick={() => handleShare(link)} disabled={link.status !== 'ACTIVE'}>
                               <ShareIcon fontSize="small" />
@@ -674,11 +582,11 @@ export const PayByLinkPage: React.FC = () => {
                   </TableRow>
                 );
               })}
-              {paginated.length === 0 && (
+              {links.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
                     <LinkIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
-                    <Typography color="text.secondary">No payment links found</Typography>
+                    <Typography color="text.secondary">{tObj.payByLink.empty}</Typography>
                   </TableCell>
                 </TableRow>
               )}
@@ -689,7 +597,7 @@ export const PayByLinkPage: React.FC = () => {
         <TablePagination
           rowsPerPageOptions={[10, 25, 50]}
           component="div"
-          count={totalElements || filtered.length}
+          count={totalElements}
           rowsPerPage={rowsPerPage}
           page={page}
           onPageChange={(_, p) => setPage(p)}
@@ -704,9 +612,9 @@ export const PayByLinkPage: React.FC = () => {
             <LinkIcon />
           </Box>
           <Box>
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>Create Payment Link</Typography>
+            <Box sx={{ fontWeight: 700, fontSize: '1.25rem' }}>{tObj.payByLink.createTitle}</Box>
             <Typography variant="caption" color="text.secondary">
-              Generate a secure link and share it with your customer
+              {tObj.payByLink.createSubtitle}
             </Typography>
           </Box>
         </DialogTitle>
@@ -718,11 +626,11 @@ export const PayByLinkPage: React.FC = () => {
           {newlyCreatedLink ? (
             <Box>
               <Alert severity="success" sx={{ mb: 3 }}>
-                Payment link created successfully! Share it with your customer.
+                {tObj.payByLink.createdTitle}
               </Alert>
               <Paper variant="outlined" sx={{ p: 2.5, mb: 3, borderRadius: 2, bgcolor: 'action.hover' }}>
                 <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                  Payment Link
+                  {tObj.payByLink.linkLabel}
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75 }}>
                   <Typography
@@ -731,7 +639,7 @@ export const PayByLinkPage: React.FC = () => {
                   >
                     {newlyCreatedLink.url}
                   </Typography>
-                  <Tooltip title="Copy">
+                  <Tooltip title={tObj.common.copy}>
                     <IconButton size="small" onClick={() => handleCopy(newlyCreatedLink.url)}>
                       <CopyIcon />
                     </IconButton>
@@ -740,60 +648,64 @@ export const PayByLinkPage: React.FC = () => {
               </Paper>
               <Stack spacing={1.5}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography variant="body2" color="text.secondary">Amount</Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 700 }}>₼{newlyCreatedLink.amount.toFixed(2)}</Typography>
+                  <Typography variant="body2" color="text.secondary">{tObj.payByLink.table.amount}</Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    {formatCurrency(newlyCreatedLink.amount, newlyCreatedLink.currency)}
+                  </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography variant="body2" color="text.secondary">Expires</Typography>
+                  <Typography variant="body2" color="text.secondary">{tObj.payByLink.table.expires}</Typography>
                   <Typography variant="body2">{formatDateTime(newlyCreatedLink.expiresAt)}</Typography>
                 </Box>
                 {newlyCreatedLink.customerEmail && (
                   <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2" color="text.secondary">Customer</Typography>
+                    <Typography variant="body2" color="text.secondary">{tObj.payByLink.table.customer}</Typography>
                     <Typography variant="body2">{newlyCreatedLink.customerEmail}</Typography>
                   </Box>
                 )}
               </Stack>
+              {/* Настоящие ссылки mailto / wa.me, а не копирование текста «mailto:…» в буфер,
+                  как было. Без адреса или телефона кнопка погашена — отправлять некуда. */}
               <Stack direction="row" spacing={1.5} sx={{ mt: 3 }}>
                 <Button
                   variant="outlined"
                   startIcon={<EmailIcon />}
                   fullWidth
-                  onClick={() => handleCopy(`mailto:${newlyCreatedLink.customerEmail}?subject=Payment Request&body=Please use this link to complete your payment: ${newlyCreatedLink.url}`)}
+                  href={mailtoHref(newlyCreatedLink, tObj.payByLink.emailSubject, tObj.payByLink.messageText)}
+                  disabled={!newlyCreatedLink.customerEmail}
                 >
-                  Send Email
+                  {tObj.payByLink.sendEmail}
                 </Button>
                 <Button
                   variant="outlined"
                   color="success"
                   startIcon={<WhatsAppIcon />}
                   fullWidth
-                  onClick={() => handleCopy(`https://wa.me/${newlyCreatedLink.customerPhone}?text=Please use this link to complete your payment: ${newlyCreatedLink.url}`)}
+                  href={whatsAppHref(newlyCreatedLink, tObj.payByLink.messageText)}
+                  target="_blank"
+                  rel="noopener"
+                  disabled={!newlyCreatedLink.customerPhone}
                 >
-                  WhatsApp
+                  {tObj.payByLink.sendWhatsApp}
                 </Button>
               </Stack>
             </Box>
           ) : (
             <Stack spacing={3}>
               {terminals.length === 0 ? (
-                <Alert severity="warning">
-                  ⚠️ Нет доступных терминалов: они либо не зарегистрированы, либо заблокированы.
-                  Зарегистрировать терминал или снять блокировку можно в разделе <strong>Terminals</strong>.
-                  По заблокированному терминалу новые ссылки не создаются, а существующие приостановлены.
-                </Alert>
+                <Alert severity="warning">{tObj.payByLink.noActiveTerminals}</Alert>
               ) : (
                 <TextField
                   select
                   fullWidth
-                  label="Select Terminal *"
+                  label={tObj.payByLink.terminalSelect}
                   value={form.terminalId || (terminals[0]?.id ?? '')}
                   onChange={e => setForm(f => ({ ...f, terminalId: e.target.value }))}
-                  helperText="Эквайринговый терминал, через который пройдет платеж"
+                  helperText={tObj.payByLink.terminalHelper}
                 >
                   {/* Терминал подписан логином — основным его параметром; имя идёт после,
                       как пояснение, а числовой id мерчанту ничего не говорит. */}
-                  {terminals.map((t: any) => (
+                  {terminals.map((t) => (
                     <MenuItem key={t.id} value={t.id}>
                       <Box component="span" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
                         {terminalOptionLabel(t)}
@@ -813,24 +725,24 @@ export const PayByLinkPage: React.FC = () => {
               {/* Amount */}
               <Box>
                 <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 700, color: 'text.primary' }}>
-                  Payment Amount *
+                  {tObj.payByLink.amountLabel}
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1.5 }}>
                   <TextField
                     fullWidth
-                    label="Amount"
+                    label={tObj.payByLink.table.amount}
                     type="number"
                     placeholder="0.00"
                     value={form.amount}
                     onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
                     InputProps={{
-                      startAdornment: <InputAdornment position="start">₼</InputAdornment>,
+                      startAdornment: <InputAdornment position="start">{form.currency}</InputAdornment>,
                     }}
                     inputProps={{ min: 0, step: '0.01' }}
                   />
                   <TextField
                     select
-                    label="Currency"
+                    label={tObj.payByLink.currencyLabel}
                     value={form.currency}
                     onChange={e => setForm(f => ({ ...f, currency: e.target.value }))}
                     sx={{ minWidth: 110 }}
@@ -845,23 +757,21 @@ export const PayByLinkPage: React.FC = () => {
               {/* Description */}
               <TextField
                 fullWidth
-                label="Description / Invoice Reference *"
-                placeholder="e.g. Invoice #INV-2024-0001 — Annual subscription"
+                label={tObj.payByLink.descriptionLabel}
                 value={form.description}
                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                helperText="This will be visible to the customer on the payment page"
+                helperText={tObj.payByLink.descriptionHint}
               />
 
               {/* Customer */}
               <Box>
                 <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 700, color: 'text.primary' }}>
-                  Customer Info
+                  {tObj.payByLink.customerSection}
                 </Typography>
                 <Stack spacing={2}>
                   <TextField
                     fullWidth
-                    label="Customer Name"
-                    placeholder="Full name"
+                    label={tObj.payByLink.customerNameLabel}
                     value={form.customerName}
                     onChange={e => setForm(f => ({ ...f, customerName: e.target.value }))}
                     InputProps={{ startAdornment: <InputAdornment position="start"><PersonIcon color="action" /></InputAdornment> }}
@@ -869,16 +779,14 @@ export const PayByLinkPage: React.FC = () => {
                   <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
                     <TextField
                       fullWidth
-                      label="Email"
+                      label={tObj.payByLink.customerEmailLabel}
                       type="email"
-                      placeholder="customer@email.com"
                       value={form.customerEmail}
                       onChange={e => setForm(f => ({ ...f, customerEmail: e.target.value }))}
                     />
                     <TextField
                       fullWidth
-                      label="Phone"
-                      placeholder="+994 50 000 0000"
+                      label={tObj.payByLink.customerPhoneLabel}
                       value={form.customerPhone}
                       onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))}
                     />
@@ -886,16 +794,18 @@ export const PayByLinkPage: React.FC = () => {
                 </Stack>
               </Box>
 
-              {/* Link Options */}
+              {/* Link Options. Полей «redirect URL», «внутренняя заметка» и «отправить письмо»
+                  здесь больше нет: бэкенд их не принимает и письма не шлёт — контролы собирали
+                  значения и молча выбрасывали. */}
               <Box>
                 <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 700, color: 'text.primary' }}>
-                  Link Settings
+                  {tObj.payByLink.linkSettings}
                 </Typography>
                 <Stack spacing={2}>
                   {/* Payment type — SMS vs DMS */}
                   <Box>
                     <Typography variant="body2" sx={{ mb: 0.75, fontWeight: 600, color: 'text.primary' }}>
-                      Payment Type
+                      {tObj.payByLink.paymentTypeLabel}
                     </Typography>
                     <ToggleButtonGroup
                       exclusive
@@ -904,13 +814,11 @@ export const PayByLinkPage: React.FC = () => {
                       value={form.paymentType}
                       onChange={(_, v) => { if (v) setForm(f => ({ ...f, paymentType: v })); }}
                     >
-                      <ToggleButton value="SMS">SMS — Charge Immediately</ToggleButton>
-                      <ToggleButton value="DMS">DMS — Authorize &amp; Capture</ToggleButton>
+                      <ToggleButton value="SMS">SMS</ToggleButton>
+                      <ToggleButton value="DMS">DMS</ToggleButton>
                     </ToggleButtonGroup>
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-                      {form.paymentType === 'SMS'
-                        ? 'SMS: funds are charged immediately when customer pays.'
-                        : 'DMS: funds are reserved (authorized) on the card. You must manually finalize the payment to capture them.'}
+                      {form.paymentType === 'SMS' ? tObj.payByLink.smsHint : tObj.payByLink.dmsHint}
                     </Typography>
                   </Box>
 
@@ -918,21 +826,19 @@ export const PayByLinkPage: React.FC = () => {
                   <TextField
                     select
                     fullWidth
-                    label="Link Expiry"
+                    label={tObj.payByLink.expirationLabel}
                     value={form.expiry}
-                    onChange={e => setForm(f => ({ ...f, expiry: e.target.value }))}
+                    onChange={e => setForm(f => ({ ...f, expiry: e.target.value as ExpiryOption }))}
                     InputProps={{ startAdornment: <InputAdornment position="start"><TimeIcon color="action" /></InputAdornment> }}
                   >
-                    <MenuItem value="1h">1 Hour</MenuItem>
-                    <MenuItem value="24h">24 Hours</MenuItem>
-                    <MenuItem value="72h">3 Days</MenuItem>
-                    <MenuItem value="7d">7 Days</MenuItem>
-                    <MenuItem value="30d">30 Days</MenuItem>
+                    {EXPIRY_OPTIONS.map(option => (
+                      <MenuItem key={option} value={option}>{tObj.payByLink.expiry[option]}</MenuItem>
+                    ))}
                   </TextField>
 
                   {/* Usage type */}
                   <Box>
-                    <Typography variant="body2" sx={{ mb: 1, color: 'text.secondary' }}>Usage Type</Typography>
+                    <Typography variant="body2" sx={{ mb: 1, color: 'text.secondary' }}>{tObj.payByLink.usageTypeLabel}</Typography>
                     <ToggleButtonGroup
                       exclusive
                       fullWidth
@@ -940,61 +846,22 @@ export const PayByLinkPage: React.FC = () => {
                       value={form.usageType}
                       onChange={(_, v) => { if (v) setForm(f => ({ ...f, usageType: v })); }}
                     >
-                      <ToggleButton value="SINGLE">Single Use</ToggleButton>
-                      <ToggleButton value="MULTIPLE">Multiple Uses</ToggleButton>
+                      <ToggleButton value="SINGLE">{tObj.payByLink.singleUse}</ToggleButton>
+                      <ToggleButton value="MULTIPLE">{tObj.payByLink.multipleUse}</ToggleButton>
                     </ToggleButtonGroup>
                     {form.usageType === 'MULTIPLE' && (
                       <TextField
                         fullWidth
-                        label="Max number of payments"
+                        label={tObj.payByLink.maxUsesLabel}
                         type="number"
                         value={form.maxUses}
                         onChange={e => setForm(f => ({ ...f, maxUses: e.target.value }))}
                         sx={{ mt: 1.5 }}
-                        inputProps={{ min: 2, max: 100 }}
-                        helperText="Link deactivates after this many successful payments"
+                        inputProps={{ min: 1, max: 100, step: 1 }}
+                        helperText={tObj.payByLink.maxUsesHint}
                       />
                     )}
                   </Box>
-
-                  {/* Redirect URL */}
-                  <TextField
-                    fullWidth
-                    label="Redirect URL after payment (optional)"
-                    placeholder="https://yourstore.az/thank-you"
-                    value={form.redirectUrl}
-                    onChange={e => setForm(f => ({ ...f, redirectUrl: e.target.value }))}
-                    helperText="Customer is redirected here after a successful payment"
-                  />
-
-                  {/* Note */}
-                  <TextField
-                    fullWidth
-                    label="Internal note (optional)"
-                    placeholder="Visible only to you, not the customer"
-                    value={form.note}
-                    onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
-                    multiline
-                    rows={2}
-                  />
-
-                  {/* Send email toggle */}
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={form.sendEmail}
-                        onChange={e => setForm(f => ({ ...f, sendEmail: e.target.checked }))}
-                      />
-                    }
-                    label={
-                      <Box>
-                        <Typography variant="body2">Send link to customer by email</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Requires customer email to be filled in
-                        </Typography>
-                      </Box>
-                    }
-                  />
                 </Stack>
               </Box>
             </Stack>
@@ -1005,12 +872,12 @@ export const PayByLinkPage: React.FC = () => {
         <DialogActions sx={{ p: 2.5, gap: 1 }}>
           {newlyCreatedLink ? (
             <Button onClick={handleCloseCreate} variant="contained" fullWidth>
-              Done
+              {tObj.payByLink.done}
             </Button>
           ) : (
             <>
-              <Button onClick={handleCloseCreate} variant="outlined" sx={{ minWidth: 100 }}>
-                Cancel
+              <Button onClick={handleCloseCreate} variant="outlined" sx={{ minWidth: 100 }} disabled={generating}>
+                {tObj.common.cancel}
               </Button>
               <Button
                 onClick={handleGenerate}
@@ -1019,7 +886,7 @@ export const PayByLinkPage: React.FC = () => {
                 disabled={generating}
                 sx={{ minWidth: 180 }}
               >
-                {generating ? 'Generating…' : 'Generate Link'}
+                {generating ? tObj.payByLink.generating : tObj.payByLink.createLinkAction}
               </Button>
             </>
           )}
@@ -1041,7 +908,7 @@ export const PayByLinkPage: React.FC = () => {
                 </Typography>
                 <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
                   <Typography variant="caption" color="text.secondary">
-                    ₼{selectedLink.amount.toFixed(2)} · expires {formatTimeLeft(selectedLink.expiresAt)}
+                    {formatCurrency(selectedLink.amount, selectedLink.currency)} · {formatTimeLeft(selectedLink.expiresAt)}
                   </Typography>
                 </Stack>
               </Paper>
@@ -1052,18 +919,17 @@ export const PayByLinkPage: React.FC = () => {
                 startIcon={<CopyIcon />}
                 onClick={() => { handleCopy(selectedLink.url); setShareOpen(false); }}
               >
-                Copy Link
+                {tObj.payByLink.copyLink}
               </Button>
 
               <Button
                 fullWidth
                 variant="outlined"
                 startIcon={<EmailIcon />}
-                href={`mailto:${selectedLink.customerEmail}?subject=Payment Request — ₼${selectedLink.amount.toFixed(2)}&body=Hi ${selectedLink.customerName},%0A%0APlease complete your payment using the link below:%0A${selectedLink.url}%0A%0AAmount: ₼${selectedLink.amount.toFixed(2)}%0ADescription: ${selectedLink.description}%0A%0AThank you.`}
-                target="_blank"
+                href={mailtoHref(selectedLink, tObj.payByLink.emailSubject, tObj.payByLink.messageText)}
                 disabled={!selectedLink.customerEmail}
               >
-                Send by Email
+                {tObj.payByLink.sendEmail}
               </Button>
 
               <Button
@@ -1071,29 +937,20 @@ export const PayByLinkPage: React.FC = () => {
                 variant="outlined"
                 color="success"
                 startIcon={<WhatsAppIcon />}
-                onClick={() => {
-                  const text = encodeURIComponent(`Hi ${selectedLink.customerName}, please complete your payment of ₼${selectedLink.amount.toFixed(2)} using this link: ${selectedLink.url}`);
-                  window.open(`https://wa.me/${selectedLink.customerPhone.replace(/\D/g, '')}?text=${text}`, '_blank');
-                }}
+                href={whatsAppHref(selectedLink, tObj.payByLink.messageText)}
+                target="_blank"
+                rel="noopener"
                 disabled={!selectedLink.customerPhone}
               >
-                Send via WhatsApp
+                {tObj.payByLink.sendWhatsApp}
               </Button>
-
-              <Button
-                fullWidth
-                variant="outlined"
-                startIcon={<QrCodeIcon />}
-                onClick={() => handleCopy(`QR code for ${selectedLink.url} — feature coming soon`, 'QR code feature coming soon')}
-              >
-                Generate QR Code
-              </Button>
+              {/* Кнопки «QR-код» здесь больше нет: она копировала в буфер текст «feature coming soon». */}
             </Stack>
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setShareOpen(false)} variant="contained" fullWidth>
-            Close
+            {tObj.common.close}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1125,7 +982,7 @@ export const PayByLinkPage: React.FC = () => {
               {tObj.payByLink.table.amount}
             </Typography>
             <Typography variant="body2" sx={{ fontWeight: 700 }}>
-              ₼{cancelTarget.amount.toFixed(2)}
+              {formatCurrency(cancelTarget.amount, cancelTarget.currency)}
             </Typography>
           </Box>
         )}

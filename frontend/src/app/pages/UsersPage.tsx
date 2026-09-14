@@ -44,6 +44,14 @@ import type { UserDto, CompanyDto } from '../types/dto';
 export const UsersPage: React.FC = () => {
   const { user: currentUser } = useAuth();
   const { tObj } = useLanguage();
+  /**
+   * Компанию нового пользователя выбирает только SYSTEM_ADMIN. COMPANY_HEAD заводит людей в свою
+   * (`UserService.validateCreatePermission`), и она известна из токена; список всех компаний ему
+   * недоступен (`GET /companies` — 403), так что раньше селект оставался пустым, `companyId`
+   * уходил пустым, и сервер отвечал «Cannot create user for another company».
+   */
+  const isAdmin = currentUser?.role === 'SYSTEM_ADMIN';
+  const ownCompanyId = currentUser?.companyId ?? '';
   const [usersList, setUsersList] = useState<UserDto[]>([]);
   // Удаление уходит на сервер только после подтверждения: оно мягкое, но необратимое из
   // портала (updateUser на удалённом отвечает «User not found») и гасит все сессии сразу.
@@ -63,6 +71,7 @@ export const UsersPage: React.FC = () => {
     companyId: ''
   });
   const [userError, setUserError] = useState('');
+  const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   // Поиск и фильтр по роли — серверные (P3-1): клиентский фильтр видел только текущую страницу.
@@ -105,34 +114,51 @@ export const UsersPage: React.FC = () => {
   }, [fetchUsers]);
 
   useEffect(() => {
-    // Компании нужны только для выпадающего списка в диалоге создания, поэтому берём их
-    // одной страницей по потолку (200 — тот же лимит, что у журнала аудита).
-    apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 } })
-      .then(res => {
-        const content = Array.isArray(res.data) ? res.data : (res.data?.content || []);
-        if (Array.isArray(content)) {
-          setCompaniesList(content);
-          if (content.length > 0) {
-            setUserForm(f => ({ ...f, companyId: content[0].id }));
+    if (isAdmin) {
+      // Компании нужны для выпадающего списка и подписей, поэтому берём их одной страницей
+      // по потолку (200 — тот же лимит, что у журнала аудита).
+      apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 } })
+        .then(res => {
+          const content = Array.isArray(res.data) ? res.data : (res.data?.content || []);
+          if (Array.isArray(content)) {
+            setCompaniesList(content);
+            if (content.length > 0) {
+              setUserForm(f => ({ ...f, companyId: content[0].id }));
+            }
           }
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const handleCreateUser = async () => {
-    setUserError('');
-    if (!userForm.username || !userForm.password || !userForm.fullName) {
-      setUserError('Please fill in all required fields');
+        })
+        .catch(() => {});
       return;
     }
+    // Своя компания — одиночным GET, он открыт всем ролям компании (AGENTS.md §6): нужна для
+    // подписи в таблице. В форму она подставляется при отправке.
+    if (ownCompanyId) {
+      apiClient.get(`/api/v1/companies/${ownCompanyId}`)
+        .then(res => { if (res.data) setCompaniesList([res.data]); })
+        .catch(() => {});
+    }
+  }, [isAdmin, ownCompanyId]);
+
+  const handleOpenCreate = () => {
+    setUserError('');
+    setUserDialogOpen(true);
+  };
+
+  const handleCreateUser = async () => {
+    if (creating) return;
+    setUserError('');
+    if (!userForm.username || !userForm.password || !userForm.fullName) {
+      setUserError(tObj.users.formIncomplete);
+      return;
+    }
+    setCreating(true);
     try {
       const payload = {
         username: userForm.username,
         password: userForm.password,
         fullName: userForm.fullName,
         role: userForm.role,
-        companyId: userForm.companyId || undefined,
+        companyId: (isAdmin ? userForm.companyId : ownCompanyId) || undefined,
       };
       await apiClient.post('/api/v1/users', payload);
       // Не дописываем строку в массив: список постраничный и отсортирован сервером — новая
@@ -144,10 +170,12 @@ export const UsersPage: React.FC = () => {
         password: '',
         fullName: '',
         role: 'COMPANY_HEAD',
-        companyId: companiesList[0]?.id || ''
+        companyId: isAdmin ? (companiesList[0]?.id || '') : ''
       });
     } catch (err: any) {
-      setUserError(err.response?.data?.message || 'Failed to create user');
+      setUserError(err.response?.data?.message || tObj.users.createFailed);
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -156,11 +184,16 @@ export const UsersPage: React.FC = () => {
     setDeleteBusy(true);
     try {
       await apiClient.delete(`/api/v1/users/${pendingDelete.id}`);
-      // Перечитываем страницу: после удаления на неё поднимается строка со следующей.
-      fetchUsers();
+      // Перечитываем страницу: после удаления на неё поднимается строка со следующей. Если
+      // удалили единственную строку не первой страницы, страницы больше нет — шаг назад.
+      if (usersList.length === 1 && page > 0) {
+        setPage(page - 1);
+      } else {
+        fetchUsers();
+      }
     } catch (err: any) {
       // Полосой на странице, а не системным alert'ом: остальные экраны отвечают так же.
-      setSnackbar(err.response?.data?.message || 'Failed to delete user');
+      setSnackbar(err.response?.data?.message || tObj.users.deleteFailed);
     } finally {
       setDeleteBusy(false);
       setPendingDelete(null);
@@ -190,7 +223,7 @@ export const UsersPage: React.FC = () => {
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => fetchUsers()}>
             {tObj.common.refresh}
           </Button>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setUserDialogOpen(true)}>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreate}>
             {tObj.users.addUser}
           </Button>
         </Stack>
@@ -254,16 +287,22 @@ export const UsersPage: React.FC = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {usersList.map((u: any) => (
+              {usersList.map((u) => (
                 <TableRow key={u.id} hover>
                   <TableCell sx={{ fontWeight: 600 }}>{u.username}</TableCell>
                   <TableCell>{u.fullName || '—'}</TableCell>
                   <TableCell>
-                    <Chip label={u.role || 'USER'} color="primary" size="small" variant="outlined" />
+                    {/* Роль — как прислал сервер; подставлять несуществующую «USER» нельзя (Р-48). */}
+                    <Chip label={u.role || '—'} color="primary" size="small" variant="outlined" />
                   </TableCell>
                   <TableCell>{getCompanyName(u.companyId) || '—'}</TableCell>
                   <TableCell>
-                    <Chip label={tObj.common.active} color="success" size="small" />
+                    {/* Статус — из ответа: чип «Active» на всех строках подряд скрывал заблокированных. */}
+                    <Chip
+                      label={u.status === 'ACTIVE' ? tObj.common.active : (u.status || '—')}
+                      color={u.status === 'ACTIVE' ? 'success' : 'default'}
+                      size="small"
+                    />
                   </TableCell>
                   <TableCell align="center">
                     <Tooltip title={tObj.common.delete}>
@@ -289,7 +328,7 @@ export const UsersPage: React.FC = () => {
       </TableContainer>
 
       {/* Create User Dialog */}
-      <Dialog open={userDialogOpen} onClose={() => setUserDialogOpen(false)} maxWidth="xs" fullWidth>
+      <Dialog open={userDialogOpen} onClose={() => { if (!creating) setUserDialogOpen(false); }} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.users.createDialogTitle}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
@@ -331,9 +370,11 @@ export const UsersPage: React.FC = () => {
               <MenuItem value="COMPANY_MANAGER">{tObj.users.roles.companyManager}</MenuItem>
               <MenuItem value="COMPANY_EMPLOYEE">{tObj.users.roles.companyEmployee}</MenuItem>
               <MenuItem value="AUDITOR">{tObj.users.roles.auditor}</MenuItem>
-              <MenuItem value="SYSTEM_ADMIN">{tObj.users.roles.systemAdmin}</MenuItem>
+              {/* Системного администратора назначает только системный администратор
+                  (`UserService.validateCreatePermission`): остальным пункт не предлагается. */}
+              {isAdmin && <MenuItem value="SYSTEM_ADMIN">{tObj.users.roles.systemAdmin}</MenuItem>}
             </TextField>
-            {companiesList.length > 0 && (
+            {isAdmin && companiesList.length > 0 && (
               <TextField
                 select
                 label={tObj.users.company}
@@ -341,7 +382,7 @@ export const UsersPage: React.FC = () => {
                 onChange={e => setUserForm(f => ({ ...f, companyId: e.target.value }))}
                 fullWidth
               >
-                {companiesList.map((c: any) => (
+                {companiesList.map((c) => (
                   <MenuItem key={c.id} value={c.id}>
                     {c.name} ({c.id})
                   </MenuItem>
@@ -351,8 +392,10 @@ export const UsersPage: React.FC = () => {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setUserDialogOpen(false)}>{tObj.common.cancel}</Button>
-          <Button variant="contained" onClick={handleCreateUser}>{tObj.common.create}</Button>
+          <Button onClick={() => setUserDialogOpen(false)} disabled={creating}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={handleCreateUser} disabled={creating}>
+            {creating ? tObj.common.loading : tObj.common.create}
+          </Button>
         </DialogActions>
       </Dialog>
 

@@ -67,7 +67,7 @@ export interface EcomOrder {
   amount: number | null;
   capturedAmount: number;
   refundedAmount: number;
-  currency: string;
+  currency: string | null;
   description: string | null;
   createdAt: Date | null;
   lastOperationAt: Date | null;

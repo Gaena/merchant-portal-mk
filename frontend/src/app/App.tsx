@@ -1,19 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import {
-  ThemeProvider,
-  createTheme,
-  CssBaseline
-} from '@mui/material';
+import React from 'react';
+import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import { RouterProvider } from 'react-router';
-import type { Transaction, TransactionFilters } from './types/transaction';
-import { createRouter } from './routes';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { router } from './routes';
+import { AuthProvider } from './context/AuthContext';
 import { LanguageProvider } from './context/LanguageContext';
-import { apiClient } from './api/client';
-import { buildTerminalIndex } from './utils/terminals';
-import { mapTransaction } from './utils/mapTransaction';
 
-// Create Material Design theme
 const theme = createTheme({
   palette: {
     primary: {
@@ -74,121 +65,20 @@ const theme = createTheme({
   },
 });
 
-// Suppress MUI ThemeProvider prop validation — Figma's inspection layer injects
-// data-fg-* attributes onto every component including ThemeProvider, which MUI rejects.
-// Use defineProperty so the null can't be overwritten by module re-evaluation.
-try {
-  Object.defineProperty(ThemeProvider, 'propTypes', { value: null, writable: true, configurable: true });
-} catch {
-  (ThemeProvider as any).propTypes = null;
-}
-
-// Wrapper component to filter out Figma inspection props
-const FilteredThemeProvider = ({ children }: { children?: React.ReactNode; [key: string]: any }) => {
-  return <ThemeProvider theme={theme}>{children}</ThemeProvider>;
-};
-
 /**
- * Состояние транзакций и роутер. Живёт **под** `AuthProvider`: список запрашивается, когда
- * есть сессия (после входа или восстановления), а не при первом рендере до логина — раньше
- * запрос уходил без токена, получал 401 и список оставался пустым до ручного обновления.
+ * Состояния данных здесь нет: каждая страница грузит своё. Роутер — из `routes.tsx`, создан один
+ * раз при загрузке модуля. `AuthProvider` сам показывает загрузку, пока восстанавливает сессию
+ * через /refresh; страницы под ним запрашивают данные уже с токеном.
  */
-function AppShell() {
-  const { isAuthenticated } = useAuth();
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [filters, setFilters] = useState<TransactionFilters>({
-    dateFrom: new Date(Date.now() - 10 * 60 * 1000), // Last 10 minutes
-    dateTo: new Date(),
-    status: 'all',
-    paymentMethod: 'all',
-    minAmount: '',
-    maxAmount: '',
-    searchQuery: '',
-    terminalRid: [],
-    posPaymentType: 'all',
-    cashierId: 'all',
-    locationName: 'all',
-    batchId: 'all'
-  });
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [newTransactionCount, setNewTransactionCount] = useState(0);
-
-  const fetchTransactions = async () => {
-    try {
-      // Parallel fetch transactions and terminals to get terminal names.
-      // Лёгкий список терминалов (Р-45): здесь нужны только имена, а полная карточка
-      // постранична с P2-1 — по ней имя терминала находилось бы только у первых двадцати.
-      // Заблокированные терминалы в ответе есть, и это важно: платёж, прошедший через
-      // терминал, который потом сняли с обслуживания, должен сохранить его имя.
-      const [txRes, termRes] = await Promise.allSettled([
-        apiClient.get('/api/v1/transactions', { params: { page: 0, size: 100 } }),
-        apiClient.get('/api/v1/terminals/options')
-      ]);
-
-      const terminalIndex = termRes.status === 'fulfilled'
-        ? buildTerminalIndex(termRes.value.data)
-        : {};
-
-      if (txRes.status === 'fulfilled') {
-        const rawContent = Array.isArray(txRes.value.data) ? txRes.value.data : (txRes.value.data?.content || []);
-        if (Array.isArray(rawContent)) {
-          const mapped = rawContent.map((t: any) => mapTransaction(t, terminalIndex));
-          setTransactions(mapped);
-        }
-      }
-    } catch {
-      setTransactions([]);
-    }
-  };
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchTransactions();
-    } else {
-      // Выход: чужие данные не должны пережить сессию до следующего входа.
-      setTransactions([]);
-    }
-  }, [isAuthenticated]);
-
-  const handleRefresh = () => {
-    setNewTransactionCount(0);
-    setFilters(prev => ({
-      ...prev,
-      dateFrom: new Date(Date.now() - 10 * 60 * 1000),
-      dateTo: new Date()
-    }));
-    fetchTransactions();
-  };
-
-  const handleToggleAutoRefresh = () => {
-    setAutoRefresh(prev => !prev);
-  };
-
-  const router = useMemo(() => {
-    return createRouter({
-      transactions,
-      filters,
-      onFilterChange: setFilters,
-      autoRefresh,
-      onToggleAutoRefresh: handleToggleAutoRefresh,
-      newTransactionCount,
-      onRefresh: handleRefresh
-    });
-  }, [transactions, filters, autoRefresh, newTransactionCount]);
-
-  return <RouterProvider router={router} />;
-}
-
 function App() {
   return (
     <LanguageProvider>
-      <FilteredThemeProvider>
+      <ThemeProvider theme={theme}>
         <CssBaseline />
-        {/* AuthProvider сам показывает загрузку, пока восстанавливает сессию через /refresh. */}
         <AuthProvider>
-          <AppShell />
+          <RouterProvider router={router} />
         </AuthProvider>
-      </FilteredThemeProvider>
+      </ThemeProvider>
     </LanguageProvider>
   );
 }

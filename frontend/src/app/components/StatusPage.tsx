@@ -10,10 +10,12 @@ interface StatusPageProps {
   text: string;
   /** Техническая подробность (текст ошибки) — мелко, под основным текстом. */
   detail?: string;
+  /** Чем заменить переход на главную (например, полной перезагрузкой после деплоя). */
+  onHome?: () => void;
 }
 
 /** Страница-заглушка для «нет доступа», «не найдено» и ошибок рендера. */
-export const StatusPage: React.FC<StatusPageProps> = ({ code, title, text, detail }) => {
+export const StatusPage: React.FC<StatusPageProps> = ({ code, title, text, detail, onHome }) => {
   const navigate = useNavigate();
   const { tObj } = useLanguage();
 
@@ -34,7 +36,7 @@ export const StatusPage: React.FC<StatusPageProps> = ({ code, title, text, detai
             {detail}
           </Typography>
         )}
-        <Button variant="contained" onClick={() => navigate('/', { replace: true })}>
+        <Button variant="contained" onClick={onHome ?? (() => navigate('/', { replace: true }))}>
           {tObj.errors.goHome}
         </Button>
       </Paper>

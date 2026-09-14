@@ -153,6 +153,16 @@ export interface PaymentLink {
   providerReference?: string;
 }
 
+/**
+ * Ссылки «отправить клиенту». Настоящие `mailto:` и `wa.me`, с кодированием параметров:
+ * описание «Invoice #12 & extras» иначе обрывало тело письма на `#`.
+ */
+export const mailtoHref = (link: Pick<PaymentLink, 'customerEmail' | 'url'>, subject: string, text: string): string =>
+  `mailto:${encodeURIComponent(link.customerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(`${text}\n${link.url}`)}`;
+
+export const whatsAppHref = (link: Pick<PaymentLink, 'customerPhone' | 'url'>, text: string): string =>
+  `https://wa.me/${link.customerPhone.replace(/\D/g, '')}?text=${encodeURIComponent(`${text} ${link.url}`)}`;
+
 export const formatDateTime = (d: Date) =>
   d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 

@@ -42,8 +42,11 @@ import {
 
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
-import { formatCurrency, formatDateTime } from '../utils/mockData';
+import { formatCurrency, formatDateTime } from '../utils/format';
 import { parseTransactionStatus } from '../types/transaction';
+import { statusLabel } from '../i18n/translations';
+import { getPaymentMethodLabel } from '../utils/format';
+import { parsePaymentMethod } from '../types/transaction';
 import type { DashboardSummary, DashboardCurrencyTotals, TerminalOptionDto } from '../types/dto';
 import { buildTerminalIndex, terminalLabel } from '../utils/terminals';
 
@@ -121,7 +124,7 @@ export const HomePage: React.FC = () => {
           </Typography>
           {summary && (
             <Typography variant="caption" color="text.secondary">
-              {tObj.home.period}: {formatDateTime(new Date(summary.window.from))} — {formatDateTime(new Date(summary.window.to))}
+              {tObj.home.period}: {formatInZone(summary.window.from, summary.window.zone)} — {formatInZone(summary.window.to, summary.window.zone)}
               {' · '}{summary.window.zone}
             </Typography>
           )}
@@ -215,7 +218,7 @@ export const HomePage: React.FC = () => {
                   <Box key={item.status} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: STATUS_COLORS[item.status] ?? '#9e9e9e' }} />
-                      <Typography variant="body2">{item.status}</Typography>
+                      <Typography variant="body2">{statusLabel(tObj, parseTransactionStatus(item.status), item.status)}</Typography>
                     </Box>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.count}</Typography>
                   </Box>
@@ -289,13 +292,17 @@ export const HomePage: React.FC = () => {
             <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>{tObj.home.charts.byPaymentType}</Typography>
             <Stack spacing={1} sx={{ mb: 3 }}>
               {summary.paymentLinks.byPaymentType.map(item => (
-                <CountRow key={item.paymentType} label={item.paymentType} count={item.count} />
+                <CountRow key={item.paymentType} label={getPaymentMethodLabel(parsePaymentMethod(item.paymentType))} count={item.count} />
               ))}
             </Stack>
             <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>{tObj.home.charts.byUsageType}</Typography>
             <Stack spacing={1}>
               {summary.paymentLinks.byUsageType.map(item => (
-                <CountRow key={item.usageType} label={item.usageType} count={item.count} />
+                <CountRow
+                  key={item.usageType}
+                  label={item.usageType === 'SINGLE' ? tObj.payByLink.singleUse : item.usageType === 'MULTIPLE' ? tObj.payByLink.multipleUse : item.usageType}
+                  count={item.count}
+                />
               ))}
             </Stack>
           </Panel>
@@ -311,10 +318,13 @@ export const HomePage: React.FC = () => {
           <Chip label={recent.length} size="small" color="primary" variant="outlined" />
         </Box>
 
+        {/* «Платежей ещё нет» — только когда список действительно пуст, а не когда он не загрузился. */}
         {recent.length === 0 ? (
           <Box sx={{ py: 5, textAlign: 'center' }}>
             <ReceiptIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
-            <Typography color="text.secondary">{tObj.home.recentTransactions.empty}</Typography>
+            <Typography color="text.secondary">
+              {failed ? tObj.common.loadFailed : tObj.home.recentTransactions.empty}
+            </Typography>
           </Box>
         ) : (
           <TableContainer sx={{ overflowX: 'auto' }}>
@@ -349,12 +359,12 @@ export const HomePage: React.FC = () => {
                     >
                       <TableCell>
                         <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                          {tx.providerOrderId || tx.provider_order_id || '—'}
+                          {tx.providerOrderId || '—'}
                         </Typography>
                       </TableCell>
                       <TableCell>
                         <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                          {tx.ridByMerchant || tx.rid_by_merchant || '—'}
+                          {tx.ridByMerchant || '—'}
                         </Typography>
                       </TableCell>
                       <TableCell>
@@ -464,6 +474,19 @@ const DailyChart: React.FC<{ summary: DashboardSummary; totals: DashboardCurrenc
     </Panel>
   );
 };
+
+// Границы периода — в зоне, в которой их считал сервер (`window.zone`), а не в зоне браузера:
+// иначе подпись «Asia/Baku» стояла бы рядом с временем из другого пояса.
+function formatInZone(iso: string, zone: string): string {
+  const date = new Date(iso);
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone, day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit',
+    }).format(date);
+  } catch {
+    return formatDateTime(date);
+  }
+}
 
 // Доля самого крупного терминала этой валюты. Ширина полосы — оформление, и сравнивается
 // только внутри одной валюты.

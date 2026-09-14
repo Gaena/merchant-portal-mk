@@ -38,6 +38,8 @@ export interface TranslationDictionary {
     overview: string;
     create: string;
     update: string;
+    /** Общий отказ загрузки экрана или его части. */
+    loadFailed: string;
   };
   nav: {
     home: string;
@@ -58,6 +60,8 @@ export interface TranslationDictionary {
     noNotifications: string;
     profile: string;
     logout: string;
+    /** Вопрос окна выхода: подтверждение — общее `ConfirmDialog`. */
+    logoutQuestion: string;
     language: string;
     adminBadge: string;
   };
@@ -148,6 +152,33 @@ export interface TranslationDictionary {
     keepLink: string;
     linkCancelledSuccess: string;
     linkCancelFailed: string;
+    /** Форма и окно создания: раньше тексты были зашиты по-английски и по-русски вперемешку. */
+    noActiveTerminals: string;
+    customerNotSpecified: string;
+    empty: string;
+    share: string;
+    copyLink: string;
+    sendEmail: string;
+    sendWhatsApp: string;
+    createdTitle: string;
+    linkLabel: string;
+    done: string;
+    generating: string;
+    invalidAmount: string;
+    descriptionRequired: string;
+    invalidMaxUses: string;
+    createFailed: string;
+    smsHint: string;
+    dmsHint: string;
+    maxUsesHint: string;
+    descriptionHint: string;
+    customerSection: string;
+    linkSettings: string;
+    /** Текст, который уходит клиенту в письме и в WhatsApp перед самой ссылкой. */
+    messageText: string;
+    emailSubject: string;
+    /** Варианты срока жизни ссылки; значение уходит на сервер как `expiresAt`. */
+    expiry: { h1: string; h24: string; h72: string; d7: string; d30: string };
     /** Подпись в списке вместо срока — только у завершённой ссылки (P2-15, Р-47). */
     paid: string;
     /**
@@ -279,6 +310,13 @@ export interface TranslationDictionary {
       /** Кнопка, спрашивающая эквайера о судьбе операции. Единственный верный следующий шаг. */
       checkStatusAction: string;
       statusChecked: string;
+      /**
+       * Перечитали, а операция не изменилась: исход по-прежнему не подтверждён, повтор закрыт.
+       * Снять запрет может только перечитывание, которое показало движение денег.
+       */
+      statusStillUnresolved: string;
+      /** Сама проверка статуса не удалась. Это не исход денежной операции — запрет не трогает. */
+      checkStatusFailed: string;
       /** Остаток к возврату у частично возвращённой операции: вернуть можно только его. */
       refundableLeft: string;
       /**
@@ -424,6 +462,20 @@ export interface TranslationDictionary {
     editPasswordReplaced: string;
     editNothingChanged: string;
     searchPlaceholder: string;
+    /** Пояснение к выбору компании в формах; виден только тем, кто выбирает (SYSTEM_ADMIN). */
+    companyHint: string;
+    /** Итоги и отказы действий на странице — раньше были зашиты по-английски и по-русски вперемешку. */
+    formIncomplete: string;
+    created: string;
+    createFailed: string;
+    updated: string;
+    updateFailed: string;
+    checkFailed: string;
+    revealFailed: string;
+    blockedNotice: string;
+    unblockedNotice: string;
+    statusChangeFailed: string;
+    empty: string;
   };
   companies: {
     title: string;
@@ -464,6 +516,9 @@ export interface TranslationDictionary {
       companyEmployee: string;
       auditor: string;
     };
+    formIncomplete: string;
+    createFailed: string;
+    deleteFailed: string;
   };
   auditLogs: {
     title: string;
@@ -494,6 +549,18 @@ export interface TranslationDictionary {
   };
   auth: {
     unknownRole: string;
+    /** Форма входа. Раньше была зашита по-английски целиком, а под ней стояла ложная надпись о 2FA. */
+    subtitle: string;
+    emailLabel: string;
+    passwordLabel: string;
+    signIn: string;
+    fillBoth: string;
+    invalidEmail: string;
+    /** Запрос до сервера не дошёл: это не «неверный пароль», перепечатывать его незачем. */
+    networkError: string;
+    authFailed: string;
+    /** 200 без токенов (например, прокси отдал HTML): вход отклонён на клиенте. */
+    malformedResponse: string;
   };
   errors: {
     forbiddenTitle: string;
@@ -561,6 +628,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       overview: 'Overview',
       create: 'Create',
       update: 'Update',
+      loadFailed: 'Could not load the data.',
     },
     nav: {
       home: 'Home Page',
@@ -581,6 +649,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       noNotifications: 'No unread notifications',
       profile: 'My Profile',
       logout: 'Log Out',
+      logoutQuestion: 'Sign out of the portal?',
       language: 'Language',
       adminBadge: 'SYSTEM ADMIN',
     },
@@ -670,6 +739,30 @@ export const translations: Record<Language, TranslationDictionary> = {
       linkCancelledSuccess: 'Payment link cancelled successfully',
       linkCancelFailed: 'Could not cancel the payment link',
       paid: 'Paid',
+      noActiveTerminals: 'No active terminals: register one or unblock it on the Terminals page. A blocked terminal issues no new links.',
+      customerNotSpecified: 'Not specified',
+      empty: 'No payment links',
+      share: 'Share',
+      copyLink: 'Copy link',
+      sendEmail: 'Send by email',
+      sendWhatsApp: 'Send via WhatsApp',
+      createdTitle: 'Payment link created. Share it with the customer.',
+      linkLabel: 'Payment link',
+      done: 'Done',
+      generating: 'Generating…',
+      invalidAmount: 'Enter a valid amount',
+      descriptionRequired: 'Add a description or order reference',
+      invalidMaxUses: 'Max payments must be a whole number of at least 1',
+      createFailed: 'Could not create the payment link',
+      smsHint: 'SMS: funds are charged as soon as the customer pays.',
+      dmsHint: 'DMS: funds are reserved on the card; capture them from the transaction card.',
+      maxUsesHint: 'The link closes after this many successful payments',
+      descriptionHint: 'Shown to the customer on the payment page',
+      customerSection: 'Customer',
+      linkSettings: 'Link settings',
+      messageText: 'Please complete your payment using this link:',
+      emailSubject: 'Payment request',
+      expiry: { h1: '1 hour', h24: '24 hours', h72: '3 days', d7: '7 days', d30: '30 days' },
       statuses: {
         ACTIVE: 'Active',
         EXPIRED: 'Expired',
@@ -756,7 +849,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         backToTransactions: 'Back to Transactions',
         refundAction: 'Process Refund',
         refundTitle: 'Issue Transaction Refund',
-        refundAmount: 'Refund Amount (AZN)',
+        refundAmount: 'Refund amount',
         confirmRefund: 'Confirm Refund',
         completeAction: 'Complete',
         completeTitle: 'Complete DMS Transaction',
@@ -772,7 +865,9 @@ export const translations: Record<Language, TranslationDictionary> = {
         unresolvedTitle: 'Outcome not confirmed by the acquirer',
         unresolvedHint: 'The operation may already have gone through. Do not send it again — check the transaction status first.',
         checkStatusAction: 'Check status',
-        statusChecked: 'Status re-read from the acquirer.',
+        statusChecked: 'Transaction status refreshed.',
+        statusStillUnresolved: 'The re-read shows no change: the outcome is still unconfirmed and the operation stays locked. Review it in the audit log before retrying.',
+        checkStatusFailed: 'Could not check the status. Try again.',
         refundableLeft: 'Left to refund',
         eventCreated: 'Transaction opened',
         eventCaptured: 'Hold captured',
@@ -910,6 +1005,18 @@ export const translations: Record<Language, TranslationDictionary> = {
       editPasswordReplaced: 'The terminal password will be replaced',
       editNothingChanged: 'Nothing changed — no request was sent.',
       searchPlaceholder: 'Search terminals by name, ID or login...',
+      companyHint: 'The company that owns the terminal',
+      formIncomplete: 'Fill in every required field',
+      created: 'Terminal registered',
+      createFailed: 'Could not register the terminal',
+      updated: 'Terminal updated',
+      updateFailed: 'Could not update the terminal',
+      checkFailed: 'Could not check the terminal',
+      revealFailed: 'Could not show the terminal password',
+      blockedNotice: 'Terminal blocked: it takes no new payments and its active links are suspended',
+      unblockedNotice: 'Terminal unblocked: suspended links are active again, except those whose lifetime ran out',
+      statusChangeFailed: 'Could not change the terminal status',
+      empty: 'No terminals yet',
     },
     companies: {
       title: 'Companies',
@@ -950,6 +1057,9 @@ export const translations: Record<Language, TranslationDictionary> = {
         companyEmployee: 'Company Employee',
         auditor: 'Auditor',
       },
+      formIncomplete: 'Fill in every required field',
+      createFailed: 'Could not create the user',
+      deleteFailed: 'Could not delete the user',
     },
     auditLogs: {
       title: 'Audit Logs',
@@ -979,6 +1089,15 @@ export const translations: Record<Language, TranslationDictionary> = {
     },
     auth: {
       unknownRole: 'The server returned a role this application does not recognise. Sign-in was refused — contact your administrator.',
+      subtitle: 'Sign in to the merchant portal',
+      emailLabel: 'Email',
+      passwordLabel: 'Password',
+      signIn: 'Sign in',
+      fillBoth: 'Enter your email and password',
+      invalidEmail: 'Enter a valid email address',
+      networkError: 'The server is unreachable. Check the connection and try again.',
+      authFailed: 'Sign-in failed',
+      malformedResponse: 'The server answered without a session. Sign-in was refused — try again or contact your administrator.',
     },
     errors: {
       forbiddenTitle: 'Access denied',
@@ -1023,6 +1142,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       overview: 'Xülasə',
       create: 'Yarat',
       update: 'Yenilə',
+      loadFailed: 'Məlumatı yükləmək mümkün olmadı.',
     },
     nav: {
       home: 'Ana Səhifə',
@@ -1043,6 +1163,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       noNotifications: 'Oxunmamış bildiriş yoxdur',
       profile: 'Profilim',
       logout: 'Çıxış',
+      logoutQuestion: 'Portaldan çıxmaq istəyirsiniz?',
       language: 'Dil',
       adminBadge: 'SİSTEM ADMİNİ',
     },
@@ -1132,6 +1253,30 @@ export const translations: Record<Language, TranslationDictionary> = {
       linkCancelledSuccess: 'Ödəniş linki uğurla ləğv edildi',
       linkCancelFailed: 'Ödəniş linkini ləğv etmək mümkün olmadı',
       paid: 'Ödənilib',
+      noActiveTerminals: 'Aktiv terminal yoxdur: Terminallar səhifəsində terminal qeydiyyatdan keçirin və ya blokunu açın. Bloklanmış terminal yeni link vermir.',
+      customerNotSpecified: 'Göstərilməyib',
+      empty: 'Ödəniş linki yoxdur',
+      share: 'Paylaş',
+      copyLink: 'Linki kopyala',
+      sendEmail: 'E-poçtla göndər',
+      sendWhatsApp: 'WhatsApp ilə göndər',
+      createdTitle: 'Ödəniş linki yaradıldı. Onu müştəri ilə paylaşın.',
+      linkLabel: 'Ödəniş linki',
+      done: 'Hazırdır',
+      generating: 'Yaradılır…',
+      invalidAmount: 'Düzgün məbləğ daxil edin',
+      descriptionRequired: 'Təsvir və ya sifariş nömrəsi əlavə edin',
+      invalidMaxUses: 'Maksimum ödəniş sayı ən azı 1 olan tam ədəd olmalıdır',
+      createFailed: 'Ödəniş linkini yaratmaq mümkün olmadı',
+      smsHint: 'SMS: vəsait müştəri ödəyən kimi tutulur.',
+      dmsHint: 'DMS: vəsait kartda bloklanır; silinməsi əməliyyat kartından edilir.',
+      maxUsesHint: 'Bu qədər uğurlu ödənişdən sonra link bağlanır',
+      descriptionHint: 'Ödəniş səhifəsində müştəriyə göstərilir',
+      customerSection: 'Müştəri',
+      linkSettings: 'Link parametrləri',
+      messageText: 'Zəhmət olmasa ödənişi bu link vasitəsilə tamamlayın:',
+      emailSubject: 'Ödəniş sorğusu',
+      expiry: { h1: '1 saat', h24: '24 saat', h72: '3 gün', d7: '7 gün', d30: '30 gün' },
       statuses: {
         ACTIVE: 'Aktiv',
         EXPIRED: 'Müddəti bitib',
@@ -1218,7 +1363,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         backToTransactions: 'Əməliyyatlara Geri Dön',
         refundAction: 'Ödənişi Qaytar (Refund)',
         refundTitle: 'Məbləğin Qaytarılması',
-        refundAmount: 'Qaytarılan Məbləğ (AZN)',
+        refundAmount: 'Qaytarılan məbləğ',
         confirmRefund: 'Qaytarılmanı Təsdiqlə',
         completeAction: 'Tamamla',
         completeTitle: 'DMS Əməliyyatını Tamamla',
@@ -1234,7 +1379,9 @@ export const translations: Record<Language, TranslationDictionary> = {
         unresolvedTitle: 'Nəticə ekvayer tərəfindən təsdiqlənmədi',
         unresolvedHint: 'Əməliyyat artıq keçmiş ola bilər. Təkrar göndərməyin — əvvəlcə əməliyyatın statusunu yoxlayın.',
         checkStatusAction: 'Statusu yoxla',
-        statusChecked: 'Status ekvayerdən yenidən oxundu.',
+        statusChecked: 'Əməliyyatın statusu yeniləndi.',
+        statusStillUnresolved: 'Yenidən oxuma dəyişiklik göstərmir: nəticə hələ də təsdiqlənməyib, əməliyyat bağlı qalır. Təkrarlamazdan əvvəl audit jurnalında yoxlayın.',
+        checkStatusFailed: 'Statusu yoxlamaq mümkün olmadı. Yenidən cəhd edin.',
         refundableLeft: 'Qaytarıla bilən qalıq',
         eventCreated: 'Əməliyyat açıldı',
         eventCaptured: 'Blok məbləği silindi',
@@ -1372,6 +1519,18 @@ export const translations: Record<Language, TranslationDictionary> = {
       editPasswordReplaced: 'Terminalın şifrəsi əvəz olunacaq',
       editNothingChanged: 'Dəyişiklik yoxdur — sorğu göndərilmədi.',
       searchPlaceholder: 'Ad, ID və ya login üzrə axtarış...',
+      companyHint: 'Terminalın aid olduğu şirkət',
+      formIncomplete: 'Bütün məcburi sahələri doldurun',
+      created: 'Terminal qeydiyyatdan keçdi',
+      createFailed: 'Terminalı qeydiyyatdan keçirmək mümkün olmadı',
+      updated: 'Terminal yeniləndi',
+      updateFailed: 'Terminalı yeniləmək mümkün olmadı',
+      checkFailed: 'Terminalı yoxlamaq mümkün olmadı',
+      revealFailed: 'Terminal parolunu göstərmək mümkün olmadı',
+      blockedNotice: 'Terminal bloklandı: yeni ödənişlər qəbul edilmir, aktiv linklər dayandırıldı',
+      unblockedNotice: 'Terminalın bloku açıldı: dayandırılmış linklər yenidən aktivdir (müddəti bitənlər istisna olmaqla)',
+      statusChangeFailed: 'Terminalın statusunu dəyişmək mümkün olmadı',
+      empty: 'Hələ terminal yoxdur',
     },
     companies: {
       title: 'Şirkətlər',
@@ -1412,6 +1571,9 @@ export const translations: Record<Language, TranslationDictionary> = {
         companyEmployee: 'Şirkət Əməkdaşı',
         auditor: 'Auditor',
       },
+      formIncomplete: 'Bütün məcburi sahələri doldurun',
+      createFailed: 'İstifadəçini yaratmaq mümkün olmadı',
+      deleteFailed: 'İstifadəçini silmək mümkün olmadı',
     },
     auditLogs: {
       title: 'Audit Jurnalı',
@@ -1441,6 +1603,15 @@ export const translations: Record<Language, TranslationDictionary> = {
     },
     auth: {
       unknownRole: 'Server bu tətbiqin tanımadığı bir rol qaytardı. Giriş rədd edildi — administratorla əlaqə saxlayın.',
+      subtitle: 'Merçant portalına daxil olun',
+      emailLabel: 'E-poçt',
+      passwordLabel: 'Parol',
+      signIn: 'Daxil ol',
+      fillBoth: 'E-poçt və parolu daxil edin',
+      invalidEmail: 'Düzgün e-poçt ünvanı daxil edin',
+      networkError: 'Server əlçatan deyil. Bağlantını yoxlayın və yenidən cəhd edin.',
+      authFailed: 'Giriş alınmadı',
+      malformedResponse: 'Server sessiyasız cavab verdi. Giriş rədd edildi — yenidən cəhd edin və ya administratorla əlaqə saxlayın.',
     },
     errors: {
       forbiddenTitle: 'Giriş qadağandır',
@@ -1485,6 +1656,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       overview: 'Обзор',
       create: 'Создать',
       update: 'Обновить',
+      loadFailed: 'Не удалось загрузить данные.',
     },
     nav: {
       home: 'Главная',
@@ -1505,6 +1677,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       noNotifications: 'Нет непрочитанных уведомлений',
       profile: 'Мой профиль',
       logout: 'Выйти',
+      logoutQuestion: 'Выйти из портала?',
       language: 'Язык',
       adminBadge: 'СИСТЕМНЫЙ АДМИН',
     },
@@ -1594,6 +1767,30 @@ export const translations: Record<Language, TranslationDictionary> = {
       linkCancelledSuccess: 'Ссылка на оплату успешно отменена',
       linkCancelFailed: 'Не удалось отменить ссылку на оплату',
       paid: 'Оплачена',
+      noActiveTerminals: 'Нет активных терминалов: заведите терминал или снимите блокировку на странице «Терминалы». По заблокированному терминалу новые ссылки не создаются.',
+      customerNotSpecified: 'Не указан',
+      empty: 'Ссылок на оплату нет',
+      share: 'Поделиться',
+      copyLink: 'Скопировать ссылку',
+      sendEmail: 'Отправить по email',
+      sendWhatsApp: 'Отправить в WhatsApp',
+      createdTitle: 'Ссылка на оплату создана. Поделитесь ею с клиентом.',
+      linkLabel: 'Ссылка на оплату',
+      done: 'Готово',
+      generating: 'Создаётся…',
+      invalidAmount: 'Введите корректную сумму',
+      descriptionRequired: 'Добавьте описание или номер заказа',
+      invalidMaxUses: 'Максимум платежей — целое число не меньше 1',
+      createFailed: 'Не удалось создать ссылку на оплату',
+      smsHint: 'SMS: деньги списываются сразу, как только клиент платит.',
+      dmsHint: 'DMS: деньги резервируются на карте; списание — с карточки операции.',
+      maxUsesHint: 'После этого числа успешных платежей ссылка закрывается',
+      descriptionHint: 'Показывается клиенту на странице оплаты',
+      customerSection: 'Клиент',
+      linkSettings: 'Параметры ссылки',
+      messageText: 'Пожалуйста, завершите оплату по этой ссылке:',
+      emailSubject: 'Запрос на оплату',
+      expiry: { h1: '1 час', h24: '24 часа', h72: '3 дня', d7: '7 дней', d30: '30 дней' },
       statuses: {
         ACTIVE: 'Активна',
         EXPIRED: 'Истекла',
@@ -1680,7 +1877,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         backToTransactions: 'Назад к транзакциям',
         refundAction: 'Оформить возврат (Refund)',
         refundTitle: 'Возврат средств по транзакции',
-        refundAmount: 'Сумма возврата (AZN)',
+        refundAmount: 'Сумма возврата',
         confirmRefund: 'Подтвердить возврат',
         completeAction: 'Завершить',
         completeTitle: 'Завершить DMS-транзакцию',
@@ -1696,7 +1893,9 @@ export const translations: Record<Language, TranslationDictionary> = {
         unresolvedTitle: 'Эквайер не подтвердил исход',
         unresolvedHint: 'Операция могла уже пройти. Не отправляйте её повторно — сначала проверьте статус операции.',
         checkStatusAction: 'Проверить статус',
-        statusChecked: 'Статус перечитан у эквайера.',
+        statusChecked: 'Статус операции обновлён.',
+        statusStillUnresolved: 'Перечитывание ничего не изменило: исход по-прежнему не подтверждён, операция остаётся закрытой для повтора. Разберите её по журналу аудита.',
+        checkStatusFailed: 'Не удалось проверить статус. Попробуйте ещё раз.',
         refundableLeft: 'Остаток к возврату',
         eventCreated: 'Операция заведена',
         eventCaptured: 'Холд списан',
@@ -1834,6 +2033,18 @@ export const translations: Record<Language, TranslationDictionary> = {
       editPasswordReplaced: 'Пароль терминала будет заменён',
       editNothingChanged: 'Изменений нет — запрос не отправлялся.',
       searchPlaceholder: 'Поиск по названию, ID или логину...',
+      companyHint: 'Компания, которой принадлежит терминал',
+      formIncomplete: 'Заполните все обязательные поля',
+      created: 'Терминал заведён',
+      createFailed: 'Не удалось завести терминал',
+      updated: 'Терминал обновлён',
+      updateFailed: 'Не удалось обновить терминал',
+      checkFailed: 'Не удалось проверить терминал',
+      revealFailed: 'Не удалось показать пароль терминала',
+      blockedNotice: 'Терминал заблокирован: новые платежи по нему не принимаются, активные ссылки приостановлены',
+      unblockedNotice: 'Терминал разблокирован: приостановленные ссылки вернулись в работу, кроме тех, у которых истёк срок',
+      statusChangeFailed: 'Не удалось изменить статус терминала',
+      empty: 'Терминалов пока нет',
     },
     companies: {
       title: 'Компании',
@@ -1874,6 +2085,9 @@ export const translations: Record<Language, TranslationDictionary> = {
         companyEmployee: 'Сотрудник компании',
         auditor: 'Аудитор',
       },
+      formIncomplete: 'Заполните все обязательные поля',
+      createFailed: 'Не удалось создать пользователя',
+      deleteFailed: 'Не удалось удалить пользователя',
     },
     auditLogs: {
       title: 'Журнал аудита',
@@ -1903,6 +2117,15 @@ export const translations: Record<Language, TranslationDictionary> = {
     },
     auth: {
       unknownRole: 'Сервер вернул роль, неизвестную приложению. Вход отклонён — обратитесь к администратору.',
+      subtitle: 'Вход в портал мерчанта',
+      emailLabel: 'Email',
+      passwordLabel: 'Пароль',
+      signIn: 'Войти',
+      fillBoth: 'Введите email и пароль',
+      invalidEmail: 'Введите корректный email',
+      networkError: 'Сервер недоступен. Проверьте соединение и попробуйте ещё раз.',
+      authFailed: 'Вход не выполнен',
+      malformedResponse: 'Сервер ответил без сессии. Вход отклонён — попробуйте ещё раз или обратитесь к администратору.',
     },
     errors: {
       forbiddenTitle: 'Нет доступа',

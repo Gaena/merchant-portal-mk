@@ -140,12 +140,14 @@ export const AuditLogsPage: React.FC = () => {
   }, [page, rowsPerPage, debouncedSearch, entityTypeFilter, outcomeFilter, fromDate, toDate]);
 
   // Отмена предыдущего запроса при каждом изменении параметров: без неё ответ на «ив» может
-  // прийти позже ответа на «ива» и перезаписать более точный результат.
+  // прийти позже ответа на «ива» и перезаписать более точный результат. «Обновить» идёт тем же
+  // путём (через `reloadKey`), иначе его ответ без сигнала перекрывал бы ответ на новый фильтр.
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     fetchAuditLogs(controller.signal);
     return () => controller.abort();
-  }, [fetchAuditLogs]);
+  }, [fetchAuditLogs, reloadKey]);
 
   return (
     <Box>
@@ -160,7 +162,7 @@ export const AuditLogsPage: React.FC = () => {
             {tObj.auditLogs.subtitle}
           </Typography>
         </Box>
-        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => fetchAuditLogs()}>
+        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => setReloadKey(k => k + 1)}>
           {tObj.common.refresh}
         </Button>
       </Box>

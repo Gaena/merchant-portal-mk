@@ -22,8 +22,6 @@ import {
   ShoppingCart as EcommerceIcon,
   PointOfSale as POSIcon,
   Link as LinkIcon,
-  Assessment as ReportsIcon,
-  Notifications as NotificationsIcon,
   Business as BusinessIcon,
   Group as GroupIcon,
   History as HistoryIcon,
@@ -41,6 +39,8 @@ interface SidebarProps {
 }
 
 interface NavItem {
+  /** Ключ группы или пункта: не зависит от языка, в отличие от подписи. */
+  key: string;
   label: string;
   path?: string;
   icon: React.ReactNode;
@@ -64,27 +64,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const visible = (path: string) => canAccessPath(user?.role, path);
 
   const navItems: NavItem[] = [
-    { label: tObj.nav.home, path: '/', icon: <HomeIcon /> },
-    { label: tObj.nav.payByLink, path: '/pay-by-link', icon: <LinkIcon /> },
+    { key: 'home', label: tObj.nav.home, path: '/', icon: <HomeIcon /> },
+    { key: 'pay-by-link', label: tObj.nav.payByLink, path: '/pay-by-link', icon: <LinkIcon /> },
     {
+      key: 'transactions',
       label: tObj.nav.transactions,
       icon: <ReceiptIcon />,
       children: [
-        { label: tObj.nav.ecommerce, path: '/transactions/ecommerce', icon: <EcommerceIcon /> },
+        { key: 'ecommerce', label: tObj.nav.ecommerce, path: '/transactions/ecommerce', icon: <EcommerceIcon /> },
       ]
     },
-    { label: tObj.nav.terminals, path: '/terminals', icon: <POSIcon /> },
-    { label: tObj.nav.companies, path: '/companies', icon: <BusinessIcon /> },
-    { label: tObj.nav.users, path: '/users', icon: <GroupIcon /> },
-    { label: tObj.nav.auditLogs, path: '/audit-logs', icon: <HistoryIcon /> },
-    { label: tObj.nav.settings, path: '/settings', icon: <SettingsIcon /> }
+    { key: 'terminals', label: tObj.nav.terminals, path: '/terminals', icon: <POSIcon /> },
+    { key: 'companies', label: tObj.nav.companies, path: '/companies', icon: <BusinessIcon /> },
+    { key: 'users', label: tObj.nav.users, path: '/users', icon: <GroupIcon /> },
+    { key: 'audit-logs', label: tObj.nav.auditLogs, path: '/audit-logs', icon: <HistoryIcon /> },
+    { key: 'settings', label: tObj.nav.settings, path: '/settings', icon: <SettingsIcon /> }
   ]
     .map(item => item.children
       ? { ...item, children: item.children.filter(child => !child.path || visible(child.path)) }
       : item)
     .filter(item => item.children ? item.children.length > 0 : (!item.path || visible(item.path)));
 
-  const [expandedItems, setExpandedItems] = useState<string[]>(['Transaction List']);
+  // Раскрытые группы — по ключу, не по подписи: ключ 'Transaction List' не совпадал ни с одной
+  // локализованной подписью, и группа операций всегда стартовала свёрнутой, а смена языка её
+  // схлопывала.
+  const [expandedItems, setExpandedItems] = useState<string[]>(['transactions']);
 
   const handleNavigate = (path: string) => {
     navigate(path);
@@ -93,11 +97,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleToggleExpand = (label: string) => {
-    setExpandedItems(prev => 
-      prev.includes(label) 
-        ? prev.filter(item => item !== label)
-        : [...prev, label]
+  const handleToggleExpand = (key: string) => {
+    setExpandedItems(prev =>
+      prev.includes(key)
+        ? prev.filter(item => item !== key)
+        : [...prev, key]
     );
   };
 
@@ -116,12 +120,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <List sx={{ flex: 1, pt: 2 }}>
         {navItems.map((item) => {
           const hasChildren = item.children && item.children.length > 0;
-          const isExpanded = expandedItems.includes(item.label);
+          const isExpanded = expandedItems.includes(item.key);
           const isActive = isPathActive(item.path, item.children);
 
           if (hasChildren) {
             return (
-              <React.Fragment key={item.label}>
+              <React.Fragment key={item.key}>
                 {/* Parent Item */}
                 <ListItem disablePadding sx={{ px: isMini ? 1 : 2, mb: 0.5 }}>
                   {isMini ? (
@@ -156,7 +160,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ) : (
                     <ListItemButton
                       selected={isActive}
-                      onClick={() => handleToggleExpand(item.label)}
+                      onClick={() => handleToggleExpand(item.key)}
                       sx={{
                         borderRadius: 1,
                         '&.Mui-selected': {
@@ -272,7 +276,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Divider />
           <Box sx={{ p: 2 }}>
             <Typography variant="caption" color="text.secondary">
-              Version 1.0.0
+              {/* Версия — из package.json при сборке (vite.config.ts), не зашитая строка. */}
+              v{__APP_VERSION__}
             </Typography>
           </Box>
         </>

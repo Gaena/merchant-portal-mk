@@ -5,7 +5,6 @@ import {
   Typography,
   Box,
   IconButton,
-  Badge,
   Avatar,
   Tooltip,
   Chip,
@@ -13,56 +12,37 @@ import {
   MenuItem,
   Divider,
   ListItemIcon,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogContentText,
-  DialogActions,
   Button,
-  Popover,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemAvatar,
-  Paper,
 } from '@mui/material';
 import {
   AccountBalance as AccountBalanceIcon,
   Menu as MenuIcon,
   Logout as LogoutIcon,
-  Notifications as BellIcon,
-  CheckCircle as SuccessIcon,
-  ErrorOutline as FailIcon,
-  AccountBalance as SettlementIcon,
-  Warning as WarningIcon,
-  Info as InfoIcon,
-  Link as LinkIcon,
-  DoneAll as MarkAllReadIcon,
   Language as LanguageIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { ConfirmDialog } from './ConfirmDialog';
 import type { Language } from '../i18n/translations';
 
 // ─── Header component ─────────────────────────────────────────────────────────
 
 interface HeaderProps {
-  newTransactionCount: number;
   onMenuClick: () => void;
   onDesktopDrawerToggle: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick, onDesktopDrawerToggle }) => {
+export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerToggle }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { language, setLanguage, tObj } = useLanguage();
 
   // Имени пользователя бэкенд в ответе логина не отдаёт (эндпоинта профиля нет) — показываем
-  // честный email, а не вычисленный из него «fullName». Роль без запасного значения: если её нет,
-  // сессии нет (session.ts отказывает во входе), поэтому здесь она всегда есть.
-  const displayEmail = user?.email || 'N/A';
-  const avatarLetter = (user?.email || 'M').charAt(0).toUpperCase();
+  // честный email. Роль без запасного значения: если её нет, сессии нет (session.ts отказывает
+  // во входе), поэтому здесь она всегда есть.
+  const displayEmail = user?.email || '—';
+  const avatarLetter = (user?.email || '?').charAt(0).toUpperCase();
   const displayRole = user?.role ?? '—';
 
   // Account menu
@@ -174,31 +154,25 @@ export const Header: React.FC<HeaderProps> = ({ newTransactionCount, onMenuClick
         </MenuItem>
       </Menu>
 
-      {/* ── Logout Dialog ──────────────────────────────────────────────────── */}
-      <Dialog open={logoutDialogOpen} onClose={() => setLogoutDialogOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>{tObj.header.logout}?</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            {tObj.common.confirm} {tObj.header.logout.toLowerCase()}?
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setLogoutDialogOpen(false)} variant="outlined">{tObj.common.cancel}</Button>
-          <Button
-            onClick={() => {
-              setLogoutDialogOpen(false);
-              // logout сбрасывает сессию сразу (ProtectedRoute уведёт на /login сам) и вдогонку
-              // гасит refresh-токен на сервере; ошибку сети он логирует и не пробрасывает.
-              void logout();
-              navigate('/login', { replace: true });
-            }}
-            variant="contained"
-            autoFocus
-          >
-            {tObj.header.logout}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* Выход — через общее окно подтверждения (P3-5b): фокус на безопасной кнопке, Enter по
+          инерции не выходит из системы. */}
+      <ConfirmDialog
+        open={logoutDialogOpen}
+        maxWidth="xs"
+        title={tObj.header.logout}
+        question={tObj.header.logoutQuestion}
+        confirmLabel={tObj.header.logout}
+        confirmColor="primary"
+        confirmIcon={<LogoutIcon />}
+        onConfirm={() => {
+          setLogoutDialogOpen(false);
+          // logout сбрасывает сессию сразу (ProtectedRoute уведёт на /login сам) и вдогонку
+          // гасит refresh-токен на сервере; ошибку сети он логирует и не пробрасывает.
+          void logout();
+          navigate('/login', { replace: true });
+        }}
+        onCancel={() => setLogoutDialogOpen(false)}
+      />
     </AppBar>
   );
 };

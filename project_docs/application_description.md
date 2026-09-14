@@ -529,13 +529,13 @@ sequenceDiagram
 frontend/src/app/
 ├── App.tsx, routes.tsx      ← корень приложения и маршруты
 ├── api/client.ts            ← единственный axios-клиент
-├── auth/                    ← session.ts (токены), guards.tsx, routeAccess.ts (маршрут → роли)
+├── auth/                    ← session.ts (токены), guards.tsx, routeAccess.ts (маршрут → роли), actionAccess.ts (действие → роли)
 ├── context/                 ← AuthContext, LanguageContext
-├── layouts/, components/    ← MainLayout, Header, Sidebar, ConfirmDialog, таблицы и фильтры
-├── pages/                   ← экраны: главная, операции, ссылки, компании, терминалы, пользователи, журнал, настройки
+├── layouts/, components/    ← MainLayout, Header, Sidebar, ConfirmDialog, StatusPage
+├── pages/                   ← экраны: главная, карточка операции, выписка ecom, ссылки, компании, терминалы, пользователи, журнал, настройки
 ├── i18n/translations.ts     ← словарь en / az / ru
 ├── types/                   ← DTO, роли, транзакции, выписка провайдера (ecom)
-└── utils/                   ← разбор ответов (mapTransaction, terminals, ecom), исходы денежных операций, экспорт в Excel
+└── utils/                   ← разбор ответов (mapTransaction, terminals, ecom), форматтеры (format), исходы денежных операций, экспорт выписки в Excel
 ```
 
 - **Связь с бэкендом.** Один клиент `api/client.ts`, адрес — `VITE_API_BASE_URL` (пусто — тот же
@@ -544,8 +544,12 @@ frontend/src/app/
 - **Маршрутизация по сервисам.** В разработке запросы разводит прокси Vite, в эксплуатации — nginx
   по префиксам `/api/v1/*`; таблица префиксов — `deployment_guide.md` §19, правила фронтенда —
   `AGENTS.md` §9.
-- **Роли на экране.** `RoleRoute` и боковое меню читают одну раскладку `routeAccess.ts`; это
-  удобство, а не защита — права проверяет бэкенд.
+- **Роли на экране.** `RoleRoute` и боковое меню читают одну раскладку `routeAccess.ts`, кнопки
+  действий (заведение и блокировка терминала, возврат, списание холда) — `actionAccess.ts`, зеркало
+  ролевых наборов сервисов; это удобство, а не защита — права проверяет бэкенд.
+- **Состояние.** Общего состояния данных нет: роутер создаётся один раз, каждая страница грузит
+  своё; карточка операции `/transactions/:id` читает `GET /transactions/{id}` и перечитывает после
+  возврата и списания. Списка операций портала нет (Р-65) — операции на главной и под ссылками.
 
 ---
 

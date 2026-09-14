@@ -1,25 +1,36 @@
 import React from 'react';
-import { Navigate } from 'react-router';
+import { Navigate, useLocation } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import type { Role } from '../types/role';
 import { ForbiddenPage } from '../pages/ForbiddenPage';
 
-/** Только для вошедших: без сессии — на `/login`. */
+/**
+ * Только для вошедших: без сессии — на `/login`, с запомненным адресом: открыл ссылку на карточку,
+ * вошёл — попал на карточку, а не на главную.
+ */
 export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated } = useAuth();
+  const location = useLocation();
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   }
   return <>{children}</>;
 };
 
-/** Только для не вошедших (`/login`): с сессией — на главную, туда же, куда ведёт вход. */
+/** Только для не вошедших (`/login`): с сессией — туда, откуда увели на вход, иначе на главную. */
 export const PublicOnlyRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated } = useAuth();
+  const location = useLocation();
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={returnPathFrom(location.state)} replace />;
   }
   return <>{children}</>;
+};
+
+/** Адрес, куда вернуть после входа. Только свой относительный путь: чужой origin сюда не попадёт. */
+export const returnPathFrom = (state: unknown): string => {
+  const from = (state as { from?: unknown } | null)?.from;
+  return typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') && from !== '/login' ? from : '/';
 };
 
 interface RoleRouteProps {

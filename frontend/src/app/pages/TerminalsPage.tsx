@@ -44,6 +44,7 @@ import {
 } from '@mui/icons-material';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
+import { canWriteTerminals } from '../auth/actionAccess';
 import {
   checkExistingTerminal,
   checkNewTerminal,
@@ -70,6 +71,19 @@ export const TerminalsPage: React.FC = () => {
    * предлагать действие и отвечать на него отказом.
    */
   const canSeePassword = user?.role === 'SYSTEM_ADMIN';
+  /**
+   * Заводить, править и блокировать терминалы могут SYSTEM_ADMIN, COMPANY_HEAD и COMPANY_MANAGER
+   * (`TerminalService.TERMINAL_WRITE_ROLES`); AUDITOR и COMPANY_EMPLOYEE только смотрят. Кнопки,
+   * которым сервер откажет, не показываются (Р-62).
+   */
+  const canWrite = canWriteTerminals(user?.role);
+  /**
+   * Компанию выбирает только SYSTEM_ADMIN. Остальные работают в своей, и она известна из токена;
+   * список всех компаний им недоступен (`GET /companies` — 403), так что раньше у руководителя
+   * и менеджера селект оставался пустым, а форма отказывала «заполните все поля».
+   */
+  const choosesCompany = user?.role === 'SYSTEM_ADMIN';
+  const ownCompanyId = user?.companyId ?? '';
 
   const checkLabel = (outcome: TerminalCheckOutcome): string => ({
     OK: tObj.terminals.checkOk,
@@ -84,8 +98,13 @@ export const TerminalsPage: React.FC = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [editingTerminalId, setEditingTerminalId] = useState<number | null>(null);
   const [form, setForm] = useState({ name: '', login: '', password: '', companyId: '' });
+  /** Ошибка внутри открытого окна (заведение, правка). */
   const [error, setError] = useState('');
+  /** Ошибка действия из таблицы («Тест», показ пароля, смена статуса): окна нет — полоса на странице. */
+  const [pageError, setPageError] = useState('');
   const [snackbar, setSnackbar] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   /**
    * Раскрытые пароли — по одному запросу на терминал, и только пока открыта страница. Ответ
@@ -152,20 +171,28 @@ export const TerminalsPage: React.FC = () => {
     }
   }, [page, rowsPerPage, debouncedSearch]);
 
-  const fetchCompanies = async () => {
+  const fetchCompanies = useCallback(async () => {
     try {
-      // Компании нужны только для выпадающего списка в диалогах, поэтому берём их одной
-      // страницей по потолку (200 — тот же лимит, что у журнала аудита).
-      const res = await apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 } });
-      const list = Array.isArray(res.data) ? res.data : (res.data?.content || []);
-      setCompanies(list);
-      if (list.length > 0 && !form.companyId) {
-        setForm(f => ({ ...f, companyId: list[0].id }));
+      if (choosesCompany || user?.role === 'AUDITOR') {
+        // Компании нужны для выпадающего списка и подписей, поэтому берём их одной страницей
+        // по потолку (200 — тот же лимит, что у журнала аудита).
+        const res = await apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 } });
+        const list = Array.isArray(res.data) ? res.data : (res.data?.content || []);
+        setCompanies(Array.isArray(list) ? list : []);
+      } else if (ownCompanyId) {
+        // Своя компания — одиночным GET: он открыт всем ролям компании (AGENTS.md §6).
+        const res = await apiClient.get(`/api/v1/companies/${ownCompanyId}`);
+        setCompanies(res.data ? [res.data] : []);
+      } else {
+        setCompanies([]);
       }
     } catch {
       setCompanies([]);
     }
-  };
+  }, [choosesCompany, ownCompanyId, user?.role]);
+
+  // Компания по умолчанию для форм: администратору — первая из списка, остальным — своя.
+  const defaultCompanyId = () => (choosesCompany ? (companies[0]?.id ?? '') : ownCompanyId);
 
   // Отмена предыдущего запроса при каждом изменении параметров: без неё ответ на «ив» может
   // прийти позже ответа на «ива» и перезаписать более точный результат.
@@ -177,7 +204,7 @@ export const TerminalsPage: React.FC = () => {
 
   useEffect(() => {
     fetchCompanies();
-  }, []);
+  }, [fetchCompanies]);
 
   const loadProviderTerminals = async () => {
     setProviderState('loading');
@@ -208,10 +235,9 @@ export const TerminalsPage: React.FC = () => {
   };
 
   const handleOpenCreate = () => {
-    fetchCompanies();
     setError('');
     setEditingTerminalId(null);
-    setForm({ name: '', login: '', password: '', companyId: companies[0]?.id || '' });
+    setForm({ name: '', login: '', password: '', companyId: defaultCompanyId() });
     setSelectedProvider(null);
     setSyncResult(null);
     setFormCheck(null);
@@ -221,40 +247,45 @@ export const TerminalsPage: React.FC = () => {
     setCreateOpen(true);
   };
 
-  const handleOpenEdit = (term: any) => {
-    fetchCompanies();
+  const handleOpenEdit = (term: TerminalDto) => {
     setError('');
     setEditingTerminalId(term.id);
+    // Компания — та, что у терминала. Подставлять первую из списка нельзя: так правка одного
+    // названия молча перевешивала терминал на другую компанию.
     setForm({
       name: term.name || '',
       login: term.login || '',
-      password: '', // blank password unless changing
-      companyId: term.companyId || (companies[0]?.id ?? '')
+      password: '', // пусто — пароль не меняется
+      companyId: term.companyId || ''
     });
     setEditOpen(true);
   };
 
   const handleCreate = async () => {
+    if (creating) return;
     // Администратор заводит терминал выбором из справочника: название и логин сервер берёт оттуда
     // по merchantRid и введённые руками игнорирует (TerminalService.createTerminal).
     const fromDirectory = canSeePassword;
     const identityMissing = fromDirectory ? !selectedProvider : !form.name.trim() || !form.login.trim();
-    if (identityMissing || !form.password.trim() || !form.companyId) {
-      setError('All fields including Company selection are required');
+    // Пароль уходит тем же, что проверяла кнопка «Тест», — обрезанным с обеих сторон.
+    const password = form.password.trim();
+    if (identityMissing || !password || !form.companyId) {
+      setError(tObj.terminals.formIncomplete);
       return;
     }
     setError('');
+    setCreating(true);
     try {
       const payload = fromDirectory
         ? {
-            password: form.password.trim(),
+            password,
             companyId: form.companyId,
             merchantRid: selectedProvider?.rid,
           }
         : {
             name: form.name.trim(),
             login: form.login.trim(),
-            password: form.password.trim(),
+            password,
             companyId: form.companyId,
           };
       await apiClient.post('/api/v1/terminals', payload);
@@ -262,10 +293,12 @@ export const TerminalsPage: React.FC = () => {
       // новый терминал может принадлежать другой странице.
       fetchTerminals();
       setCreateOpen(false);
-      setForm({ name: '', login: '', password: '', companyId: companies[0]?.id || '' });
-      setSnackbar('Acquiring terminal registered successfully');
+      setForm({ name: '', login: '', password: '', companyId: defaultCompanyId() });
+      setSnackbar(tObj.terminals.created);
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to create terminal');
+      setError(err.response?.data?.message || tObj.terminals.createFailed);
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -281,12 +314,12 @@ export const TerminalsPage: React.FC = () => {
    */
   const runCheck = async (terminalId: number) => {
     setChecking(terminalId);
-    setError('');
+    setPageError('');
     try {
       const result = await checkExistingTerminal(terminalId);
       setChecks(prev => ({ ...prev, [terminalId]: result }));
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to check the terminal');
+      setPageError(err.response?.data?.message || tObj.terminals.checkFailed);
     } finally {
       setChecking(null);
     }
@@ -304,9 +337,9 @@ export const TerminalsPage: React.FC = () => {
     setFormChecking(true);
     setError('');
     try {
-      setFormCheck(await checkNewTerminal(formLogin, form.password));
+      setFormCheck(await checkNewTerminal(formLogin, form.password.trim()));
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to check the terminal');
+      setError(err.response?.data?.message || tObj.terminals.checkFailed);
     } finally {
       setFormChecking(false);
     }
@@ -322,42 +355,42 @@ export const TerminalsPage: React.FC = () => {
       return;
     }
     setRevealing(terminalId);
-    setError('');
+    setPageError('');
     try {
       const res = await apiClient.get(`/api/v1/terminals/${terminalId}/password`);
       setRevealed(prev => ({ ...prev, [terminalId]: String(res.data?.password ?? '') }));
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to reveal the terminal password');
+      setPageError(err.response?.data?.message || tObj.terminals.revealFailed);
     } finally {
       setRevealing(null);
     }
   };
 
   const handleUpdate = async () => {
-    if (!editingTerminalId) return;
-    if (!form.name.trim() || !form.login.trim() || !form.companyId) {
-      setError('Name, Login and Company selection are required');
-      return;
-    }
+    if (!editingTerminalId || editBusy) return;
+    const original = terminals.find(t => t.id === editingTerminalId);
+    if (!original) return;
     setError('');
+    setEditBusy(true);
     try {
-      const payload: any = {
-        name: form.name.trim(),
-        login: form.login.trim(),
-        companyId: form.companyId,
-      };
-      if (form.password.trim()) {
-        payload.password = form.password.trim();
-      }
+      // Только то, что изменилось. PATCH с прежними значениями бэкенд всё равно записывает в
+      // журнал аудита («Name changed from X to X») — три лишних строки при смене одного пароля,
+      // тогда как окно подтверждения показало один пункт.
+      const payload: Record<string, string> = {};
+      if (form.name.trim() !== (original.name || '')) payload.name = form.name.trim();
+      if (form.login.trim() !== (original.login || '')) payload.login = form.login.trim();
+      if (form.companyId !== (original.companyId || '')) payload.companyId = form.companyId;
+      if (form.password.trim()) payload.password = form.password.trim();
       const res = await apiClient.patch(`/api/v1/terminals/${editingTerminalId}`, payload);
       setTerminals(prev => prev.map(t => (t.id === editingTerminalId ? res.data : t)));
       setEditOpen(false);
       setEditingTerminalId(null);
-      setForm({ name: '', login: '', password: '', companyId: companies[0]?.id || '' });
-      setSnackbar('Acquiring terminal updated successfully');
+      setForm({ name: '', login: '', password: '', companyId: defaultCompanyId() });
+      setSnackbar(tObj.terminals.updated);
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to update terminal');
+      setError(err.response?.data?.message || tObj.terminals.updateFailed);
     } finally {
+      setEditBusy(false);
       setEditConfirm(null);
     }
   };
@@ -370,15 +403,21 @@ export const TerminalsPage: React.FC = () => {
    */
   const handleAskStatus = async (terminal: TerminalDto, nextStatus: TerminalStatus) => {
     setStatusChange({ terminal, nextStatus, affectedLinks: null });
+    // Число дописывается в окно, только если оно всё ещё открыто про тот же терминал: ответ,
+    // пришедший после «Отмена» (или после подтверждения), иначе открывал бы окно заново.
+    const applyCount = (affectedLinks: number | null) =>
+      setStatusChange(prev => (prev && prev.terminal.id === terminal.id && prev.nextStatus === nextStatus
+        ? { ...prev, affectedLinks }
+        : prev));
     try {
       const res = await apiClient.get('/api/v1/payment-links', {
         params: { terminal: terminal.id, status: nextStatus === 'BLOCKED' ? 'ACTIVE' : 'SUSPENDED', size: 1 },
       });
       const total = res.data?.totalElements;
-      setStatusChange({ terminal, nextStatus, affectedLinks: typeof total === 'number' ? total : null });
+      applyCount(typeof total === 'number' ? total : null);
     } catch {
       // Счёт — справка, а не условие: не смогли посчитать, диалог всё равно показывает, что делает.
-      setStatusChange({ terminal, nextStatus, affectedLinks: null });
+      applyCount(null);
     }
   };
 
@@ -408,7 +447,7 @@ export const TerminalsPage: React.FC = () => {
 
   const handleAskUpdate = () => {
     if (!form.name.trim() || !form.login.trim() || !form.companyId) {
-      setError('Name, Login and Company selection are required');
+      setError(tObj.terminals.formIncomplete);
       return;
     }
     setError('');
@@ -422,15 +461,16 @@ export const TerminalsPage: React.FC = () => {
   };
 
   const setTerminalStatus = async (terminal: TerminalDto, status: 'ACTIVE' | 'BLOCKED') => {
+    if (busy) return;
     setBusy(true);
+    setPageError('');
     try {
       const res = await apiClient.patch(`/api/v1/terminals/${terminal.id}`, { status });
       setTerminals(prev => prev.map(t => (t.id === terminal.id ? res.data : t)));
-      setSnackbar(status === 'BLOCKED'
-        ? `Терминал #${terminal.id} заблокирован: новые платежи по нему не принимаются, активные ссылки приостановлены`
-        : `Терминал #${terminal.id} разблокирован: приостановленные ссылки вернулись в работу (кроме тех, у которых истёк срок)`);
+      // Терминал в сообщении — логином, как везде (Р-59); номер пользователю ни к чему (Р-81).
+      setSnackbar(`${terminal.login}: ${status === 'BLOCKED' ? tObj.terminals.blockedNotice : tObj.terminals.unblockedNotice}`);
     } catch (err: any) {
-      setSnackbar(err.response?.data?.message || 'Не удалось изменить статус терминала');
+      setPageError(err.response?.data?.message || tObj.terminals.statusChangeFailed);
     } finally {
       setBusy(false);
       setStatusChange(null);
@@ -458,15 +498,22 @@ export const TerminalsPage: React.FC = () => {
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => fetchTerminals()}>
             {tObj.common.refresh}
           </Button>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreate}>
-            {tObj.terminals.addTerminal}
-          </Button>
+          {canWrite && (
+            <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreate}>
+              {tObj.terminals.addTerminal}
+            </Button>
+          )}
         </Stack>
       </Box>
 
       {snackbar && (
         <Alert severity="info" sx={{ mb: 3 }} onClose={() => setSnackbar('')}>
           {snackbar}
+        </Alert>
+      )}
+      {pageError && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setPageError('')}>
+          {pageError}
         </Alert>
       )}
 
@@ -560,7 +607,7 @@ export const TerminalsPage: React.FC = () => {
                     />
                   </TableCell>
                   <TableCell sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
-                    {term.createdAt ? new Date(term.createdAt).toLocaleString() : 'N/A'}
+                    {term.createdAt ? new Date(term.createdAt).toLocaleString() : '—'}
                   </TableCell>
                   <TableCell align="center">
                     <Stack direction="row" spacing={0.5} justifyContent="center" alignItems="center">
@@ -584,14 +631,17 @@ export const TerminalsPage: React.FC = () => {
                           </span>
                         </Tooltip>
                       )}
-                      <Tooltip title={tObj.terminals.editTerminal}>
-                        <IconButton color="primary" size="small" onClick={() => handleOpenEdit(term)}>
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      {active ? (
+                      {canWrite && (
+                        <Tooltip title={tObj.terminals.editTerminal}>
+                          <IconButton color="primary" size="small" onClick={() => handleOpenEdit(term)}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {canWrite && (active ? (
                         <Tooltip title={tObj.terminals.blockAction}>
-                          <IconButton color="warning" size="small" onClick={() => handleAskStatus(term, 'BLOCKED')}>
+                          <IconButton color="warning" size="small" disabled={busy}
+                                      onClick={() => handleAskStatus(term, 'BLOCKED')}>
                             <BlockIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -602,7 +652,7 @@ export const TerminalsPage: React.FC = () => {
                             <UnblockIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                      )}
+                      ))}
                     </Stack>
                   </TableCell>
                 </TableRow>
@@ -612,7 +662,7 @@ export const TerminalsPage: React.FC = () => {
                 <TableRow>
                   <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
                     <POSIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
-                    <Typography color="text.secondary">No acquiring terminals registered yet.</Typography>
+                    <Typography color="text.secondary">{tObj.terminals.empty}</Typography>
                   </TableCell>
                 </TableRow>
               )}
@@ -655,24 +705,27 @@ export const TerminalsPage: React.FC = () => {
       </ConfirmDialog>
 
       {/* Create Terminal Dialog */}
-      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={createOpen} onClose={() => { if (!creating) setCreateOpen(false); }} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.createDialogTitle}</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{error}</Alert>}
           <Stack spacing={2.5} sx={{ mt: 1 }}>
-            <TextField
-              select
-              fullWidth
-              label={`${tObj.terminals.company} *`}
-              value={form.companyId || (companies[0]?.id ?? '')}
-              onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}
-            >
-              {companies.map((comp) => (
-                <MenuItem key={comp.id} value={comp.id}>
-                  {comp.name} (ID: {comp.id})
-                </MenuItem>
-              ))}
-            </TextField>
+            {choosesCompany && (
+              <TextField
+                select
+                fullWidth
+                label={`${tObj.terminals.company} *`}
+                value={form.companyId}
+                onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}
+                helperText={tObj.terminals.companyHint}
+              >
+                {companies.map((comp) => (
+                  <MenuItem key={comp.id} value={comp.id}>
+                    {comp.name} (ID: {comp.id})
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
 
             {canSeePassword ? (
               <Box>
@@ -745,14 +798,12 @@ export const TerminalsPage: React.FC = () => {
                   label={`${tObj.terminals.name} *`}
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. Main Online E-commerce Terminal"
                   fullWidth
                 />
                 <TextField
                   label={`${tObj.terminals.login} *`}
                   value={form.login}
                   onChange={e => { setForm(f => ({ ...f, login: e.target.value })); setFormCheck(null); }}
-                  placeholder="e.g. term_login_001"
                   fullWidth
                 />
               </>
@@ -788,44 +839,48 @@ export const TerminalsPage: React.FC = () => {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
-          <Button onClick={() => setCreateOpen(false)}>{tObj.common.cancel}</Button>
-          <Button variant="contained" onClick={handleCreate}>{tObj.terminals.registerAction}</Button>
+          <Button onClick={() => setCreateOpen(false)} disabled={creating}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={handleCreate} disabled={creating}>
+            {creating ? tObj.common.loading : tObj.terminals.registerAction}
+          </Button>
         </DialogActions>
       </Dialog>
 
       {/* Edit Terminal Dialog */}
-      <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={editOpen} onClose={() => { if (!editBusy) setEditOpen(false); }} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.editDialogTitle} {editingLogin}</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{error}</Alert>}
           <Stack spacing={2.5} sx={{ mt: 1 }}>
-            <TextField
-              select
-              fullWidth
-              label="Assigned Company *"
-              value={form.companyId}
-              onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}
-              helperText="Выберите компанию, к которой относится терминал"
-            >
-              {companies.map((comp) => (
-                <MenuItem key={comp.id} value={comp.id}>
-                  {comp.name} (ID: {comp.id})
-                </MenuItem>
-              ))}
-            </TextField>
+            {/* Перевесить терминал на другую компанию может только SYSTEM_ADMIN: остальным сервер
+                откажет, поэтому им селект не показывается. */}
+            {choosesCompany && (
+              <TextField
+                select
+                fullWidth
+                label={`${tObj.terminals.company} *`}
+                value={form.companyId}
+                onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}
+                helperText={tObj.terminals.companyHint}
+              >
+                {companies.map((comp) => (
+                  <MenuItem key={comp.id} value={comp.id}>
+                    {comp.name} (ID: {comp.id})
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
 
             <TextField
-              label="Terminal Name *"
+              label={`${tObj.terminals.name} *`}
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              placeholder="e.g. Main Online E-commerce Terminal"
               fullWidth
             />
             <TextField
-              label="Terminal Login *"
+              label={`${tObj.terminals.login} *`}
               value={form.login}
               onChange={e => setForm(f => ({ ...f, login: e.target.value }))}
-              placeholder="e.g. term_login_001"
               fullWidth
             />
             {/* Пароль эквайринга меняет только системный администратор — те же ворота, что
@@ -836,7 +891,6 @@ export const TerminalsPage: React.FC = () => {
                 type="password"
                 value={form.password}
                 onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                placeholder="Leave blank to keep existing password"
                 fullWidth
                 helperText={tObj.terminals.newPasswordHint}
               />
@@ -844,8 +898,8 @@ export const TerminalsPage: React.FC = () => {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
-          <Button onClick={() => setEditOpen(false)}>{tObj.common.cancel}</Button>
-          <Button variant="contained" onClick={handleAskUpdate}>{tObj.common.save}</Button>
+          <Button onClick={() => setEditOpen(false)} disabled={editBusy}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={handleAskUpdate} disabled={editBusy}>{tObj.common.save}</Button>
         </DialogActions>
       </Dialog>
 
@@ -856,6 +910,7 @@ export const TerminalsPage: React.FC = () => {
         question={tObj.terminals.editConfirmQuestion}
         confirmLabel={tObj.common.confirm}
         confirmColor="primary"
+        busy={editBusy}
         onConfirm={handleUpdate}
         onCancel={() => setEditConfirm(null)}
       >
