@@ -403,6 +403,13 @@ export interface TranslationDictionary {
     dateTo: string;
     entityAuth: string;
     entityAuditLog: string;
+    /** Карточка записи журнала: открывается кликом по строке. */
+    detailsTitle: string;
+    entityId: string;
+    company: string;
+    recordId: string;
+    openTransaction: string;
+    openPaymentLink: string;
   };
   auth: {
     unknownRole: string;
@@ -796,6 +803,12 @@ export const translations: Record<Language, TranslationDictionary> = {
       dateTo: 'To',
       entityAuth: 'Authentication',
       entityAuditLog: 'Audit Journal',
+      detailsTitle: 'Audit record',
+      entityId: 'Entity ID',
+      company: 'Company',
+      recordId: 'Record ID',
+      openTransaction: 'Open transaction',
+      openPaymentLink: 'Open payment link',
     },
     auth: {
       unknownRole: 'The server returned a role this application does not recognise. Sign-in was refused — contact your administrator.',
@@ -1166,6 +1179,12 @@ export const translations: Record<Language, TranslationDictionary> = {
       dateTo: 'Tarixədək',
       entityAuth: 'Autentifikasiya',
       entityAuditLog: 'Audit jurnalı',
+      detailsTitle: 'Audit jurnalı qeydi',
+      entityId: 'Obyektin ID-si',
+      company: 'Şirkət',
+      recordId: 'Qeydin ID-si',
+      openTransaction: 'Əməliyyatı aç',
+      openPaymentLink: 'Ödəniş linkini aç',
     },
     auth: {
       unknownRole: 'Server bu tətbiqin tanımadığı bir rol qaytardı. Giriş rədd edildi — administratorla əlaqə saxlayın.',
@@ -1536,6 +1555,12 @@ export const translations: Record<Language, TranslationDictionary> = {
       dateTo: 'По дату',
       entityAuth: 'Аутентификация',
       entityAuditLog: 'Журнал аудита',
+      detailsTitle: 'Запись журнала аудита',
+      entityId: 'ID объекта',
+      company: 'Компания',
+      recordId: 'ID записи',
+      openTransaction: 'Открыть операцию',
+      openPaymentLink: 'Открыть платёжную ссылку',
     },
     auth: {
       unknownRole: 'Сервер вернул роль, неизвестную приложению. Вход отклонён — обратитесь к администратору.',

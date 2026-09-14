@@ -11,6 +11,10 @@ import {
   TableHead,
   TableRow,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   TextField,
   MenuItem,
   Stack,
@@ -24,6 +28,7 @@ import {
   Refresh as RefreshIcon
 } from '@mui/icons-material';
 import axios from 'axios';
+import { useNavigate } from 'react-router';
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
 import { useDebounced } from '../hooks/useDebounced';
@@ -43,9 +48,35 @@ const outcomeColor = (outcome?: string): 'success' | 'error' | 'warning' | 'defa
   }
 };
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Одна строка карточки: подпись слева, значение справа; на узком экране — одно под другим.
+const DetailRow: React.FC<{ label: string; mono?: boolean; children: React.ReactNode }> = ({ label, mono, children }) => (
+  <Box
+    sx={{
+      display: 'grid',
+      gridTemplateColumns: { xs: '1fr', sm: '170px 1fr' },
+      columnGap: 2,
+      rowGap: 0.25,
+      py: 1,
+      borderBottom: '1px solid',
+      borderColor: 'divider',
+    }}
+  >
+    <Typography variant="body2" color="text.secondary">{label}</Typography>
+    <Typography variant="body2" component="div" sx={{ fontFamily: mono ? 'monospace' : undefined, wordBreak: 'break-word' }}>
+      {children}
+    </Typography>
+  </Box>
+);
+
 export const AuditLogsPage: React.FC = () => {
   const { tObj } = useLanguage();
+  const navigate = useNavigate();
   const [auditLogsList, setAuditLogsList] = useState<AuditLogDto[]>([]);
+  // Карточка записи. Всё, что в ней показано, уже пришло строкой списка, поэтому отдельного
+  // запроса нет: окно лишь показывает запись целиком — детали в таблице бывают длинными.
+  const [selectedLog, setSelectedLog] = useState<AuditLogDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [entityTypeFilter, setEntityTypeFilter] = useState('all');
@@ -67,6 +98,20 @@ export const AuditLogsPage: React.FC = () => {
     DENIED: tObj.auditLogs.outcomeDenied,
     UNRESOLVED: tObj.auditLogs.outcomeUnresolved,
   };
+
+  // Переход к объекту записи — только там, где у объекта есть своя карточка: операция и
+  // платёжная ссылка (их entityId — UUID). У терминалов, компаний и пользователей карточек нет.
+  const selectedTarget = (() => {
+    const entityId = selectedLog?.entityId;
+    if (!entityId || !UUID_PATTERN.test(entityId)) return null;
+    if (selectedLog?.entityType === 'TRANSACTION') {
+      return { path: `/transactions/${entityId}`, label: tObj.auditLogs.openTransaction };
+    }
+    if (selectedLog?.entityType === 'PAYMENT_LINK') {
+      return { path: `/pay-by-link/${entityId}`, label: tObj.auditLogs.openPaymentLink };
+    }
+    return null;
+  })();
 
   const fetchAuditLogs = useCallback((signal?: AbortSignal) => {
     setLoading(true);
@@ -204,13 +249,25 @@ export const AuditLogsPage: React.FC = () => {
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.auditLogs.user}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.auditLogs.ip}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.auditLogs.resource}</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Entity ID</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.auditLogs.entityId}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.details}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {auditLogsList.map((log: any) => (
-                <TableRow key={log.id || Math.random()} hover>
+              {auditLogsList.map((log: AuditLogDto) => (
+                <TableRow
+                  key={log.id || Math.random()}
+                  hover
+                  tabIndex={0}
+                  onClick={() => setSelectedLog(log)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedLog(log);
+                    }
+                  }}
+                  sx={{ cursor: 'pointer' }}
+                >
                   <TableCell sx={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
                     {log.createdAt ? new Date(log.createdAt).toLocaleString() : 'N/A'}
                   </TableCell>
@@ -254,6 +311,63 @@ export const AuditLogsPage: React.FC = () => {
           onRowsPerPageChange={e => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
         />
       </TableContainer>
+
+      <Dialog open={selectedLog !== null} onClose={() => setSelectedLog(null)} maxWidth="sm" fullWidth>
+        {selectedLog && (
+          <>
+            <DialogTitle sx={{ fontWeight: 700 }}>{tObj.auditLogs.detailsTitle}</DialogTitle>
+            <DialogContent dividers>
+              <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+                <Chip label={selectedLog.action} size="small" color="info" variant="outlined" />
+                <Chip
+                  label={outcomeLabels[selectedLog.outcome as string] || selectedLog.outcome || '—'}
+                  size="small"
+                  color={outcomeColor(selectedLog.outcome)}
+                  variant={selectedLog.outcome === 'SUCCESS' ? 'outlined' : 'filled'}
+                />
+              </Stack>
+              <DetailRow label={tObj.auditLogs.timestamp}>
+                {selectedLog.createdAt ? (
+                  <>
+                    {new Date(selectedLog.createdAt).toLocaleString()}
+                    <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block', fontFamily: 'monospace' }}>
+                      {selectedLog.createdAt}
+                    </Typography>
+                  </>
+                ) : '—'}
+              </DetailRow>
+              <DetailRow label={tObj.auditLogs.user}>{selectedLog.performedBy || 'System'}</DetailRow>
+              <DetailRow label={tObj.auditLogs.ip} mono>{selectedLog.clientIp || '—'}</DetailRow>
+              <DetailRow label={tObj.auditLogs.company} mono>{selectedLog.companyId || '—'}</DetailRow>
+              <DetailRow label={tObj.auditLogs.resource}>{selectedLog.entityType || '—'}</DetailRow>
+              <DetailRow label={tObj.auditLogs.entityId} mono>{selectedLog.entityId || '—'}</DetailRow>
+              <DetailRow label={tObj.auditLogs.recordId} mono>{selectedLog.id ?? '—'}</DetailRow>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
+                {tObj.common.details}
+              </Typography>
+              <Box
+                sx={{
+                  p: 1.5,
+                  bgcolor: 'action.hover',
+                  borderRadius: 1,
+                  fontFamily: 'monospace',
+                  fontSize: '0.8rem',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {selectedLog.details || '—'}
+              </Box>
+            </DialogContent>
+            <DialogActions>
+              {selectedTarget && (
+                <Button onClick={() => navigate(selectedTarget.path)}>{selectedTarget.label}</Button>
+              )}
+              <Button variant="contained" onClick={() => setSelectedLog(null)}>{tObj.common.close}</Button>
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
     </Box>
   );
 };
