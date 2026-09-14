@@ -20,6 +20,14 @@ spring:
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.xml
 
+directory:
+  terminal-reconciliation:
+    # Сверка статусов терминалов со слепком, который держит ecom. Период тот же, что и у самой
+    # синхронизации: решение о наших терминалах принимается здесь, где смена статуса уже умеет
+    # приостанавливать и восстанавливать платёжные ссылки.
+    enabled: ${DIRECTORY_TERMINAL_RECONCILIATION_ENABLED:true}
+    cron: "${DIRECTORY_TERMINAL_RECONCILIATION_CRON:0 */15 * * * *}"
+
 pbl:
   security:
     # Must be byte-for-byte the same value as in auth and pbl, otherwise tokens issued by auth
@@ -50,8 +58,8 @@ management:
 
 springdoc:
   # Off in normal operation: /v3/api-docs is a complete map of the API. Turned on with
-  # SWAGGER_ENABLED=true for acceptance testing (technical_handover.md lists Swagger as delivered
-  # documentation), then turned back off — see deployment_guide.md. While off, springdoc registers
+  # SWAGGER_ENABLED=true for acceptance testing (project_docs/technical_handover.md lists Swagger as delivered
+  # documentation), then turned back off — see project_docs/deployment_guide.md. While off, springdoc registers
   # no handlers and SecurityConfig adds no matchers for these paths.
   api-docs:
     enabled: ${SWAGGER_ENABLED:false}

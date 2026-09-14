@@ -5,6 +5,7 @@ import az.millikart.common.search.SearchTerms;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.directory.dto.CreateTerminalRequest;
 import az.millikart.directory.dto.TerminalOptionResponse;
+import az.millikart.directory.dto.TerminalPasswordResponse;
 import az.millikart.directory.dto.TerminalResponse;
 import az.millikart.directory.dto.UpdateTerminalRequest;
 import az.millikart.directory.service.TerminalService;
@@ -59,7 +60,7 @@ public class TerminalController {
         return terminalService.listTerminals(pageable, principal, SearchTerms.normalize(search));
     }
 
-    // Р-45: фид для селекторов — id, name, status, без страниц и без реквизитов эквайринга.
+    // Р-45: фид для селекторов — id, name, login, status, без страниц и без пароля терминала.
     // Заблокированные терминалы в ответе есть, фильтрует потребитель — см.
     // TerminalService.listTerminalOptions. Маппинг стоит до /{id}: Spring сначала матчит
     // литеральный путь, и options не попадёт в Integer-переменную пути.
@@ -72,6 +73,15 @@ public class TerminalController {
     public TerminalResponse get(@PathVariable Integer id,
                                 @AuthenticationPrincipal UserPrincipal principal) {
         return terminalService.getTerminal(id, principal);
+    }
+
+    // Единственный путь, по которому пароль терминала уходит наружу: отдельный запрос, только для
+    // SYSTEM_ADMIN, каждое чтение в журнале аудита. В TerminalResponse пароль как был
+    // замаскирован, так и остаётся — см. TerminalService.revealPassword.
+    @GetMapping("/{id}/password")
+    public TerminalPasswordResponse password(@PathVariable Integer id,
+                                             @AuthenticationPrincipal UserPrincipal principal) {
+        return terminalService.revealPassword(id, principal);
     }
 
     // Через status в теле терминал выводится из эксплуатации и возвращается обратно (Р-37).

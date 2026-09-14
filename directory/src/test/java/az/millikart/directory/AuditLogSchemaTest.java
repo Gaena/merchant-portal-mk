@@ -1,5 +1,6 @@
 package az.millikart.directory;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.sql.Connection;
@@ -13,11 +14,16 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 
 // Три индекса changeset 004 обязаны существовать после миграции, и проверяются они по метаданным
 // схемы, а не по учёту самого Liquibase: changeset, отмеченный как выполненный, но тихо
 // пропущенный по preconditions, устроил бы DATABASECHANGELOG и оставил таблицу без индексов.
+//
+// На настоящей PostgreSQL, а не на H2: проверять созданные миграцией индексы на эмуляции значит
+// проверять схему, которой в проде нет.
 @SpringBootTest
+@Import(PostgresTestContainer.class)
 public class AuditLogSchemaTest {
 
     @Autowired
@@ -30,7 +36,9 @@ public class AuditLogSchemaTest {
 
         try (Connection connection = dataSource.getConnection();
              ResultSet indexInfo = connection.getMetaData()
-                     .getIndexInfo(null, null, "AUDIT_LOGS", false, false)) {
+                     // Имя в нижнем регистре: так его хранит PostgreSQL, и так же его
+                     // отдают метаданные. В версии для H2 здесь стояло "AUDIT_LOGS".
+                     .getIndexInfo(null, null, "audit_logs", false, false)) {
             // JDBC отдаёт строки в порядке имени индекса и позиции, поэтому собранные списки
             // колонок идут в порядке определения индекса.
             while (indexInfo.next()) {

@@ -1,6 +1,7 @@
 import type { TransactionStatus } from '../types/transaction';
 import type { LinkStatus } from '../utils/payByLinkData';
 import type { TerminalStatus } from '../types/dto';
+import type { EcomOperationKind, EcomStatus } from '../types/ecom';
 
 export type Language = 'en' | 'az' | 'ru';
 
@@ -84,6 +85,8 @@ export interface TranslationDictionary {
     };
     recentTransactions: {
       title: string;
+      providerOrderId: string;
+      ridByMerchant: string;
       id: string;
       date: string;
       terminal: string;
@@ -203,7 +206,6 @@ export interface TranslationDictionary {
   transactions: {
     title: string;
     subtitle: string;
-    ecommerceTitle: string;
     filters: {
       dateRange: string;
       search: string;
@@ -218,6 +220,13 @@ export interface TranslationDictionary {
      */
     statuses: Record<TransactionStatus, string>;
     columns: {
+      /**
+       * Идентификаторы, которые мерчант знает по своей стороне: номер заказа у провайдера
+       * и RID платежа. Идут первыми во всех таблицах операций — внутренний `id` для мерчанта
+       * ничего не значит и стоит последним, служебной колонкой.
+       */
+      providerOrderId: string;
+      ridByMerchant: string;
       id: string;
       date: string;
       amount: string;
@@ -226,6 +235,11 @@ export interface TranslationDictionary {
       rrn: string;
       method: string;
       terminal: string;
+      /**
+       * Подпись колонки терминала. Основной его параметр — логин: имя мерчант придумывает сам,
+       * а числовой id внутренний. Короткая форма `terminals.login`, годная для шапки таблицы.
+       */
+      terminalLogin: string;
       actions: string;
     };
     detail: {
@@ -255,8 +269,103 @@ export interface TranslationDictionary {
       paymentInfo: string;
       technicalInfo: string;
       approvalCode: string;
+      /**
+       * Тексты неподтверждённого исхода денежной операции (502 от бэкенда). Отдельные от
+       * обычного отказа намеренно: при отказе деньги не двигались и повтор безопасен, здесь
+       * операция могла уже пройти — см. `utils/moneyOperationError.ts`.
+       */
+      unresolvedTitle: string;
+      unresolvedHint: string;
+      /** Кнопка, спрашивающая эквайера о судьбе операции. Единственный верный следующий шаг. */
+      checkStatusAction: string;
+      statusChecked: string;
+      /** Остаток к возврату у частично возвращённой операции: вернуть можно только его. */
+      refundableLeft: string;
+      /**
+       * Подписи событий на шкале истории. Денежные события называют действие, а не состояние
+       * после него: «возврат» понятнее, чем «частично возвращена», когда рядом стоит сумма.
+       */
+      eventCreated: string;
+      eventCaptured: string;
+      eventRefunded: string;
+      /** Ответ не принёс ни одного события. Пустая шкала без слов читается как поломка. */
+      historyEmpty: string;
+      /** Заголовок блока с ProviderOrderId и MerchantRid — он открывает карточку операции. */
+      identifiers: string;
       providerOrderId: string;
+      ridByMerchant: string;
       clientIp: string;
+    };
+  };
+  /**
+   * Вкладка E-commerce — выписка провайдера из сервиса `ecom` (`project_docs/ecom.md` §2). Свой
+   * словарь, а не `transactions`: статусов восемь (Р-75, Р-78), период обязателен и ограничен,
+   * страница курсорная, а операции заказа приходят вместе с ним.
+   */
+  ecommerce: {
+    title: string;
+    subtitle: string;
+    periodFrom: string;
+    periodTo: string;
+    periodHint: string;
+    periodInvalid: string;
+    periodTooLong: string;
+    terminals: string;
+    allTerminals: string;
+    search: string;
+    minAmount: string;
+    maxAmount: string;
+    loadMore: string;
+    loaded: string;
+    loadFailed: string;
+    empty: string;
+    exportLoaded: string;
+    stats: {
+      orders: string;
+      captured: string;
+      refunded: string;
+    };
+    /** Все восемь статусов `types/ecom.ts`: новый статус — и `tsc` потребует подпись на трёх языках. */
+    statuses: Record<EcomStatus, string>;
+    operationKinds: Record<EcomOperationKind, string>;
+    columns: {
+      createdAt: string;
+      orderId: string;
+      ridByMerchant: string;
+      card: string;
+      amount: string;
+      captured: string;
+      status: string;
+      terminal: string;
+    };
+    detail: {
+      back: string;
+      title: string;
+      notFound: string;
+      loadFailed: string;
+      identifiers: string;
+      money: string;
+      orderAmount: string;
+      captured: string;
+      refunded: string;
+      payment: string;
+      card: string;
+      terminal: string;
+      providerStatus: string;
+      createdAt: string;
+      lastOperationAt: string;
+      declineCode: string;
+      description: string;
+      operations: string;
+      operationAt: string;
+      kind: string;
+      codes: string;
+      result: string;
+      amount: string;
+      clearAmount: string;
+      rrn: string;
+      tranId: string;
+      noOperations: string;
     };
   };
   terminals: {
@@ -269,9 +378,36 @@ export interface TranslationDictionary {
     createDialogTitle: string;
     editDialogTitle: string;
     name: string;
-    terminalId: string;
+    /**
+     * Выбор терминала провайдера при заведении (Р-67, Р-79): название и логин приходят из справочника,
+     * администратор вводит пароль. Справочник видит только SYSTEM_ADMIN (`ecom.md` §3).
+     */
+    providerTerminal: string;
+    providerTerminalHint: string;
+    providerTerminalEmpty: string;
+    providerTerminalLoadFailed: string;
+    syncDirectory: string;
+    syncApplied: string;
+    syncSkipped: string;
     login: string;
     password: string;
+    /**
+     * Раскрытие пароля терминала: ключ от эквайринга показывается по нажатию, только системному
+     * администратору и с записью в журнал аудита (`TerminalService.revealPassword`).
+     */
+    revealPassword: string;
+    hidePassword: string;
+    /**
+     * Кнопка «Тест» и её исходы. Проверка — пробный заказ у провайдера; различать нужно все
+     * четыре исхода, потому что следующий шаг у каждого свой (`utils/terminalCheck.ts`).
+     */
+    testAction: string;
+    checkOk: string;
+    checkInvalid: string;
+    checkRejected: string;
+    checkUnreachable: string;
+    newPassword: string;
+    newPasswordHint: string;
     company: string;
     status: string;
     /** Полный словарь статусов терминала: новое значение потребует перевода на все три языка. */
@@ -348,6 +484,13 @@ export interface TranslationDictionary {
     dateTo: string;
     entityAuth: string;
     entityAuditLog: string;
+    /** Карточка записи журнала: открывается кликом по строке. */
+    detailsTitle: string;
+    entityId: string;
+    company: string;
+    recordId: string;
+    openTransaction: string;
+    openPaymentLink: string;
   };
   auth: {
     unknownRole: string;
@@ -465,6 +608,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       recentTransactions: {
         title: 'Latest payments',
+        providerOrderId: 'Provider Order ID',
+        ridByMerchant: 'RID by merchant',
         id: 'Transaction',
         date: 'Date & time',
         terminal: 'Terminal',
@@ -577,10 +722,9 @@ export const translations: Record<Language, TranslationDictionary> = {
     transactions: {
       title: 'Transactions',
       subtitle: 'View and audit all transaction logs processed across your terminals.',
-      ecommerceTitle: 'E-commerce Transactions',
       filters: {
         dateRange: 'Date Range',
-        search: 'Search by ID, customer or RRN...',
+        search: 'Search by Provider Order ID, RID by merchant, customer, email or transaction ID...',
         paymentMethod: 'Payment Method',
         terminal: 'Terminal',
         clearFilters: 'Clear Filters',
@@ -594,6 +738,8 @@ export const translations: Record<Language, TranslationDictionary> = {
         REFUNDED: 'Refunded',
       },
       columns: {
+        providerOrderId: 'Provider Order ID',
+        ridByMerchant: 'RID by merchant',
         id: 'Transaction ID',
         date: 'Date & Time',
         amount: 'Amount',
@@ -602,6 +748,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         rrn: 'RRN',
         method: 'Method',
         terminal: 'Terminal',
+        terminalLogin: 'Terminal Login',
         actions: 'Details',
       },
       detail: {
@@ -622,8 +769,100 @@ export const translations: Record<Language, TranslationDictionary> = {
         paymentInfo: 'Payment Breakdown',
         technicalInfo: 'Technical Gateway Info',
         approvalCode: 'Approval Code',
+        unresolvedTitle: 'Outcome not confirmed by the acquirer',
+        unresolvedHint: 'The operation may already have gone through. Do not send it again — check the transaction status first.',
+        checkStatusAction: 'Check status',
+        statusChecked: 'Status re-read from the acquirer.',
+        refundableLeft: 'Left to refund',
+        eventCreated: 'Transaction opened',
+        eventCaptured: 'Hold captured',
+        eventRefunded: 'Refund confirmed',
+        historyEmpty: 'No recorded events for this transaction yet.',
+        identifiers: 'Payment Identifiers',
         providerOrderId: 'Provider Order ID',
+        ridByMerchant: 'RID by merchant',
         clientIp: 'Client IP Address',
+      },
+    },
+    ecommerce: {
+      title: 'E-commerce Statement',
+      subtitle: 'Payments of your terminals from the provider\u2019s gateway: one row per order, with its full history.',
+      periodFrom: 'Created from',
+      periodTo: 'Created to',
+      periodHint: 'Orders are selected by creation date. The period is required and can be at most 92 days.',
+      periodInvalid: 'The end of the period must be later than its start.',
+      periodTooLong: 'The period cannot be longer than 92 days.',
+      terminals: 'Terminals',
+      allTerminals: 'All terminals',
+      search: 'Order ID, RID by merchant or RRN (exact match)',
+      minAmount: 'Minimum amount',
+      maxAmount: 'Maximum amount',
+      loadMore: 'Load more',
+      loaded: 'Orders loaded',
+      loadFailed: 'Could not load the statement.',
+      empty: 'No orders for the selected period and filters.',
+      exportLoaded: 'Export loaded rows',
+      stats: {
+        orders: 'Orders',
+        captured: 'Captured',
+        refunded: 'Refunded',
+      },
+      statuses: {
+        PENDING: 'Pending',
+        AUTHORIZED: 'Authorized',
+        SUCCESS: 'Success',
+        PARTIALLY_PAID: 'Partially Paid',
+        FAILED: 'Failed',
+        PARTIALLY_REFUNDED: 'Partially Refunded',
+        REFUNDED: 'Refunded',
+        CANCELED: 'Canceled',
+      },
+      operationKinds: {
+        AUTHORIZATION: 'Authorization (hold)',
+        CAPTURE: 'Capture',
+        PURCHASE: 'Purchase',
+        REVERSAL: 'Reversal',
+        REFUND: 'Refund',
+        UNKNOWN: 'Unrecognised operation',
+      },
+      columns: {
+        createdAt: 'Created',
+        orderId: 'Provider Order ID',
+        ridByMerchant: 'RID by merchant',
+        card: 'Card',
+        amount: 'Order amount',
+        captured: 'Captured',
+        status: 'Status',
+        terminal: 'Terminal',
+      },
+      detail: {
+        back: 'Back to statement',
+        title: 'Order',
+        notFound: 'Order not found: it does not exist, belongs to another merchant or is not finished yet.',
+        loadFailed: 'Could not load the order.',
+        identifiers: 'Identifiers',
+        money: 'Money',
+        orderAmount: 'Order amount',
+        captured: 'Captured',
+        refunded: 'Refunded',
+        payment: 'Payment',
+        card: 'Card',
+        terminal: 'Terminal',
+        providerStatus: 'Provider status',
+        createdAt: 'Created',
+        lastOperationAt: 'Last operation',
+        declineCode: 'Decline code',
+        description: 'Description',
+        operations: 'Operations',
+        operationAt: 'Time',
+        kind: 'Operation',
+        codes: 'Provider codes',
+        result: 'Result',
+        amount: 'Amount',
+        clearAmount: 'Cleared',
+        rrn: 'RRN',
+        tranId: 'Transaction ID',
+        noOperations: 'No operations for this order.',
       },
     },
     terminals: {
@@ -635,9 +874,24 @@ export const translations: Record<Language, TranslationDictionary> = {
       createDialogTitle: 'Create New Terminal',
       editDialogTitle: 'Edit Terminal Details',
       name: 'Terminal Name',
-      terminalId: 'Numeric Terminal ID',
+      providerTerminal: 'Provider terminal',
+      providerTerminalHint: 'Name and login come from the provider directory; only the password is entered here.',
+      providerTerminalEmpty: 'The provider directory is empty. Refresh it — the scheduled update may not have run yet.',
+      providerTerminalLoadFailed: 'Could not load the provider directory.',
+      syncDirectory: 'Refresh directory',
+      syncApplied: 'Directory refreshed. Terminals received',
+      syncSkipped: 'Directory was not refreshed',
       login: 'Merchant Login ID',
       password: 'Terminal Password',
+      revealPassword: 'Show password',
+      hidePassword: 'Hide password',
+      testAction: 'Test',
+      checkOk: 'Credentials accepted, payments allowed',
+      checkInvalid: 'Invalid login or password',
+      checkRejected: 'Credentials accepted, but the acquirer refused a payment',
+      checkUnreachable: 'The acquirer did not answer — nothing is known about the terminal',
+      newPassword: 'New Terminal Password (Optional)',
+      newPasswordHint: 'Leave blank to keep the current terminal password',
       company: 'Assigned Company',
       status: 'Status',
       statuses: {
@@ -716,6 +970,12 @@ export const translations: Record<Language, TranslationDictionary> = {
       dateTo: 'To',
       entityAuth: 'Authentication',
       entityAuditLog: 'Audit Journal',
+      detailsTitle: 'Audit record',
+      entityId: 'Entity ID',
+      company: 'Company',
+      recordId: 'Record ID',
+      openTransaction: 'Open transaction',
+      openPaymentLink: 'Open payment link',
     },
     auth: {
       unknownRole: 'The server returned a role this application does not recognise. Sign-in was refused — contact your administrator.',
@@ -810,6 +1070,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       recentTransactions: {
         title: 'Son ödənişlər',
+        providerOrderId: 'Provayder Sifariş ID',
+        ridByMerchant: 'RID by merchant',
         id: 'Əməliyyat',
         date: 'Tarix və vaxt',
         terminal: 'Terminal',
@@ -922,10 +1184,9 @@ export const translations: Record<Language, TranslationDictionary> = {
     transactions: {
       title: 'Əməliyyatlar',
       subtitle: 'Terminallarınızdan keçən bütün ödəniş jurnalını nəzərdən keçirin.',
-      ecommerceTitle: 'E-ticarət Əməliyyatları',
       filters: {
         dateRange: 'Tarix Aralığı',
-        search: 'ID, müştəri və ya RRN üzrə axtarış...',
+        search: 'Provayder Sifariş ID, RID by merchant, müştəri, e-poçt və ya əməliyyat ID üzrə axtarış...',
         paymentMethod: 'Ödəniş Üsulu',
         terminal: 'Terminal',
         clearFilters: 'Filtrləri Sıfırla',
@@ -939,6 +1200,8 @@ export const translations: Record<Language, TranslationDictionary> = {
         REFUNDED: 'Qaytarılıb',
       },
       columns: {
+        providerOrderId: 'Provayder Sifariş ID',
+        ridByMerchant: 'RID by merchant',
         id: 'Əməliyyat ID',
         date: 'Tarix və Vaxt',
         amount: 'Məbləğ',
@@ -947,6 +1210,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         rrn: 'RRN',
         method: 'Üsul',
         terminal: 'Terminal',
+        terminalLogin: 'Terminal Logini',
         actions: 'Ətraflı',
       },
       detail: {
@@ -967,8 +1231,100 @@ export const translations: Record<Language, TranslationDictionary> = {
         paymentInfo: 'Ödəniş Bölgüsü',
         technicalInfo: 'Texniki Əlaqə Məlumatı',
         approvalCode: 'Təsdiq Kodu (Approval Code)',
+        unresolvedTitle: 'Nəticə ekvayer tərəfindən təsdiqlənmədi',
+        unresolvedHint: 'Əməliyyat artıq keçmiş ola bilər. Təkrar göndərməyin — əvvəlcə əməliyyatın statusunu yoxlayın.',
+        checkStatusAction: 'Statusu yoxla',
+        statusChecked: 'Status ekvayerdən yenidən oxundu.',
+        refundableLeft: 'Qaytarıla bilən qalıq',
+        eventCreated: 'Əməliyyat açıldı',
+        eventCaptured: 'Blok məbləği silindi',
+        eventRefunded: 'Qaytarma təsdiqləndi',
+        historyEmpty: 'Bu əməliyyat üzrə qeydə alınmış hadisə yoxdur.',
+        identifiers: 'Ödəniş identifikatorları',
         providerOrderId: 'Provayder Sifariş ID',
+        ridByMerchant: 'RID by merchant',
         clientIp: 'Müştərinin IP Ünvanı',
+      },
+    },
+    ecommerce: {
+      title: 'E-ticarət çıxarışı',
+      subtitle: 'Terminallarınızın provayder şlüzündən ödənişləri: hər sətir bütün tarixçəsi ilə bir sifarişdir.',
+      periodFrom: 'Yaradılma tarixindən',
+      periodTo: 'Yaradılma tarixinədək',
+      periodHint: 'Sifarişlər yaradılma tarixinə görə seçilir. Dövr mütləqdir və 92 gündən uzun ola bilməz.',
+      periodInvalid: 'Dövrün sonu başlanğıcından gec olmalıdır.',
+      periodTooLong: 'Dövr 92 gündən uzun ola bilməz.',
+      terminals: 'Terminallar',
+      allTerminals: 'Bütün terminallar',
+      search: 'Sifariş nömrəsi, RID by merchant və ya RRN (dəqiq uyğunluq)',
+      minAmount: 'Minimum məbləğ',
+      maxAmount: 'Maksimum məbləğ',
+      loadMore: 'Daha çox göstər',
+      loaded: 'Yüklənmiş sifarişlər',
+      loadFailed: 'Çıxarışı yükləmək mümkün olmadı.',
+      empty: 'Seçilmiş dövr və filtrlər üzrə sifariş yoxdur.',
+      exportLoaded: 'Yüklənənləri ixrac et',
+      stats: {
+        orders: 'Sifarişlər',
+        captured: 'Silinib',
+        refunded: 'Qaytarılıb',
+      },
+      statuses: {
+        PENDING: 'Gözləmədə',
+        AUTHORIZED: 'Avtorizasiya edilib',
+        SUCCESS: 'Uğurlu',
+        PARTIALLY_PAID: 'Qismən ödənilib',
+        FAILED: 'Uğursuz',
+        PARTIALLY_REFUNDED: 'Qismən qaytarılıb',
+        REFUNDED: 'Qaytarılıb',
+        CANCELED: 'Ləğv edilib',
+      },
+      operationKinds: {
+        AUTHORIZATION: 'Avtorizasiya (hold)',
+        CAPTURE: 'Silinmə',
+        PURCHASE: 'Alış',
+        REVERSAL: 'Reversal',
+        REFUND: 'Geri qaytarma',
+        UNKNOWN: 'Tanınmayan əməliyyat',
+      },
+      columns: {
+        createdAt: 'Yaradılıb',
+        orderId: 'Provayder Sifariş ID',
+        ridByMerchant: 'RID by merchant',
+        card: 'Kart',
+        amount: 'Sifariş məbləği',
+        captured: 'Silinib',
+        status: 'Status',
+        terminal: 'Terminal',
+      },
+      detail: {
+        back: 'Çıxarışa qayıt',
+        title: 'Sifariş',
+        notFound: 'Sifariş tapılmadı: mövcud deyil, başqa merçanta aiddir və ya hələ tamamlanmayıb.',
+        loadFailed: 'Sifarişi yükləmək mümkün olmadı.',
+        identifiers: 'İdentifikatorlar',
+        money: 'Məbləğlər',
+        orderAmount: 'Sifariş məbləği',
+        captured: 'Silinib',
+        refunded: 'Qaytarılıb',
+        payment: 'Ödəniş',
+        card: 'Kart',
+        terminal: 'Terminal',
+        providerStatus: 'Provayderdə status',
+        createdAt: 'Yaradılıb',
+        lastOperationAt: 'Son əməliyyat',
+        declineCode: 'İmtina kodu',
+        description: 'Təsvir',
+        operations: 'Əməliyyatlar',
+        operationAt: 'Vaxt',
+        kind: 'Əməliyyat',
+        codes: 'Provayder kodları',
+        result: 'Nəticə',
+        amount: 'Məbləğ',
+        clearAmount: 'Silinmiş məbləğ',
+        rrn: 'RRN',
+        tranId: 'Tranzaksiya ID',
+        noOperations: 'Sifariş üzrə əməliyyat yoxdur.',
       },
     },
     terminals: {
@@ -980,9 +1336,24 @@ export const translations: Record<Language, TranslationDictionary> = {
       createDialogTitle: 'Yeni Terminal Yarat',
       editDialogTitle: 'Terminal Parametrlərini Redaktə Et',
       name: 'Terminalın Adı',
-      terminalId: 'Reqamli Terminal ID',
+      providerTerminal: 'Provayder terminalı',
+      providerTerminalHint: 'Ad və login provayder kataloqundan gəlir; burada yalnız şifrə daxil edilir.',
+      providerTerminalEmpty: 'Provayder kataloqu boşdur. Onu yeniləyin — planlı yenilənmə hələ işləməmiş ola bilər.',
+      providerTerminalLoadFailed: 'Provayder kataloqunu yükləmək mümkün olmadı.',
+      syncDirectory: 'Kataloqu yenilə',
+      syncApplied: 'Kataloq yeniləndi. Alınan terminallar',
+      syncSkipped: 'Kataloq yenilənmədi',
       login: 'Mərfəti Terminal Logini',
       password: 'Terminal Şifrəsi',
+      revealPassword: 'Şifrəni göstər',
+      hidePassword: 'Şifrəni gizlət',
+      testAction: 'Test',
+      checkOk: 'Məlumatlar qəbul edildi, ödənişlər icazəlidir',
+      checkInvalid: 'Login və ya şifrə yanlışdır',
+      checkRejected: 'Məlumatlar qəbul edildi, lakin ekvayer ödənişə icazə vermədi',
+      checkUnreachable: 'Ekvayer cavab vermədi — terminal barədə məlumat yoxdur',
+      newPassword: 'Yeni terminal şifrəsi (istəyə görə)',
+      newPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
       company: 'Təyin Olunmuş Şirkət',
       status: 'Status',
       statuses: {
@@ -1061,6 +1432,12 @@ export const translations: Record<Language, TranslationDictionary> = {
       dateTo: 'Tarixədək',
       entityAuth: 'Autentifikasiya',
       entityAuditLog: 'Audit jurnalı',
+      detailsTitle: 'Audit jurnalı qeydi',
+      entityId: 'Obyektin ID-si',
+      company: 'Şirkət',
+      recordId: 'Qeydin ID-si',
+      openTransaction: 'Əməliyyatı aç',
+      openPaymentLink: 'Ödəniş linkini aç',
     },
     auth: {
       unknownRole: 'Server bu tətbiqin tanımadığı bir rol qaytardı. Giriş rədd edildi — administratorla əlaqə saxlayın.',
@@ -1155,6 +1532,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       recentTransactions: {
         title: 'Последние платежи',
+        providerOrderId: 'ID заказа провайдера',
+        ridByMerchant: 'RID by merchant',
         id: 'Операция',
         date: 'Дата и время',
         terminal: 'Терминал',
@@ -1267,10 +1646,9 @@ export const translations: Record<Language, TranslationDictionary> = {
     transactions: {
       title: 'Транзакции',
       subtitle: 'Просмотр и аудит всех проведённых платежей по вашим терминалам.',
-      ecommerceTitle: 'Электронные транзакции',
       filters: {
         dateRange: 'Диапазон дат',
-        search: 'Поиск по ID, клиенту или RRN...',
+        search: 'Поиск по ID заказа провайдера, RID by merchant, клиенту, email или ID транзакции...',
         paymentMethod: 'Метод оплаты',
         terminal: 'Терминал',
         clearFilters: 'Сбросить фильтры',
@@ -1284,6 +1662,8 @@ export const translations: Record<Language, TranslationDictionary> = {
         REFUNDED: 'Возврат',
       },
       columns: {
+        providerOrderId: 'ID заказа провайдера',
+        ridByMerchant: 'RID by merchant',
         id: 'ID Транзакции',
         date: 'Дата и Время',
         amount: 'Сумма',
@@ -1292,6 +1672,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         rrn: 'RRN',
         method: 'Метод',
         terminal: 'Терминал',
+        terminalLogin: 'Логин терминала',
         actions: 'Детали',
       },
       detail: {
@@ -1312,8 +1693,100 @@ export const translations: Record<Language, TranslationDictionary> = {
         paymentInfo: 'Параметры платежа',
         technicalInfo: 'Техническая информация шлюза',
         approvalCode: 'Код одобрения (Approval Code)',
+        unresolvedTitle: 'Эквайер не подтвердил исход',
+        unresolvedHint: 'Операция могла уже пройти. Не отправляйте её повторно — сначала проверьте статус операции.',
+        checkStatusAction: 'Проверить статус',
+        statusChecked: 'Статус перечитан у эквайера.',
+        refundableLeft: 'Остаток к возврату',
+        eventCreated: 'Операция заведена',
+        eventCaptured: 'Холд списан',
+        eventRefunded: 'Возврат подтверждён',
+        historyEmpty: 'По этой операции не записано ни одного события.',
+        identifiers: 'Идентификаторы платежа',
         providerOrderId: 'ID заказа провайдера',
+        ridByMerchant: 'RID by merchant',
         clientIp: 'IP адрес клиента',
+      },
+    },
+    ecommerce: {
+      title: 'Выписка E-commerce',
+      subtitle: 'Платежи ваших терминалов из шлюза провайдера: строка — заказ со всей его историей.',
+      periodFrom: 'Создан с',
+      periodTo: 'Создан по',
+      periodHint: 'Заказы отбираются по дате создания. Период обязателен и не длиннее 92 дней.',
+      periodInvalid: 'Конец периода должен быть позже начала.',
+      periodTooLong: 'Период не может быть длиннее 92 дней.',
+      terminals: 'Терминалы',
+      allTerminals: 'Все терминалы',
+      search: 'Номер заказа, RID by merchant или RRN (точное совпадение)',
+      minAmount: 'Сумма от',
+      maxAmount: 'Сумма до',
+      loadMore: 'Показать ещё',
+      loaded: 'Загружено заказов',
+      loadFailed: 'Не удалось загрузить выписку.',
+      empty: 'За выбранный период и с этими фильтрами заказов нет.',
+      exportLoaded: 'Выгрузить загруженные',
+      stats: {
+        orders: 'Заказов',
+        captured: 'Списано',
+        refunded: 'Возвращено',
+      },
+      statuses: {
+        PENDING: 'В обработке',
+        AUTHORIZED: 'Авторизован',
+        SUCCESS: 'Успешно',
+        PARTIALLY_PAID: 'Частично оплачен',
+        FAILED: 'Неуспешно',
+        PARTIALLY_REFUNDED: 'Частичный возврат',
+        REFUNDED: 'Возврат',
+        CANCELED: 'Отменён',
+      },
+      operationKinds: {
+        AUTHORIZATION: 'Авторизация (холд)',
+        CAPTURE: 'Списание',
+        PURCHASE: 'Покупка',
+        REVERSAL: 'Реверсал',
+        REFUND: 'Возврат',
+        UNKNOWN: 'Нераспознанная операция',
+      },
+      columns: {
+        createdAt: 'Создан',
+        orderId: 'ID заказа провайдера',
+        ridByMerchant: 'RID by merchant',
+        card: 'Карта',
+        amount: 'Сумма заказа',
+        captured: 'Списано',
+        status: 'Статус',
+        terminal: 'Терминал',
+      },
+      detail: {
+        back: 'К выписке',
+        title: 'Заказ',
+        notFound: 'Заказ не найден: его нет, он принадлежит другому мерчанту или ещё не завершён.',
+        loadFailed: 'Не удалось загрузить заказ.',
+        identifiers: 'Идентификаторы',
+        money: 'Деньги',
+        orderAmount: 'Сумма заказа',
+        captured: 'Списано',
+        refunded: 'Возвращено',
+        payment: 'Платёж',
+        card: 'Карта',
+        terminal: 'Терминал',
+        providerStatus: 'Статус у провайдера',
+        createdAt: 'Создан',
+        lastOperationAt: 'Последняя операция',
+        declineCode: 'Код отказа',
+        description: 'Описание',
+        operations: 'Операции',
+        operationAt: 'Время',
+        kind: 'Операция',
+        codes: 'Коды провайдера',
+        result: 'Результат',
+        amount: 'Сумма',
+        clearAmount: 'Списано операцией',
+        rrn: 'RRN',
+        tranId: 'ID транзакции',
+        noOperations: 'По заказу нет операций.',
       },
     },
     terminals: {
@@ -1325,9 +1798,24 @@ export const translations: Record<Language, TranslationDictionary> = {
       createDialogTitle: 'Создать новый терминал',
       editDialogTitle: 'Редактировать параметры терминала',
       name: 'Название терминала',
-      terminalId: 'Цифровой Terminal ID',
+      providerTerminal: 'Терминал провайдера',
+      providerTerminalHint: 'Название и логин берутся из справочника провайдера; здесь вводится только пароль.',
+      providerTerminalEmpty: 'Справочник провайдера пуст. Обновите его — плановое обновление могло ещё не пройти.',
+      providerTerminalLoadFailed: 'Не удалось загрузить справочник провайдера.',
+      syncDirectory: 'Обновить справочник',
+      syncApplied: 'Справочник обновлён. Получено терминалов',
+      syncSkipped: 'Справочник не обновлён',
       login: 'Логин терминала мерчанта',
       password: 'Пароль терминала',
+      revealPassword: 'Показать пароль',
+      hidePassword: 'Скрыть пароль',
+      testAction: 'Тест',
+      checkOk: 'Данные приняты, оплаты разрешены',
+      checkInvalid: 'Неверный логин или пароль',
+      checkRejected: 'Данные приняты, но эквайер не разрешил оплату',
+      checkUnreachable: 'Эквайер не ответил — о терминале ничего не известно',
+      newPassword: 'Новый пароль терминала (необязательно)',
+      newPasswordHint: 'Оставьте пустым, чтобы сохранить текущий пароль терминала',
       company: 'Назначенная компания',
       status: 'Статус',
       statuses: {
@@ -1406,6 +1894,12 @@ export const translations: Record<Language, TranslationDictionary> = {
       dateTo: 'По дату',
       entityAuth: 'Аутентификация',
       entityAuditLog: 'Журнал аудита',
+      detailsTitle: 'Запись журнала аудита',
+      entityId: 'ID объекта',
+      company: 'Компания',
+      recordId: 'ID записи',
+      openTransaction: 'Открыть операцию',
+      openPaymentLink: 'Открыть платёжную ссылку',
     },
     auth: {
       unknownRole: 'Сервер вернул роль, неизвестную приложению. Вход отклонён — обратитесь к администратору.',

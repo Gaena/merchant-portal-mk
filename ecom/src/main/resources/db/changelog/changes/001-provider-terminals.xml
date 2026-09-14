@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Слепок терминалов провайдера. У него один терминал — это один мерчант, поэтому здесь и
+      идентификатор, и логин, и название приходят с его стороны: админ при заведении нашего
+      терминала выбирает строку отсюда и вводит только пароль.
+
+      Таблица наполняется единственным писателем — планировщиком `ecom`. Читает её `directory`,
+      когда сверяет статусы: все сервисы сидят на одной PostgreSQL, и вызов по HTTP между ними
+      ради этого чтения был бы лишним звеном, которое умеет падать.
+    -->
+    <changeSet id="001-provider-terminals" author="mp">
+        <createTable tableName="provider_terminals">
+            <!-- Идентификатор мерчанта-терминала у провайдера. Строка: на выгрузках со стенда
+                 встречались и '1234567', и 'E1120020' — числом это не бывает. -->
+            <column name="rid" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="title" type="varchar(256)"/>
+            <column name="login" type="varchar(128)"/>
+            <!--
+              Виден ли терминал в выгрузке провайдера сейчас. Гасится не первым пропаданием,
+              а после `missing_runs` подряд: один оборванный опрос не должен выключать терминалы,
+              под которыми у мерчанта идут платежи.
+            -->
+            <column name="active" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="missing_runs" type="integer" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="first_seen_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Когда терминал последний раз пришёл в выгрузке. Для разбора «почему выключен». -->
+            <column name="last_seen_at" type="timestamp with time zone"/>
+            <column name="synced_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="provider_terminals" indexName="ix_provider_terminals_login">
+            <column name="login"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

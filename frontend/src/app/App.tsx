@@ -6,11 +6,12 @@ import {
 } from '@mui/material';
 import { RouterProvider } from 'react-router';
 import type { Transaction, TransactionFilters } from './types/transaction';
-import { parsePaymentMethod, parseTransactionStatus } from './types/transaction';
 import { createRouter } from './routes';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LanguageProvider } from './context/LanguageContext';
 import { apiClient } from './api/client';
+import { buildTerminalIndex } from './utils/terminals';
+import { mapTransaction } from './utils/mapTransaction';
 
 // Create Material Design theme
 const theme = createTheme({
@@ -124,54 +125,14 @@ function AppShell() {
         apiClient.get('/api/v1/terminals/options')
       ]);
 
-      let terminalMap: Record<number, string> = {};
-      if (termRes.status === 'fulfilled' && Array.isArray(termRes.value.data)) {
-        termRes.value.data.forEach((term: any) => {
-          if (term.id) {
-            terminalMap[term.id] = term.name || `Terminal #${term.id}`;
-          }
-        });
-      }
+      const terminalIndex = termRes.status === 'fulfilled'
+        ? buildTerminalIndex(termRes.value.data)
+        : {};
 
       if (txRes.status === 'fulfilled') {
         const rawContent = Array.isArray(txRes.value.data) ? txRes.value.data : (txRes.value.data?.content || []);
         if (Array.isArray(rawContent)) {
-          const mapped = rawContent.map((t: any): Transaction => {
-            const name = t.terminalId ? terminalMap[t.terminalId] : undefined;
-            const displayName = name || (t.terminalId ? `Terminal #${t.terminalId}` : '—');
-            return {
-              id: t.id,
-              paymentLinkId: t.paymentLinkId,
-              timestamp: t.createdAt ? new Date(t.createdAt) : new Date(),
-              customer: t.customerName || t.customerEmail || 'Customer',
-              customerEmail: t.customerEmail || 'N/A',
-              customerPhone: t.customerPhone,
-              amount: t.amount,
-              refundedAmount: t.refundedAmount,
-              currency: t.currency || 'AZN',
-              // Разбор — только через parse*: нераспознанное значение даёт null и показывается
-              // как есть. Прежнее `String(t.status || 'APPROVED') as any` превращало любой
-              // неизвестный статус в «успешный» и прятало расхождение от компилятора (P2-12).
-              status: parseTransactionStatus(t.status),
-              statusRaw: t.status === null || t.status === undefined ? undefined : String(t.status),
-              paymentMethod: parsePaymentMethod(t.paymentType),
-              description: t.description || t.merchantOrderId || 'Transaction',
-              cardNumberMasked: t.cardNumberMasked,
-              cardLast4: t.cardNumberMasked ? String(t.cardNumberMasked).slice(-4) : undefined,
-              rrn: t.rrn,
-              approvalCode: t.approvalCode,
-              merchantRid: t.merchantRid,
-              providerOrderId: t.providerOrderId || t.provider_order_id,
-              terminalId: t.terminalId,
-              terminalName: name || displayName,
-              clientIp: t.clientIp,
-              userAgent: t.userAgent,
-              fee: 0,
-              statusHistory: [],
-              terminalRid: displayName,
-              channel: 'ecommerce'
-            };
-          });
+          const mapped = rawContent.map((t: any) => mapTransaction(t, terminalIndex));
           setTransactions(mapped);
         }
       }

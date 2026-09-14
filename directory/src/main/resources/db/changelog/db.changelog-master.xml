@@ -8,5 +8,7 @@
     <include file="changes/003-directory-schema.xml" relativeToChangelogFile="true"/>
     <include file="changes/004-audit-log-ip-and-indexes.xml" relativeToChangelogFile="true"/>
     <include file="changes/005-terminal-status.xml" relativeToChangelogFile="true"/>
+    <include file="changes/006-terminal-status-source.xml" relativeToChangelogFile="true"/>
+    <include file="changes/007-terminal-id-sequence.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

@@ -13,5 +13,6 @@
     <include file="changes/006-audit-logs.xml" relativeToChangelogFile="true"/>
     <include file="changes/007-transaction-indexes.xml" relativeToChangelogFile="true"/>
     <include file="changes/008-dashboard-indexes.xml" relativeToChangelogFile="true"/>
+    <include file="changes/009-rid-by-merchant.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

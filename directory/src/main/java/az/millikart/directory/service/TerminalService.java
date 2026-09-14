@@ -5,12 +5,15 @@ import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.domain.TerminalStatus;
+import az.millikart.directory.domain.TerminalStatusSource;
 import az.millikart.directory.dto.CreateTerminalRequest;
 import az.millikart.directory.dto.TerminalOptionResponse;
+import az.millikart.directory.dto.TerminalPasswordResponse;
 import az.millikart.directory.dto.TerminalResponse;
 import az.millikart.directory.dto.UpdateTerminalRequest;
 import az.millikart.directory.repository.CompanyRepository;
 import az.millikart.directory.repository.PaymentLinkStatusRepository;
+import az.millikart.directory.repository.ProviderTerminalStatusRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.common.audit.AuditAction;
 import az.millikart.common.audit.AuditEntity;
@@ -42,20 +45,26 @@ public class TerminalService {
     private static final Set<Role> TERMINAL_WRITE_ROLES =
             EnumSet.of(Role.SYSTEM_ADMIN, Role.COMPANY_HEAD, Role.COMPANY_MANAGER);
 
+    // entityId отказа в заведении: номер терминалу выдаётся только при сохранении (Р-81).
+    private static final String NEW_TERMINAL = "NEW";
+
     private final TerminalRepository terminalRepository;
     private final CompanyRepository companyRepository;
     private final PaymentLinkStatusRepository paymentLinkStatusRepository;
+    private final ProviderTerminalStatusRepository providerTerminals;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
 
     public TerminalService(TerminalRepository terminalRepository,
                            CompanyRepository companyRepository,
                            PaymentLinkStatusRepository paymentLinkStatusRepository,
+                           ProviderTerminalStatusRepository providerTerminals,
                            AuditLogService auditLogService,
                            ApplicationEventPublisher eventPublisher) {
         this.terminalRepository = terminalRepository;
         this.companyRepository = companyRepository;
         this.paymentLinkStatusRepository = paymentLinkStatusRepository;
+        this.providerTerminals = providerTerminals;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
     }
@@ -64,27 +73,48 @@ public class TerminalService {
     public TerminalResponse createTerminal(CreateTerminalRequest request, UserPrincipal principal) {
         String actorUsername = UserPrincipal.getUsername(principal);
 
-        log.info("Request to create terminal: id={}, name={}, companyId={} by actor: {}",
-                request.id(), request.name(), request.companyId(), actorUsername);
+        log.info("Request to create terminal: name={}, merchantRid={}, companyId={} by actor: {}",
+                request.name(), request.merchantRid(), request.companyId(), actorUsername);
 
         validateWriteAccessToCompany(request.companyId(), principal,
-                String.valueOf(request.id()), AuditAction.CREATE,
-                "create terminal " + request.id() + " for company " + request.companyId());
+                NEW_TERMINAL, AuditAction.CREATE,
+                "create a terminal for company " + request.companyId());
 
         if (!companyRepository.existsById(request.companyId())) {
             throw new BusinessException("Company with ID '" + request.companyId() + "' not found");
         }
 
-        if (terminalRepository.existsById(request.id())) {
-            throw new BusinessException("Terminal with ID " + request.id() + " already exists");
+        // Название и логин берутся у провайдера, когда указан его терминал: он их хозяин, и
+        // введённые руками однажды разойдутся с тем, чем терминал ходит в шлюз.
+        String name = request.name();
+        String login = request.login();
+        String merchantRid = trimToNull(request.merchantRid());
+        if (merchantRid != null) {
+            // Один терминал провайдера — одна наша компания. Иначе две компании смотрели бы
+            // в одну выписку, и каждая видела бы платежи другой.
+            terminalRepository.findByMerchantRid(merchantRid).ifPresent(existing -> {
+                throw new BusinessException("Provider terminal " + merchantRid
+                        + " is already linked to terminal " + existing.getId());
+            });
+            ProviderTerminalStatusRepository.ProviderTerminalRow row = providerTerminals
+                    .findByRid(merchantRid)
+                    .orElseThrow(() -> new BusinessException(
+                            "Provider terminal " + merchantRid + " is not in the synchronised list"));
+            name = row.title();
+            login = row.login();
+        }
+        if (name == null || name.isBlank() || login == null || login.isBlank()) {
+            throw new BusinessException("Terminal name and login are required unless merchantRid is given");
         }
 
+        // Номер берётся последним, когда все проверки пройдены: отказ не должен тратить номера.
         Terminal terminal = Terminal.builder()
-                .id(request.id())
-                .name(request.name())
-                .login(request.login())
+                .id(Math.toIntExact(terminalRepository.nextId()))
+                .name(name)
+                .login(login)
                 .password(request.password())
                 .companyId(request.companyId())
+                .merchantRid(merchantRid)
                 .createdBy(actorUsername)
                 .updatedBy(actorUsername)
                 .build();
@@ -123,10 +153,12 @@ public class TerminalService {
                 .collect(Collectors.toList()));
     }
 
-    // Р-45: лёгкий фид для селекторов — id, name, status, без страниц. Заблокированные терминалы
-    // отдаются намеренно, фильтрует потребитель: форме ссылки нужны только ACTIVE (бэкенд всё
-    // равно откажет по заблокированному, P2-8), а экрану транзакций — все, иначе старый платёж
+    // Р-45: лёгкий фид для селекторов — id, name, login, status, без страниц. Заблокированные
+    // терминалы отдаются намеренно, фильтрует потребитель: форме ссылки нужны только ACTIVE (бэкенд
+    // всё равно откажет по заблокированному, P2-8), а экрану транзакций — все, иначе старый платёж
     // теряет имя своего терминала. Фильтр на сервере обслужил бы первого и сломал второго.
+    // Про логин в ответе — см. комментарий у TerminalOptionResponse: ворота те же, что у полного
+    // списка, который логин отдаёт и так, а пароль сюда не попадает.
     @Transactional(readOnly = true)
     public List<TerminalOptionResponse> listTerminalOptions(UserPrincipal principal) {
         List<Terminal> terminals = isGlobalReader(principal)
@@ -134,7 +166,7 @@ public class TerminalService {
                 : terminalRepository.findAllByCompanyIdOrderByNameAscIdAsc(requireOwnCompany(principal));
 
         return terminals.stream()
-                .map(t -> new TerminalOptionResponse(t.getId(), t.getName(), t.getStatus()))
+                .map(t -> new TerminalOptionResponse(t.getId(), t.getName(), t.getLogin(), t.getStatus()))
                 .collect(Collectors.toList());
     }
 
@@ -168,6 +200,51 @@ public class TerminalService {
         return actorCompanyId;
     }
 
+    /**
+     * Пароль терминала как есть — для того, чтобы администратор мог его посмотреть, не заводя
+     * терминал заново.
+     *
+     * Три вещи, которые здесь обязательны и вместе делают это допустимым:
+     *
+     *   1. **Только SYSTEM_ADMIN.** Роли записи (COMPANY_HEAD, COMPANY_MANAGER) пароль менять
+     *      больше не могут и увидеть его не могут тоже: это ключ от эквайринга, а не настройка
+     *      терминала. Отказ пишется в журнал — попытка посмотреть чужой платёжный ключ это ровно
+     *      то событие, ради которого журнал и заведён.
+     *   2. **Отдельный запрос.** В `TerminalResponse` пароль остаётся `"********"`, поэтому ни
+     *      список, ни карточка, ни лёгкий фид его не несут, сколько бы экранов их ни читало.
+     *   3. **След у каждого чтения.** Пишется сразу, своей транзакцией: читать тут нечего
+     *      коммитить, а запись «кто и когда посмотрел пароль терминала» нужна именно в момент
+     *      чтения.
+     *
+     * Сам пароль в журнал, разумеется, не идёт (см. AuditLogService.logDenied о секретах
+     * в details).
+     */
+    @Transactional(readOnly = true)
+    public TerminalPasswordResponse revealPassword(Integer id, UserPrincipal principal) {
+        Terminal terminal = terminalRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("Terminal not found"));
+
+        String actorUsername = UserPrincipal.getUsername(principal);
+        if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
+            auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(id), AuditAction.READ,
+                    actorUsername, UserPrincipal.getCompanyId(principal),
+                    "Denied: role " + UserPrincipal.getRawRole(principal)
+                            + " attempted to reveal the acquiring password of terminal " + id);
+            throw new InvalidStateException("Access denied");
+        }
+
+        auditLogService.recordSuccess(AuditEvent.of(
+                AuditEntity.TERMINAL,
+                String.valueOf(id),
+                AuditAction.READ,
+                actorUsername,
+                terminal.getCompanyId(),
+                "Revealed the acquiring password of terminal " + id
+        ));
+
+        return new TerminalPasswordResponse(terminal.getId(), terminal.getPassword());
+    }
+
     @Transactional(readOnly = true)
     public TerminalResponse getTerminal(Integer id, UserPrincipal principal) {
         Terminal terminal = terminalRepository.findById(id)
@@ -198,6 +275,16 @@ public class TerminalService {
             terminal.setLogin(request.login());
         }
         if (request.password() != null && !request.password().isBlank()) {
+            // Пароль эквайринга меняет только SYSTEM_ADMIN — те же ворота, что и на его чтение.
+            // Молча проигнорировать нельзя: администратор компании решил бы, что пароль сменён,
+            // и остался бы со старым ключом, считая его новым.
+            if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
+                auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(id), AuditAction.UPDATE,
+                        actorUsername, UserPrincipal.getCompanyId(principal),
+                        "Denied: role " + UserPrincipal.getRawRole(principal)
+                                + " attempted to change the acquiring password of terminal " + id);
+                throw new InvalidStateException("Access denied: only a system administrator may change the terminal password");
+            }
             changes.append("Password updated. ");
             terminal.setPassword(request.password());
         }
@@ -217,7 +304,23 @@ public class TerminalService {
         // PATCH, возвращающий объект целиком, переприостанавливает ссылки на каждом сохранении.
         String statusChange = null;
         if (request.status() != null && request.status() != terminal.getStatus()) {
+            // Терминал, выключенный синхронизацией, человек включить не может: у провайдера он
+            // снят с обслуживания, платёж через него всё равно не пройдёт, а включение здесь
+            // подняло бы его ссылки и отправило плательщиков в отказ. Вернёт его та же
+            // синхронизация, когда провайдер вернёт терминал себе.
+            if (request.status() == TerminalStatus.ACTIVE
+                    && terminal.getStatus() == TerminalStatus.BLOCKED
+                    && terminal.getStatusSource() == TerminalStatusSource.PROVIDER) {
+                auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(id), AuditAction.UNBLOCK,
+                        actorUsername, terminal.getCompanyId(),
+                        "Denied: terminal " + id + " was blocked by the provider sync and cannot be "
+                                + "unblocked by hand");
+                throw new InvalidStateException("Terminal " + id + " is out of service at the provider "
+                        + "and will be unblocked automatically once the provider brings it back");
+            }
             statusChange = applyStatusChange(terminal, request.status());
+            // Статус поставил человек — и это решение синхронизация впредь не трогает.
+            terminal.setStatusSource(TerminalStatusSource.MANUAL);
             changes.append(statusChange).append(". ");
         }
 
@@ -314,6 +417,14 @@ public class TerminalService {
             throw new InvalidStateException("Access denied: AUDITOR is read-only");
         }
         throw new InvalidStateException("Access denied");
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private TerminalResponse mapToResponse(Terminal terminal) {

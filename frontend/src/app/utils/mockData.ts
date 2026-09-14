@@ -1,17 +1,8 @@
 import type { TransactionStatus, PaymentMethod } from '../types/transaction';
 
-export const terminalRids = [
-  'TRM-001-AZE',
-  'TRM-002-BAK',
-  'TRM-003-GNJ',
-  'TRM-004-SMX',
-  'TRM-005-MNG',
-  'TRM-006-AZE',
-  'TRM-007-BAK',
-  'TRM-008-GNJ',
-  'TRM-009-SMX',
-  'TRM-010-MNG'
-];
+// Здесь стоял `terminalRids` — десять выдуманных кодов вида «TRM-001-AZE». Ими наполнялся
+// фильтр по терминалу, и совпасть с настоящей транзакцией они не могли ни разу: выбор любого
+// пункта давал пустой список. Фильтр берёт терминалы из `GET /api/v1/terminals/options`.
 
 export function formatCurrency(amount: number, currency: string): string {
   return new Intl.NumberFormat('en-US', {

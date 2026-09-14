@@ -1009,7 +1009,7 @@ class PaymentLinkIntegrationTest {
     void redirectPage_forSuccessfulPayment_rendersReceipt() throws Exception {
         Transaction tx = createTransaction(TERMINAL_ID, "ORDER-RECEIPT", TransactionStatus.SUCCESS);
 
-        mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", tx.getMerchantRid()))
+        mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", tx.getRidByMerchant()))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("Transaction Receipt")))
                 .andExpect(content().string(containsString("100.00 AZN")))
@@ -1027,7 +1027,7 @@ class PaymentLinkIntegrationTest {
 
         Transaction tx = createTransaction(TERMINAL_ID, "ORDER-PENDING", TransactionStatus.PENDING);
 
-        mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", tx.getMerchantRid()))
+        mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", tx.getRidByMerchant()))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("being processed")))
                 .andExpect(content().string(not(containsString("Transaction Receipt"))))
@@ -1038,7 +1038,7 @@ class PaymentLinkIntegrationTest {
     }
 
     @Test
-    void redirectPage_withUnknownMerchantRid_rendersNeutralPage() throws Exception {
+    void redirectPage_withUnknownRidByMerchant_rendersNeutralPage() throws Exception {
         mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", UUID.randomUUID()))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("unavailable")))
@@ -1060,7 +1060,7 @@ class PaymentLinkIntegrationTest {
 
         // Провайдер дописывает свои ID/PASSWORD/STATUS; они под контролем атакующего и не должны ни
         // выбирать транзакцию, ни запускать обновление статуса на чужой.
-        mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", shown.getMerchantRid())
+        mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", shown.getRidByMerchant())
                         .param("ID", other.getProviderOrderId())
                         .param("PASSWORD", "provider-password")
                         .param("STATUS", "Declined"))
@@ -1421,7 +1421,7 @@ class PaymentLinkIntegrationTest {
     private Transaction attemptFixture(PaymentLink link, TransactionStatus status) {
         return transactionRepository.save(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId("ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
                 .providerPassword("provider-password")
                 .amount(link.getAmount())
@@ -1451,7 +1451,7 @@ class PaymentLinkIntegrationTest {
 
         return transactionRepository.save(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId("ORD-" + merchantOrderId)
                 .providerPassword("provider-password")
                 .amount(new BigDecimal("100.00"))

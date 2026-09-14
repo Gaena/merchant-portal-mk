@@ -1,5 +1,6 @@
 package az.millikart.pbl;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
@@ -34,13 +35,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
 // P1-5: два одновременных открытия одной ссылки обязаны дать одну попытку платежа, а не две.
 // Старый openAndBuildRedirect проверял ссылку в одной транзакции, звал эквайера вне транзакций
 // и вставлял попытку в третьей: оба вызова вместе проходили проверку «ещё не оплачено», оба
 // регистрировали заказ, и одноразовая ссылка получала два живых заказа — платили по ней дважды.
+// На настоящей PostgreSQL, а не на H2, и это здесь главное: тест держит ссылку под
+// `SELECT ... FOR UPDATE`, а семантика блокировок у H2 своя. На эмуляции он подтверждал бы,
+// что код не виснет, но не что гонка закрыта той СУБД, которая стоит в проде.
 @SpringBootTest
+@Import(PostgresTestContainer.class)
 class OpenLinkConcurrencyTest {
 
     private static final int TERMINAL_ID = 123456789;

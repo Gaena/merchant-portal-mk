@@ -11,6 +11,7 @@ import type { Transaction, TransactionFilters } from './types/transaction';
 const HomePage = lazy(() => import('./pages/HomePage').then(m => ({ default: m.HomePage })));
 const TransactionListPage = lazy(() => import('./pages/TransactionListPage').then(m => ({ default: m.TransactionListPage })));
 const EcommerceTransactionListPage = lazy(() => import('./pages/EcommerceTransactionListPage').then(m => ({ default: m.EcommerceTransactionListPage })));
+const EcommerceOrderDetailPage = lazy(() => import('./pages/EcommerceOrderDetailPage').then(m => ({ default: m.EcommerceOrderDetailPage })));
 const TransactionDetailPage = lazy(() => import('./pages/TransactionDetailPage').then(m => ({ default: m.TransactionDetailPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const CompaniesPage = lazy(() => import('./pages/CompaniesPage').then(m => ({ default: m.CompaniesPage })));
@@ -72,19 +73,21 @@ export const createRouter = (layoutProps: AppRouterProps) => {
             </Suspense>
           )
         },
+        // Выписка провайдера из сервиса ecom (Р-65): свои запросы и своя карточка заказа по номеру у
+        // провайдера. Общий список операций портала из App сюда не передаётся — это другой источник.
         {
           path: 'transactions/ecommerce',
           element: (
             <Suspense fallback={<PageLoader />}>
-              <EcommerceTransactionListPage
-                transactions={layoutProps.transactions}
-                filters={layoutProps.filters}
-                onFilterChange={layoutProps.onFilterChange}
-                autoRefresh={layoutProps.autoRefresh}
-                onToggleAutoRefresh={layoutProps.onToggleAutoRefresh}
-                newTransactionCount={layoutProps.newTransactionCount}
-                onRefresh={layoutProps.onRefresh}
-              />
+              <EcommerceTransactionListPage />
+            </Suspense>
+          )
+        },
+        {
+          path: 'transactions/ecommerce/:orderId',
+          element: (
+            <Suspense fallback={<PageLoader />}>
+              <EcommerceOrderDetailPage />
             </Suspense>
           )
         },

@@ -1,0 +1,90 @@
+spring:
+  application:
+    name: ecom
+  datasource:
+    # Наша PostgreSQL — та же, что у остальных трёх сервисов. Здесь живут привязки мерчантов
+    # и общий журнал аудита; платёжных данных провайдера в ней нет и по замыслу быть не должно.
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/postgres}
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USERNAME:postgres}
+    # No default on purpose: the service must not start with a guessable database password.
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+
+ecom:
+  txpg:
+    # Схема шлюза, из которой читаем. Меняется от контура к контуру — отсюда переменная,
+    # а не константа в SQL.
+    schema: ${ECOM_TXPG_SCHEMA:TXPG}
+    # Потолок периода одной выборки и размер страницы: наши собственные предохранители против
+    # отчётного запроса, который конкурирует с авторизациями на боевом шлюзе.
+    max-window: ${ECOM_TXPG_MAX_WINDOW:P92D}
+    max-page-size: ${ECOM_TXPG_MAX_PAGE_SIZE:200}
+    query-timeout: ${ECOM_TXPG_QUERY_TIMEOUT:PT30S}
+    fetch-size: ${ECOM_TXPG_FETCH_SIZE:200}
+    # Даты в базе шлюза хранятся местным временем без пояса; этим поясом они читаются и
+    # в нём же режутся границы периода. Ошибка сдвигает всю выписку на разницу поясов.
+    zone: ${ECOM_TXPG_ZONE:Asia/Baku}
+    # Сколько опросов подряд терминал должен не приходить, прежде чем считаться выключенным.
+    missing-runs-before-disable: ${ECOM_TXPG_MISSING_RUNS:3}
+    datasource:
+      # Без значений по умолчанию намеренно: сервис не должен подниматься, молча целясь
+      # в localhost, — это чужая база, и адрес у каждого контура свой.
+      url: ${ECOM_TXPG_URL}
+      driver-class-name: oracle.jdbc.OracleDriver
+      username: ${ECOM_TXPG_USERNAME}
+      password: ${ECOM_TXPG_PASSWORD}
+      hikari:
+        # Маленький пул намеренно: пока провайдер не дал читающую реплику, каждое наше
+        # соединение отнимает ресурс у боевых авторизаций.
+        maximum-pool-size: ${ECOM_TXPG_POOL_SIZE:4}
+        connection-timeout: 10000
+
+  terminal-sync:
+    # Обновление слепка терминалов провайдера. Расписанием, а не входом администратора: вход —
+    # событие случайное, а платой за него была бы зависимость аутентификации от чужой базы.
+    enabled: ${ECOM_TERMINAL_SYNC_ENABLED:true}
+    cron: "${ECOM_TERMINAL_SYNC_CRON:0 */15 * * * *}"
+
+# Ключ `pbl`, а не `ecom`: JwtProvider и JwtAuthFilter живут в common и читают именно этот
+# префикс — так же, как его объявляют у себя auth и directory. Переименование тронуло бы все
+# четыре сервиса сразу, и ради одного нового это того не стоит.
+pbl:
+  security:
+    jwt:
+      # Тот же секрет, что в auth, directory и pbl, байт в байт. Без значения по умолчанию.
+      secret: ${JWT_SECRET}
+      expiration-ms: ${JWT_EXPIRATION_MS:900000} # 15 minutes
+
+mp:
+  trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+
+server:
+  # auth 8081, directory 8082, pbl 8080 — этот занимает следующий свободный.
+  port: ${SERVER_PORT:8083}
+
+management:
+  server:
+    # Actuator на своём порту и только на петле, как у остальных трёх сервисов.
+    port: ${MANAGEMENT_PORT:9083}
+    address: 127.0.0.1
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
+    path: /swagger-ui.html

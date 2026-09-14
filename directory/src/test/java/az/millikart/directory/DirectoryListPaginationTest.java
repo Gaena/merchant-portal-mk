@@ -1,5 +1,6 @@
 package az.millikart.directory;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -31,7 +33,12 @@ import org.springframework.test.web.servlet.ResultActions;
 // Списки компаний и терминалов после P2-1 и облегчённая выдача терминалов Р-45. Интересный случай
 // здесь — две записи с одинаковым именем: именно на них ломается сортировка без уникального
 // довеска, и строка оказывается сразу на двух страницах или ни на одной.
+//
+// Сортировка строк в PostgreSQL зависит от локали базы, а H2 сравнивает побайтово: порядок
+// страниц и результат поиска через LIKE — ровно те вопросы, на которые эмуляция отвечает
+// за себя, а не за прод.
 @SpringBootTest
+@Import(PostgresTestContainer.class)
 @AutoConfigureMockMvc
 public class DirectoryListPaginationTest {
 
@@ -450,10 +457,15 @@ public class DirectoryListPaginationTest {
                 "a blocked terminal must still be offered to the caller: " + json);
     }
 
-    // Эквайринговых кредов в TerminalOptionResponse нет вовсе. Проверка идёт по сырому телу, а не
-    // по разобранным полям: так поймается и поле, добавленное позже неаккуратным маппером.
+    // Пароля терминала в TerminalOptionResponse нет вовсе. Проверка идёт по сырому телу, а не по
+    // разобранным полям: так поймается и поле, добавленное позже неаккуратным маппером.
+    //
+    // Логин с этой проверки снят намеренно: мерчант опознаёт терминал по логину, и фид подписывает
+    // им терминал на экранах платежей. Ворота у фида те же, что у постраничного GET
+    // /api/v1/terminals, который логин отдаёт и так, — видимости это не прибавляет. Пароль под
+    // запретом остаётся: он и в полной карточке уходит замаскированным.
     @Test
-    public void options_carryNoTerminalCredentials() throws Exception {
+    public void options_carryTheTerminalLoginButNeverItsPassword() throws Exception {
         seedCompany("comp-01", "MilliKart LLC", "ACTIVE");
         seedTerminal(500701, "Terminal", "comp-01", TerminalStatus.ACTIVE);
 
@@ -462,14 +474,14 @@ public class DirectoryListPaginationTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
-        Assertions.assertFalse(raw.contains("login"), "the feed must not name a login field: " + raw);
         Assertions.assertFalse(raw.contains("password"), "the feed must not name a password field: " + raw);
-        Assertions.assertFalse(raw.contains("term_login_500701"), "no credential value may leak: " + raw);
-        Assertions.assertFalse(raw.contains("term_pass_500701"), "no credential value may leak: " + raw);
+        Assertions.assertFalse(raw.contains("term_pass_500701"), "no password value may leak: " + raw);
 
         JsonNode json = objectMapper.readTree(raw);
-        Assertions.assertEquals(List.of("id", "name", "status"), fieldNames(json.get(0)),
-                "three fields, nothing else");
+        Assertions.assertEquals(List.of("id", "name", "login", "status"), fieldNames(json.get(0)),
+                "four fields, nothing else");
+        Assertions.assertEquals("term_login_500701", json.get(0).get("login").asText(),
+                "the login is what names the terminal on the payment screens: " + raw);
     }
 
     @Test

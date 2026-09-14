@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Переименование по словарю провайдера (12.09.2026). Два разных идентификатора назывались
+      у нас одинаково, и колонка носила чужое имя:
+
+        merchantRid    — reference id **мерчанта**, который задаёт **провайдер**;
+        ridByMerchant  — reference id **платежа**, который задаёт **мерчант**.
+
+      В этой колонке всё это время лежало второе: случайный UUID, который мы генерируем на
+      попытку оплаты и отправляем провайдеру именно полем `ridByMerchant`
+      (EcomCreateOrderRequest.Order). Имя `merchant_rid` обещало первое, и спутать их было
+      вопросом времени — тем более что настоящий merchantRid у нас теперь тоже есть,
+      в терминалах.
+
+      Колонка остаётся NOT NULL: этот идентификатор мы порождаем сами, и платежа без него не
+      бывает. Пустым он может прийти только из базы провайдера, где заказ заводили не мы, —
+      это про `ecom`, а не про эту таблицу.
+    -->
+    <changeSet id="009-rename-merchant-rid-to-rid-by-merchant" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <columnExists tableName="transactions" columnName="merchant_rid"/>
+        </preConditions>
+        <renameColumn tableName="transactions"
+                      oldColumnName="merchant_rid"
+                      newColumnName="rid_by_merchant"/>
+    </changeSet>
+
+</databaseChangeLog>

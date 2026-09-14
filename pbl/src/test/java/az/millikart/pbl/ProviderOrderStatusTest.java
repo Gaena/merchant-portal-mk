@@ -13,7 +13,7 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 // P1-8a: словарь статусов заказа эквайера, без Spring. Таблица повторяет
-// pbl/TXPG-client-side-integration.md §5.8.8 плюс значения, унаследованные от исходного кода
+// project_docs/TXPG-client-side-integration.md §5.8.8 плюс значения, унаследованные от исходного кода
 // (что откуда — сказано в комментарии к ProviderOrderStatus).
 class ProviderOrderStatusTest {
 

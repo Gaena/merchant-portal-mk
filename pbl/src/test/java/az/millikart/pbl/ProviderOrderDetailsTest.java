@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 // P1-16: маскированный номер карты, RRN и approval code читаются из payload заказа эквайера без
-// Spring. Payload'ы взяты из контракта pbl/TXPG-client-side-integration.md: §5.8.3 (lastTran),
+// Spring. Payload'ы взяты из контракта project_docs/TXPG-client-side-integration.md: §5.8.3 (lastTran),
 // §5.8.4 (srcToken), §5.8.5/§5.8.6 (trans[]); правила выбора записи — §5.8.8 (Purchase /
 // Purchase - Void / Refund, кто раньше — говорит regTime).
 class ProviderOrderDetailsTest {

@@ -1,5 +1,6 @@
 package az.millikart.pbl;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.containsString;
@@ -47,6 +48,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -58,7 +60,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 // продолжает работать (Р-38). Вторая половина — суть решения и то, что легче всего сломать
 // «наведением порядка»: проверка блокировки в capture, refund или опросе статуса заперла бы
 // деньги плательщика на карте, задержала возврат или оставила платёж PENDING навсегда.
+//
+// Обратная сторона блокировки терминала, со стороны платёжного пути. Диалект тот же и так же
+// существенный: проверяется поведение запросов, а не только код вокруг них.
 @SpringBootTest
+@Import(PostgresTestContainer.class)
 @AutoConfigureMockMvc
 class TerminalBlockedIntegrationTest {
 
@@ -372,7 +378,7 @@ class TerminalBlockedIntegrationTest {
 
         return transactionRepository.save(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId(providerOrderId != null ? providerOrderId : "ORD-" + key)
                 .providerPassword("provider-password")
                 .amount(AMOUNT)

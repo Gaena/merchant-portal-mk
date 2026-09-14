@@ -46,6 +46,27 @@ public class Terminal {
     @Builder.Default
     private TerminalStatus status = TerminalStatus.ACTIVE;
 
+    // Кто поставил текущий статус. Не null по той же причине: колонка not null default 'MANUAL'
+    // (006-terminal-status-source.xml), и для всех существующих строк это правда — до появления
+    // синхронизации статусы ставили только люди.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status_source", nullable = false, length = 16)
+    @Builder.Default
+    private TerminalStatusSource statusSource = TerminalStatusSource.MANUAL;
+
+    /**
+     * Reference id **мерчанта**, который задаёт **провайдер**, — словарь провайдера:
+     *
+     *   merchantRid   — reference id мерчанта, его задаёт провайдер (это поле);
+     *   ridByMerchant — reference id платежа, его задаёт мерчант (`pbl`, в транзакции).
+     *
+     * У провайдера один терминал — это один мерчант, поэтому здесь и стоит его rid: заполняется
+     * при заведении, когда админ выбирает строку из слепка, а логин с названием приходят оттуда
+     * же. Пусто у терминалов, заведённых до синхронизации; их сверка не касается.
+     */
+    @Column(name = "merchant_rid")
+    private String merchantRid;
+
     @Column(name = "created_by")
     private String createdBy;
 

@@ -302,7 +302,7 @@ class PblAuditIntegrationTest {
 
         return transactionRepository.save(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId("ORD-" + key)
                 .providerPassword("provider-password")
                 .amount(AMOUNT)

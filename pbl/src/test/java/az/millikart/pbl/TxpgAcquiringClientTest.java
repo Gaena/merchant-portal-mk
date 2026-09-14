@@ -12,6 +12,7 @@ import az.millikart.pbl.domain.PaymentType;
 import az.millikart.pbl.provider.TxpgAcquiringClient;
 import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
 import az.millikart.pbl.provider.dto.MoneyOperationResult;
+import az.millikart.pbl.provider.dto.TerminalCheckResult;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -583,5 +584,96 @@ class TxpgAcquiringClientTest {
             }
             return line.toString();
         });
+    }
+
+    // --- проверка учётных данных терминала --------------------------------------------------
+
+    // Заказ заведён — значит сразу и логин с паролем верны, и оплаты терминалу разрешены.
+    @Test
+    void terminalCheck_orderCreated_isOk() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+                .andExpect(MockRestRequestMatchers.method(HttpMethod.POST))
+                .andExpect(MockRestRequestMatchers.header("Authorization", Matchers.startsWith("Basic ")))
+                .andRespond(withSuccess("{\"order\":{\"id\":987654,\"password\":\"p\",\"hppUrl\":\"https://x\"}}",
+                        MediaType.APPLICATION_JSON));
+
+        Assertions.assertEquals(TerminalCheckResult.Outcome.OK,
+                client.checkTerminalCredentials("TerminalSys/Admin", "right").outcome());
+        server.verify();
+    }
+
+    // Ровно тот ответ, что прислал провайдер на неверный пароль.
+    @Test
+    void terminalCheck_invalidLogin_isInvalidCredentials() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+                .andRespond(withSuccess("{\"errorCode\":\"InvalidLogin\",\"errorDescription\":\"Invalid login or password\"}",
+                        MediaType.APPLICATION_JSON));
+
+        TerminalCheckResult result = client.checkTerminalCredentials("TerminalSys/Admin", "wrong");
+
+        Assertions.assertEquals(TerminalCheckResult.Outcome.INVALID_CREDENTIALS, result.outcome());
+        Assertions.assertEquals("InvalidLogin", result.providerErrorCode());
+        Assertions.assertEquals("Invalid login or password", result.providerMessage());
+    }
+
+    // Тот же код может прийти и в 4xx — разбирать надо тело, а не статус.
+    @Test
+    void terminalCheck_invalidLoginInA4xx_isStillInvalidCredentials() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+                .andRespond(withBadRequest().contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"errorCode\":\"InvalidLogin\",\"errorDescription\":\"Invalid login or password\"}"));
+
+        Assertions.assertEquals(TerminalCheckResult.Outcome.INVALID_CREDENTIALS,
+                client.checkTerminalCredentials("TerminalSys/Admin", "wrong").outcome());
+    }
+
+    // Пароль подошёл, но заказ завести не дали — это не «неверный пароль», и выдать его за
+    // такой нельзя: администратор пошёл бы менять ключ, который исправен.
+    @Test
+    void terminalCheck_otherProviderError_isRejectedWithItsWords() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+                .andRespond(withSuccess("{\"errorCode\":\"MerchantBlocked\",\"errorDescription\":\"Merchant is blocked\"}",
+                        MediaType.APPLICATION_JSON));
+
+        TerminalCheckResult result = client.checkTerminalCredentials("TerminalSys/Admin", "right");
+
+        Assertions.assertEquals(TerminalCheckResult.Outcome.REJECTED, result.outcome());
+        Assertions.assertEquals("Merchant is blocked", result.providerMessage());
+    }
+
+    // 5xx ничего не говорит о терминале. «Пароль неверный» здесь был бы ложью.
+    @Test
+    void terminalCheck_serverError_isUnreachableNotInvalid() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+                .andRespond(withServerError());
+
+        Assertions.assertEquals(TerminalCheckResult.Outcome.UNREACHABLE,
+                client.checkTerminalCredentials("TerminalSys/Admin", "right").outcome());
+    }
+
+    // Проверка идёт без повторов: каждый повтор — ещё один пробный заказ у провайдера.
+    @Test
+    void terminalCheck_isSentExactlyOnce() {
+        server.expect(org.springframework.test.web.client.ExpectedCount.once(),
+                        requestTo("https://gateway.txpg.example.com/order"))
+                .andRespond(withServerError());
+
+        client.checkTerminalCredentials("TerminalSys/Admin", "right");
+
+        server.verify();
+    }
+
+    // Пароль терминала не должен оказаться в логах ни на каком уровне.
+    @Test
+    void terminalCheck_neverLogsThePassword() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+                .andRespond(withSuccess("{\"errorCode\":\"InvalidLogin\",\"errorDescription\":\"Invalid login or password\"}",
+                        MediaType.APPLICATION_JSON));
+
+        client.checkTerminalCredentials("TerminalSys/Admin", "super-secret-terminal-password");
+
+        Assertions.assertTrue(logEvents.list.stream()
+                        .noneMatch(event -> event.getFormattedMessage().contains("super-secret-terminal-password")),
+                "the terminal password must never reach the logs");
     }
 }

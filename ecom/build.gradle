@@ -1,0 +1,26 @@
+plugins {
+    id 'org.springframework.boot'
+}
+
+dependencies {
+    implementation project(':common')
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    // Две базы: своя PostgreSQL под привязки мерчантов и журнал аудита (JPA) и чужая Oracle,
+    // в которую ходим голым JdbcTemplate. JPA поверх схемы шлюза не нужна и вредна: их таблицы
+    // не наши, маппить их в сущности значило бы взять на себя обязательство знать их форму.
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'org.liquibase:liquibase-core'
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    runtimeOnly 'org.postgresql:postgresql'
+    // Драйвер Oracle для чтения схемы TXPG. ojdbc11 — сборка под JDK 11+, работает на нашем 21.
+    runtimeOnly 'com.oracle.database.jdbc:ojdbc11:23.4.0.24.05'
+    runtimeOnly 'com.h2database:h2'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

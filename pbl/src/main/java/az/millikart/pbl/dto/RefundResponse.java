@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 // Ответ на подтверждённый возврат. Все три идентификатора — собственные идентификаторы эквайера
-// (pbl/TXPG-client-side-integration.md §5.7), локально не генерируется ни один.
+// (project_docs/TXPG-client-side-integration.md §5.7), локально не генерируется ни один.
 public record RefundResponse(
         UUID transactionId,
         // Статус транзакции после этого возврата: REFUNDED или PARTIALLY_REFUNDED.

@@ -1,5 +1,6 @@
 package az.millikart.directory;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,6 +18,7 @@ import liquibase.database.Database;
 import liquibase.database.DatabaseFactory;
 import liquibase.database.jvm.JdbcConnection;
 import liquibase.resource.DirectoryResourceAccessor;
+import org.testcontainers.containers.PostgreSQLContainer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -26,26 +28,51 @@ import org.junit.jupiter.api.TestInfo;
 // P1-2: общий объект вправе создать любой из владеющих им сервисов — terminals.status (P2-8) и
 // audit_logs (P2-14). Иначе стартовавший первым построит таблицу без него и либо не пройдёт свой
 // ddl-auto: validate, либо будет писать в несуществующую таблицу. Только здесь changelog-и разных
-// сервисов встречаются: прочие тесты поднимают один модуль на своей H2, потому баг и не виден.
+// сервисов встречаются.
+//
+// Идёт на **настоящей PostgreSQL** в контейнере, и это здесь не формальность: тест проверяет
+// идемпотентность миграций, а «повторный ADD COLUMN падает» — свойство PostgreSQL, не H2. На
+// эмуляции он проверял бы, что предусловия не мешают, но не что они спасают.
+//
+// Каждому методу — своя схема в общей базе: миграции должны видеть пустоту, как при первом
+// развёртывании, а поднимать контейнер на метод значило бы платить за это минутами.
 @DisplayName("shared tables survive any service starting first (P2-8, P2-14)")
 public class SharedSchemaMigrationTest {
 
     private static final String CHANGELOG = "db/changelog/db.changelog-master.xml";
 
-    // Держится открытым весь тест: in-memory база умирает вместе с последним соединением.
     private Connection keepAlive;
     private String url;
+    private String schema;
 
     @BeforeEach
     void openDatabase(TestInfo testInfo) throws Exception {
-        url = "jdbc:h2:mem:terminal-status-" + testInfo.getTestMethod().orElseThrow().getName()
-                + ";MODE=PostgreSQL";
-        keepAlive = DriverManager.getConnection(url, "sa", "");
+        PostgreSQLContainer<?> container = PostgresTestContainer.instance();
+        // Имя схемы из имени метода: в отчёте сразу видно, чья схема осталась, если тест упал.
+        schema = ("s_" + testInfo.getTestMethod().orElseThrow().getName()).toLowerCase(Locale.ROOT);
+        if (schema.length() > 60) {
+            schema = schema.substring(0, 60);
+        }
+        try (Connection admin = DriverManager.getConnection(
+                container.getJdbcUrl(), container.getUsername(), container.getPassword());
+             Statement statement = admin.createStatement()) {
+            statement.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+            statement.execute("CREATE SCHEMA " + schema);
+        }
+
+        url = container.getJdbcUrl() + "&currentSchema=" + schema;
+        keepAlive = DriverManager.getConnection(url, container.getUsername(), container.getPassword());
     }
 
     @AfterEach
     void dropDatabase() throws Exception {
         keepAlive.close();
+        PostgreSQLContainer<?> container = PostgresTestContainer.instance();
+        try (Connection admin = DriverManager.getConnection(
+                container.getJdbcUrl(), container.getUsername(), container.getPassword());
+             Statement statement = admin.createStatement()) {
+            statement.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+        }
     }
 
     @Test
@@ -180,6 +207,38 @@ public class SharedSchemaMigrationTest {
         }
     }
 
+    // Р-81: номер терминала выдаёт последовательность. На живой базе терминалы уже есть, и она
+    // обязана продолжить с наибольшего номера — иначе первое же заведение упадёт на занятом ключе.
+    @Test
+    @DisplayName("existing terminals: numbering continues after the largest id")
+    void existingTerminals_numberingContinuesAfterTheLargestId() throws Exception {
+        execute("""
+                CREATE TABLE terminals (
+                    id integer NOT NULL,
+                    name varchar(255) NOT NULL,
+                    login varchar(255) NOT NULL,
+                    password varchar(255) NOT NULL,
+                    company_id varchar(255),
+                    CONSTRAINT pk_terminals PRIMARY KEY (id)
+                )""");
+        execute("INSERT INTO terminals (id, name, login, password) VALUES (3, 'A', 'a', 'p'), (41, 'B', 'b', 'p')");
+
+        runDirectoryChangelog();
+
+        try (Statement statement = keepAlive.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT nextval('terminals_id_seq')")) {
+            assertTrue(rs.next());
+            org.junit.jupiter.api.Assertions.assertEquals(42L, rs.getLong(1));
+        }
+        // Запись мимо сервиса тоже получает номер из той же последовательности.
+        execute("INSERT INTO terminals (name, login, password) VALUES ('C', 'c', 'p')");
+        try (Statement statement = keepAlive.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT id FROM terminals WHERE name = 'C'")) {
+            assertTrue(rs.next());
+            org.junit.jupiter.api.Assertions.assertEquals(43, rs.getInt(1));
+        }
+    }
+
     // --- вспомогательное ---
 
     private void runDirectoryChangelog() throws Exception {
@@ -199,7 +258,9 @@ public class SharedSchemaMigrationTest {
         if (!Files.isDirectory(resources)) {
             throw new IllegalStateException("changelog resources not found at " + resources);
         }
-        try (Connection connection = DriverManager.getConnection(url, "sa", "")) {
+        PostgreSQLContainer<?> container = PostgresTestContainer.instance();
+        try (Connection connection = DriverManager.getConnection(
+                url, container.getUsername(), container.getPassword())) {
             Database database = DatabaseFactory.getInstance()
                     .findCorrectDatabaseImplementation(new JdbcConnection(connection));
             try (DirectoryResourceAccessor accessor = new DirectoryResourceAccessor(resources);
@@ -216,13 +277,13 @@ public class SharedSchemaMigrationTest {
     }
 
     private boolean tableExists(String table) throws Exception {
-        try (ResultSet rs = keepAlive.getMetaData().getTables(null, null, upper(table), null)) {
+        try (ResultSet rs = keepAlive.getMetaData().getTables(null, schema, upper(table), null)) {
             return rs.next();
         }
     }
 
     private boolean columnExists(String table, String column) throws Exception {
-        try (ResultSet rs = keepAlive.getMetaData().getColumns(null, null, upper(table), upper(column))) {
+        try (ResultSet rs = keepAlive.getMetaData().getColumns(null, schema, upper(table), upper(column))) {
             return rs.next();
         }
     }
@@ -231,7 +292,7 @@ public class SharedSchemaMigrationTest {
         if (!tableExists(table)) {
             return false;
         }
-        try (ResultSet rs = keepAlive.getMetaData().getIndexInfo(null, null, upper(table), false, false)) {
+        try (ResultSet rs = keepAlive.getMetaData().getIndexInfo(null, schema, upper(table), false, false)) {
             while (rs.next()) {
                 if (indexName.equalsIgnoreCase(rs.getString("INDEX_NAME"))) {
                     return true;
@@ -243,7 +304,7 @@ public class SharedSchemaMigrationTest {
 
     private boolean statusColumnIsSingle() throws Exception {
         int count = 0;
-        try (ResultSet rs = keepAlive.getMetaData().getColumns(null, null, upper("terminals"), upper("status"))) {
+        try (ResultSet rs = keepAlive.getMetaData().getColumns(null, schema, upper("terminals"), upper("status"))) {
             while (rs.next()) {
                 count++;
             }
@@ -251,9 +312,9 @@ public class SharedSchemaMigrationTest {
         return count == 1;
     }
 
-    // H2 приводит некавыченные идентификаторы к верхнему регистру, а JDBC-метаданные сравнивают их
-    // буквально.
+    // PostgreSQL складывает некавыченные идентификаторы в нижнем регистре, а JDBC-метаданные
+    // сравнивают их буквально. С H2 здесь было ровно наоборот — верхний регистр.
     private static String upper(String identifier) {
-        return identifier.toUpperCase(Locale.ROOT);
+        return identifier.toLowerCase(Locale.ROOT);
     }
 }

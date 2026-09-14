@@ -1,5 +1,6 @@
 package az.millikart.pbl;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -35,12 +37,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 // StubAcquiringClient всегда отвечает FullyPaid — единственный ответ, на котором эти случаи
 // нельзя запирать, поэтому провайдер заменён моком и каждый тест диктует ответ эквайера сам.
 // Прогон вызывается напрямую: pbl.reconciliation.enabled в тестовом профиле false, cron не бьёт.
+//
+// На настоящей PostgreSQL, а не на H2: метки, по которым свёртка узнаёт судьбу платежа, лежат
+// в `provider_response` — колонке jsonb, а выборка идёт по возрасту операции. И тип, и работа
+// с временем у эмуляции свои.
 @SpringBootTest(properties = {
         "pbl.reconciliation.min-age=PT2M",
         "pbl.reconciliation.max-age=PT24H",
         "pbl.reconciliation.give-up-age=P7D",
         "pbl.reconciliation.batch-size=3"
 })
+@Import(PostgresTestContainer.class)
 class TransactionReconciliationIntegrationTest {
 
     // Обязаны повторять свойства выше: фикстуры состариваются относительно них.
@@ -236,7 +243,7 @@ class TransactionReconciliationIntegrationTest {
     // Refused = возвращён целиком, PartPaid = частично отменён или возвращён (§5.8.8): деньги
     // двигались вне портала. Это не «брошено плательщиком», поэтому не FAILED — и не REFUNDED,
     // потому что сумма локально неизвестна (её разбор из order.trans[] — отдельная задача,
-    // problems.md §6).
+    // AGENTS.md §10).
     @Test
     void reconcile_olderThanMaxAge_providerSaysRefused_staysPending() {
         Transaction tx = agedTransaction("REFUSED", TransactionStatus.PENDING, MAX_AGE.plusHours(1));
@@ -403,7 +410,7 @@ class TransactionReconciliationIntegrationTest {
 
         return transactionRepository.save(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId("ORD-" + key)
                 .providerPassword("provider-password")
                 .amount(new BigDecimal("100.00"))
@@ -413,11 +420,17 @@ class TransactionReconciliationIntegrationTest {
     }
 
     // createdAt помечен CreationTimestamp и updatable = false, JPA его не выставит. Сдвиг уже
-    // сохранённого значения вместо абсолютной метки не зависит от того, как драйвер кодирует время.
+    // сохранённого значения вместо абсолютной метки не зависит от того, как драйвер кодирует время,
+    // — и это правило стоит держать: в TerminalBlockingIntegrationTest абсолютная метка,
+    // записанная мимо Hibernate, легла в локальной зоне вместо UTC и сломала проверку.
+    //
+    // Само вычитание — на диалекте PostgreSQL. Здесь стоял `TIMESTAMPADD`, которого у неё нет
+    // вовсе: функция H2, и на настоящей СУБД запрос не разбирается.
     private void backdate(Transaction tx, Duration age) {
         int rows = jdbcTemplate.update(
-                "UPDATE transactions SET created_at = TIMESTAMPADD(SECOND, ?, created_at) WHERE id = ?",
-                -age.toSeconds(), tx.getId());
+                "UPDATE transactions SET created_at = created_at - CAST(? AS double precision) "
+                        + "* INTERVAL '1 second' WHERE id = ?",
+                (double) age.toSeconds(), tx.getId());
         Assertions.assertEquals(1, rows, "backdating helper must touch exactly one row");
     }
 

@@ -3,6 +3,7 @@ package az.millikart.pbl.provider;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
 import az.millikart.pbl.provider.dto.MoneyOperationResult;
+import az.millikart.pbl.provider.dto.TerminalCheckResult;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -22,10 +23,10 @@ public class StubAcquiringClient implements AcquiringClient {
     private static final Logger log = LoggerFactory.getLogger(StubAcquiringClient.class);
 
     @Override
-    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID merchantRid, String hppRedirectUrl) {
+    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID ridByMerchant, String hppRedirectUrl) {
         long orderId = (long) (Math.random() * 1000000000L);
         String hppUrl = "https://gateway.txpg.example.com/pay?rid=" + orderId;
-        log.info("[STUB PROVIDER] createEcomOrder for merchantRid: {}, amount: {}, generated orderId: {}", merchantRid, link.getAmount(), orderId);
+        log.info("[STUB PROVIDER] createEcomOrder for ridByMerchant: {}, amount: {}, generated orderId: {}", ridByMerchant, link.getAmount(), orderId);
         return new EcomCreateOrderResponse(
                 new EcomCreateOrderResponse.Order(hppUrl, orderId, "Preparing", "password123")
         );
@@ -50,6 +51,14 @@ public class StubAcquiringClient implements AcquiringClient {
         response.put("status", "FullyPaid");
         response.put("id", providerOrderId);
         return response;
+    }
+
+    // Заглушка принимает любые учётные данные: тесты, которым нужен другой исход проверки,
+    // подменяют клиента моком и диктуют ответ сами.
+    @Override
+    public TerminalCheckResult checkTerminalCredentials(String login, String password) {
+        log.info("[STUB PROVIDER] checkTerminalCredentials for login: {}", login);
+        return TerminalCheckResult.ok();
     }
 
     // P1-8b: та же форма, которой настоящий шлюз отвечает на exec-tran (контракт §5.5–5.7), и

@@ -1,11 +1,19 @@
 plugins {
     id 'java-library'
+    // Тестовый контейнер PostgreSQL объявляется один раз и достаётся всем модулям: две копии
+    // одного базового класса однажды разойдутся версией образа, и половина тестов начнёт
+    // проверять не ту СУБД, что другая половина.
+    id 'java-test-fixtures'
     id 'io.spring.dependency-management'
 }
 
 dependencyManagement {
     imports {
-        mavenBom "org.springframework.boot:spring-boot-dependencies:3.2.5"
+        mavenBom("org.springframework.boot:spring-boot-dependencies:3.2.5") {
+            // См. комментарий в корневом build.gradle: Docker Engine 29 не отвечает на версию
+            // API, которой пользуется Testcontainers 1.19.x из BOM.
+            bomProperty 'testcontainers.version', '1.20.6'
+        }
     }
 }
 
@@ -29,6 +37,17 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
     
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+
+    // Версия Testcontainers задана явно и **выше** той, что приносит BOM Spring Boot 3.2.5
+    // (1.19.7). Причина конкретная: 1.19.x обращается к Docker по версии API 1.32, а Docker
+    // Engine 29 объявляет минимальной 1.40 и отвечает на такие запросы 400 — Testcontainers
+    // при этом рапортует «Could not find a valid Docker environment», хотя докер работает.
+    // Понижать докер ради BOM неразумно; обновится Boot — эту строку можно будет снять.
+    testFixturesApi 'org.springframework.boot:spring-boot-testcontainers'
+    testFixturesApi 'org.testcontainers:postgresql'
+    testFixturesApi 'org.testcontainers:junit-jupiter'
+    testFixturesApi 'org.springframework.boot:spring-boot-starter-test'
+    testFixturesRuntimeOnly 'org.postgresql:postgresql'
 }
 
 tasks.named('test') {

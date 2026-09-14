@@ -18,7 +18,7 @@
          One index per changeset, each behind its own precondition, for the reason stated in 002:
          a database restored from a dump without its DATABASECHANGELOG must skip what is already
          there and still create what is missing. Changeset ids carry the module name — all three
-         services share one DATABASECHANGELOG table (problems.md).
+         services share one DATABASECHANGELOG table (AGENTS.md §10).
 
          Nothing beyond these three: every index slows down insertion, and a row is inserted here
          on every payment attempt. -->

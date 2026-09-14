@@ -10,6 +10,10 @@ import java.util.UUID;
 public record PaymentLinkSummaryResponse(
         UUID id,
         PaymentLinkStatus status,
+        // Эквайринговый терминал ссылки — то же поле и то же имя, что в PaymentLinkResponse.
+        // Берётся из самой строки ссылки, никакого похода в справочник: подпись терминала
+        // (его логин) портал разрешает по этому номеру своим лёгким фидом терминалов.
+        Integer terminal,
         BigDecimal amount,
         String currency,
         String description,

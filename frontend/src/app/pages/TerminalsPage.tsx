@@ -27,6 +27,7 @@ import {
   TablePagination,
   Tooltip,
   InputAdornment,
+  Autocomplete,
 } from '@mui/material';
 import {
   PointOfSale as POSIcon,
@@ -37,23 +38,78 @@ import {
   Refresh as RefreshIcon,
   Business as BusinessIcon,
   Search as SearchIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
+  Sync as SyncIcon,
 } from '@mui/icons-material';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import {
+  checkExistingTerminal,
+  checkNewTerminal,
+  checkSeverity,
+  type TerminalCheckOutcome,
+  type TerminalCheckResponse,
+} from '../utils/terminalCheck';
 import { isTerminalActive } from '../types/dto';
-import type { TerminalDto, CompanyDto, TerminalStatus } from '../types/dto';
+import type {
+  TerminalDto,
+  CompanyDto,
+  TerminalStatus,
+  ProviderTerminalDto,
+  ProviderTerminalSyncOutcome,
+} from '../types/dto';
 
 export const TerminalsPage: React.FC = () => {
   const { tObj } = useLanguage();
+  const { user } = useAuth();
+  /**
+   * Пароль терминала — ключ от эквайринга, и видеть его может только системный администратор
+   * (`TerminalService.revealPassword`). Здесь та же роль решает, показывать ли кнопку раскрытия
+   * и поле смены пароля: прятать кнопку, которой сервер всё равно откажет, честнее, чем
+   * предлагать действие и отвечать на него отказом.
+   */
+  const canSeePassword = user?.role === 'SYSTEM_ADMIN';
+
+  const checkLabel = (outcome: TerminalCheckOutcome): string => ({
+    OK: tObj.terminals.checkOk,
+    INVALID_CREDENTIALS: tObj.terminals.checkInvalid,
+    REJECTED: tObj.terminals.checkRejected,
+    UNREACHABLE: tObj.terminals.checkUnreachable,
+  })[outcome];
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editingTerminalId, setEditingTerminalId] = useState<number | null>(null);
-  const [form, setForm] = useState({ id: '', name: '', login: '', password: '', companyId: '' });
+  const [form, setForm] = useState({ name: '', login: '', password: '', companyId: '' });
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  /**
+   * Раскрытые пароли — по одному запросу на терминал, и только пока открыта страница. Ответ
+   * намеренно не кладётся в `terminals`: там он пережил бы перерисовку списка и разъехался бы
+   * с тем, что отдаёт сервер, где пароль по-прежнему замаскирован.
+   */
+  const [revealed, setRevealed] = useState<Record<number, string>>({});
+  const [revealing, setRevealing] = useState<number | null>(null);
+  /**
+   * Итог последней проверки по каждому терминалу. Хранится до перезагрузки списка, как и
+   * раскрытые пароли, — и по той же причине: на новой странице те же строки уже другие терминалы.
+   */
+  const [checks, setChecks] = useState<Record<number, TerminalCheckResponse>>({});
+  const [checking, setChecking] = useState<number | null>(null);
+  // Проверка в форме заведения: ключ ещё не сохранён.
+  const [formCheck, setFormCheck] = useState<TerminalCheckResponse | null>(null);
+  const [formChecking, setFormChecking] = useState(false);
+  // Справочник терминалов провайдера для формы заведения (Р-67, Р-79). Его видит только
+  // SYSTEM_ADMIN; у остальных ролей форма остаётся с ручным вводом названия и логина.
+  const [providerTerminals, setProviderTerminals] = useState<ProviderTerminalDto[]>([]);
+  const [providerState, setProviderState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [selectedProvider, setSelectedProvider] = useState<ProviderTerminalDto | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<ProviderTerminalSyncOutcome | null>(null);
   // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
   // чтобы не слать запрос на каждую букву.
   const debouncedSearch = useDebounced(searchQuery, 300);
@@ -75,6 +131,10 @@ export const TerminalsPage: React.FC = () => {
 
   const fetchTerminals = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
+    // Раскрытые ключи не переживают перезагрузку списка: на новой странице те же строки — уже
+    // другие терминалы, и оставить значение на экране значило бы подписать им чужой пароль.
+    setRevealed({});
+    setChecks({});
     try {
       const params: Record<string, unknown> = { page, size: rowsPerPage };
       if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
@@ -119,11 +179,45 @@ export const TerminalsPage: React.FC = () => {
     fetchCompanies();
   }, []);
 
+  const loadProviderTerminals = async () => {
+    setProviderState('loading');
+    try {
+      const res = await apiClient.get('/api/v1/ecom/provider-terminals');
+      setProviderTerminals(Array.isArray(res.data) ? res.data : []);
+      setProviderState('ready');
+    } catch {
+      setProviderTerminals([]);
+      setProviderState('failed');
+    }
+  };
+
+  // Обновить справочник прямо сейчас, не дожидаясь расписания: нужен, когда терминал только что
+  // завели у провайдера или плановое обновление ещё не проходило.
+  const handleSyncDirectory = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await apiClient.post<ProviderTerminalSyncOutcome>('/api/v1/ecom/provider-terminals/sync');
+      setSyncResult(res.data);
+      await loadProviderTerminals();
+    } catch (err: any) {
+      setError(err.response?.data?.message || tObj.terminals.providerTerminalLoadFailed);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleOpenCreate = () => {
     fetchCompanies();
     setError('');
     setEditingTerminalId(null);
-    setForm({ id: '', name: '', login: '', password: '', companyId: companies[0]?.id || '' });
+    setForm({ name: '', login: '', password: '', companyId: companies[0]?.id || '' });
+    setSelectedProvider(null);
+    setSyncResult(null);
+    setFormCheck(null);
+    if (canSeePassword) {
+      loadProviderTerminals();
+    }
     setCreateOpen(true);
   };
 
@@ -132,7 +226,6 @@ export const TerminalsPage: React.FC = () => {
     setError('');
     setEditingTerminalId(term.id);
     setForm({
-      id: String(term.id),
       name: term.name || '',
       login: term.login || '',
       password: '', // blank password unless changing
@@ -142,28 +235,101 @@ export const TerminalsPage: React.FC = () => {
   };
 
   const handleCreate = async () => {
-    if (!form.id || !form.name.trim() || !form.login.trim() || !form.password.trim() || !form.companyId) {
+    // Администратор заводит терминал выбором из справочника: название и логин сервер берёт оттуда
+    // по merchantRid и введённые руками игнорирует (TerminalService.createTerminal).
+    const fromDirectory = canSeePassword;
+    const identityMissing = fromDirectory ? !selectedProvider : !form.name.trim() || !form.login.trim();
+    if (identityMissing || !form.password.trim() || !form.companyId) {
       setError('All fields including Company selection are required');
       return;
     }
     setError('');
     try {
-      const payload = {
-        id: Number(form.id),
-        name: form.name.trim(),
-        login: form.login.trim(),
-        password: form.password.trim(),
-        companyId: form.companyId,
-      };
+      const payload = fromDirectory
+        ? {
+            password: form.password.trim(),
+            companyId: form.companyId,
+            merchantRid: selectedProvider?.rid,
+          }
+        : {
+            name: form.name.trim(),
+            login: form.login.trim(),
+            password: form.password.trim(),
+            companyId: form.companyId,
+          };
       await apiClient.post('/api/v1/terminals', payload);
       // Не дописываем строку в массив: список постраничный и отсортирован сервером по имени —
       // новый терминал может принадлежать другой странице.
       fetchTerminals();
       setCreateOpen(false);
-      setForm({ id: '', name: '', login: '', password: '', companyId: companies[0]?.id || '' });
+      setForm({ name: '', login: '', password: '', companyId: companies[0]?.id || '' });
       setSnackbar('Acquiring terminal registered successfully');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to create terminal');
+    }
+  };
+
+  /**
+   * Показать или спрятать пароль терминала. Каждое раскрытие — отдельный запрос, и каждый
+   * пишется в журнал аудита на сервере; повторное нажатие просто убирает значение с экрана,
+   * ничего не спрашивая.
+   */
+  /**
+   * «Тест» у терминала. Результат — всегда один из четырёх исходов, даже при неверном пароле
+   * или недоступном провайдере; сбоем здесь считается только отказ самого портала (например,
+   * нехватка прав), и он идёт в общую строку ошибки.
+   */
+  const runCheck = async (terminalId: number) => {
+    setChecking(terminalId);
+    setError('');
+    try {
+      const result = await checkExistingTerminal(terminalId);
+      setChecks(prev => ({ ...prev, [terminalId]: result }));
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to check the terminal');
+    } finally {
+      setChecking(null);
+    }
+  };
+
+  // Терминал в заголовках окон подписан логином, как везде (Р-59): номер терминала на экране не
+  // показывается — его выдаёт база и знать его пользователю незачем (Р-81).
+  const editingLogin = terminals.find(t => t.id === editingTerminalId)?.login ?? '';
+
+  // Логин, который уйдёт в проверку и в терминал: у администратора — из выбранной строки справочника.
+  const formLogin = (canSeePassword ? selectedProvider?.login ?? '' : form.login).trim();
+
+  const runFormCheck = async () => {
+    setFormCheck(null);
+    setFormChecking(true);
+    setError('');
+    try {
+      setFormCheck(await checkNewTerminal(formLogin, form.password));
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to check the terminal');
+    } finally {
+      setFormChecking(false);
+    }
+  };
+
+  const togglePassword = async (terminalId: number) => {
+    if (revealed[terminalId] !== undefined) {
+      setRevealed(prev => {
+        const next = { ...prev };
+        delete next[terminalId];
+        return next;
+      });
+      return;
+    }
+    setRevealing(terminalId);
+    setError('');
+    try {
+      const res = await apiClient.get(`/api/v1/terminals/${terminalId}/password`);
+      setRevealed(prev => ({ ...prev, [terminalId]: String(res.data?.password ?? '') }));
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to reveal the terminal password');
+    } finally {
+      setRevealing(null);
     }
   };
 
@@ -187,7 +353,7 @@ export const TerminalsPage: React.FC = () => {
       setTerminals(prev => prev.map(t => (t.id === editingTerminalId ? res.data : t)));
       setEditOpen(false);
       setEditingTerminalId(null);
-      setForm({ id: '', name: '', login: '', password: '', companyId: companies[0]?.id || '' });
+      setForm({ name: '', login: '', password: '', companyId: companies[0]?.id || '' });
       setSnackbar('Acquiring terminal updated successfully');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to update terminal');
@@ -328,9 +494,9 @@ export const TerminalsPage: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.terminalId}</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.name}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.login}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.password}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.name}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.company}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.status}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
@@ -342,11 +508,39 @@ export const TerminalsPage: React.FC = () => {
                 const active = isTerminalActive(term);
                 return (
                 <TableRow key={term.id} hover sx={active ? undefined : { opacity: 0.6 }}>
+                  {/* Логин впереди: по нему мерчант терминал и опознаёт, имя он придумывает
+                      сам, а номер — внутренний. */}
                   <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: active ? 'primary.main' : 'text.disabled' }}>
-                    #{term.id}
+                    {term.login}
+                  </TableCell>
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{ fontFamily: 'monospace', letterSpacing: revealed[term.id] === undefined ? 2 : 0 }}
+                      >
+                        {revealed[term.id] ?? '••••••••'}
+                      </Typography>
+                      {canSeePassword && (
+                        <Tooltip title={revealed[term.id] === undefined
+                          ? tObj.terminals.revealPassword
+                          : tObj.terminals.hidePassword}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={revealing === term.id}
+                              onClick={() => togglePassword(term.id)}
+                            >
+                              {revealed[term.id] === undefined
+                                ? <VisibilityIcon fontSize="small" />
+                                : <VisibilityOffIcon fontSize="small" />}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      )}
+                    </Box>
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{term.name}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>{term.login}</TableCell>
                   <TableCell>
                     <Chip
                       icon={<BusinessIcon fontSize="small" />}
@@ -369,7 +563,27 @@ export const TerminalsPage: React.FC = () => {
                     {term.createdAt ? new Date(term.createdAt).toLocaleString() : 'N/A'}
                   </TableCell>
                   <TableCell align="center">
-                    <Stack direction="row" spacing={0.5} justifyContent="center">
+                    <Stack direction="row" spacing={0.5} justifyContent="center" alignItems="center">
+                      {/* «Тест» — только администратору: проверка отвечает на вопрос, подходит ли
+                          ключ, и перебирать ключи другим ролям незачем. */}
+                      {canSeePassword && (
+                        <Tooltip title={checks[term.id]
+                          ? `${checkLabel(checks[term.id].outcome)}${checks[term.id].message ? ` — ${checks[term.id].message}` : ''}`
+                          : tObj.terminals.testAction}>
+                          <span>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color={checks[term.id] ? checkSeverity(checks[term.id].outcome) : 'primary'}
+                              disabled={checking === term.id}
+                              onClick={() => runCheck(term.id)}
+                              sx={{ minWidth: 0, px: 1 }}
+                            >
+                              {checking === term.id ? '…' : tObj.terminals.testAction}
+                            </Button>
+                          </span>
+                        </Tooltip>
+                      )}
                       <Tooltip title={tObj.terminals.editTerminal}>
                         <IconButton color="primary" size="small" onClick={() => handleOpenEdit(term)}>
                           <EditIcon fontSize="small" />
@@ -422,7 +636,7 @@ export const TerminalsPage: React.FC = () => {
         maxWidth="xs"
         title={<>
           {statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockAction : tObj.terminals.unblockAction}
-          {' #'}{statusChange?.terminal.id}
+          {' '}{statusChange?.terminal.login}
         </>}
         question={statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockExplains : tObj.terminals.unblockExplains}
         confirmLabel={statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockAction : tObj.terminals.unblockAction}
@@ -449,10 +663,9 @@ export const TerminalsPage: React.FC = () => {
             <TextField
               select
               fullWidth
-              label="Assigned Company *"
+              label={`${tObj.terminals.company} *`}
               value={form.companyId || (companies[0]?.id ?? '')}
               onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}
-              helperText="Выберите компанию, к которой относится создаваемый терминал"
             >
               {companies.map((comp) => (
                 <MenuItem key={comp.id} value={comp.id}>
@@ -461,37 +674,117 @@ export const TerminalsPage: React.FC = () => {
               ))}
             </TextField>
 
-            <TextField
-              label="Terminal ID (Numeric) *"
-              type="number"
-              value={form.id}
-              onChange={e => setForm(f => ({ ...f, id: e.target.value }))}
-              placeholder="e.g. 1"
-              fullWidth
-              helperText="Числовой ID терминала в эквайринговой системе"
-            />
-            <TextField
-              label="Terminal Name *"
-              value={form.name}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              placeholder="e.g. Main Online E-commerce Terminal"
-              fullWidth
-            />
-            <TextField
-              label="Terminal Login *"
-              value={form.login}
-              onChange={e => setForm(f => ({ ...f, login: e.target.value }))}
-              placeholder="e.g. term_login_001"
-              fullWidth
-            />
+            {canSeePassword ? (
+              <Box>
+                {/* Название и логин — от провайдера (Р-67): выбирается строка справочника, руками
+                    вводится только пароль. Один терминал провайдера — одна компания: занятый
+                    сервер отклонит с объяснением. */}
+                <Autocomplete
+                  options={providerTerminals}
+                  value={selectedProvider}
+                  loading={providerState === 'loading'}
+                  onChange={(_, value) => { setSelectedProvider(value); setFormCheck(null); }}
+                  getOptionLabel={option => [option.login, option.title].filter(Boolean).join(' — ') || option.rid}
+                  isOptionEqualToValue={(option, value) => option.rid === value.rid}
+                  renderOption={({ key, ...optionProps }, option) => (
+                    <li key={key} {...optionProps}>
+                      <Box>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                          {option.login || '—'}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {option.title || '—'} · {option.rid}
+                        </Typography>
+                      </Box>
+                    </li>
+                  )}
+                  renderInput={params => (
+                    <TextField
+                      {...params}
+                      label={`${tObj.terminals.providerTerminal} *`}
+                      helperText={tObj.terminals.providerTerminalHint}
+                    />
+                  )}
+                />
+                {selectedProvider && (
+                  <Box sx={{ mt: 1.5, p: 1.5, borderRadius: 1, bgcolor: 'action.hover' }}>
+                    <Typography variant="body2">
+                      {tObj.terminals.name}: <b>{selectedProvider.title || '—'}</b>
+                    </Typography>
+                    <Typography variant="body2">
+                      {tObj.terminals.login}: <b style={{ fontFamily: 'monospace' }}>{selectedProvider.login || '—'}</b>
+                    </Typography>
+                  </Box>
+                )}
+                {providerState === 'failed' && (
+                  <Alert severity="error" sx={{ mt: 1.5 }}>{tObj.terminals.providerTerminalLoadFailed}</Alert>
+                )}
+                {providerState === 'ready' && providerTerminals.length === 0 && (
+                  <Alert severity="info" sx={{ mt: 1.5 }}>{tObj.terminals.providerTerminalEmpty}</Alert>
+                )}
+                {syncResult && (
+                  <Alert severity={syncResult.applied ? 'success' : 'warning'} sx={{ mt: 1.5 }}>
+                    {syncResult.applied
+                      ? `${tObj.terminals.syncApplied}: ${syncResult.seen}`
+                      : `${tObj.terminals.syncSkipped}: ${syncResult.skippedBecause ?? '—'}`}
+                  </Alert>
+                )}
+                <Button
+                  size="small"
+                  startIcon={<SyncIcon />}
+                  disabled={syncing}
+                  onClick={handleSyncDirectory}
+                  sx={{ mt: 1 }}
+                >
+                  {syncing ? tObj.common.loading : tObj.terminals.syncDirectory}
+                </Button>
+              </Box>
+            ) : (
+              <>
+                <TextField
+                  label={`${tObj.terminals.name} *`}
+                  value={form.name}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="e.g. Main Online E-commerce Terminal"
+                  fullWidth
+                />
+                <TextField
+                  label={`${tObj.terminals.login} *`}
+                  value={form.login}
+                  onChange={e => { setForm(f => ({ ...f, login: e.target.value })); setFormCheck(null); }}
+                  placeholder="e.g. term_login_001"
+                  fullWidth
+                />
+              </>
+            )}
             <TextField
               label={`${tObj.terminals.password} *`}
               type="password"
               value={form.password}
-              onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+              onChange={e => { setForm(f => ({ ...f, password: e.target.value })); setFormCheck(null); }}
               placeholder="••••••••"
               fullWidth
             />
+            {/* Проверить ключ до сохранения: неверный пароль иначе выяснится на первом платеже.
+                Итог сбрасывается, как только логин или пароль поменяли, — он относится только
+                к тому, что проверяли. */}
+            {canSeePassword && (
+              <Box>
+                <Button
+                  variant="outlined"
+                  disabled={formChecking || !formLogin || !form.password}
+                  onClick={runFormCheck}
+                >
+                  {formChecking ? tObj.common.loading : tObj.terminals.testAction}
+                </Button>
+                {formCheck && (
+                  <Alert severity={checkSeverity(formCheck.outcome)} sx={{ mt: 1.5 }}>
+                    {checkLabel(formCheck.outcome)}
+                    {formCheck.message ? ` — ${formCheck.message}` : ''}
+                  </Alert>
+                )}
+              </Box>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
@@ -502,7 +795,7 @@ export const TerminalsPage: React.FC = () => {
 
       {/* Edit Terminal Dialog */}
       <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.editDialogTitle} #{editingTerminalId}</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.editDialogTitle} {editingLogin}</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{error}</Alert>}
           <Stack spacing={2.5} sx={{ mt: 1 }}>
@@ -535,15 +828,19 @@ export const TerminalsPage: React.FC = () => {
               placeholder="e.g. term_login_001"
               fullWidth
             />
-            <TextField
-              label="New Terminal Password (Optional)"
-              type="password"
-              value={form.password}
-              onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-              placeholder="Leave blank to keep existing password"
-              fullWidth
-              helperText="Оставьте пустым, если не хотите менять пароль терминала"
-            />
+            {/* Пароль эквайринга меняет только системный администратор — те же ворота, что
+                и на его чтение. Остальным поле не показывается вовсе: сервер откажет. */}
+            {canSeePassword && (
+              <TextField
+                label={tObj.terminals.newPassword}
+                type="password"
+                value={form.password}
+                onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                placeholder="Leave blank to keep existing password"
+                fullWidth
+                helperText={tObj.terminals.newPasswordHint}
+              />
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
@@ -555,7 +852,7 @@ export const TerminalsPage: React.FC = () => {
       {/* Confirm Edit Dialog */}
       <ConfirmDialog
         open={editConfirm !== null}
-        title={<>{tObj.terminals.editConfirmTitle} #{editingTerminalId}</>}
+        title={<>{tObj.terminals.editConfirmTitle} {editingLogin}</>}
         question={tObj.terminals.editConfirmQuestion}
         confirmLabel={tObj.common.confirm}
         confirmColor="primary"

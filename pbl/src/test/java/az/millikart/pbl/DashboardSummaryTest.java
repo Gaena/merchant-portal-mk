@@ -1,5 +1,6 @@
 package az.millikart.pbl;
 
+import az.millikart.common.testing.PostgresTestContainer;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -37,6 +38,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
@@ -44,9 +46,13 @@ import org.springframework.test.web.servlet.MockMvc;
 // Сводка главной страницы (P3-7). До неё главная считала аналитику в браузере по двадцати строкам
 // и называла результат «All system transactions»; здесь проверяется, что теперь считает база и
 // что она считает именно то, что написано на экране.
+//
+// На настоящей PostgreSQL, а не на H2, и здесь это самое существенное из всех: сводка считается
+// группировками с границами суток в часовом поясе Баку. Функции работы с датами и раскладка по
+// окнам у двух СУБД разные, и на эмуляции тест подтверждал бы чужую арифметику.
 @SpringBootTest
 @AutoConfigureMockMvc
-@Import(StubAcquirerConfig.class)
+@Import({StubAcquirerConfig.class, PostgresTestContainer.class})
 public class DashboardSummaryTest {
 
     private static final int TERMINAL_A = 1001;
@@ -248,15 +254,17 @@ public class DashboardSummaryTest {
         }
     }
 
-    // Топ терминалов показывает имя из таблицы, а не «TRM-<id>» и не «Default Terminal».
+    // Топ терминалов показывает логин и имя из таблицы, а не «TRM-<id>» и не «Default Terminal».
+    // Логин здесь потому, что по нему мерчант терминал и опознаёт.
     @Test
-    public void topTerminals_carryTheirRealName() throws Exception {
+    public void topTerminals_carryTheirRealLoginAndName() throws Exception {
         paid(link(TERMINAL_A, "AZN"), "100.00");
 
         JsonNode top = summary(headAToken, "").get("topTerminals");
         Assertions.assertEquals(1, top.size());
         Assertions.assertEquals(TERMINAL_A, top.get(0).get("terminalId").asInt());
         Assertions.assertEquals("Main e-commerce", top.get(0).get("terminalName").asText());
+        Assertions.assertEquals("login-" + TERMINAL_A, top.get(0).get("terminalLogin").asText());
     }
 
     // ─── чтение транзакции по id ─────────────────────────────────────────────
@@ -346,7 +354,7 @@ public class DashboardSummaryTest {
                              String amount, String captured, String refunded, Instant at) {
         Transaction saved = transactionRepository.saveAndFlush(Transaction.builder()
                 .link(link)
-                .merchantRid(UUID.randomUUID())
+                .ridByMerchant(UUID.randomUUID())
                 .providerOrderId("ORD-" + UUID.randomUUID())
                 .providerPassword("secret")
                 .amount(new BigDecimal(amount))
@@ -357,8 +365,14 @@ public class DashboardSummaryTest {
 
         long delta = at.getEpochSecond() - saved.getCreatedAt().getEpochSecond();
         if (delta != 0) {
-            jdbcTemplate.update("UPDATE transactions SET created_at = TIMESTAMPADD(SECOND, ?, created_at) WHERE id = ?",
-                    delta, saved.getId());
+            // Сложение на диалекте PostgreSQL: `TIMESTAMPADD` — функция H2, на настоящей СУБД
+            // такой запрос не разбирается вовсе. Сдвиг сохранённого значения, а не абсолютная
+            // метка: так результат не зависит от того, в какой зоне драйвер закодирует время.
+            // `delta` бывает любого знака, поэтому именно плюс.
+            jdbcTemplate.update(
+                    "UPDATE transactions SET created_at = created_at + CAST(? AS double precision) "
+                            + "* INTERVAL '1 second' WHERE id = ?",
+                    (double) delta, saved.getId());
         }
         return saved;
     }

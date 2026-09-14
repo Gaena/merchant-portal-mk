@@ -44,7 +44,8 @@ import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
 import { formatCurrency, formatDateTime } from '../utils/mockData';
 import { parseTransactionStatus } from '../types/transaction';
-import type { DashboardSummary, DashboardCurrencyTotals } from '../types/dto';
+import type { DashboardSummary, DashboardCurrencyTotals, TerminalOptionDto } from '../types/dto';
+import { buildTerminalIndex, terminalLabel } from '../utils/terminals';
 
 // P3-7: страница больше ничего не считает. До этого она тянула две выборки без пагинации
 // (то есть двадцать строк по умолчанию), сводила их в браузере и подписывала результат
@@ -67,6 +68,9 @@ export const HomePage: React.FC = () => {
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [recent, setRecent] = useState<any[]>([]);
+  // Транзакция несёт только `terminalId`; подпись терминала — его логин, и он приходит
+  // отдельным лёгким фидом (см. `utils/terminals.ts`).
+  const [terminalIndex, setTerminalIndex] = useState<Record<number, TerminalOptionDto>>({});
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
@@ -95,6 +99,10 @@ export const HomePage: React.FC = () => {
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
+    apiClient.get('/api/v1/terminals/options', { signal: controller.signal })
+      .then(res => setTerminalIndex(buildTerminalIndex(res.data)))
+      .catch(() => {});
+
     return () => controller.abort();
   }, []);
 
@@ -238,11 +246,19 @@ export const HomePage: React.FC = () => {
               {summary.topTerminals.map(terminal => (
                 <Box key={`${terminal.currency}-${terminal.terminalId}`}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    {/* Имя из таблицы терминалов; если терминала уже нет — только его номер,
+                    {/* Логин из таблицы терминалов — по нему мерчант терминал и опознаёт;
+                        имя идёт пояснением. Если терминала уже нет — только его номер,
                         без придуманного префикса и подставного имени. */}
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {terminal.terminalName ?? `#${terminal.terminalId}`}
-                    </Typography>
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: 'monospace' }}>
+                        {terminal.terminalLogin ?? terminal.terminalName ?? `#${terminal.terminalId}`}
+                      </Typography>
+                      {terminal.terminalName && terminal.terminalName !== terminal.terminalLogin && (
+                        <Typography variant="caption" color="text.secondary">
+                          {terminal.terminalName}
+                        </Typography>
+                      )}
+                    </Box>
                     <Box sx={{ textAlign: 'right' }}>
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>
                         {formatCurrency(Number(terminal.netAmount), terminal.currency)}
@@ -305,13 +321,15 @@ export const HomePage: React.FC = () => {
             <Table size="small">
               <TableHead>
                 <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.id}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.providerOrderId}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.ridByMerchant}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.date}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.terminal}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.ip}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.device}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }} align="right">{tObj.home.recentTransactions.amount}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.status}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.id}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -330,7 +348,14 @@ export const HomePage: React.FC = () => {
                       sx={{ cursor: 'pointer' }}
                     >
                       <TableCell>
-                        <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{tx.id}</Typography>
+                        <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                          {tx.providerOrderId || tx.provider_order_id || '—'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                          {tx.ridByMerchant || tx.rid_by_merchant || '—'}
+                        </Typography>
                       </TableCell>
                       <TableCell>
                         <Typography variant="caption" color="text.secondary">
@@ -338,7 +363,13 @@ export const HomePage: React.FC = () => {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="caption">{tx.terminalId ?? '—'}</Typography>
+                        <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
+                          {terminalLabel({
+                            terminalLogin: terminalIndex[tx.terminalId]?.login,
+                            terminalName: terminalIndex[tx.terminalId]?.name,
+                            terminalId: tx.terminalId
+                          })}
+                        </Typography>
                       </TableCell>
                       {/* Настоящее значение или прочерк: прежде вместо незаписанного
                           подставлялись адрес и браузер по умолчанию. */}
@@ -360,6 +391,15 @@ export const HomePage: React.FC = () => {
                           sx={{ fontWeight: 700, fontSize: '0.65rem', height: 20,
                                 color: '#fff', bgcolor: STATUS_COLORS[parsed ?? ''] ?? '#9e9e9e' }}
                         />
+                      </TableCell>
+                      <TableCell>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontFamily: 'monospace', fontSize: '0.68rem' }}
+                        >
+                          {tx.id}
+                        </Typography>
                       </TableCell>
                     </TableRow>
                   );

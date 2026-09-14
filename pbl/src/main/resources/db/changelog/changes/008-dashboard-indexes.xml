@@ -25,7 +25,7 @@
          One index per changeset behind its own precondition, for the reason stated in 002: a
          database restored from a dump without its DATABASECHANGELOG must skip what is already
          there and still create what is missing. The changeset id carries the module name — all
-         three services share one DATABASECHANGELOG table (problems.md). -->
+         three services share one DATABASECHANGELOG table (AGENTS.md §10). -->
 
     <changeSet id="8-pbl-index-transactions-created" author="millikart">
         <preConditions onFail="MARK_RAN">

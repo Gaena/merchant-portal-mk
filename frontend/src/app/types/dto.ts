@@ -22,12 +22,51 @@ export interface TerminalDto {
 }
 
 /**
+ * Ответ `GET /api/v1/terminals/options` — лёгкий фид для селекторов, фильтров и подписей
+ * терминала на экранах платежей. Пароля в нём нет и не будет; `login` есть намеренно —
+ * см. `TerminalOptionResponse` на бэкенде.
+ */
+export interface TerminalOptionDto {
+  id: number;
+  name: string;
+  /**
+   * Логин эквайринга — основной параметр терминала: мерчант знает терминал по нему, а не по
+   * имени, которое придумывает сам, и не по внутреннему номеру. Подписывает терминал везде,
+   * где тот показан, — см. `utils/terminals.ts`.
+   */
+  login: string;
+  /** Бэкенд присылает всегда; поле необязательное только ради ответов, снятых до P2-8. */
+  status?: TerminalStatus;
+}
+
+/**
  * Терминал доступен для новых платежей. Скрывает только явно заблокированный: отсутствие поля —
  * это ответ старого бэкенда, и по нему нельзя прятать все терминалы разом, иначе форма создания
  * ссылки останется пустой без единой причины на экране.
  */
 export const isTerminalActive = (terminal: Pick<TerminalDto, 'status'>): boolean =>
   terminal.status !== 'BLOCKED';
+
+/**
+ * Терминал из справочника провайдера (`GET /api/v1/ecom/provider-terminals`, только SYSTEM_ADMIN).
+ * `rid` — reference id мерчанта у провайдера, он же `merchantRid` нашего терминала (Р-67, Р-79).
+ */
+export interface ProviderTerminalDto {
+  rid: string;
+  title: string | null;
+  login: string | null;
+  active: boolean;
+  lastSeenAt?: string | null;
+}
+
+/** Итог ручного обновления справочника (`POST /api/v1/ecom/provider-terminals/sync`). */
+export interface ProviderTerminalSyncOutcome {
+  applied: boolean;
+  seen: number;
+  ambiguous: number;
+  disabled: number;
+  skippedBecause: string | null;
+}
 
 export interface UserDto {
   id: string;
@@ -88,6 +127,8 @@ export interface DashboardCurrencyTotals {
 export interface DashboardTerminalTotal {
   currency: string;
   terminalId: number;
+  /** Логин из таблицы терминалов — основная подпись; `null`, если терминала уже нет. */
+  terminalLogin: string | null;
   /** Имя из таблицы терминалов; `null`, если терминала уже нет — выдумывать его нельзя. */
   terminalName: string | null;
   netAmount: string;

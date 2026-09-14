@@ -16,6 +16,7 @@ import {
 import type { Transaction } from '../types/transaction';
 import { formatCurrency, formatDateTime, getPaymentMethodLabel } from '../utils/mockData';
 import { getStatusColorScheme } from '../utils/statusColors';
+import { terminalLabel, terminalSubLabel } from '../utils/terminals';
 import { useNavigate } from 'react-router';
 
 import { useLanguage } from '../context/LanguageContext';
@@ -78,7 +79,7 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
   return (
     <Paper elevation={2}>
       <TableContainer>
-        <Table sx={{ minWidth: 1200 }}>
+        <Table sx={{ minWidth: 1400 }}>
           <TableHead>
             <TableRow sx={{ bgcolor: 'action.hover' }}>
               <TableCell>
@@ -92,11 +93,20 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
               </TableCell>
               <TableCell>
                 <TableSortLabel
-                  active={orderBy === 'id'}
-                  direction={orderBy === 'id' ? order : 'asc'}
-                  onClick={() => createSortHandler('id')}
+                  active={orderBy === 'providerOrderId'}
+                  direction={orderBy === 'providerOrderId' ? order : 'asc'}
+                  onClick={() => createSortHandler('providerOrderId')}
                 >
-                  {tObj.transactions.columns.id}
+                  {tObj.transactions.columns.providerOrderId}
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={orderBy === 'ridByMerchant'}
+                  direction={orderBy === 'ridByMerchant' ? order : 'asc'}
+                  onClick={() => createSortHandler('ridByMerchant')}
+                >
+                  {tObj.transactions.columns.ridByMerchant}
                 </TableSortLabel>
               </TableCell>
               <TableCell>{tObj.transactions.columns.customer}</TableCell>
@@ -119,8 +129,7 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                 </TableSortLabel>
               </TableCell>
               <TableCell>Payment Method</TableCell>
-              <TableCell>Terminal Name</TableCell>
-              <TableCell>Provider / Order Ref</TableCell>
+              <TableCell>{tObj.transactions.columns.terminalLogin}</TableCell>
               <TableCell align="right">
                 <TableSortLabel
                   active={orderBy === 'fee'}
@@ -128,6 +137,15 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                   onClick={() => createSortHandler('fee')}
                 >
                   Fee
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={orderBy === 'id'}
+                  direction={orderBy === 'id' ? order : 'asc'}
+                  onClick={() => createSortHandler('id')}
+                >
+                  {tObj.transactions.columns.id}
                 </TableSortLabel>
               </TableCell>
             </TableRow>
@@ -152,8 +170,13 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                   </Typography>
                 </TableCell>
                 <TableCell>
-                  <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                    {transaction.id}
+                  <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem', fontWeight: 700 }}>
+                    {transaction.providerOrderId || '—'}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem', fontWeight: 700 }}>
+                    {transaction.ridByMerchant || '—'}
                   </Typography>
                 </TableCell>
                 <TableCell>
@@ -208,33 +231,37 @@ export const TransactionTable: React.FC<TransactionTableProps> = ({
                   </Typography>
                 </TableCell>
                 <TableCell>
+                  {/* Логин — подпись терминала; имя, если оно отличается, идёт под ней. */}
                   <Chip
-                    label={(() => {
-                      const isUuid = (s?: string) => Boolean(s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s));
-                      if (transaction.terminalName && !isUuid(transaction.terminalName)) return transaction.terminalName;
-                      if (transaction.terminalRid && !isUuid(transaction.terminalRid)) return transaction.terminalRid;
-                      if (transaction.terminalId) return `Terminal #${transaction.terminalId}`;
-                      return '—';
-                    })()}
+                    label={terminalLabel(transaction)}
                     size="small"
                     variant="outlined"
                     sx={{
-                      fontFamily: 'sans-serif',
+                      fontFamily: 'monospace',
                       fontWeight: 600,
                       fontSize: '0.75rem',
                       borderColor: 'divider',
                       bgcolor: 'background.paper'
                     }}
                   />
-                </TableCell>
-                <TableCell>
-                  <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                    {transaction.providerOrderId || '—'}
-                  </Typography>
+                  {terminalSubLabel(transaction) && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                      {terminalSubLabel(transaction)}
+                    </Typography>
+                  )}
                 </TableCell>
                 <TableCell align="right">
                   <Typography variant="body2" sx={{ fontWeight: 500 }}>
                     {formatCurrency(transaction.fee, transaction.currency)}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontFamily: 'monospace', fontSize: '0.72rem' }}
+                  >
+                    {transaction.id}
                   </Typography>
                 </TableCell>
               </TableRow>

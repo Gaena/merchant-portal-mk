@@ -42,8 +42,21 @@ public class Transaction {
     @JoinColumn(name = "link_id", nullable = false)
     private PaymentLink link;
 
-    @Column(name = "merchant_rid", nullable = false)
-    private UUID merchantRid;
+    /**
+     * Reference id **платежа**, который задаём мы как мерчант, — словарь провайдера:
+     *
+     *   merchantRid   — reference id мерчанта, его задаёт провайдер (у нас он в терминалах);
+     *   ridByMerchant — reference id платежа, его задаёт мерчант.
+     *
+     * Уходит провайдеру полем `ridByMerchant` при заведении заказа и служит ключом страницы
+     * возврата плательщика. Случайный UUID на каждую попытку оплаты, поэтому not null: платежа,
+     * который мы завели без него, не бывает. Пустым он приходит только из базы провайдера, где
+     * заказ заводили не мы, — это про `ecom`.
+     *
+     * Колонка называлась `merchant_rid` и обещала совсем другой идентификатор (009).
+     */
+    @Column(name = "rid_by_merchant", nullable = false)
+    private UUID ridByMerchant;
 
     @Column(name = "provider_order_id", nullable = false)
     private String providerOrderId;

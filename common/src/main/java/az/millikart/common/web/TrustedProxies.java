@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 
 // Прокси, чьим forwarding-заголовкам верит ClientIp: mp.trusted-proxies из TRUSTED_PROXIES, по
 // умолчанию 127.0.0.1,::1 — то есть всё наше развёртывание, один nginx на той же машине через
-// loopback (deployment_guide.md). Расширять список только когда второй прокси реально появился:
+// loopback (project_docs/deployment_guide.md). Расширять список только когда второй прокси реально появился:
 // каждый адрес в нём вправе назвать любого клиента, а список «на всякий случай» — обход лимитера.
 @Component
 public class TrustedProxies {

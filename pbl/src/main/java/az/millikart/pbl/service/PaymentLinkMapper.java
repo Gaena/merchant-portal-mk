@@ -63,6 +63,7 @@ public class PaymentLinkMapper {
         return new PaymentLinkSummaryResponse(
                 link.getId(),
                 link.getStatus(),
+                link.getTerminalId(),
                 link.getAmount(),
                 link.getCurrency(),
                 link.getDescription(),

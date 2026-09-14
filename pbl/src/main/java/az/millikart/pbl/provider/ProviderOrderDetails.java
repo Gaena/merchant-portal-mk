@@ -99,7 +99,7 @@ public final class ProviderOrderDetails {
     }
 
     // description=Purchase — предпочтение, а не строгий фильтр, намеренно: DMS (Order_DMS) контракт
-    // не описывает вовсе (problems.md §4), и какой description несут авторизация и клиринг —
+    // не описывает вовсе (AGENTS.md §10), и какой description несут авторизация и клиринг —
     // неизвестно. Строгий фильтр оставил бы каждый DMS-платёж без RRN.
     private static List<Map<String, Object>> preferPurchase(List<Map<String, Object>> candidates) {
         List<Map<String, Object>> purchases = new ArrayList<>();
