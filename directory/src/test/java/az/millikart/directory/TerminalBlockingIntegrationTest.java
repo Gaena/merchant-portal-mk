@@ -93,8 +93,9 @@ public class TerminalBlockingIntegrationTest {
     private String adminToken;
     private String employeeTokenCompany1;
 
-    private static final int TERMINAL = 810001;
-    private static final int OTHER_TERMINAL = 810002;
+    // Номера выдаёт база при заведении (Р-81), поэтому поля, а не константы.
+    private int terminal;
+    private int otherTerminal;
 
     @BeforeEach
     public void setup() throws Exception {
@@ -112,22 +113,22 @@ public class TerminalBlockingIntegrationTest {
         employeeTokenCompany1 = "Bearer " + jwtProvider.generateToken("444", "employee@comp1.com", "COMPANY_EMPLOYEE", "comp-01");
 
         createCompany("comp-01", "MilliKart LLC");
-        createTerminal(TERMINAL, "Main Terminal");
-        createTerminal(OTHER_TERMINAL, "Second Terminal");
+        terminal = createTerminal("Main Terminal");
+        otherTerminal = createTerminal("Second Terminal");
     }
 
     // 1-3. Блокировка приостанавливает нужные ссылки и только их
 
     @Test
     public void blockingTerminal_suspendsItsActiveLinks() throws Exception {
-        UUID active = seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
-        UUID alsoActive = seedLink(TERMINAL, "ACTIVE", null);
+        UUID active = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID alsoActive = seedLink(terminal, "ACTIVE", null);
 
-        block(TERMINAL);
+        block(terminal);
 
         assertThat(statusOf(active)).isEqualTo("SUSPENDED");
         assertThat(statusOf(alsoActive)).isEqualTo("SUSPENDED");
-        assertThat(terminalRepository.findById(TERMINAL).orElseThrow().getStatus())
+        assertThat(terminalRepository.findById(terminal).orElseThrow().getStatus())
                 .isEqualTo(TerminalStatus.BLOCKED);
     }
 
@@ -135,11 +136,11 @@ public class TerminalBlockingIntegrationTest {
     // затирать: разблокировке пришлось бы гадать, чем каждая из них была.
     @Test
     public void blockingTerminal_leavesFinishedLinksAlone() throws Exception {
-        UUID expired = seedLink(TERMINAL, "EXPIRED", Instant.now().minus(1, ChronoUnit.DAYS));
-        UUID completed = seedLink(TERMINAL, "COMPLETED", Instant.now().plus(1, ChronoUnit.DAYS));
-        UUID canceled = seedLink(TERMINAL, "CANCELED", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID expired = seedLink(terminal, "EXPIRED", Instant.now().minus(1, ChronoUnit.DAYS));
+        UUID completed = seedLink(terminal, "COMPLETED", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID canceled = seedLink(terminal, "CANCELED", Instant.now().plus(1, ChronoUnit.DAYS));
 
-        block(TERMINAL);
+        block(terminal);
 
         assertThat(statusOf(expired)).isEqualTo("EXPIRED");
         assertThat(statusOf(completed)).isEqualTo("COMPLETED");
@@ -148,10 +149,10 @@ public class TerminalBlockingIntegrationTest {
 
     @Test
     public void blockingTerminal_leavesAnotherTerminalsLinksAlone() throws Exception {
-        UUID mine = seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
-        UUID neighbours = seedLink(OTHER_TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID mine = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID neighbours = seedLink(otherTerminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
 
-        block(TERMINAL);
+        block(terminal);
 
         assertThat(statusOf(mine)).isEqualTo("SUSPENDED");
         assertThat(statusOf(neighbours)).isEqualTo("ACTIVE");
@@ -161,11 +162,11 @@ public class TerminalBlockingIntegrationTest {
 
     @Test
     public void unblockingTerminal_reactivatesSuspendedLinks() throws Exception {
-        UUID link = seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
-        UUID noDeadline = seedLink(TERMINAL, "ACTIVE", null);
-        block(TERMINAL);
+        UUID link = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID noDeadline = seedLink(terminal, "ACTIVE", null);
+        block(terminal);
 
-        unblock(TERMINAL);
+        unblock(terminal);
 
         assertThat(statusOf(link)).isEqualTo("ACTIVE");
         assertThat(statusOf(noDeadline))
@@ -178,14 +179,14 @@ public class TerminalBlockingIntegrationTest {
     // sweep — а sweep смотрит только на ACTIVE, так что исправить это было бы уже некому.
     @Test
     public void unblockingTerminal_expiresLinksWhoseDeadlinePassedDuringTheBlock() throws Exception {
-        UUID stillGood = seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
-        UUID ranOut = seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
-        block(TERMINAL);
+        UUID stillGood = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID ranOut = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        block(terminal);
         // Срок истекает, пока терминал заблокирован.
         jdbcTemplate.update("UPDATE payment_links SET expires_at = ? WHERE id = ?",
                 utc(Instant.now().minus(1, ChronoUnit.HOURS)), ranOut);
 
-        unblock(TERMINAL);
+        unblock(terminal);
 
         assertThat(statusOf(stillGood)).isEqualTo("ACTIVE");
         assertThat(statusOf(ranOut)).isEqualTo("EXPIRED");
@@ -195,10 +196,10 @@ public class TerminalBlockingIntegrationTest {
 
     @Test
     public void settingTheSameStatus_doesNotTouchLinks() throws Exception {
-        UUID link = seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID link = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
 
         // ACTIVE -> ACTIVE: PATCH, повторяющий объект как есть, вообще не должен быть событием.
-        mockMvc.perform(patch("/api/v1/terminals/" + TERMINAL)
+        mockMvc.perform(patch("/api/v1/terminals/" + terminal)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
@@ -208,13 +209,13 @@ public class TerminalBlockingIntegrationTest {
 
         assertThat(statusOf(link)).isEqualTo("ACTIVE");
 
-        block(TERMINAL);
+        block(terminal);
         assertThat(statusOf(link)).isEqualTo("SUSPENDED");
 
         // BLOCKED -> BLOCKED: то же самое, и в особенности нельзя заново прогонять приостановку по
         // ссылкам, которые с тех пор изменил кто-то другой.
         jdbcTemplate.update("UPDATE payment_links SET status = 'CANCELED' WHERE id = ?", link);
-        mockMvc.perform(patch("/api/v1/terminals/" + TERMINAL)
+        mockMvc.perform(patch("/api/v1/terminals/" + terminal)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
@@ -228,16 +229,16 @@ public class TerminalBlockingIntegrationTest {
     // может остаться заблокированным, пока его ссылки платятся.
     @Test
     public void failureToSuspendLinks_rollsBackTheBlockItself() throws Exception {
-        UUID link = seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID link = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
         doThrow(new DataAccessResourceFailureException("links are unreachable"))
                 .when(paymentLinkStatusRepository).suspendActiveLinks(anyInt());
 
-        assertThatThrownBy(() -> terminalService.updateTerminal(TERMINAL,
+        assertThatThrownBy(() -> terminalService.updateTerminal(terminal,
                 new UpdateTerminalRequest(null, null, null, null, TerminalStatus.BLOCKED),
                 adminPrincipal()))
                 .isInstanceOf(DataAccessResourceFailureException.class);
 
-        assertThat(terminalRepository.findById(TERMINAL).orElseThrow().getStatus())
+        assertThat(terminalRepository.findById(terminal).orElseThrow().getStatus())
                 .as("a terminal must never be blocked while its links stay payable")
                 .isEqualTo(TerminalStatus.ACTIVE);
         assertThat(statusOf(link)).isEqualTo("ACTIVE");
@@ -247,20 +248,20 @@ public class TerminalBlockingIntegrationTest {
 
     @Test
     public void blockingAndUnblocking_areRecordedWithTheLinkCounts() throws Exception {
-        seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
-        seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
         auditLogRepository.deleteAll();
 
-        block(TERMINAL);
+        block(terminal);
 
         AuditLog blocked = auditRecord("BLOCK");
         assertThat(blocked.getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
-        assertThat(blocked.getEntityId()).isEqualTo(String.valueOf(TERMINAL));
+        assertThat(blocked.getEntityId()).isEqualTo(String.valueOf(terminal));
         assertThat(blocked.getDetails())
                 .as("the number of links is the only trace the bulk change happened")
                 .contains("suspended 2 links");
 
-        unblock(TERMINAL);
+        unblock(terminal);
 
         assertThat(auditRecord("UNBLOCK").getDetails()).contains("resumed 2 links", "expired 0 links");
     }
@@ -269,16 +270,16 @@ public class TerminalBlockingIntegrationTest {
 
     @Test
     public void blockingTerminal_asEmployee_isRefusedAndChangesNothing() throws Exception {
-        UUID link = seedLink(TERMINAL, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID link = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
 
-        mockMvc.perform(patch("/api/v1/terminals/" + TERMINAL)
+        mockMvc.perform(patch("/api/v1/terminals/" + terminal)
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new UpdateTerminalRequest(null, null, null, null, TerminalStatus.BLOCKED))))
                 .andExpect(status().isForbidden());
 
-        assertThat(terminalRepository.findById(TERMINAL).orElseThrow().getStatus())
+        assertThat(terminalRepository.findById(terminal).orElseThrow().getStatus())
                 .isEqualTo(TerminalStatus.ACTIVE);
         assertThat(statusOf(link)).isEqualTo("ACTIVE");
     }
@@ -351,15 +352,15 @@ public class TerminalBlockingIntegrationTest {
     // ради которого журнал и заведён.
     @Test
     public void password_isRevealedToASystemAdmin_andRecorded() throws Exception {
-        mockMvc.perform(get("/api/v1/terminals/{id}/password", TERMINAL)
+        mockMvc.perform(get("/api/v1/terminals/{id}/password", terminal)
                         .header(HttpHeaders.AUTHORIZATION, adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id", is(TERMINAL)))
+                .andExpect(jsonPath("$.id", is(terminal)))
                 .andExpect(jsonPath("$.password", is("term_pass")));
 
         List<AuditLog> reads = auditLogRepository.findAll().stream()
                 .filter(record -> "READ".equals(record.getAction())
-                        && String.valueOf(TERMINAL).equals(record.getEntityId()))
+                        && String.valueOf(terminal).equals(record.getEntityId()))
                 .toList();
         assertThat(reads).hasSize(1);
         assertThat(reads.getFirst().getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
@@ -371,7 +372,7 @@ public class TerminalBlockingIntegrationTest {
     // Сотруднику компании пароль не показывают, хотя терминалы своей компании он читает свободно.
     @Test
     public void password_isRefusedToEveryoneElse_andTheAttemptIsRecorded() throws Exception {
-        mockMvc.perform(get("/api/v1/terminals/{id}/password", TERMINAL)
+        mockMvc.perform(get("/api/v1/terminals/{id}/password", terminal)
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
                 .andExpect(status().isForbidden());
 
@@ -387,7 +388,7 @@ public class TerminalBlockingIntegrationTest {
     // заведён именно для того, чтобы списки и карточки ключа не несли.
     @Test
     public void terminalResponse_keepsThePasswordMasked() throws Exception {
-        mockMvc.perform(get("/api/v1/terminals/{id}", TERMINAL)
+        mockMvc.perform(get("/api/v1/terminals/{id}", terminal)
                         .header(HttpHeaders.AUTHORIZATION, adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.password", is("********")));
@@ -400,13 +401,13 @@ public class TerminalBlockingIntegrationTest {
         String headTokenCompany1 = "Bearer " + jwtProvider.generateToken(
                 "111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
 
-        mockMvc.perform(patch("/api/v1/terminals/{id}", TERMINAL)
+        mockMvc.perform(patch("/api/v1/terminals/{id}", terminal)
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"password\":\"stolen-key\"}"))
                 .andExpect(status().isForbidden());
 
-        assertThat(terminalRepository.findById(TERMINAL).orElseThrow().getPassword())
+        assertThat(terminalRepository.findById(terminal).orElseThrow().getPassword())
                 .isEqualTo("term_pass");
     }
 
@@ -416,7 +417,7 @@ public class TerminalBlockingIntegrationTest {
         String headTokenCompany1 = "Bearer " + jwtProvider.generateToken(
                 "111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
 
-        mockMvc.perform(patch("/api/v1/terminals/{id}", TERMINAL)
+        mockMvc.perform(patch("/api/v1/terminals/{id}", terminal)
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Renamed Terminal\"}"))
@@ -437,13 +438,15 @@ public class TerminalBlockingIntegrationTest {
         return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 
-    private void createTerminal(int id, String name) throws Exception {
-        mockMvc.perform(post("/api/v1/terminals")
+    private int createTerminal(String name) throws Exception {
+        String body = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateTerminalRequest(id, name, "term_login", "term_pass", "comp-01", null))))
+                                new CreateTerminalRequest(name, "term_login", "term_pass", "comp-01", null))))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status", is("ACTIVE")));
+                .andExpect(jsonPath("$.status", is("ACTIVE")))
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body).get("id").asInt();
     }
 }

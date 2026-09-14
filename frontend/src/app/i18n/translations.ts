@@ -378,8 +378,6 @@ export interface TranslationDictionary {
     createDialogTitle: string;
     editDialogTitle: string;
     name: string;
-    terminalId: string;
-    terminalIdHint: string;
     /**
      * Выбор терминала провайдера при заведении (Р-67, Р-79): название и логин приходят из справочника,
      * администратор вводит пароль. Справочник видит только SYSTEM_ADMIN (`ecom.md` §3).
@@ -876,8 +874,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       createDialogTitle: 'Create New Terminal',
       editDialogTitle: 'Edit Terminal Details',
       name: 'Terminal Name',
-      terminalId: 'Numeric Terminal ID',
-      terminalIdHint: 'Numeric terminal ID in the acquiring system',
       providerTerminal: 'Provider terminal',
       providerTerminalHint: 'Name and login come from the provider directory; only the password is entered here.',
       providerTerminalEmpty: 'The provider directory is empty. Refresh it — the scheduled update may not have run yet.',
@@ -1340,8 +1336,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       createDialogTitle: 'Yeni Terminal Yarat',
       editDialogTitle: 'Terminal Parametrlərini Redaktə Et',
       name: 'Terminalın Adı',
-      terminalId: 'Reqamli Terminal ID',
-      terminalIdHint: 'Ekvayrinq sistemində terminalın rəqəmli ID-si',
       providerTerminal: 'Provayder terminalı',
       providerTerminalHint: 'Ad və login provayder kataloqundan gəlir; burada yalnız şifrə daxil edilir.',
       providerTerminalEmpty: 'Provayder kataloqu boşdur. Onu yeniləyin — planlı yenilənmə hələ işləməmiş ola bilər.',
@@ -1804,8 +1798,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       createDialogTitle: 'Создать новый терминал',
       editDialogTitle: 'Редактировать параметры терминала',
       name: 'Название терминала',
-      terminalId: 'Цифровой Terminal ID',
-      terminalIdHint: 'Числовой ID терминала в эквайринговой системе',
       providerTerminal: 'Терминал провайдера',
       providerTerminalHint: 'Название и логин берутся из справочника провайдера; здесь вводится только пароль.',
       providerTerminalEmpty: 'Справочник провайдера пуст. Обновите его — плановое обновление могло ещё не пройти.',

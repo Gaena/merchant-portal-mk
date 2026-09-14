@@ -83,7 +83,7 @@ export const TerminalsPage: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editingTerminalId, setEditingTerminalId] = useState<number | null>(null);
-  const [form, setForm] = useState({ id: '', name: '', login: '', password: '', companyId: '' });
+  const [form, setForm] = useState({ name: '', login: '', password: '', companyId: '' });
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -211,7 +211,7 @@ export const TerminalsPage: React.FC = () => {
     fetchCompanies();
     setError('');
     setEditingTerminalId(null);
-    setForm({ id: '', name: '', login: '', password: '', companyId: companies[0]?.id || '' });
+    setForm({ name: '', login: '', password: '', companyId: companies[0]?.id || '' });
     setSelectedProvider(null);
     setSyncResult(null);
     setFormCheck(null);
@@ -226,7 +226,6 @@ export const TerminalsPage: React.FC = () => {
     setError('');
     setEditingTerminalId(term.id);
     setForm({
-      id: String(term.id),
       name: term.name || '',
       login: term.login || '',
       password: '', // blank password unless changing
@@ -240,7 +239,7 @@ export const TerminalsPage: React.FC = () => {
     // по merchantRid и введённые руками игнорирует (TerminalService.createTerminal).
     const fromDirectory = canSeePassword;
     const identityMissing = fromDirectory ? !selectedProvider : !form.name.trim() || !form.login.trim();
-    if (!form.id || identityMissing || !form.password.trim() || !form.companyId) {
+    if (identityMissing || !form.password.trim() || !form.companyId) {
       setError('All fields including Company selection are required');
       return;
     }
@@ -248,13 +247,11 @@ export const TerminalsPage: React.FC = () => {
     try {
       const payload = fromDirectory
         ? {
-            id: Number(form.id),
             password: form.password.trim(),
             companyId: form.companyId,
             merchantRid: selectedProvider?.rid,
           }
         : {
-            id: Number(form.id),
             name: form.name.trim(),
             login: form.login.trim(),
             password: form.password.trim(),
@@ -265,7 +262,7 @@ export const TerminalsPage: React.FC = () => {
       // новый терминал может принадлежать другой странице.
       fetchTerminals();
       setCreateOpen(false);
-      setForm({ id: '', name: '', login: '', password: '', companyId: companies[0]?.id || '' });
+      setForm({ name: '', login: '', password: '', companyId: companies[0]?.id || '' });
       setSnackbar('Acquiring terminal registered successfully');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to create terminal');
@@ -294,6 +291,10 @@ export const TerminalsPage: React.FC = () => {
       setChecking(null);
     }
   };
+
+  // Терминал в заголовках окон подписан логином, как везде (Р-59): номер терминала на экране не
+  // показывается — его выдаёт база и знать его пользователю незачем (Р-81).
+  const editingLogin = terminals.find(t => t.id === editingTerminalId)?.login ?? '';
 
   // Логин, который уйдёт в проверку и в терминал: у администратора — из выбранной строки справочника.
   const formLogin = (canSeePassword ? selectedProvider?.login ?? '' : form.login).trim();
@@ -352,7 +353,7 @@ export const TerminalsPage: React.FC = () => {
       setTerminals(prev => prev.map(t => (t.id === editingTerminalId ? res.data : t)));
       setEditOpen(false);
       setEditingTerminalId(null);
-      setForm({ id: '', name: '', login: '', password: '', companyId: companies[0]?.id || '' });
+      setForm({ name: '', login: '', password: '', companyId: companies[0]?.id || '' });
       setSnackbar('Acquiring terminal updated successfully');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to update terminal');
@@ -496,7 +497,6 @@ export const TerminalsPage: React.FC = () => {
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.login}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.password}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.name}</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.terminalId}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.company}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.status}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
@@ -541,7 +541,6 @@ export const TerminalsPage: React.FC = () => {
                     </Box>
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{term.name}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>#{term.id}</TableCell>
                   <TableCell>
                     <Chip
                       icon={<BusinessIcon fontSize="small" />}
@@ -637,7 +636,7 @@ export const TerminalsPage: React.FC = () => {
         maxWidth="xs"
         title={<>
           {statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockAction : tObj.terminals.unblockAction}
-          {' #'}{statusChange?.terminal.id}
+          {' '}{statusChange?.terminal.login}
         </>}
         question={statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockExplains : tObj.terminals.unblockExplains}
         confirmLabel={statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockAction : tObj.terminals.unblockAction}
@@ -675,15 +674,6 @@ export const TerminalsPage: React.FC = () => {
               ))}
             </TextField>
 
-            <TextField
-              label={`${tObj.terminals.terminalId} *`}
-              type="number"
-              value={form.id}
-              onChange={e => setForm(f => ({ ...f, id: e.target.value }))}
-              placeholder="e.g. 1"
-              fullWidth
-              helperText={tObj.terminals.terminalIdHint}
-            />
             {canSeePassword ? (
               <Box>
                 {/* Название и логин — от провайдера (Р-67): выбирается строка справочника, руками
@@ -805,7 +795,7 @@ export const TerminalsPage: React.FC = () => {
 
       {/* Edit Terminal Dialog */}
       <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.editDialogTitle} #{editingTerminalId}</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.editDialogTitle} {editingLogin}</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{error}</Alert>}
           <Stack spacing={2.5} sx={{ mt: 1 }}>
@@ -862,7 +852,7 @@ export const TerminalsPage: React.FC = () => {
       {/* Confirm Edit Dialog */}
       <ConfirmDialog
         open={editConfirm !== null}
-        title={<>{tObj.terminals.editConfirmTitle} #{editingTerminalId}</>}
+        title={<>{tObj.terminals.editConfirmTitle} {editingLogin}</>}
         question={tObj.terminals.editConfirmQuestion}
         confirmLabel={tObj.common.confirm}
         confirmColor="primary"

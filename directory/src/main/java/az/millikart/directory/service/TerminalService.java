@@ -45,6 +45,9 @@ public class TerminalService {
     private static final Set<Role> TERMINAL_WRITE_ROLES =
             EnumSet.of(Role.SYSTEM_ADMIN, Role.COMPANY_HEAD, Role.COMPANY_MANAGER);
 
+    // entityId отказа в заведении: номер терминалу выдаётся только при сохранении (Р-81).
+    private static final String NEW_TERMINAL = "NEW";
+
     private final TerminalRepository terminalRepository;
     private final CompanyRepository companyRepository;
     private final PaymentLinkStatusRepository paymentLinkStatusRepository;
@@ -70,19 +73,15 @@ public class TerminalService {
     public TerminalResponse createTerminal(CreateTerminalRequest request, UserPrincipal principal) {
         String actorUsername = UserPrincipal.getUsername(principal);
 
-        log.info("Request to create terminal: id={}, name={}, companyId={} by actor: {}",
-                request.id(), request.name(), request.companyId(), actorUsername);
+        log.info("Request to create terminal: name={}, merchantRid={}, companyId={} by actor: {}",
+                request.name(), request.merchantRid(), request.companyId(), actorUsername);
 
         validateWriteAccessToCompany(request.companyId(), principal,
-                String.valueOf(request.id()), AuditAction.CREATE,
-                "create terminal " + request.id() + " for company " + request.companyId());
+                NEW_TERMINAL, AuditAction.CREATE,
+                "create a terminal for company " + request.companyId());
 
         if (!companyRepository.existsById(request.companyId())) {
             throw new BusinessException("Company with ID '" + request.companyId() + "' not found");
-        }
-
-        if (terminalRepository.existsById(request.id())) {
-            throw new BusinessException("Terminal with ID " + request.id() + " already exists");
         }
 
         // Название и логин берутся у провайдера, когда указан его терминал: он их хозяин, и
@@ -108,8 +107,9 @@ public class TerminalService {
             throw new BusinessException("Terminal name and login are required unless merchantRid is given");
         }
 
+        // Номер берётся последним, когда все проверки пройдены: отказ не должен тратить номера.
         Terminal terminal = Terminal.builder()
-                .id(request.id())
+                .id(Math.toIntExact(terminalRepository.nextId()))
                 .name(name)
                 .login(login)
                 .password(request.password())

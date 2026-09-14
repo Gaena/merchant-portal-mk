@@ -78,11 +78,14 @@
 
 -   `POST /api/v1/terminals` — Создать терминал.  
     *Доступ*: `SYSTEM_ADMIN` (для любой компании), `COMPANY_HEAD`/`COMPANY_MANAGER` (только для своей компании).  
-    *Запрос*: `{"id": 998877, "name": "Main Terminal", "login": "term_login", "password": "term_password", "companyId": "comp-01", "merchantRid": null}`  
+    *Запрос*: `{"name": "Main Terminal", "login": "term_login", "password": "term_password", "companyId": "comp-01", "merchantRid": null}`  
+    **Номер терминала выдаёт база** (с 14.09.2026, Р-81): `id` в запросе не нужен, а присланный
+    игнорируется; номер приходит в ответе. На живой базе нумерация продолжается после наибольшего
+    существующего номера.  
     `merchantRid` необязателен (с 12.09.2026, Р-67). Если он передан, `name` и `login` из запроса
     игнорируются и берутся из справочника терминалов провайдера — администратор вводит только
     пароль. Без `merchantRid` обязательны `name` и `login`.  
-    *Отказы (`400`)*: компании нет; терминал с таким `id` уже есть; `merchantRid` уже привязан к
+    *Отказы (`400`)*: компании нет; `merchantRid` уже привязан к
     другому терминалу (`Provider terminal … is already linked to terminal …`); `merchantRid` нет в
     справочнике (`… is not in the synchronised list`); нет `merchantRid` и пустые `name` или `login`.
 -   `GET /api/v1/terminals` — Список терминалов. **Постранично с 22.08.2026 (P2-1)**.  

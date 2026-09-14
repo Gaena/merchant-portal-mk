@@ -327,6 +327,7 @@ changeset'ы не редактируются.
 | `directory` | `004-audit-log-ip-and-indexes.xml` | `client_ip`, `outcome` и три индекса журнала |
 | `directory` | `005-terminal-status.xml` | `terminals.status` |
 | `directory` | `006-terminal-status-source.xml` | `terminals.status_source` (по умолчанию `MANUAL`), `terminals.merchant_rid`, уникальный индекс `uk_terminals_merchant_rid` |
+| `directory` | `007-terminal-id-sequence.xml` | последовательность `terminals_id_seq` — номера терминалов выдаёт база, продолжая после наибольшего существующего |
 | `pbl` | `001-initial-schema.xml` | `payment_links`, `transactions`; `terminals`, если ещё нет |
 | `pbl` | `002-add-indexes.xml` | индексы ссылок и транзакций |
 | `pbl` | `003-add-client-ip-and-user-agent.xml` | `transactions.client_ip`, `user_agent` |

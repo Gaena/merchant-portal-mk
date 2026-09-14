@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Номер терминала выдаёт база (Р-81): вводить его при заведении больше не нужно — терминал
+      опознаётся логином и терминалом провайдера. Сам номер остаётся ключом: на него ссылаются
+      платёжные ссылки, адреса API и журнал аудита.
+
+      На живой базе терминалы уже есть, поэтому последовательность продолжает с наибольшего номера,
+      а не с единицы: иначе первое же заведение упало бы на занятом ключе. Значение по умолчанию у
+      колонки — для записи мимо сервиса; сам сервис берёт номер явно (TerminalRepository.nextId).
+    -->
+    <changeSet id="7-directory-terminal-id-sequence" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="terminals"/>
+            <not>
+                <sequenceExists sequenceName="terminals_id_seq"/>
+            </not>
+        </preConditions>
+        <createSequence sequenceName="terminals_id_seq" startValue="1" incrementBy="1"/>
+        <sql dbms="postgresql">
+            SELECT setval('terminals_id_seq', COALESCE((SELECT MAX(id) FROM terminals), 0) + 1, false)
+        </sql>
+        <addDefaultValue tableName="terminals" columnName="id" defaultValueSequenceNext="terminals_id_seq"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -186,6 +186,20 @@
 			"item": [
 				{
 					"name": "Create Terminal",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Номер терминала выдаёт база (Р-81): запоминаем его для запросов с {{terminalId}}.",
+									"if (pm.response.code === 201) {",
+									"    pm.collectionVariables.set('terminalId', pm.response.json().id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [
@@ -200,7 +214,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"id\": 998877,\n  \"name\": \"Main Terminal 1\",\n  \"login\": \"term_login_01\",\n  \"password\": \"term_pass_01\",\n  \"companyId\": \"comp-01\"\n}",
+							"raw": "{\n  \"name\": \"Main Terminal 1\",\n  \"login\": \"term_login_01\",\n  \"password\": \"term_pass_01\",\n  \"companyId\": \"comp-01\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"

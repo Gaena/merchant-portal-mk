@@ -41,4 +41,9 @@ public interface TerminalRepository extends JpaRepository<Terminal, Integer> {
 
     /** Один терминал провайдера — одна наша компания: связь проверяется перед заведением. */
     Optional<Terminal> findByMerchantRid(String merchantRid);
+
+    // Номер нового терминала — из последовательности базы (Р-81, 007-terminal-id-sequence.xml).
+    // Явно, а не @GeneratedValue: сущность с заданным номером по-прежнему сохраняется как есть.
+    @Query(value = "SELECT nextval('terminals_id_seq')", nativeQuery = true)
+    long nextId();
 }

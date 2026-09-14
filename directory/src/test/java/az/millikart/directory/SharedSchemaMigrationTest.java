@@ -207,6 +207,38 @@ public class SharedSchemaMigrationTest {
         }
     }
 
+    // Р-81: номер терминала выдаёт последовательность. На живой базе терминалы уже есть, и она
+    // обязана продолжить с наибольшего номера — иначе первое же заведение упадёт на занятом ключе.
+    @Test
+    @DisplayName("existing terminals: numbering continues after the largest id")
+    void existingTerminals_numberingContinuesAfterTheLargestId() throws Exception {
+        execute("""
+                CREATE TABLE terminals (
+                    id integer NOT NULL,
+                    name varchar(255) NOT NULL,
+                    login varchar(255) NOT NULL,
+                    password varchar(255) NOT NULL,
+                    company_id varchar(255),
+                    CONSTRAINT pk_terminals PRIMARY KEY (id)
+                )""");
+        execute("INSERT INTO terminals (id, name, login, password) VALUES (3, 'A', 'a', 'p'), (41, 'B', 'b', 'p')");
+
+        runDirectoryChangelog();
+
+        try (Statement statement = keepAlive.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT nextval('terminals_id_seq')")) {
+            assertTrue(rs.next());
+            org.junit.jupiter.api.Assertions.assertEquals(42L, rs.getLong(1));
+        }
+        // Запись мимо сервиса тоже получает номер из той же последовательности.
+        execute("INSERT INTO terminals (name, login, password) VALUES ('C', 'c', 'p')");
+        try (Statement statement = keepAlive.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT id FROM terminals WHERE name = 'C'")) {
+            assertTrue(rs.next());
+            org.junit.jupiter.api.Assertions.assertEquals(43, rs.getInt(1));
+        }
+    }
+
     // --- вспомогательное ---
 
     private void runDirectoryChangelog() throws Exception {
