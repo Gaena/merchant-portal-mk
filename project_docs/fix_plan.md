@@ -4584,6 +4584,39 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
 
 ---
 
+### 15.09.2026 — скоуп выписки `ecom` по логинам терминалов (Р-83)
+
+- **Пришёл запрос выписки** со скоупом по логинам: `tr.merchantid in (select l.merchantid from login l
+  where l.ownerkind = 'TerminalSys' and l.login in (...))` и `m.id = tr.merchantid` в join. От портала он
+  отличался этими двумя местами; окно `sysdate - 100`, `join login`, `join token` без подзапроса, отсутствие
+  фильтра Р-71 и страниц портал по-прежнему не переносит (Р-71, Р-74). По выбору пользователя взяты
+  только скоуп и `m.id = tr.merchantid`.
+- **Как устроено.** `EcomScopeService.scopeFor` отдаёт `EcomScope`: логины терминалов скоупа (префикс
+  `TerminalSys/` Basic-логина снимается, пустые и повторы отбрасываются) и их `merchant_rid`. Все три
+  запроса `TxpgTransactionRepository` несут `loginScope()` и `m.id = tr.merchantid`; `merchantRids`
+  фильтра — `m.rid in (:merchant_rids)` только в выборе заказов периода и только когда фильтр задан.
+  `EcomTransactionFilter` — `logins` плюс необязательные `merchantRids`. Сущность `Terminal` в `ecom`
+  читает `login`, `TerminalRepository` — `findByCompanyId` вместо двух запросов по `merchant_rid`.
+- **Что меняется для пользователя.** Терминал, заведённый вручную без `merchant_rid`, теперь даёт
+  выписку по логину, но в фильтре `/terminals` его нет. API и фронтенд не менялись. Выписка доверяет
+  логину терминала — ограничение записано в `AGENTS.md` §10.
+- **Проверено на локальном `oracle-free`** (схема `TXPG` по SQL провайдера, выгрузка BazarStore) временным
+  тестом, после проверки удалённым: новый репозиторий под `MP_ECOM` и старый из `HEAD` дали одинаковые
+  строки страницы и итогов (372), собранные заказы совпали, с фильтром по терминалу — тоже (128). Неизвестный
+  логин и `merchantRid` мерчанта вне скоупа логинов дают пусто, карточка заказа чужого мерчанта — пусто. Сравнение шло на
+  задвоенных данных (в `TRAN` были копии операций BazarStore с `id` 900001–900188); после их удаления
+  выписка по двум логинам — 112 заказов, 186 операций, списано 2 199 AZN, возвращено 258 AZN, `SUCCESS`
+  47, `PARTIALLY_PAID` 12, `FAILED` 23, `CANCELED` 16, `PARTIALLY_REFUNDED` 7, `REFUNDED` 7 — ровно
+  итоги выгрузки из записей Р-77 и Р-78.
+- Тесты `ecom`: 81 → 87 — новый `EcomScopeServiceTest` (компания, администратор и аудитор, префикс
+  `TerminalSys/`, роль без компании), скоуп по логинам и сужение фильтром в
+  `TxpgTransactionRepositoryTest`, терминал без `merchant_rid` в `EcomTransactionScopeTest`.
+  `./gradlew test` — 753 запуска, все зелёные.
+- Документы: `decisions.md` (Р-83), `ecom.md` §2.1, §2.4, §2.6, `AGENTS.md` §10,
+  `application_description.md` §6 и §8.
+
+---
+
 ## Описания закрытых задач
 
 > Перенесено из `AGENTS.md` §10 («Закрытые блокеры» и записи, попавшие в «Тонкости») 13.09.2026

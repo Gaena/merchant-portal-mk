@@ -24,6 +24,7 @@ import az.millikart.ecom.dto.EcomTransactionResponse;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.repository.TxpgStatementRow;
 import az.millikart.ecom.repository.TxpgTransactionRepository;
+import az.millikart.ecom.service.EcomScope;
 import az.millikart.ecom.service.EcomScopeService;
 import az.millikart.ecom.service.EcomTransactionService;
 import az.millikart.ecom.service.TxpgRows;
@@ -40,13 +41,15 @@ import org.mockito.Mockito;
 
 // Скоуп и предохранители выписки. SQL здесь не проверяется — для него TxpgTransactionRepositoryTest.
 // Проверяется то, что решается на нашей стороне и ценой ошибки имеет чужие обороты на экране:
-// мерчанты скоупа уходят в каждый запрос, фильтр их не расширяет, период обязателен и ограничен.
+// логины скоупа уходят в каждый запрос, фильтр по терминалу его не расширяет, период обязателен и ограничен.
 class EcomTransactionScopeTest {
 
     private TxpgTransactionRepository repository;
     private EcomScopeService scope;
     private ProviderTerminalRepository providerTerminals;
     private EcomTransactionService service;
+
+    private static final EcomScope SCOPE = new EcomScope(List.of("BS00001"), List.of("E1120020"));
 
     private final Instant from = Instant.parse("2026-09-01T00:00:00Z");
     private final Instant to = Instant.parse("2026-09-02T00:00:00Z");
@@ -68,7 +71,7 @@ class EcomTransactionScopeTest {
     // ветка — «нет терминалов, значит фильтра нет» — это ровно то, как выглядит показ чужих оборотов.
     @Test
     void withoutLinkedTerminals_theStatementIsEmptyAndTheGatewayIsNotQueried() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of());
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
 
         CursorPage<EcomTransactionResponse> page =
                 service.list(from, to, null, null, null, null, null, null, principal);
@@ -80,7 +83,7 @@ class EcomTransactionScopeTest {
 
     @Test
     void withoutLinkedTerminals_anOrderIsNotFoundRatherThanEmpty() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of());
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
 
         Assertions.assertThrows(ResourceNotFoundException.class, () -> service.order("175515", principal));
         verifyNoInteractions(repository);
@@ -88,7 +91,7 @@ class EcomTransactionScopeTest {
 
     @Test
     void withoutLinkedTerminals_statsAreZeroAndTheGatewayIsNotQueried() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of());
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
 
         EcomStatsResponse stats = service.stats(from, to, null, principal);
 
@@ -96,35 +99,51 @@ class EcomTransactionScopeTest {
         verifyNoInteractions(repository);
     }
 
-    // Мерчанты скоупа уходят и в выбор страницы, и в чтение её операций.
+    // Логины скоупа уходят и в выбор страницы, и в чтение её операций; без фильтра сужения по мерчанту нет.
     @Test
-    void theLinkedMerchantsAreHandedToEveryQuery() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020", "1234567"));
+    void theLoginsOfTheScopeAreHandedToEveryQuery() {
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(
+                List.of("BS00001", "BS00002"), List.of("E1120020", "1234567")));
         when(repository.findOrderIds(any(), any(), anyInt())).thenReturn(List.of(175533L));
 
         service.list(from, to, null, null, null, null, null, null, principal);
 
         ArgumentCaptor<EcomTransactionFilter> filter = ArgumentCaptor.forClass(EcomTransactionFilter.class);
         verify(repository).findOrderIds(filter.capture(), isNull(), eq(26));
-        Assertions.assertEquals(List.of("E1120020", "1234567"), filter.getValue().merchantRids());
-        verify(repository).findRows(List.of(175533L), List.of("E1120020", "1234567"), from);
+        Assertions.assertEquals(List.of("BS00001", "BS00002"), filter.getValue().logins());
+        Assertions.assertNull(filter.getValue().merchantRids());
+        verify(repository).findRows(List.of(175533L), List.of("BS00001", "BS00002"), from);
+    }
+
+    // Терминал, заведённый без терминала провайдера, в выписке виден: скоуп идёт по логину.
+    @Test
+    void aTerminalWithoutAProviderLink_stillHasAStatement() {
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("BS00001"), List.of()));
+
+        service.list(from, to, null, null, null, null, null, null, principal);
+        service.stats(from, to, null, principal);
+
+        verify(repository).findOrderIds(any(), isNull(), anyInt());
+        verify(repository).streamPeriodRows(any(), any());
     }
 
     // Фильтр по терминалу сужает скоуп и никогда его не расширяет: чужой мерчант из запроса выпадает.
     @Test
     void aForeignMerchantInTheFilterIsDropped() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020", "1234567"));
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(
+                List.of("BS00001", "BS00002"), List.of("E1120020", "1234567")));
 
         service.list(from, to, List.of("1234567", "FOREIGN"), null, null, null, null, null, principal);
 
         ArgumentCaptor<EcomTransactionFilter> filter = ArgumentCaptor.forClass(EcomTransactionFilter.class);
         verify(repository).findOrderIds(filter.capture(), isNull(), anyInt());
         Assertions.assertEquals(List.of("1234567"), filter.getValue().merchantRids());
+        Assertions.assertEquals(List.of("BS00001", "BS00002"), filter.getValue().logins());
     }
 
     @Test
     void aFilterOfOnlyForeignMerchants_givesAnEmptyStatementWithoutAQuery() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("BS00001"), List.of("E1120020")));
 
         CursorPage<EcomTransactionResponse> page =
                 service.list(from, to, List.of("FOREIGN"), null, null, null, null, null, principal);
@@ -135,7 +154,7 @@ class EcomTransactionScopeTest {
 
     @Test
     void aPeriodIsRequired() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
 
         Assertions.assertThrows(BusinessException.class,
                 () -> service.list(null, to, null, null, null, null, null, null, principal));
@@ -145,7 +164,7 @@ class EcomTransactionScopeTest {
 
     @Test
     void anInvertedPeriodIsRefused() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
 
         Assertions.assertThrows(BusinessException.class,
                 () -> service.list(to, from, null, null, null, null, null, null, principal));
@@ -155,7 +174,7 @@ class EcomTransactionScopeTest {
     // момент проводит авторизации.
     @Test
     void aPeriodLongerThanTheCeilingIsRefused() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
         Instant farAway = from.plus(400, ChronoUnit.DAYS);
 
         Assertions.assertThrows(BusinessException.class,
@@ -165,7 +184,7 @@ class EcomTransactionScopeTest {
 
     @Test
     void thePageSizeIsClampedToTheCeiling() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
 
         service.list(from, to, null, null, null, null, null, 100_000, principal);
 
@@ -176,7 +195,7 @@ class EcomTransactionScopeTest {
     // Лишний номер не загружается и не отдаётся, а становится курсором следующей страницы.
     @Test
     void theExtraOrderIsNotLoaded_andBecomesTheNextCursor() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
         when(repository.findOrderIds(any(), any(), anyInt())).thenReturn(List.of(175662L, 175661L, 175605L));
         when(repository.findRows(any(), any(), any())).thenReturn(rowsOf("175662", "175661"));
 
@@ -190,7 +209,7 @@ class EcomTransactionScopeTest {
 
     @Test
     void theLastPageCarriesNoCursor() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
         when(repository.findOrderIds(any(), any(), anyInt())).thenReturn(List.of(175662L, 175661L));
         when(repository.findRows(any(), any(), any())).thenReturn(rowsOf("175662", "175661"));
 
@@ -204,7 +223,7 @@ class EcomTransactionScopeTest {
     // Курсор прошлой страницы читается обратно в номер её последнего заказа.
     @Test
     void theCursorRoundTripsBackIntoAPosition() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
         when(repository.findOrderIds(any(), any(), anyInt())).thenReturn(List.of(175662L, 175661L, 175605L));
 
         String cursor = service.list(from, to, null, null, null, null, null, 2, principal).nextCursor();
@@ -219,7 +238,7 @@ class EcomTransactionScopeTest {
     // Битый курсор — это 400 клиенту, а не 500 у нас.
     @Test
     void anUnreadableCursorIsARequestError() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
 
         for (String cursor : List.of("not-a-cursor", "!!!")) {
             Assertions.assertThrows(BusinessException.class,
@@ -230,19 +249,19 @@ class EcomTransactionScopeTest {
 
     @Test
     void theOrderCardIsReadWithinTheScope_andWithoutAPeriod() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
         when(repository.findRows(any(), any(), any())).thenReturn(rowsOf("175533"));
 
         EcomTransactionResponse order = service.order("175533", principal);
 
         Assertions.assertEquals("175533", order.orderId());
-        verify(repository).findRows(List.of(175533L), List.of("E1120020"), null);
+        verify(repository).findRows(List.of(175533L), List.of("BS00001"), null);
     }
 
     // Номер заказа у провайдера — число: всё прочее в адресе не существует, и в шлюз за ним не ходим.
     @Test
     void aNonNumericOrderIdIsNotFound_andTheGatewayIsNotQueried() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
 
         for (String orderId : List.of("abc", "-1", "0", "1 or 1=1", "12345678901234567890")) {
             Assertions.assertThrows(ResourceNotFoundException.class, () -> service.order(orderId, principal), orderId);
@@ -253,7 +272,7 @@ class EcomTransactionScopeTest {
     // Чужой, несуществующий и незавершённый заказ для запроса неотличимы — всё это пустой ответ шлюза.
     @Test
     void anOrderTheGatewayDoesNotReturnIsNotFound() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
         when(repository.findRows(any(), any(), any())).thenReturn(List.of());
 
         Assertions.assertThrows(ResourceNotFoundException.class, () -> service.order("175700", principal));
@@ -261,7 +280,7 @@ class EcomTransactionScopeTest {
 
     @Test
     void statsFoldTheWholeStreamOfThePeriod() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("E1120020"));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
         doAnswer(invocation -> {
             Consumer<TxpgStatementRow> sink = invocation.getArgument(1);
             TxpgRows.testStandExport().forEach(sink);
@@ -278,7 +297,7 @@ class EcomTransactionScopeTest {
     // с пустым названием: иначе по нему нельзя было бы отфильтровать собственные платежи.
     @Test
     void terminalsForTheFilterComeFromTheScope() {
-        when(scope.merchantRidsFor(principal)).thenReturn(List.of("M-2", "M-1"));
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("BS00002", "shop_login"), List.of("M-2", "M-1")));
         when(providerTerminals.findAllById(List.of("M-2", "M-1"))).thenReturn(List.of(
                 ProviderTerminal.builder().rid("M-2").title("Bazar").login("BS00002").build()));
 
