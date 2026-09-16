@@ -32,7 +32,7 @@ final class EcomStatsAccumulator implements Consumer<TxpgStatementRow> {
 
     @Override
     public void accept(TxpgStatementRow row) {
-        if (!currentOrder.isEmpty() && !currentOrder.get(0).orderId().equals(row.orderId())) {
+        if (!currentOrder.isEmpty() && !currentOrder.getFirst().orderId().equals(row.orderId())) {
             closeOrder();
         }
         currentOrder.add(row);
@@ -53,7 +53,7 @@ final class EcomStatsAccumulator implements Consumer<TxpgStatementRow> {
             return;
         }
         OrderMoney money = EcomOrderAssembler.money(currentOrder);
-        String currency = currentOrder.get(0).orderCurrency();
+        String currency = currentOrder.getFirst().orderCurrency();
         orderCount++;
         statusCounts.merge(money.status().name(), 1L, Long::sum);
         capturedByCurrency.merge(currency, money.captured(), BigDecimal::add);

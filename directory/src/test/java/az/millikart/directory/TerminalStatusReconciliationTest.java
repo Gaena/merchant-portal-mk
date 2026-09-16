@@ -101,6 +101,34 @@ class TerminalStatusReconciliationTest {
         verify(links).expireSuspendedLinks(anyInt(), any());
     }
 
+    // Логин и название принадлежат провайдеру (Р-67): смена у него доходит до нашего терминала, и
+    // логин пишется Basic-логином шлюза, с префиксом TerminalSys/.
+    @Test
+    void aProviderLoginChangeReachesOurTerminal() {
+        Terminal ours = terminal(TerminalStatus.ACTIVE, TerminalStatusSource.MANUAL, "E1120020");
+        when(snapshot.activityByRid()).thenReturn(Map.of("E1120020", true));
+        when(snapshot.rowsByRid()).thenReturn(Map.of("E1120020",
+                new ProviderTerminalStatusRepository.ProviderTerminalRow("E1120020", "Shop LLC", "BS00005", true)));
+        when(terminals.findAll()).thenReturn(List.of(ours));
+
+        service.reconcile();
+
+        Assertions.assertEquals("TerminalSys/BS00005", ours.getLogin());
+        Assertions.assertEquals("Shop LLC", ours.getName());
+        Assertions.assertEquals(TerminalStatus.ACTIVE, ours.getStatus());
+        verify(terminals).save(ours);
+    }
+
+    @Test
+    void theGatewayLoginCarriesTheOwnerPrefixExactlyOnce() {
+        Assertions.assertEquals("TerminalSys/BS00002",
+                new ProviderTerminalStatusRepository.ProviderTerminalRow("r", "t", "BS00002", true).gatewayLogin());
+        Assertions.assertEquals("TerminalSys/BS00002",
+                new ProviderTerminalStatusRepository.ProviderTerminalRow("r", "t", "TerminalSys/BS00002", true).gatewayLogin());
+        Assertions.assertNull(
+                new ProviderTerminalStatusRepository.ProviderTerminalRow("r", "t", " ", true).gatewayLogin());
+    }
+
     // Терминал, выключенный человеком, не включает никто: это решение клиента, и то, что
     // у провайдера всё в порядке, его не отменяет.
     @Test

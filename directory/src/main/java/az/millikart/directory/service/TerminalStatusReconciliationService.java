@@ -80,6 +80,8 @@ public class TerminalStatusReconciliationService {
             return new ReconcileOutcome(0, 0, 0);
         }
 
+        Map<String, ProviderTerminalStatusRepository.ProviderTerminalRow> identity = snapshot.rowsByRid();
+
         int blocked = 0;
         int unblocked = 0;
         int untouched = 0;
@@ -89,6 +91,10 @@ public class TerminalStatusReconciliationService {
             if (rid == null || rid.isBlank()) {
                 untouched++;
                 continue;
+            }
+            ProviderTerminalStatusRepository.ProviderTerminalRow row = identity.get(rid);
+            if (row != null) {
+                alignIdentity(terminal, row);
             }
             Boolean activeAtProvider = activity.get(rid);
             if (activeAtProvider == null) {
@@ -117,6 +123,34 @@ public class TerminalStatusReconciliationService {
                     blocked, unblocked, untouched);
         }
         return new ReconcileOutcome(blocked, unblocked, untouched);
+    }
+
+    // Логин и название привязанного терминала принадлежат провайдеру (Р-67): смена у него должна
+    // дойти до terminals. Иначе pbl ходит в шлюз со старым логином, выписка ecom ищет платежи по
+    // нему же, а терминал остаётся ACTIVE без всякого сигнала.
+    private void alignIdentity(Terminal terminal, ProviderTerminalStatusRepository.ProviderTerminalRow row) {
+        String login = row.gatewayLogin();
+        String title = row.title() != null && !row.title().isBlank() ? row.title() : null;
+        boolean loginChanged = login != null && !login.equals(terminal.getLogin());
+        boolean titleChanged = title != null && !title.equals(terminal.getName());
+        if (!loginChanged && !titleChanged) {
+            return;
+        }
+        String details = "Provider terminal " + row.rid() + " changed for terminal " + terminal.getId() + ":"
+                + (loginChanged ? " login " + terminal.getLogin() + " -> " + login : "")
+                + (titleChanged ? " name " + terminal.getName() + " -> " + title : "");
+        if (loginChanged) {
+            terminal.setLogin(login);
+        }
+        if (titleChanged) {
+            terminal.setName(title);
+        }
+        terminal.setUpdatedBy(SYSTEM_ACTOR);
+        terminalRepository.save(terminal);
+        log.info(details);
+
+        auditLogService.recordSuccess(AuditEvent.of(AuditEntity.TERMINAL, String.valueOf(terminal.getId()),
+                AuditAction.UPDATE, SYSTEM_ACTOR, terminal.getCompanyId(), details));
     }
 
     /**

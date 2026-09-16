@@ -694,11 +694,15 @@ resilience4j:
         failureRateThreshold: 50
         waitDurationInOpenState: 10000ms
         permittedNumberOfCallsInHalfOpenState: 3
+        ignoreExceptions:
+          - az.millikart.pbl.provider.AcquirerDeclinedException
   retry:
     instances:
       acquiring:
         maxAttempts: 3
         waitDuration: 500ms
+        ignoreExceptions:
+          - az.millikart.pbl.provider.AcquirerDeclinedException
 
 logging:
   level:

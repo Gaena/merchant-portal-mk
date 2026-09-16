@@ -10,8 +10,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 // Пишущая половина журнала, одна на три сервиса (Р-41). Успех: сервис публикует AuditEvent, и
 // AuditLogWriter пишет его после коммита — действия, которого не было, в журнале не будет. Отказ и
-// операция с неизвестным исходом пишутся синхронно здесь: их транзакция откатится, и AFTER_COMMIT
-// уже не сработает (Р-35). Чтобы записать действие, сервису достаточно опубликовать событие.
+// неизвестный исход пишутся здесь, в своей транзакции: их транзакция откатится (Р-35). Внутри
+// HTTP-запроса запись ждёт его конца (AuditOutbox), чтобы не брать второе соединение из пула.
 @Service
 public class AuditLogService {
 
@@ -44,10 +44,10 @@ public class AuditLogService {
     }
 
     // Исключения намеренно не ловятся: их репортит AuditLogWriter, а операция к этому моменту
-    // уже закоммичена, и ломаться нечему.
+    // уже закоммичена, и ломаться нечему. Отложенную до конца запроса запись репортит она сама.
     public void recordSuccess(AuditEvent event) {
         warnIfOutsideDictionary(event.entityType(), event.action());
-        ownTransaction.executeWithoutResult(status -> auditLogRepository.save(AuditLog.builder()
+        AuditLog record = AuditLog.builder()
                 .entityType(clip(event.entityType(), ENTITY_TYPE_MAX))
                 .entityId(clip(event.entityId(), ID_MAX))
                 .action(clip(event.action(), ACTION_MAX))
@@ -56,7 +56,11 @@ public class AuditLogService {
                 .details(clip(event.details(), DETAILS_MAX))
                 .clientIp(event.clientIp())
                 .outcome(AuditOutcome.SUCCESS)
-                .build()));
+                .build();
+        if (AuditOutbox.defer(() -> writeReporting(record, "audit record"))) {
+            return;
+        }
+        ownTransaction.executeWithoutResult(status -> auditLogRepository.save(record));
     }
 
     // Вызывать прямо перед throw. companyId — компания АКТОРА, никогда не названная в запросе:
@@ -66,21 +70,19 @@ public class AuditLogService {
     public void logDenied(String entityType, String entityId, String action,
                           String performedBy, String companyId, String details) {
         warnIfOutsideDictionary(entityType, action);
-        try {
-            ownTransaction.executeWithoutResult(status -> auditLogRepository.save(AuditLog.builder()
-                    .entityType(clip(entityType, ENTITY_TYPE_MAX))
-                    .entityId(clip(entityId, ID_MAX))
-                    .action(clip(action, ACTION_MAX))
-                    .performedBy(clip(performedBy != null ? performedBy : "system", ID_MAX))
-                    .companyId(clip(companyId, ID_MAX))
-                    .details(clip(details, DETAILS_MAX))
-                    .clientIp(ClientIpHolder.get())
-                    .outcome(AuditOutcome.DENIED)
-                    .build()));
-        } catch (Exception e) {
-            log.error("{}: denial record lost for {} {} {} by {}: {}",
-                    AUDIT_WRITE_FAILED_MARKER, action, entityType, entityId, performedBy,
-                    e.getMessage(), e);
+        AuditLog record = AuditLog.builder()
+                .entityType(clip(entityType, ENTITY_TYPE_MAX))
+                .entityId(clip(entityId, ID_MAX))
+                .action(clip(action, ACTION_MAX))
+                .performedBy(clip(performedBy != null ? performedBy : "system", ID_MAX))
+                .companyId(clip(companyId, ID_MAX))
+                .details(clip(details, DETAILS_MAX))
+                .clientIp(ClientIpHolder.get())
+                .outcome(AuditOutcome.DENIED)
+                .build();
+        Runnable write = () -> writeReporting(record, "denial record");
+        if (!AuditOutbox.defer(write)) {
+            write.run();
         }
     }
 
@@ -91,21 +93,30 @@ public class AuditLogService {
     public void logUnresolved(String entityType, String entityId, String action,
                               String performedBy, String companyId, String details) {
         warnIfOutsideDictionary(entityType, action);
+        AuditLog record = AuditLog.builder()
+                .entityType(clip(entityType, ENTITY_TYPE_MAX))
+                .entityId(clip(entityId, ID_MAX))
+                .action(clip(action, ACTION_MAX))
+                .performedBy(clip(performedBy != null ? performedBy : "system", ID_MAX))
+                .companyId(clip(companyId, ID_MAX))
+                .details(clip(details, DETAILS_MAX))
+                .clientIp(ClientIpHolder.get())
+                .outcome(AuditOutcome.UNRESOLVED)
+                .build();
+        Runnable write = () -> writeReporting(record, "record");
+        if (!AuditOutbox.defer(write)) {
+            write.run();
+        }
+    }
+
+    // Запись в своей транзакции; ошибка не пробрасывается, а уходит в лог с маркером.
+    private void writeReporting(AuditLog record, String what) {
         try {
-            ownTransaction.executeWithoutResult(status -> auditLogRepository.save(AuditLog.builder()
-                    .entityType(clip(entityType, ENTITY_TYPE_MAX))
-                    .entityId(clip(entityId, ID_MAX))
-                    .action(clip(action, ACTION_MAX))
-                    .performedBy(clip(performedBy != null ? performedBy : "system", ID_MAX))
-                    .companyId(clip(companyId, ID_MAX))
-                    .details(clip(details, DETAILS_MAX))
-                    .clientIp(ClientIpHolder.get())
-                    .outcome(AuditOutcome.UNRESOLVED)
-                    .build()));
+            ownTransaction.executeWithoutResult(status -> auditLogRepository.save(record));
         } catch (Exception e) {
-            log.error("{}: record lost for {} {} {} by {}: {}",
-                    AUDIT_WRITE_FAILED_MARKER, action, entityType, entityId, performedBy,
-                    e.getMessage(), e);
+            log.error("{}: {} lost for {} {} {} by {}: {}",
+                    AUDIT_WRITE_FAILED_MARKER, what, record.getAction(), record.getEntityType(),
+                    record.getEntityId(), record.getPerformedBy(), e.getMessage(), e);
         }
     }
 

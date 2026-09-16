@@ -13,6 +13,7 @@ import io.github.resilience4j.retry.annotation.Retry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
@@ -108,8 +109,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
             return response;
         } catch (HttpStatusCodeException e) {
             log.error("PROVIDER RESP [createEcomOrder] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
-            String desc = extractErrorDescription(e.getResponseBodyAsString());
-            throw new BusinessException("Acquirer error: " + desc);
+            throw acquirerError(e);
         } catch (Exception e) {
             log.error("PROVIDER REQ [createEcomOrder] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
             throw new BusinessException("Acquirer connection failed: " + e.getMessage());
@@ -246,8 +246,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
             throw e;
         } catch (HttpStatusCodeException e) {
             log.error("PROVIDER RESP [getOrderStatus] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
-            String desc = extractErrorDescription(e.getResponseBodyAsString());
-            throw new BusinessException("Acquirer error: " + desc);
+            throw acquirerError(e);
         } catch (Exception e) {
             log.error("PROVIDER REQ [getOrderStatus] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
             throw new BusinessException("Order status check failed: " + e.getMessage());
@@ -306,6 +305,9 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .body(Map.class);
             return classifyCheck(login, body);
         } catch (HttpStatusCodeException e) {
+            if (e.getStatusCode() == HttpStatus.INTERNAL_SERVER_ERROR) {
+                return classifyCheck(login, parseBody(e.getResponseBodyAsString()));
+            }
             if (e.getStatusCode().is5xxServerError()) {
                 log.warn("PROVIDER RESP [checkTerminalCredentials] <- HTTP {} for Login: {}", e.getStatusCode(), login);
                 return TerminalCheckResult.unreachable("Acquirer answered HTTP " + e.getStatusCode().value());
@@ -419,7 +421,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
             if (httpError.getStatusCode().is4xxClientError()) {
                 log.error("PROVIDER RESP [{}] <- REJECTED for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
                         action, providerOrderId, httpError.getStatusCode(), httpError.getResponseBodyAsString(), httpError);
-                return new BusinessException("Acquirer error: " + desc);
+                return new AcquirerDeclinedException("Acquirer error: " + desc);
             }
             // 5xx: шлюз принял запрос и упал уже где-то за ним.
             log.error("PROVIDER RESP [{}] <- OUTCOME UNKNOWN for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
@@ -448,8 +450,16 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     ? String.valueOf(response.get("errorDescription"))
                     : errorCode;
             log.error("PROVIDER RESP [{}] <- REJECTED BY MILLIKART. ErrorCode: {}, Description: {}", action, errorCode, errorDesc);
-            throw new BusinessException("Acquirer error: " + errorDesc);
+            throw new AcquirerDeclinedException("Acquirer error: " + errorDesc);
         }
+    }
+
+    // 4xx — шлюз отказал (AcquirerDeclinedException, breaker его не считает), 5xx — сбой шлюза.
+    private BusinessException acquirerError(HttpStatusCodeException e) {
+        String message = "Acquirer error: " + extractErrorDescription(e.getResponseBodyAsString());
+        return e.getStatusCode().is4xxClientError()
+                ? new AcquirerDeclinedException(message)
+                : new BusinessException(message);
     }
 
     private String extractErrorDescription(String body) {

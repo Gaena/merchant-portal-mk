@@ -96,8 +96,8 @@ public class ProviderTerminalSyncService {
                         .firstSeenAt(now)
                         .build();
             }
-            // Логин и название всегда берутся у провайдера: он их хозяин. Сменил логин — сменился
-            // и у нас, иначе терминал однажды перестанет ходить в шлюз.
+            // Логин и название всегда берутся у провайдера: он их хозяин. В terminals смену переносит
+            // сверка directory (Р-67), иначе терминал однажды перестанет ходить в шлюз.
             terminal.setTitle(row.title());
             terminal.setLogin(row.login());
             terminal.setActive(true);

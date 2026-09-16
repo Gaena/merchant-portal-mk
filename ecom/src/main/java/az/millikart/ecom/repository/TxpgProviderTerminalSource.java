@@ -15,10 +15,6 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class TxpgProviderTerminalSource implements ProviderTerminalSource {
 
-    // Процессинг и префикс TID из запроса провайдера: терминалы других PMO и TID порталу не принадлежат.
-    static final String PMO_RID = "70";
-    static final String TID_PATTERN = "PBY%";
-
     private final NamedParameterJdbcTemplate jdbc;
     private final TxpgProperties properties;
 
@@ -41,17 +37,12 @@ public class TxpgProviderTerminalSource implements ProviderTerminalSource {
                   join %1$s.terminal    t  on t.id = l.terminalid
                   join %1$s.terminalpmo tp on tp.terminalid = t.id
                   join %1$s.merchant    m  on m.id = t.merchantid
-                 where tp.pmorid = :pmo_rid
-                   and tp.tid like :tid_pattern
-                   and l.status = 'Active'
+                 where l.status = 'Active'
                    and t.status = 'Active'
                  order by m.rid, l.login
                 """.formatted(properties.getSchema());
-        MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("pmo_rid", PMO_RID)
-                .addValue("tid_pattern", TID_PATTERN);
 
-        return jdbc.query(sql, params, (rs, rowNum) -> new ProviderTerminalRow(
+        return jdbc.query(sql, new MapSqlParameterSource() , (rs, rowNum) -> new ProviderTerminalRow(
                 rs.getString("rid"),
                 rs.getString("title"),
                 rs.getString("login")

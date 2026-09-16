@@ -374,6 +374,13 @@ Retrieves a paginated list of links. Automatic company boundaries are enforced f
     no longer register two orders at the acquirer. An `AUTHORIZED` transaction — money held on the
     card — is never marked `FAILED` on reopen and occupies a usage slot, because there is no Void
     operation to release the hold with.
+-   **Note (16.09.2026):** a previous `PENDING` attempt is no longer marked `FAILED` blindly on
+    reopen — its order stays payable at the acquirer for about ten minutes, and a payment made on the
+    old page was lost. The acquirer is asked first: a paid attempt takes its usage slot (a single-use
+    link then refuses), an unpaid one stays `PENDING` for reconciliation. When the slots are taken by
+    a hold, the latest hold is re-checked too: an authorization the bank released without a capture
+    (`Closed` after `Authorized`, no positive `clearAmount` in `order.trans[]`) becomes `FAILED` and
+    frees its slot. The link lock is taken with `NOWAIT`: a concurrent open gets `409` at once.
 -   **Response:** `302 Found` (Redirects to provider HPP), `403 Forbidden` (link is
     EXPIRED/CANCELED/COMPLETED/SUSPENDED, its terminal is blocked, already paid, or held by an
     authorized payment awaiting capture),
@@ -745,6 +752,9 @@ Standard HTTP status codes are used:
 -   `403 Forbidden`: Access denied or resource in invalid state for action.
 -   `404 Not Found`: The requested resource does not exist.
 -   `409 Conflict`: Request conflict (e.g., duplicate Idempotency-Key with different parameters).
+    Since 16.09.2026 also when the payment link is locked by a concurrent request (an open, a
+    capture or a refund on the same link): the lock is taken with `NOWAIT` before the acquirer is
+    called, so nothing was sent and a retry is safe.
 -   `500 Internal Server Error`: Unexpected server-side error.
 -   `502 Bad Gateway`: **the outcome of a money movement is unknown.** Returned by
     `POST /transactions/{id}/complete` and `POST /transactions/{id}/refund` when the acquirer did

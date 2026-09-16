@@ -61,7 +61,6 @@ public final class EcomOrderAssembler {
                         captured = captured.subtract(cleared.abs());
                     }
                 }
-                // У возврата сумма с минусом (стенд, 175195); модуль — по той же причине.
                 case REFUND -> refunded = refunded.add(cleared.abs());
                 // Отрицательное списание без voidkind по контракту (§5.8.8) — возврат или реверсал.
                 case CAPTURE, PURCHASE -> {
@@ -78,7 +77,7 @@ public final class EcomOrderAssembler {
             }
         }
 
-        TxpgStatementRow head = orderRows.get(0);
+        TxpgStatementRow head = orderRows.getFirst();
         if (captured.signum() < 0) {
             log.warn("Order {} has more reversed than captured ({}); reading it as nothing captured, "
                     + "the operation dictionary needs checking", head.orderId(), captured);
@@ -95,8 +94,8 @@ public final class EcomOrderAssembler {
 
     private static EcomTransactionResponse toOrder(List<TxpgStatementRow> rows) {
         List<TxpgStatementRow> history = rows.stream().sorted(BY_TIME).toList();
-        TxpgStatementRow head = history.get(0);
-        TxpgStatementRow last = history.get(history.size() - 1);
+        TxpgStatementRow head = history.getFirst();
+        TxpgStatementRow last = history.getLast();
         OrderMoney money = money(history);
         boolean anyApproved = history.stream().anyMatch(row -> APPROVED.equals(row.resultCode()));
 

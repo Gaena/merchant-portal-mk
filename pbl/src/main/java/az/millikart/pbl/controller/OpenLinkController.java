@@ -10,6 +10,7 @@ import java.net.URI;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
@@ -61,7 +62,15 @@ public class OpenLinkController {
     public String redirectPage(@PathVariable("tx") String tx, Model model) {
         PaymentReceiptView receipt = null;
         try {
-            receipt = paymentLinkService.refreshByRidByMerchant(UUID.fromString(tx)).orElse(null);
+            UUID ridByMerchant = UUID.fromString(tx);
+            try {
+                receipt = paymentLinkService.refreshByRidByMerchant(ridByMerchant).orElse(null);
+            } catch (OptimisticLockingFailureException e) {
+                // Одновременно вернулся другой плательщик той же ссылки, и его коммит поднял версию
+                // ссылки. Конфликт всплывает на коммите, мимо catch сервиса: один повтор вместо JSON 409.
+                log.info("Return page refresh for a payment raced with another update of its link; retrying once");
+                receipt = paymentLinkService.refreshByRidByMerchant(ridByMerchant).orElse(null);
+            }
         } catch (IllegalArgumentException e) {
             log.warn("Payment return page requested with a malformed transaction reference");
         }

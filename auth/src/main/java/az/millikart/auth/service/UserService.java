@@ -17,7 +17,10 @@ import az.millikart.common.search.SearchTerms;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -40,6 +43,11 @@ public class UserService {
 
     private static final String STATUS_ACTIVE = "ACTIVE";
     private static final String STATUS_DELETED = "DELETED";
+
+    // Руководитель выдаёт и правит только роли ниже своей (auth.md §4.2). AUDITOR и SYSTEM_ADMIN
+    // глобальны: выдать такую роль или сменить пароль такой учётке с его companyId значило бы
+    // получить данные всех компаний или права администратора.
+    private static final Set<Role> HEAD_MANAGED_ROLES = EnumSet.of(Role.COMPANY_MANAGER, Role.COMPANY_EMPLOYEE);
 
     private final UserRepository userRepository;
     private final CompanyRepository companyRepository;
@@ -70,11 +78,12 @@ public class UserService {
 
         String cleanEmail = request.username() != null ? request.username().trim().toLowerCase() : "";
 
-        log.info("Request to create user: username={}, role={}, companyId={} by actor: {}", 
+        log.info("Request to create user: username={}, role={}, companyId={} by actor: {}",
                 cleanEmail, request.role(), request.companyId(), actorUsername);
 
+        requireActiveActor(principal, AuditAction.CREATE, cleanEmail);
         // Enforce RBAC
-        validateCreatePermission(request, actorRole, actorCompanyId);
+        validateCreatePermission(request, principal);
 
         // Check uniqueness
         if (userRepository.findByUsername(cleanEmail).isPresent()) {
@@ -173,7 +182,8 @@ public class UserService {
             throw new BusinessException("User not found");
         }
 
-        validateAccess(user, actorRole, actorCompanyId);
+        requireActiveActor(principal, AuditAction.UPDATE, id.toString());
+        validateWriteAccess(user, principal, AuditAction.UPDATE);
 
         // Поля перечисляются поимённо: «пользователь обновлён» бесполезно, а смена роли или
         // компании — смена прав, и запись обязана сказать, с чего на что (P2-14). Пароль
@@ -192,12 +202,15 @@ public class UserService {
             passwordChanged = true;
         }
         if (request.role() != null) {
-            // Cannot assign SYSTEM_ADMIN unless SYSTEM_ADMIN
-            if (Role.fromValue(request.role()).orElse(null) == Role.SYSTEM_ADMIN && actorRole != Role.SYSTEM_ADMIN) {
+            // Не администратор выдаёт только роли ниже руководителя; неизменённая роль — не выдача.
+            boolean grantable = actorRole == Role.SYSTEM_ADMIN
+                    || request.role().equals(user.getRole())
+                    || HEAD_MANAGED_ROLES.contains(Role.fromValue(request.role()).orElse(null));
+            if (!grantable) {
                 auditLogService.logDenied(AuditEntity.USER, id.toString(), AuditAction.UPDATE, actorUsername, actorCompanyId,
                         "Denied: role " + UserPrincipal.getRawRole(principal)
                                 + " attempted to grant role " + request.role() + " to user " + id);
-                throw new InvalidStateException("Cannot assign administrative role");
+                throw new InvalidStateException("Cannot assign this role");
             }
             if (!request.role().equals(user.getRole())) {
                 changes.add("role " + user.getRole() + " -> " + request.role());
@@ -249,12 +262,11 @@ public class UserService {
 
     @Transactional
     public void deleteUser(UUID id, UserPrincipal principal) {
-        Role actorRole = UserPrincipal.getRole(principal);
-        String actorCompanyId = UserPrincipal.getCompanyId(principal);
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("User not found"));
 
-        validateAccess(user, actorRole, actorCompanyId);
+        requireActiveActor(principal, AuditAction.DELETE, id.toString());
+        validateWriteAccess(user, principal, AuditAction.DELETE);
 
         user.setStatus(STATUS_DELETED);
         userRepository.save(user);
@@ -269,7 +281,9 @@ public class UserService {
                 user.getId(), UserPrincipal.getUsername(principal), revoked);
     }
 
-    private void validateCreatePermission(CreateUserRequest request, Role actorRole, String actorCompanyId) {
+    private void validateCreatePermission(CreateUserRequest request, UserPrincipal principal) {
+        Role actorRole = UserPrincipal.getRole(principal);
+        String actorCompanyId = UserPrincipal.getCompanyId(principal);
         if (actorRole == Role.SYSTEM_ADMIN) {
             return;
         }
@@ -277,12 +291,57 @@ public class UserService {
             if (request.companyId() == null || !request.companyId().equals(actorCompanyId)) {
                 throw new InvalidStateException("Cannot create user for another company");
             }
-            if (Role.fromValue(request.role()).orElse(null) == Role.SYSTEM_ADMIN) {
-                throw new InvalidStateException("Cannot assign system admin role");
+            if (!HEAD_MANAGED_ROLES.contains(Role.fromValue(request.role()).orElse(null))) {
+                auditLogService.logDenied(AuditEntity.USER, request.username(), AuditAction.CREATE,
+                        UserPrincipal.getUsername(principal), actorCompanyId,
+                        "Denied: role " + UserPrincipal.getRawRole(principal)
+                                + " attempted to create a user with role " + request.role());
+                throw new InvalidStateException("Cannot assign this role");
             }
             return;
         }
         throw new InvalidStateException("Access denied");
+    }
+
+    // Правка и удаление: руководитель трогает в своей компании только роли ниже своей и себя самого.
+    private void validateWriteAccess(User targetUser, UserPrincipal principal, String action) {
+        Role actorRole = UserPrincipal.getRole(principal);
+        validateAccess(targetUser, actorRole, UserPrincipal.getCompanyId(principal));
+        if (actorRole == Role.COMPANY_HEAD
+                && !targetUser.getId().toString().equals(UserPrincipal.getUserId(principal))
+                && !HEAD_MANAGED_ROLES.contains(Role.fromValue(targetUser.getRole()).orElse(null))) {
+            auditLogService.logDenied(AuditEntity.USER, targetUser.getId().toString(), action,
+                    UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                    "Denied: role " + UserPrincipal.getRawRole(principal) + " attempted " + action
+                            + " of user " + targetUser.getId() + " with role " + targetUser.getRole());
+            throw new InvalidStateException("Access denied");
+        }
+    }
+
+    // Access-токен живёт до 15 минут после блокировки или удаления (auth.md §4.1.2): без сверки с
+    // базой заблокированный руководитель или админ за это время снял бы блокировку с себя или завёл
+    // бы себе новую учётку. Строки нет только у статического токена интеграции и в синтетических тестах.
+    private void requireActiveActor(UserPrincipal principal, String action, String entityId) {
+        User actor = parseUuid(UserPrincipal.getUserId(principal))
+                .flatMap(userRepository::findById)
+                .orElse(null);
+        if (actor != null && !STATUS_ACTIVE.equals(actor.getStatus())) {
+            auditLogService.logDenied(AuditEntity.USER, entityId, action,
+                    UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                    "Denied: actor account is " + actor.getStatus());
+            throw new InvalidStateException("Access denied");
+        }
+    }
+
+    private static Optional<UUID> parseUuid(String value) {
+        if (value == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(UUID.fromString(value));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
     }
 
     private void validateAccess(User targetUser, Role actorRole, String actorCompanyId) {

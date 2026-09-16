@@ -48,9 +48,9 @@ public class OpenLinkService {
         SLOT_OCCUPYING_STATUSES = Collections.unmodifiableSet(statuses);
     }
 
-    // Гасить при переоткрытии можно только PENDING: за любым другим незавершённым состоянием стоят
-    // деньги на карте плательщика.
-    private static final List<TransactionStatus> RETIRABLE_STATUSES = List.of(TransactionStatus.PENDING);
+    // Прошлая попытка, которую переоткрытие сверяет с эквайером. Гасить её вслепую нельзя: заказ у
+    // эквайера живёт ещё ~10 минут (Р-71), а FAILED никто не опрашивает — оплата бы потерялась.
+    private static final List<TransactionStatus> UNSETTLED_ATTEMPT_STATUSES = List.of(TransactionStatus.PENDING);
 
     // Отдельный отказ для ссылки, занятой холдом: «использована» и «ждёт списания» — разные
     // ситуации для мерчанта, и один текст на оба их скрывал.
@@ -60,17 +60,20 @@ public class OpenLinkService {
     private final PaymentLinkRepository paymentLinkRepository;
     private final TransactionRepository transactionRepository;
     private final TerminalRepository terminalRepository;
+    private final PaymentLinkService paymentLinkService;
     private final String baseUrl;
 
     public OpenLinkService(AcquiringClient acquiringClient,
                            PaymentLinkRepository paymentLinkRepository,
                            TransactionRepository transactionRepository,
                            TerminalRepository terminalRepository,
+                           PaymentLinkService paymentLinkService,
                            @Value("${pbl.base-url}") String baseUrl) {
         this.acquiringClient = acquiringClient;
         this.paymentLinkRepository = paymentLinkRepository;
         this.transactionRepository = transactionRepository;
         this.terminalRepository = terminalRepository;
+        this.paymentLinkService = paymentLinkService;
         this.baseUrl = baseUrl;
     }
 
@@ -121,8 +124,29 @@ public class OpenLinkService {
             throw new InvalidStateException("Payment link has expired");
         }
 
+        // Прошлая PENDING-попытка сверяется с эквайером до подсчёта слотов: оплаченная по старой
+        // странице обязана занять слот, а не погаснуть. Неоплаченная остаётся PENDING — её закроет
+        // сверка, когда заказ у эквайера истечёт.
+        Optional<Transaction> previousAttempt = transactionRepository
+                .findFirstByLinkIdAndStatusInOrderByCreatedAtDesc(id, UNSETTLED_ATTEMPT_STATUSES);
+        if (previousAttempt.isPresent()) {
+            Transaction attempt = previousAttempt.get();
+            // Создана после начала этого запроса, то есть пока он ждал блокировку: это второй клик
+            // по той же ссылке, а не брошенная сессия. Ещё один заказ оставил бы плательщику два
+            // живых заказа на одной ссылке.
+            if (attempt.getCreatedAt() != null && attempt.getCreatedAt().isAfter(openedAt)) {
+                log.warn("Refusing a duplicate open of link {}: attempt {} was registered while this request waited for the link lock",
+                        id, attempt.getId());
+                throw new ConflictException("A payment session for this link is already being opened");
+            }
+            refreshAtAcquirer(attempt, id);
+        }
+
         // Живая авторизация идёт в лимит наравне с прошедшими платежами (P1-6).
         long occupiedSlots = transactionRepository.countByLinkIdAndStatusIn(id, SLOT_OCCUPYING_STATUSES);
+        if (slotsTaken(link, occupiedSlots) && holdReleasedAtAcquirer(id)) {
+            occupiedSlots = transactionRepository.countByLinkIdAndStatusIn(id, SLOT_OCCUPYING_STATUSES);
+        }
 
         // Состоявшиеся платежи (возвращённые в том числе, Р-49) отличаются от живых холдов только
         // ради выбора текста отказа.
@@ -145,28 +169,6 @@ public class OpenLinkService {
             log.warn("Payment link {} has {} of {} slots taken, {} of them by payments awaiting capture",
                     id, occupiedSlots, link.getMaxPayments(), occupiedSlots - paidPayments);
             throw new InvalidStateException(HOLD_BLOCKED_MESSAGE);
-        }
-
-        // Гасим прошлую незавершённую попытку: эквайер выдаёт одну сессию на заказ. Только PENDING
-        // (P1-6) — пометка AUTHORIZED как FAILED у эквайера не меняла ничего: холд оставался, деньги
-        // держателя были заморожены, а портал считал платёж неуспешным, и мерчант не мог ни списать
-        // его, ни отменить. Снять холд мы тоже не умеем (Void в AcquiringClient нет) — AGENTS.md §10.
-        Optional<Transaction> previousAttempt = transactionRepository
-                .findFirstByLinkIdAndStatusInOrderByCreatedAtDesc(id, RETIRABLE_STATUSES);
-
-        if (previousAttempt.isPresent()) {
-            Transaction attempt = previousAttempt.get();
-            // Создана после начала этого запроса, то есть пока он ждал блокировку: это второй клик
-            // по той же ссылке, а не брошенная сессия. Погасить её и зарегистрировать ещё один заказ
-            // значило бы оставить плательщику два живых заказа на одной ссылке.
-            if (attempt.getCreatedAt() != null && attempt.getCreatedAt().isAfter(openedAt)) {
-                log.warn("Refusing a duplicate open of link {}: attempt {} was registered while this request waited for the link lock",
-                        id, attempt.getId());
-                throw new ConflictException("A payment session for this link is already being opened");
-            }
-            log.info("Found uncompleted transaction {} for link {}. Marking as FAILED to issue a fresh Millikart session.", attempt.getId(), id);
-            attempt.setStatus(TransactionStatus.FAILED);
-            transactionRepository.save(attempt);
         }
 
         UUID ridByMerchant = UUID.randomUUID();
@@ -211,6 +213,34 @@ public class OpenLinkService {
         // Пароль остаётся в редиректе плательщика — он и открывает платёжную страницу (§5.3). Отсюда
         // и дальше этот адрес не логировать: контроллер пишет его через ProviderPayloads.urlForLog.
         return response.order().hppUrl() + "?id=" + response.order().id() + "&password=" + response.order().password();
+    }
+
+    private static boolean slotsTaken(PaymentLink link, long occupiedSlots) {
+        return (link.getUsageType() == UsageType.SINGLE && occupiedSlots > 0)
+                || (link.getUsageType() == UsageType.MULTIPLE && link.getMaxPayments() != null
+                        && occupiedSlots >= link.getMaxPayments());
+    }
+
+    // Слоты заняты, а последний холд мог давно снять банк (Closed ← Authorized, Р-75): спросить
+    // эквайера дешевле, чем навсегда отказывать ссылке. true — холд больше не AUTHORIZED.
+    private boolean holdReleasedAtAcquirer(UUID linkId) {
+        return transactionRepository
+                .findFirstByLinkIdAndStatusInOrderByCreatedAtDesc(linkId, List.of(TransactionStatus.AUTHORIZED))
+                .map(hold -> refreshAtAcquirer(hold, linkId) != TransactionStatus.AUTHORIZED)
+                .orElse(false);
+    }
+
+    // Сбой опроса не мешает открытию: попытка остаётся в прежнем статусе, её дожмут сверка и /status.
+    private TransactionStatus refreshAtAcquirer(Transaction attempt, UUID linkId) {
+        try {
+            TransactionStatus status = paymentLinkService.refreshStatus(attempt).transaction().getStatus();
+            log.info("Attempt {} of link {} is {} at the acquirer", attempt.getId(), linkId, status);
+            return status;
+        } catch (RuntimeException e) {
+            log.warn("Could not refresh attempt {} of link {} at the acquirer: {}; leaving it {}",
+                    attempt.getId(), linkId, e.getMessage(), attempt.getStatus());
+            return attempt.getStatus();
+        }
     }
 
     // Блокировка строки здесь и сериализует одновременные открытия одной ссылки: всё, что делает

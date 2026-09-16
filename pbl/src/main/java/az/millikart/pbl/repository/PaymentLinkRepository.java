@@ -20,12 +20,12 @@ import org.springframework.data.jpa.repository.Modifying;
 @Repository
 public interface PaymentLinkRepository extends JpaRepository<PaymentLink, UUID> {
 
-    // SELECT ... FOR UPDATE: сериализует всё, что делают со ссылкой, до коммита; вызывать только
-    // внутри транзакции. Этим открывает OpenLinkService.openAndBuildRedirect (P1-5) — раньше два
-    // одновременных открытия одноразовой ссылки проходили проверку «ещё не оплачена» вместе, и её
-    // можно было оплатить дважды. Таймаут 10 с равен read timeout эквайера (RestTemplateConfig).
+    // SELECT ... FOR UPDATE NOWAIT: сериализует открытие и денежные операции ссылки (P1-5), вызывать
+    // только внутри транзакции. NOWAIT, а не таймаут: таймаута ожидания Hibernate на PostgreSQL не
+    // рисует, и очередь за блокировкой держала бы соединения пула, пока держатель ходит к эквайеру.
+    // Занятая ссылка — сразу 409 (GlobalExceptionHandler, PessimisticLockingFailureException).
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "10000"))
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "0"))
     Optional<PaymentLink> findWithLockById(UUID id);
 
     @Query("""
