@@ -38,10 +38,13 @@ public class EcomTransactionController {
             @RequestParam(required = false) BigDecimal minAmount,
             @RequestParam(required = false) BigDecimal maxAmount,
             @RequestParam(required = false) String query,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String paymentType,
             @RequestParam(required = false) String cursor,
             @RequestParam(required = false) Integer size,
             @AuthenticationPrincipal UserPrincipal principal) {
-        return service.list(dateFrom, dateTo, merchantRids, minAmount, maxAmount, query, cursor, size, principal);
+        return service.list(dateFrom, dateTo, merchantRids, minAmount, maxAmount, query, status, paymentType,
+                cursor, size, principal);
     }
 
     @GetMapping("/stats")
@@ -49,8 +52,9 @@ public class EcomTransactionController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant dateFrom,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant dateTo,
             @RequestParam(required = false) List<String> merchantRids,
+            @RequestParam(required = false) String paymentType,
             @AuthenticationPrincipal UserPrincipal principal) {
-        return service.stats(dateFrom, dateTo, merchantRids, principal);
+        return service.stats(dateFrom, dateTo, merchantRids, paymentType, principal);
     }
 
     @GetMapping("/terminals")

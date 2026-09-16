@@ -742,6 +742,8 @@ ecom:
     # Предохранители отчётных запросов: они идут по боевой базе платежей.
     max-window: ${ECOM_TXPG_MAX_WINDOW:P92D}
     max-page-size: ${ECOM_TXPG_MAX_PAGE_SIZE:200}
+    # Сколько заказов страница выписки с фильтром по статусу просматривает за один запрос (Р-87).
+    status-scan-limit: ${ECOM_TXPG_STATUS_SCAN_LIMIT:1000}
     query-timeout: ${ECOM_TXPG_QUERY_TIMEOUT:PT30S}
     fetch-size: ${ECOM_TXPG_FETCH_SIZE:200}
     # Часовой пояс дат в базе шлюза: они хранятся местным временем без пояса. Ошибка сдвигает

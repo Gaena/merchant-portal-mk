@@ -1,7 +1,7 @@
 import type { TransactionStatus } from '../types/transaction';
 import type { LinkStatus } from '../utils/payByLinkData';
 import type { TerminalStatus } from '../types/dto';
-import type { EcomOperationKind, EcomStatus } from '../types/ecom';
+import type { EcomOperationKind, EcomStatus, EcomPaymentType } from '../types/ecom';
 
 export type Language = 'en' | 'az' | 'ru';
 
@@ -358,6 +358,16 @@ export interface TranslationDictionary {
     loadFailed: string;
     empty: string;
     exportLoaded: string;
+    /** Фильтры статуса и типа оплаты (Р-87). Статус сервер отбирает после сборки заказа, с потолком просмотра. */
+    statusFilter: string;
+    allStatuses: string;
+    paymentTypeFilter: string;
+    allPaymentTypes: string;
+    paymentTypes: Record<EcomPaymentType, string>;
+    /** Потолок просмотра дошёл, а совпадений в просмотренной части нет: дальше — «показать ещё». */
+    noMatchesYet: string;
+    /** Подсказка к чипам итогов: клик ставит статус в фильтр. */
+    statusChipHint: string;
     stats: {
       orders: string;
       captured: string;
@@ -897,6 +907,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       loadFailed: 'Could not load the statement.',
       empty: 'No orders for the selected period and filters.',
       exportLoaded: 'Export loaded rows',
+      statusFilter: 'Status',
+      allStatuses: 'All statuses',
+      paymentTypeFilter: 'Payment type',
+      allPaymentTypes: 'All types',
+      paymentTypes: { SMS: 'SMS (single message)', DMS: 'DMS (hold and capture)' },
+      noMatchesYet: 'No orders with this status among the orders checked so far. Load more to keep looking.',
+      statusChipHint: 'Show only this status',
       stats: {
         orders: 'Orders',
         captured: 'Captured',
@@ -1411,6 +1428,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       loadFailed: 'Çıxarışı yükləmək mümkün olmadı.',
       empty: 'Seçilmiş dövr və filtrlər üzrə sifariş yoxdur.',
       exportLoaded: 'Yüklənənləri ixrac et',
+      statusFilter: 'Status',
+      allStatuses: 'Bütün statuslar',
+      paymentTypeFilter: 'Ödəniş növü',
+      allPaymentTypes: 'Bütün növlər',
+      paymentTypes: { SMS: 'SMS (tək mesaj)', DMS: 'DMS (bloklama və silinmə)' },
+      noMatchesYet: 'Yoxlanılmış sifarişlər arasında bu statusda sifariş yoxdur. Axtarışı davam etdirmək üçün daha çox yükləyin.',
+      statusChipHint: 'Yalnız bu statusu göstər',
       stats: {
         orders: 'Sifarişlər',
         captured: 'Silinib',
@@ -1925,6 +1949,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       loadFailed: 'Не удалось загрузить выписку.',
       empty: 'За выбранный период и с этими фильтрами заказов нет.',
       exportLoaded: 'Выгрузить загруженные',
+      statusFilter: 'Статус',
+      allStatuses: 'Все статусы',
+      paymentTypeFilter: 'Тип оплаты',
+      allPaymentTypes: 'Все типы',
+      paymentTypes: { SMS: 'SMS (одним сообщением)', DMS: 'DMS (холд и списание)' },
+      noMatchesYet: 'Среди просмотренных заказов с этим статусом нет. Нажмите «показать ещё», чтобы искать дальше.',
+      statusChipHint: 'Показать только этот статус',
       stats: {
         orders: 'Заказов',
         captured: 'Списано',

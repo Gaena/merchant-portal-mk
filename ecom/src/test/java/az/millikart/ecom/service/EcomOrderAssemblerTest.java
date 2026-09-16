@@ -49,6 +49,49 @@ class EcomOrderAssemblerTest {
         Assertions.assertEquals(order.operations().get(1).at(), order.lastOperationAt());
     }
 
+    // Р-86: на контуре из test.env DMS пишется своими типами — Authorization/Auth и Capture/Charge
+    // (заказ 1003, лог ecom 16.09.2026). Типы и фазы — оттуда; статус заказа и суммы условные: строк
+    // заказа целиком не было. До правила обе операции были UNKNOWN, заказ выходил PENDING и 0 списано.
+    @Test
+    void dmsPaymentWrittenAsAuthorizationAndCapture_isReadLikeAuthAndClearing() {
+        EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(
+                order("1003", "FullyPaid", "Authorized", "22",
+                        op("Authorization", "Auth", null, "Approved", "22", "0"),
+                        op("Capture", "Charge", null, "Approved", "22", "22"))));
+
+        Assertions.assertEquals("SUCCESS", order.status());
+        Assertions.assertEquals(0, new BigDecimal("22").compareTo(order.capturedAmount()));
+        Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(order.refundedAmount()));
+        Assertions.assertEquals(List.of("AUTHORIZATION", "CAPTURE"),
+                order.operations().stream().map(EcomOperationResponse::kind).toList());
+    }
+
+    // Холд в новом словаре, который провайдер ещё не списал, читается так же, как Purchase/Auth.
+    @Test
+    void holdWrittenAsAuthorization_theMerchantCanStillCapture_isAuthorized() {
+        EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(
+                order("1004", "Authorized", "Preparing", "15",
+                        op("Authorization", "Auth", null, "Approved", "15", "0"))));
+
+        Assertions.assertEquals("AUTHORIZED", order.status());
+        Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(order.capturedAmount()));
+    }
+
+    // Пустая фаза у операции с типом нового словаря — не списание и не холд, а UNKNOWN. Раньше здесь
+    // стоял row.phase().equals(...), и одна такая строка роняла NullPointerException всю выписку.
+    @Test
+    void operationWithoutPhase_isUnknown_andDoesNotBreakTheStatement() {
+        EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(
+                order("1005", "FullyPaid", "Authorized", "10",
+                        op("Capture", null, null, "Approved", "10", "10"),
+                        op("Authorization", null, null, "Approved", "10", "0"))));
+
+        Assertions.assertEquals(List.of("UNKNOWN", "UNKNOWN"),
+                order.operations().stream().map(EcomOperationResponse::kind).toList());
+        Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(order.capturedAmount()));
+        Assertions.assertEquals("PENDING", order.status());
+    }
+
     @Test
     void singleMessagePayment_isSuccess() {
         EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(

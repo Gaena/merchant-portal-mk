@@ -29,7 +29,16 @@ import {
 } from '@mui/icons-material';
 import { useLanguage } from '../context/LanguageContext';
 import { useDebounced } from '../hooks/useDebounced';
-import { ECOM_STATUSES, type EcomOrder, type EcomQuery, type EcomStats, type EcomTerminal } from '../types/ecom';
+import {
+  ECOM_PAYMENT_TYPES,
+  ECOM_STATUSES,
+  type EcomOrder,
+  type EcomPaymentType,
+  type EcomQuery,
+  type EcomStats,
+  type EcomStatus,
+  type EcomTerminal,
+} from '../types/ecom';
 import {
   ecomTerminalLabel,
   fetchEcomPage,
@@ -89,6 +98,8 @@ export const EcommerceTransactionListPage: React.FC = () => {
   const [minAmount, setMinAmount] = useState('');
   const [maxAmount, setMaxAmount] = useState('');
   const [search, setSearch] = useState('');
+  const [status, setStatus] = useState<EcomStatus | null>(null);
+  const [paymentType, setPaymentType] = useState<EcomPaymentType | null>(null);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const debouncedSearch = useDebounced(search, 400);
   const debouncedMin = useDebounced(minAmount, 400);
@@ -110,13 +121,17 @@ export const EcommerceTransactionListPage: React.FC = () => {
   const query = useMemo<EcomQuery | null>(() => (
     problem || !dateFrom || !dateTo
       ? null
-      : { dateFrom, dateTo, merchantRids, minAmount: debouncedMin, maxAmount: debouncedMax, query: debouncedSearch }
-  ), [problem, dateFrom, dateTo, merchantRids, debouncedMin, debouncedMax, debouncedSearch]);
+      : {
+          dateFrom, dateTo, merchantRids, minAmount: debouncedMin, maxAmount: debouncedMax, query: debouncedSearch,
+          status, paymentType,
+        }
+  ), [problem, dateFrom, dateTo, merchantRids, debouncedMin, debouncedMax, debouncedSearch, status, paymentType]);
 
-  // Итоги зависят только от периода и терминалов: сумма и поиск на них не влияют (ecom.md §2.5).
+  // Итоги зависят от периода, терминалов и типа оплаты. Сумма, поиск и статус на них не влияют:
+  // итоги и так разложены по статусам (ecom.md §2.5).
   const statsQuery = useMemo(() => (
-    problem || !dateFrom || !dateTo ? null : { dateFrom, dateTo, merchantRids }
-  ), [problem, dateFrom, dateTo, merchantRids]);
+    problem || !dateFrom || !dateTo ? null : { dateFrom, dateTo, merchantRids, paymentType }
+  ), [problem, dateFrom, dateTo, merchantRids, paymentType]);
 
   const terminalIndex = useMemo(
     () => new Map(terminals.map(terminal => [terminal.merchantRid, terminal])),
@@ -301,6 +316,35 @@ export const EcommerceTransactionListPage: React.FC = () => {
             onChange={e => setMaxAmount(e.target.value)}
             sx={fieldSx}
           />
+          {/* Статус отбирает сервер после сборки заказа (Р-87): на экране ничего не отсеивается. */}
+          <TextField
+            select
+            label={t.statusFilter}
+            value={status ?? ''}
+            onChange={e => setStatus((e.target.value || null) as EcomStatus | null)}
+            SelectProps={{ displayEmpty: true }}
+            InputLabelProps={{ shrink: true }}
+            sx={fieldSx}
+          >
+            <MenuItem value="">{t.allStatuses}</MenuItem>
+            {ECOM_STATUSES.map(value => (
+              <MenuItem key={value} value={value}>{t.statuses[value]}</MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            select
+            label={t.paymentTypeFilter}
+            value={paymentType ?? ''}
+            onChange={e => setPaymentType((e.target.value || null) as EcomPaymentType | null)}
+            SelectProps={{ displayEmpty: true }}
+            InputLabelProps={{ shrink: true }}
+            sx={fieldSx}
+          >
+            <MenuItem value="">{t.allPaymentTypes}</MenuItem>
+            {ECOM_PAYMENT_TYPES.map(value => (
+              <MenuItem key={value} value={value}>{t.paymentTypes[value]}</MenuItem>
+            ))}
+          </TextField>
         </Box>
         {problem ? (
           <Alert severity="warning" sx={{ mt: 2 }}>
@@ -339,13 +383,25 @@ export const EcommerceTransactionListPage: React.FC = () => {
             ))}
           </Stack>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-            {ECOM_STATUSES.filter(status => stats.statusCounts[status] > 0).map(status => {
-              const scheme = getStatusColorScheme(status);
+            {/* Клик по чипу ставит этот статус в фильтр, повторный — снимает. */}
+            {ECOM_STATUSES.filter(value => stats.statusCounts[value] > 0).map(value => {
+              const scheme = getStatusColorScheme(value);
+              const selected = status === value;
               return (
                 <Chip
-                  key={status}
-                  label={`${t.statuses[status]}: ${stats.statusCounts[status]}`}
-                  sx={{ bgcolor: scheme.light, color: scheme.contrastText, fontWeight: 600 }}
+                  key={value}
+                  label={`${t.statuses[value]}: ${stats.statusCounts[value]}`}
+                  title={t.statusChipHint}
+                  onClick={() => setStatus(selected ? null : value)}
+                  variant={selected ? 'filled' : 'outlined'}
+                  sx={{
+                    bgcolor: scheme.light,
+                    color: scheme.contrastText,
+                    fontWeight: 600,
+                    borderColor: selected ? scheme.main : 'transparent',
+                    borderWidth: 2,
+                    borderStyle: 'solid',
+                  }}
                 />
               );
             })}
@@ -455,7 +511,9 @@ export const EcommerceTransactionListPage: React.FC = () => {
               {orders.length === 0 && !loading && (
                 <TableRow>
                   <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
-                    <Typography color="text.secondary">{t.empty}</Typography>
+                    {/* С фильтром по статусу пустая страница с курсором — не «ничего нет», а «в просмотренной
+                        части нет»: сервер упёрся в потолок просмотра, дальше ищет «показать ещё». */}
+                    <Typography color="text.secondary">{nextCursor ? t.noMatchesYet : t.empty}</Typography>
                   </TableCell>
                 </TableRow>
               )}
