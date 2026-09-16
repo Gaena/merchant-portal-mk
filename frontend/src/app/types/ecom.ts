@@ -104,7 +104,18 @@ export interface EcomTerminal {
   login: string | null;
 }
 
-/** Фильтр выписки. Период — по дате создания заказа и обязателен. */
+/**
+ * Тип оплаты заказа — `EcomPaymentType` на бэкенде (Р-87): определяется по операциям заказа.
+ * SMS — оплата одним сообщением, DMS — холд и списание.
+ */
+export const ECOM_PAYMENT_TYPES = ['SMS', 'DMS'] as const;
+
+export type EcomPaymentType = (typeof ECOM_PAYMENT_TYPES)[number];
+
+/**
+ * Фильтр выписки. Период — по дате создания заказа и обязателен. Статус и тип уходят на сервер,
+ * как и всё остальное: статус он отбирает после сборки заказа, с потолком просмотра (Р-87).
+ */
 export interface EcomQuery {
   dateFrom: Date;
   dateTo: Date;
@@ -112,4 +123,6 @@ export interface EcomQuery {
   minAmount: string;
   maxAmount: string;
   query: string;
+  status: EcomStatus | null;
+  paymentType: EcomPaymentType | null;
 }

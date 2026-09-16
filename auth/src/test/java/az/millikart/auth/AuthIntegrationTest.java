@@ -220,6 +220,77 @@ public class AuthIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
+    private static final String USER_PASSWORD = "UserPassword123!";
+
+    // Руководитель выдаёт только роли ниже своей (auth.md §4.2): AUDITOR читает данные всех компаний.
+    @Test
+    public void companyHead_cannotGrantAuditorRole() throws Exception {
+        createUser("head2@comp01.com", "COMPANY_HEAD", "comp-01");
+        String headToken = login("head2@comp01.com");
+
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateUserRequest(
+                                "spy@comp01.com", USER_PASSWORD, "Spy", "AUDITOR", "comp-01"))))
+                .andExpect(status().isForbidden());
+    }
+
+    // Администратор с companyId руководителя — не его подчинённый: сменить ему пароль значило бы
+    // войти администратором.
+    @Test
+    public void companyHead_cannotChangePasswordOfAnAdminOfHisCompany() throws Exception {
+        UUID secondAdminId = createUser("admin2@millikart.az", "SYSTEM_ADMIN", "comp-01");
+        createUser("head3@comp01.com", "COMPANY_HEAD", "comp-01");
+        String headToken = login("head3@comp01.com");
+
+        mockMvc.perform(patch("/api/v1/users/" + secondAdminId)
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, "Takeover12345!", null))))
+                .andExpect(status().isForbidden());
+    }
+
+    // Заблокированный руководитель, пока жив его access-токен, не снимает блокировку сам с себя.
+    @Test
+    public void blockedHead_cannotUnblockHimselfWithALiveToken() throws Exception {
+        UUID headId = createUser("head4@comp01.com", "COMPANY_HEAD", "comp-01");
+        String headToken = login("head4@comp01.com");
+
+        mockMvc.perform(patch("/api/v1/users/" + headId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED"))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/v1/users/" + headId)
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "ACTIVE"))))
+                .andExpect(status().isForbidden());
+        Assertions.assertEquals("BLOCKED", userRepository.findById(headId).orElseThrow().getStatus());
+    }
+
+    private UUID createUser(String username, String role, String companyId) throws Exception {
+        String body = mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateUserRequest(
+                                username, USER_PASSWORD, "Test User", role, companyId))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(objectMapper.readTree(body).get("id").asText());
+    }
+
+    private String login(String username) throws Exception {
+        String body = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginRequest(username, USER_PASSWORD))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return "Bearer " + objectMapper.readTree(body).get("token").asText();
+    }
+
     // 7-я попытка с неверным паролем получает тот же безымянный отказ, что и шесть до неё: сказать
     // "заблокировано" тому, кто пароля не знает, — значит подтвердить, что аккаунт существует.
     // Что блокировка действительно произошла, видно только с верным паролем — это соседний тест

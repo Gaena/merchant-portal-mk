@@ -97,7 +97,7 @@ public class AuthService {
         Instant now = Instant.now();
         log.info("Login attempt from {} for email: {}", clientIp, cleanEmail);
 
-        User user = userRepository.findByUsername(cleanEmail).orElse(null);
+        User user = userRepository.findForLoginByUsername(cleanEmail).orElse(null);
         if (user == null) {
             passwordEncoder.matches(request.password(), ABSENT_USER_PASSWORD_HASH);
             recordAddressFailure(clientIp, cleanEmail);

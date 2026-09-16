@@ -479,11 +479,7 @@ public class PaymentLinkService {
         String companyId = UserPrincipal.getCompanyId(principal);
 
         log.info("Request to complete DMS: transactionId={}, amount={}, userId={}, role={}, companyId={}", transactionId, request.amount(), userId, rawRole, companyId);
-        Transaction transaction = transactionRepository.findById(transactionId)
-                .orElseThrow(() -> {
-                    log.warn("Transaction not found for DMS complete: {}", transactionId);
-                    return new ResourceNotFoundException("Transaction not found: " + transactionId);
-                });
+        Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
         validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES);
@@ -620,11 +616,7 @@ public class PaymentLinkService {
         String companyId = UserPrincipal.getCompanyId(principal);
 
         log.info("Request to refund transaction: transactionId={}, amount={}, userId={}, role={}, companyId={}", transactionId, request.amount(), userId, rawRole, companyId);
-        Transaction transaction = transactionRepository.findById(transactionId)
-                .orElseThrow(() -> {
-                    log.warn("Transaction not found for refund: {}", transactionId);
-                    return new ResourceNotFoundException("Transaction not found: " + transactionId);
-                });
+        Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
         validateAccess(link.getTerminalId(), principal, REFUND_ROLES);
@@ -723,6 +715,22 @@ public class PaymentLinkService {
                 result.ridByPmo(),
                 result.approvalCode()
         );
+    }
+
+    // Денежные операции сериализуются блокировкой ссылки, взятой ДО чтения транзакции и похода к
+    // эквайеру: иначе два возврата проходили потолок на одном снимке, два списания уходили в шлюз
+    // оба, а конфликт @Version ссылки на коммите откатывал уже подтверждённое списание. Порядок
+    // «ссылка, потом транзакция» — тот же, что у открытия ссылки: взаимной блокировки нет.
+    private Transaction lockLinkAndLoadTransaction(UUID transactionId) {
+        UUID linkId = transactionRepository.findLinkIdById(transactionId)
+                .orElseThrow(() -> {
+                    log.warn("Transaction not found for a money operation: {}", transactionId);
+                    return new ResourceNotFoundException("Transaction not found: " + transactionId);
+                });
+        paymentLinkRepository.findWithLockById(linkId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment link not found: " + linkId));
+        return transactionRepository.findById(transactionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + transactionId));
     }
 
     // Свидетельство одного подтверждённого движения денег: три идентификатора эквайера (§5.5-5.7),
@@ -929,7 +937,8 @@ public class PaymentLinkService {
     // Транзакция в терминальном статусе возвращается как есть: ничего не спрашивали — ничего и не
     // известно. Блокировку терминала не проверяет и не должен (Р-38): иначе платежи, шедшие в момент
     // блокировки, застряли бы в PENDING навсегда — ответ у эквайера есть, а спросить некому.
-    private StatusRefresh refreshStatus(Transaction tx) {
+    // Пакетный доступ — для OpenLinkService: прошлую попытку он спрашивает у эквайера, а не гасит.
+    StatusRefresh refreshStatus(Transaction tx) {
         if (tx.getStatus() == TransactionStatus.SUCCESS || tx.getStatus() == TransactionStatus.FAILED
                 || tx.getStatus() == TransactionStatus.REFUNDED || tx.getStatus() == TransactionStatus.PARTIALLY_REFUNDED) {
             log.debug("Transaction {} already in terminal state: {}", tx.getId(), tx.getStatus());
@@ -958,6 +967,7 @@ public class PaymentLinkService {
         log.info("Provider order status check result: transactionId={}, providerStatus=\"{}\", outcome={}",
                 transactionId, raw, outcome);
 
+        boolean holdReleased = false;
         switch (outcome) {
             case PAID -> {
                 tx.setStatus(TransactionStatus.SUCCESS);
@@ -981,16 +991,26 @@ public class PaymentLinkService {
             case NON_FINAL -> {
                 // Заказ есть, никто ещё не заплатил. Менять нечего; reconcileOne может добить позже.
             }
-            case SETTLED_OTHER ->
-                // Реверсал, возврат или закрытие сделаны на стороне эквайера, мимо портала. Статус
-                // намеренно не трогаем: сумм мы не знаем, и REFUNDED положил бы в refunded_amount
-                // число, которого никто не видел. Разбор order.trans[] — отдельная задача
-                // (AGENTS.md §10); до неё строка разбирается руками.
-                log.warn("Acquirer reports order status \"{}\" for transaction {} (providerOrderId {}): the "
-                                + "order was changed outside this service (reversal, refund or closed). Local "
-                                + "status stays {} and reconciliation will NOT mark it FAILED; the money side "
-                                + "needs a manual review — see project_docs/TXPG-client-side-integration.md §5.8.8.",
-                        raw, transactionId, tx.getProviderOrderId(), tx.getStatus());
+            case SETTLED_OTHER -> {
+                if ((tx.getStatus() == TransactionStatus.AUTHORIZED || tx.getStatus() == TransactionStatus.PENDING)
+                        && ProviderOrderDetails.isReleasedAuthorization(orderDetails)) {
+                    // Холд снял банк, не списав ни копейки (Closed ← Authorized, Р-75): денег нет,
+                    // слот ссылки свободен. Иначе транзакция навсегда оставалась бы AUTHORIZED.
+                    log.info("Acquirer released the authorization of transaction {} (providerOrderId {}) "
+                            + "without a capture; marking it FAILED", transactionId, tx.getProviderOrderId());
+                    tx.setStatus(TransactionStatus.FAILED);
+                    holdReleased = true;
+                } else {
+                    // Реверсал, возврат или закрытие после списания сделаны мимо портала. Статус не
+                    // трогаем: сумм мы не знаем, и REFUNDED положил бы в refunded_amount число, которого
+                    // никто не видел. Такая строка разбирается руками (AGENTS.md §10).
+                    log.warn("Acquirer reports order status \"{}\" for transaction {} (providerOrderId {}): the "
+                                    + "order was changed outside this service (reversal, refund or closed). Local "
+                                    + "status stays {} and reconciliation will NOT mark it FAILED; the money side "
+                                    + "needs a manual review — see project_docs/TXPG-client-side-integration.md §5.8.8.",
+                            raw, transactionId, tx.getProviderOrderId(), tx.getStatus());
+                }
+            }
             case UNKNOWN ->
                 log.warn("Acquirer returned an order status this service does not know: \"{}\" "
                                 + "(transaction {}, providerOrderId {}). The transaction stays {} and will NOT be "
@@ -1026,6 +1046,9 @@ public class PaymentLinkService {
                 log.info("Acquirer decline reason for transaction {}: \"{}\"", transactionId, reason);
                 stored.put(DECLINE_REASON_KEY, reason);
             });
+        }
+        if (holdReleased) {
+            stored.put(DECLINE_REASON_KEY, "Authorization released by the acquirer without capture");
         }
         tx.setProviderResponse(stored);
         tx = transactionRepository.save(tx);

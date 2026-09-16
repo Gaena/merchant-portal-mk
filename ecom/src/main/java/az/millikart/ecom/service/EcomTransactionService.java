@@ -12,10 +12,12 @@ import az.millikart.ecom.dto.EcomTransactionFilter;
 import az.millikart.ecom.dto.EcomTransactionResponse;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.repository.TxpgTransactionRepository;
+import az.millikart.ecom.service.EcomStatusResolver.EcomStatus;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
@@ -53,7 +55,11 @@ public class EcomTransactionService {
 
     public CursorPage<EcomTransactionResponse> list(Instant dateFrom, Instant dateTo, List<String> merchantRids,
                                                     BigDecimal minAmount, BigDecimal maxAmount, String query,
+                                                    String status, String paymentType,
                                                     String cursor, Integer size, UserPrincipal principal) {
+        // Незнакомое значение фильтра — 400 до всякого похода в шлюз, а не молча пустой фильтр.
+        EcomStatus wantedStatus = parseStatus(status);
+        EcomPaymentType type = parsePaymentType(paymentType);
         EcomScope scoped = scope.scopeFor(principal);
         List<String> rids = narrow(scoped.merchantRids(), merchantRids);
         if (isEmpty(scoped, rids)) {
@@ -63,10 +69,15 @@ public class EcomTransactionService {
         requireWindow(dateFrom, dateTo);
         int pageSize = pageSize(size);
         EcomTransactionFilter filter = new EcomTransactionFilter(
-                scoped.logins(), rids, dateFrom, dateTo, minAmount, maxAmount, blankToNull(query));
+                scoped.logins(), rids, dateFrom, dateTo, minAmount, maxAmount, blankToNull(query), type);
+        Long before = decodeCursor(cursor);
+
+        if (wantedStatus != null) {
+            return pageOfStatus(filter, before, pageSize, wantedStatus);
+        }
 
         // Лишний номер запрошен ради одного вопроса: есть ли что-то дальше.
-        List<Long> orderIds = repository.findOrderIds(filter, decodeCursor(cursor), pageSize + 1);
+        List<Long> orderIds = repository.findOrderIds(filter, before, pageSize + 1);
         boolean hasMore = orderIds.size() > pageSize;
         List<Long> pageIds = hasMore ? orderIds.subList(0, pageSize) : orderIds;
 
@@ -78,8 +89,58 @@ public class EcomTransactionService {
         return new CursorPage<>(orders, nextCursor);
     }
 
+    // Р-87. Статус считается в Java по операциям заказа (Р-75…Р-78), в базе шлюза его нет, а второго
+    // набора этих правил в SQL быть не должно. Поэтому номера заказов читаются пачками по
+    // max-page-size, заказы собираются и отбираются по статусу, пока не наберётся страница. Просмотр
+    // ограничен status-scan-limit: дальше страница уходит короче размера — возможно, пустой — но с
+    // курсором, и «показать ещё» продолжает с последнего просмотренного заказа, а не с последнего
+    // отданного. Курсор null — просмотрен весь период.
+    private CursorPage<EcomTransactionResponse> pageOfStatus(EcomTransactionFilter filter, Long before,
+                                                             int pageSize, EcomStatus wanted) {
+        int limit = Math.max(properties.getStatusScanLimit(), pageSize);
+        List<EcomTransactionResponse> matched = new ArrayList<>();
+        Long position = before;
+        int scanned = 0;
+        while (true) {
+            int batch = Math.min(properties.getMaxPageSize(), limit - scanned);
+            List<Long> ids = repository.findOrderIds(filter, position, batch + 1);
+            boolean more = ids.size() > batch;
+            List<Long> batchIds = more ? ids.subList(0, batch) : ids;
+            if (batchIds.isEmpty()) {
+                return new CursorPage<>(matched, null);
+            }
+            Map<String, EcomTransactionResponse> assembled = EcomOrderAssembler
+                    .assemble(repository.findRows(batchIds, filter.logins(), filter.dateFrom())).stream()
+                    .collect(Collectors.toMap(EcomTransactionResponse::orderId, Function.identity()));
+            for (int i = 0; i < batchIds.size(); i++) {
+                long orderId = batchIds.get(i);
+                position = orderId;
+                scanned++;
+                EcomTransactionResponse order = assembled.get(Long.toString(orderId));
+                if (order == null || !wanted.name().equals(order.status())) {
+                    continue;
+                }
+                matched.add(order);
+                if (matched.size() == pageSize) {
+                    boolean anythingLeft = i < batchIds.size() - 1 || more;
+                    return new CursorPage<>(matched, anythingLeft ? encodeCursor(orderId) : null);
+                }
+            }
+            if (!more) {
+                return new CursorPage<>(matched, null);
+            }
+            if (scanned >= limit) {
+                log.info("Status filter {} scanned {} orders and found {}; handing back a cursor to continue",
+                        wanted, scanned, matched.size());
+                return new CursorPage<>(matched, encodeCursor(position));
+            }
+        }
+    }
+
+    // Итоги — по периоду, терминалам и типу оплаты. Статуса здесь нет: итоги и так разложены по статусам.
     public EcomStatsResponse stats(Instant dateFrom, Instant dateTo, List<String> merchantRids,
-                                   UserPrincipal principal) {
+                                   String paymentType, UserPrincipal principal) {
+        EcomPaymentType type = parsePaymentType(paymentType);
         EcomScope scoped = scope.scopeFor(principal);
         List<String> rids = narrow(scoped.merchantRids(), merchantRids);
         EcomStatsAccumulator accumulator = new EcomStatsAccumulator();
@@ -88,7 +149,7 @@ public class EcomTransactionService {
         }
         requireWindow(dateFrom, dateTo);
         repository.streamPeriodRows(
-                new EcomTransactionFilter(scoped.logins(), rids, dateFrom, dateTo, null, null, null), accumulator);
+                new EcomTransactionFilter(scoped.logins(), rids, dateFrom, dateTo, null, null, null, type), accumulator);
         return accumulator.result();
     }
 
@@ -161,6 +222,30 @@ public class EcomTransactionService {
     private int pageSize(Integer requested) {
         int value = requested != null ? requested : DEFAULT_PAGE_SIZE;
         return Math.clamp(value, 1, properties.getMaxPageSize());
+    }
+
+    // Значения — ровно имена enum, регистрозависимо, как у parseRole: «success» — не SUCCESS.
+    private static EcomStatus parseStatus(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return EcomStatus.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("Unknown status: expected one of PENDING, AUTHORIZED, SUCCESS, "
+                    + "PARTIALLY_PAID, FAILED, PARTIALLY_REFUNDED, REFUNDED, CANCELED");
+        }
+    }
+
+    private static EcomPaymentType parsePaymentType(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return EcomPaymentType.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("Unknown paymentType: expected SMS or DMS");
+        }
     }
 
     private static String blankToNull(String value) {

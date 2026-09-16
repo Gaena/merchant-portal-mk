@@ -74,6 +74,19 @@ public class ProviderTerminalStatusRepository {
 
     /** Строка слепка: то, что провайдер знает о своём терминале. Пароля у него мы не спрашиваем. */
     public record ProviderTerminalRow(String rid, String title, String login, boolean active) {
+
+        static final String TERMINAL_OWNER_PREFIX = "TerminalSys/";
+
+        // Логин для terminals: Basic-логин шлюза составной — OwnerKind/login («TerminalSys/Admin»,
+        // TXPG-client-side-integration.md), а слепок хранит login.login без префикса (Р-83). pbl
+        // отдаёт terminals.login шлюзу как есть, поэтому голый логин давал бы InvalidLogin.
+        public String gatewayLogin() {
+            if (login == null || login.isBlank()) {
+                return null;
+            }
+            String value = login.trim();
+            return value.startsWith(TERMINAL_OWNER_PREFIX) ? value : TERMINAL_OWNER_PREFIX + value;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -88,12 +101,33 @@ public class ProviderTerminalStatusRepository {
         if (rows.isEmpty()) {
             return Optional.empty();
         }
-        Object[] row = rows.getFirst();
-        return Optional.of(new ProviderTerminalRow(
+        return Optional.of(toRow(rows.getFirst()));
+    }
+
+    // Весь слепок по rid — сверке, чтобы переносить в terminals смену логина и названия (Р-67).
+    @SuppressWarnings("unchecked")
+    public Map<String, ProviderTerminalRow> rowsByRid() {
+        if (snapshotTableMissing()) {
+            return Map.of();
+        }
+        List<Object[]> rows = entityManager
+                .createNativeQuery("SELECT rid, title, login, active FROM provider_terminals")
+                .getResultList();
+        Map<String, ProviderTerminalRow> byRid = new HashMap<>();
+        for (Object[] row : rows) {
+            if (row[0] != null) {
+                byRid.put(String.valueOf(row[0]), toRow(row));
+            }
+        }
+        return byRid;
+    }
+
+    private static ProviderTerminalRow toRow(Object[] row) {
+        return new ProviderTerminalRow(
                 String.valueOf(row[0]),
                 row[1] != null ? String.valueOf(row[1]) : null,
                 row[2] != null ? String.valueOf(row[2]) : null,
-                Boolean.TRUE.equals(row[3])));
+                Boolean.TRUE.equals(row[3]));
     }
 
     private boolean snapshotTableMissing() {

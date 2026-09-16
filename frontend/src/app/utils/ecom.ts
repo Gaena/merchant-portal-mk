@@ -108,11 +108,12 @@ const mapStats = (raw: any): EcomStats => {
  * axios по умолчанию шлёт `merchantRids[]=a`, такой ключ контроллер не узнает, и фильтр по
  * терминалу молча пропал бы — выписка пришла бы по всем терминалам.
  */
-const periodParams = (query: Pick<EcomQuery, 'dateFrom' | 'dateTo' | 'merchantRids'>): URLSearchParams => {
+const periodParams = (query: Pick<EcomQuery, 'dateFrom' | 'dateTo' | 'merchantRids' | 'paymentType'>): URLSearchParams => {
   const params = new URLSearchParams();
   params.set('dateFrom', query.dateFrom.toISOString());
   params.set('dateTo', query.dateTo.toISOString());
   query.merchantRids.forEach(rid => params.append('merchantRids', rid));
+  if (query.paymentType) params.set('paymentType', query.paymentType);
   return params;
 };
 
@@ -126,6 +127,7 @@ export const fetchEcomPage = async (
   if (query.minAmount.trim()) params.set('minAmount', query.minAmount.trim());
   if (query.maxAmount.trim()) params.set('maxAmount', query.maxAmount.trim());
   if (query.query.trim()) params.set('query', query.query.trim());
+  if (query.status) params.set('status', query.status);
   if (cursor) params.set('cursor', cursor);
   params.set('size', String(size));
   const res = await apiClient.get('/api/v1/ecom/transactions', { params, signal });
@@ -135,9 +137,9 @@ export const fetchEcomPage = async (
   };
 };
 
-/** Итоги — по периоду и терминалам; сумма и поиск на них не влияют (`ecom.md` §2.5). */
+/** Итоги — по периоду, терминалам и типу оплаты; сумма, поиск и статус на них не влияют (`ecom.md` §2.5). */
 export const fetchEcomStats = async (
-  query: Pick<EcomQuery, 'dateFrom' | 'dateTo' | 'merchantRids'>,
+  query: Pick<EcomQuery, 'dateFrom' | 'dateTo' | 'merchantRids' | 'paymentType'>,
   signal?: AbortSignal
 ): Promise<EcomStats> => {
   const res = await apiClient.get('/api/v1/ecom/transactions/stats', { params: periodParams(query), signal });

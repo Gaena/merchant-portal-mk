@@ -397,7 +397,8 @@ public class AuditLogIntegrationTest {
         assertThat(companyRepository.existsById("comp-01"))
                 .as("the operation itself must have committed")
                 .isTrue();
-        assertThat(writerLogAppender.list)
+        // Внутри запроса запись ложится в его конце (AuditOutbox), и потерю репортит AuditLogService.
+        assertThat(serviceLogAppender.list)
                 .as("the lost record must be reported with the monitoring marker")
                 .anyMatch(event -> event.getLevel() == Level.ERROR
                         && event.getFormattedMessage().contains(AuditLogService.AUDIT_WRITE_FAILED_MARKER));

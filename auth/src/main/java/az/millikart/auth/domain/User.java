@@ -13,8 +13,12 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.DynamicUpdate;
 
+// UPDATE только изменённых колонок: вход пишет счётчик неудач, администратор — статус, пароль,
+// роль. Полной строкой каждый затирал бы то, что другой закоммитил, пока шёл BCrypt.
 @Entity
+@DynamicUpdate
 @Table(name = "users")
 @Getter
 @Setter

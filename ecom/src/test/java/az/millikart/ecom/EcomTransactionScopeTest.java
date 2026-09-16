@@ -25,13 +25,16 @@ import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.repository.TxpgStatementRow;
 import az.millikart.ecom.repository.TxpgTransactionRepository;
 import az.millikart.ecom.service.EcomScope;
+import az.millikart.ecom.service.EcomPaymentType;
 import az.millikart.ecom.service.EcomScopeService;
 import az.millikart.ecom.service.EcomTransactionService;
 import az.millikart.ecom.service.TxpgRows;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,7 +77,7 @@ class EcomTransactionScopeTest {
         when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
 
         CursorPage<EcomTransactionResponse> page =
-                service.list(from, to, null, null, null, null, null, null, principal);
+                service.list(from, to, null, null, null, null, null, null, null, null, principal);
 
         Assertions.assertTrue(page.content().isEmpty());
         Assertions.assertNull(page.nextCursor());
@@ -93,7 +96,7 @@ class EcomTransactionScopeTest {
     void withoutLinkedTerminals_statsAreZeroAndTheGatewayIsNotQueried() {
         when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
 
-        EcomStatsResponse stats = service.stats(from, to, null, principal);
+        EcomStatsResponse stats = service.stats(from, to, null, null, principal);
 
         Assertions.assertEquals(0, stats.orderCount());
         verifyNoInteractions(repository);
@@ -106,7 +109,7 @@ class EcomTransactionScopeTest {
                 List.of("BS00001", "BS00002"), List.of("E1120020", "1234567")));
         when(repository.findOrderIds(any(), any(), anyInt())).thenReturn(List.of(175533L));
 
-        service.list(from, to, null, null, null, null, null, null, principal);
+        service.list(from, to, null, null, null, null, null, null, null, null, principal);
 
         ArgumentCaptor<EcomTransactionFilter> filter = ArgumentCaptor.forClass(EcomTransactionFilter.class);
         verify(repository).findOrderIds(filter.capture(), isNull(), eq(26));
@@ -120,8 +123,8 @@ class EcomTransactionScopeTest {
     void aTerminalWithoutAProviderLink_stillHasAStatement() {
         when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("BS00001"), List.of()));
 
-        service.list(from, to, null, null, null, null, null, null, principal);
-        service.stats(from, to, null, principal);
+        service.list(from, to, null, null, null, null, null, null, null, null, principal);
+        service.stats(from, to, null, null, principal);
 
         verify(repository).findOrderIds(any(), isNull(), anyInt());
         verify(repository).streamPeriodRows(any(), any());
@@ -133,7 +136,7 @@ class EcomTransactionScopeTest {
         when(scope.scopeFor(principal)).thenReturn(new EcomScope(
                 List.of("BS00001", "BS00002"), List.of("E1120020", "1234567")));
 
-        service.list(from, to, List.of("1234567", "FOREIGN"), null, null, null, null, null, principal);
+        service.list(from, to, List.of("1234567", "FOREIGN"), null, null, null, null, null, null, null, principal);
 
         ArgumentCaptor<EcomTransactionFilter> filter = ArgumentCaptor.forClass(EcomTransactionFilter.class);
         verify(repository).findOrderIds(filter.capture(), isNull(), anyInt());
@@ -146,7 +149,7 @@ class EcomTransactionScopeTest {
         when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("BS00001"), List.of("E1120020")));
 
         CursorPage<EcomTransactionResponse> page =
-                service.list(from, to, List.of("FOREIGN"), null, null, null, null, null, principal);
+                service.list(from, to, List.of("FOREIGN"), null, null, null, null, null, null, null, principal);
 
         Assertions.assertTrue(page.content().isEmpty());
         verifyNoInteractions(repository);
@@ -157,9 +160,9 @@ class EcomTransactionScopeTest {
         when(scope.scopeFor(principal)).thenReturn(SCOPE);
 
         Assertions.assertThrows(BusinessException.class,
-                () -> service.list(null, to, null, null, null, null, null, null, principal));
+                () -> service.list(null, to, null, null, null, null, null, null, null, null, principal));
         Assertions.assertThrows(BusinessException.class,
-                () -> service.stats(from, null, null, principal));
+                () -> service.stats(from, null, null, null, principal));
     }
 
     @Test
@@ -167,7 +170,7 @@ class EcomTransactionScopeTest {
         when(scope.scopeFor(principal)).thenReturn(SCOPE);
 
         Assertions.assertThrows(BusinessException.class,
-                () -> service.list(to, from, null, null, null, null, null, null, principal));
+                () -> service.list(to, from, null, null, null, null, null, null, null, null, principal));
     }
 
     // Выписка за три года по операционной базе шлюза — полный скан на инстансе, который в этот
@@ -178,7 +181,7 @@ class EcomTransactionScopeTest {
         Instant farAway = from.plus(400, ChronoUnit.DAYS);
 
         Assertions.assertThrows(BusinessException.class,
-                () -> service.list(from, farAway, null, null, null, null, null, null, principal));
+                () -> service.list(from, farAway, null, null, null, null, null, null, null, null, principal));
         verifyNoInteractions(repository);
     }
 
@@ -186,7 +189,7 @@ class EcomTransactionScopeTest {
     void thePageSizeIsClampedToTheCeiling() {
         when(scope.scopeFor(principal)).thenReturn(SCOPE);
 
-        service.list(from, to, null, null, null, null, null, 100_000, principal);
+        service.list(from, to, null, null, null, null, null, null, null, 100_000, principal);
 
         // Запрошенная страница плюс один номер на вопрос «есть ли что-то дальше».
         verify(repository).findOrderIds(any(), isNull(), eq(201));
@@ -200,7 +203,7 @@ class EcomTransactionScopeTest {
         when(repository.findRows(any(), any(), any())).thenReturn(rowsOf("175662", "175661"));
 
         CursorPage<EcomTransactionResponse> page =
-                service.list(from, to, null, null, null, null, null, 2, principal);
+                service.list(from, to, null, null, null, null, null, null, null, 2, principal);
 
         verify(repository).findRows(eq(List.of(175662L, 175661L)), any(), any());
         Assertions.assertEquals(2, page.content().size());
@@ -214,7 +217,7 @@ class EcomTransactionScopeTest {
         when(repository.findRows(any(), any(), any())).thenReturn(rowsOf("175662", "175661"));
 
         CursorPage<EcomTransactionResponse> page =
-                service.list(from, to, null, null, null, null, null, 2, principal);
+                service.list(from, to, null, null, null, null, null, null, null, 2, principal);
 
         Assertions.assertEquals(2, page.content().size());
         Assertions.assertNull(page.nextCursor());
@@ -226,8 +229,8 @@ class EcomTransactionScopeTest {
         when(scope.scopeFor(principal)).thenReturn(SCOPE);
         when(repository.findOrderIds(any(), any(), anyInt())).thenReturn(List.of(175662L, 175661L, 175605L));
 
-        String cursor = service.list(from, to, null, null, null, null, null, 2, principal).nextCursor();
-        service.list(from, to, null, null, null, null, cursor, 2, principal);
+        String cursor = service.list(from, to, null, null, null, null, null, null, null, 2, principal).nextCursor();
+        service.list(from, to, null, null, null, null, null, null, cursor, 2, principal);
 
         ArgumentCaptor<Long> before = ArgumentCaptor.forClass(Long.class);
         verify(repository, times(2)).findOrderIds(any(), before.capture(), anyInt());
@@ -242,7 +245,7 @@ class EcomTransactionScopeTest {
 
         for (String cursor : List.of("not-a-cursor", "!!!")) {
             Assertions.assertThrows(BusinessException.class,
-                    () -> service.list(from, to, null, null, null, null, cursor, 2, principal), cursor);
+                    () -> service.list(from, to, null, null, null, null, null, null, cursor, 2, principal), cursor);
         }
         verify(repository, never()).findOrderIds(any(), any(), anyInt());
     }
@@ -287,7 +290,7 @@ class EcomTransactionScopeTest {
             return null;
         }).when(repository).streamPeriodRows(any(), any());
 
-        EcomStatsResponse stats = service.stats(from, to, null, principal);
+        EcomStatsResponse stats = service.stats(from, to, null, null, principal);
 
         Assertions.assertEquals(16, stats.orderCount());
         Assertions.assertEquals(4L, stats.statusCounts().get("CANCELED"));
@@ -307,6 +310,115 @@ class EcomTransactionScopeTest {
                 new EcomTerminalResponse("M-2", "Bazar", "BS00002"),
                 new EcomTerminalResponse("M-1", null, null)), terminals);
         verifyNoInteractions(repository);
+    }
+
+    // Р-87: тип оплаты уходит в фильтр и страницы, и итогов — условие строит SQL.
+    @Test
+    void thePaymentTypeGoesIntoTheFilterOfThePageAndOfTheTotals() {
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+
+        service.list(from, to, null, null, null, null, null, "DMS", null, null, principal);
+        service.stats(from, to, null, "SMS", principal);
+
+        ArgumentCaptor<EcomTransactionFilter> page = ArgumentCaptor.forClass(EcomTransactionFilter.class);
+        verify(repository).findOrderIds(page.capture(), isNull(), anyInt());
+        Assertions.assertEquals(EcomPaymentType.DMS, page.getValue().paymentType());
+        ArgumentCaptor<EcomTransactionFilter> totals = ArgumentCaptor.forClass(EcomTransactionFilter.class);
+        verify(repository).streamPeriodRows(totals.capture(), any());
+        Assertions.assertEquals(EcomPaymentType.SMS, totals.getValue().paymentType());
+    }
+
+    // Незнакомое значение — 400 и никакого похода в шлюз. Сравнение строгое: «success» — не SUCCESS.
+    @Test
+    void anUnknownStatusOrPaymentTypeIsARequestError() {
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+
+        for (String status : List.of("PAID", "success", "FullyPaid")) {
+            Assertions.assertThrows(BusinessException.class,
+                    () -> service.list(from, to, null, null, null, null, status, null, null, null, principal), status);
+        }
+        for (String type : List.of("sms", "Order_DMS", "POS")) {
+            Assertions.assertThrows(BusinessException.class,
+                    () -> service.list(from, to, null, null, null, null, null, type, null, null, principal), type);
+            Assertions.assertThrows(BusinessException.class,
+                    () -> service.stats(from, to, null, type, principal), type);
+        }
+        verifyNoInteractions(repository);
+    }
+
+    // Р-87: статус считается в Java, поэтому заказы читаются пачками и отбираются после сборки. Пачка —
+    // max-page-size; страница набирается из нескольких пачек, курсор — последний просмотренный заказ.
+    @Test
+    void aStatusFilterSkipsOtherStatuses_andFillsThePageFromTheNextBatch() {
+        EcomTransactionService narrow = serviceWith(2, 1000);
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+        gatewayWith(Map.of(
+                105L, TxpgRows.order("105", "FullyPaid", "Preparing", "10", TxpgRows.single("10")),
+                104L, TxpgRows.order("104", "Closed", "Authorized", "10", TxpgRows.auth("10")),
+                103L, TxpgRows.order("103", "Closed", "Authorized", "10", TxpgRows.auth("10")),
+                102L, TxpgRows.order("102", "FullyPaid", "Preparing", "10", TxpgRows.single("10")),
+                101L, TxpgRows.order("101", "FullyPaid", "Preparing", "10", TxpgRows.single("10"))));
+
+        CursorPage<EcomTransactionResponse> first =
+                narrow.list(from, to, null, null, null, null, "SUCCESS", null, null, 2, principal);
+
+        Assertions.assertEquals(List.of("105", "102"), first.content().stream().map(EcomTransactionResponse::orderId).toList());
+        Assertions.assertNotNull(first.nextCursor());
+
+        CursorPage<EcomTransactionResponse> second =
+                narrow.list(from, to, null, null, null, null, "SUCCESS", null, first.nextCursor(), 2, principal);
+
+        Assertions.assertEquals(List.of("101"), second.content().stream().map(EcomTransactionResponse::orderId).toList());
+        Assertions.assertNull(second.nextCursor());
+    }
+
+    // Потолок просмотра: редкий статус не сканирует весь период за одно нажатие. Страница приходит
+    // короче — здесь пустой — но с курсором, и следующий запрос продолжает с последнего просмотренного.
+    @Test
+    void aStatusFilterStopsAtTheScanLimit_andHandsBackACursorToContinue() {
+        EcomTransactionService narrow = serviceWith(2, 2);
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+        gatewayWith(Map.of(
+                105L, TxpgRows.order("105", "FullyPaid", "Preparing", "10", TxpgRows.single("10")),
+                104L, TxpgRows.order("104", "FullyPaid", "Preparing", "10", TxpgRows.single("10")),
+                103L, TxpgRows.order("103", "Closed", "Authorized", "10", TxpgRows.auth("10"))));
+
+        CursorPage<EcomTransactionResponse> page =
+                narrow.list(from, to, null, null, null, null, "CANCELED", null, null, 2, principal);
+
+        Assertions.assertTrue(page.content().isEmpty());
+        Assertions.assertNotNull(page.nextCursor());
+        verify(repository, times(1)).findOrderIds(any(), any(), anyInt());
+
+        CursorPage<EcomTransactionResponse> next =
+                narrow.list(from, to, null, null, null, null, "CANCELED", null, page.nextCursor(), 2, principal);
+
+        Assertions.assertEquals(List.of("103"), next.content().stream().map(EcomTransactionResponse::orderId).toList());
+        Assertions.assertNull(next.nextCursor());
+    }
+
+    private EcomTransactionService serviceWith(int maxPageSize, int statusScanLimit) {
+        TxpgProperties properties = new TxpgProperties();
+        properties.setMaxWindow(Duration.ofDays(92));
+        properties.setMaxPageSize(maxPageSize);
+        properties.setStatusScanLimit(statusScanLimit);
+        return new EcomTransactionService(repository, scope, providerTerminals, properties);
+    }
+
+    // Шлюз из заказов: номера — от новых к старым ниже курсора и не больше запрошенного, строки — по номерам.
+    private void gatewayWith(Map<Long, List<TxpgStatementRow>> orders) {
+        List<Long> ids = orders.keySet().stream().sorted((a, b) -> Long.compare(b, a)).toList();
+        when(repository.findOrderIds(any(), any(), anyInt())).thenAnswer(invocation -> {
+            Long before = invocation.getArgument(1);
+            int limit = invocation.getArgument(2);
+            return ids.stream().filter(id -> before == null || id < before).limit(limit).toList();
+        });
+        when(repository.findRows(any(), any(), any())).thenAnswer(invocation -> {
+            List<Long> wanted = invocation.getArgument(0);
+            List<TxpgStatementRow> rows = new ArrayList<>();
+            wanted.forEach(id -> rows.addAll(orders.get(id)));
+            return rows;
+        });
     }
 
     private static List<TxpgStatementRow> rowsOf(String... orderIds) {

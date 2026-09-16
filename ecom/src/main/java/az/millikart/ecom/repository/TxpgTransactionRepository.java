@@ -3,6 +3,7 @@ package az.millikart.ecom.repository;
 import az.millikart.ecom.config.TxpgDataSourceConfig;
 import az.millikart.ecom.config.TxpgProperties;
 import az.millikart.ecom.dto.EcomTransactionFilter;
+import az.millikart.ecom.service.EcomOperationKind;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -12,6 +13,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.RowCallbackHandler;
@@ -177,6 +179,12 @@ public class TxpgTransactionRepository {
             sql.append("   and m.rid in (:merchant_rids)\n");
             params.addValue("merchant_rids", filter.merchantRids());
         }
+        if (filter.paymentType() != null) {
+            // Р-87: тип оплаты — по операциям заказа, тем же парам, что вид операции в Java. Здесь, в
+            // выборе заказов, а не после сборки: фильтр работает и на странице, и в итогах периода.
+            sql.append("   and exists (select 1 from %1$s.tran pt where pt.orderid = o.id and (%2$s))\n"
+                    .formatted(schema, anyOf("pt", filter.paymentType().signs())));
+        }
         sql.append("""
                    and o.createtime >= :date_from
                    and o.createtime <  :date_to
@@ -209,20 +217,28 @@ public class TxpgTransactionRepository {
     }
 
     // Р-76: при мультиклиринге заказ остаётся Authorized и после списания (175195: 30 из 50), и без
-    // исключения списанные деньги ждали бы финального статуса до N дней. Признак списания — тот же,
-    // что у EcomOperationKind.CAPTURE; поменяешь один — меняй и другой.
+    // исключения списанные деньги ждали бы финального статуса до N дней. Признак списания строится из
+    // EcomOperationKind.CAPTURE_SIGNS — того же списка, по которому списание считается в деньгах (Р-86).
     private String finishedOrdersOnly() {
+        String captured = anyOf("c", EcomOperationKind.CAPTURE_SIGNS);
         return """
                    and (o.status not in (:unfinished_statuses)
                         or (o.status = 'Authorized'
                             and exists (select 1
                                           from %1$s.tran c
                                          where c.orderid = o.id
-                                           and c.trantype = 'Purchase'
-                                           and c.phase = 'Clearing'
+                                           and (%2$s)
                                            and c.voidkind is null
                                            and c.pmoresultcode = 'Approved')))
-                """.formatted(properties.getSchema());
+                """.formatted(properties.getSchema(), captured);
+    }
+
+    // Условие «операция — одна из пар trantype/phase» для алиаса операции. Литералы — константы кода
+    // (EcomOperationKind), не ввод пользователя, поэтому подставляются в текст запроса.
+    static String anyOf(String alias, List<EcomOperationKind.TypePhase> signs) {
+        return signs.stream()
+                .map(sign -> "(%1$s.trantype = '%2$s' and %1$s.phase = '%3$s')".formatted(alias, sign.type(), sign.phase()))
+                .collect(Collectors.joining(" or "));
     }
 
     private TxpgStatementRow mapRow(ResultSet rs, int rowNum) throws SQLException {

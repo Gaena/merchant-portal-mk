@@ -1,5 +1,6 @@
 package az.millikart.pbl.provider;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +55,39 @@ public final class ProviderOrderDetails {
                 maskedCard,
                 ProviderPayloads.scalarText(record.get("rrn")),
                 ProviderPayloads.scalarText(record.get("approvalCode")));
+    }
+
+    // Closed ← Authorized без списаний: холд снял банк (Р-75, стенд — заказ 175700). Списание узнаётся
+    // по положительному clearAmount операции (§5.8.8), у авторизации он 0. Нет списка, пустой список
+    // или нечитаемая сумма — «не доказано», и заказ остаётся на ручной разбор.
+    public static boolean isReleasedAuthorization(Map<String, Object> orderPayload) {
+        if (orderPayload == null
+                || !"Closed".equals(ProviderPayloads.scalarText(orderPayload.get("status")))
+                || !"Authorized".equals(ProviderPayloads.scalarText(orderPayload.get("prevStatus")))
+                || !(orderPayload.get("trans") instanceof List<?> trans)
+                || trans.isEmpty()) {
+            return false;
+        }
+        for (Object element : trans) {
+            Map<String, Object> record = asMap(element);
+            BigDecimal cleared = record != null ? decimal(record.get("clearAmount")) : null;
+            if (cleared == null || cleared.signum() > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static BigDecimal decimal(Object value) {
+        String text = ProviderPayloads.scalarText(value);
+        if (text == null) {
+            return null;
+        }
+        try {
+            return new BigDecimal(text.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     // §5.8.4: order.srcToken.displayName как есть — последние четыре цифры отрезает фронтенд.

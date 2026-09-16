@@ -1,11 +1,13 @@
 package az.millikart.auth.repository;
 
 import az.millikart.auth.domain.User;
+import jakarta.persistence.LockModeType;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -13,6 +15,13 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByUsername(String username);
+
+    // Вход читает строку под SELECT ... FOR UPDATE: счётчик неудач — прочитал-прибавил-записал, и
+    // параллельные попытки теряли приращения (блокировка Р-28 наступала после десятков попыток, а не
+    // после шести). Держится на время BCrypt одного входа.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.username = :username")
+    Optional<User> findForLoginByUsername(@Param("username") String username);
 
     // Нативный SQL: сущности companies в auth нет — поиск по названию компании читает таблицу
     // модуля directory (осознанный долг общей базы, AGENTS.md §10). LEFT JOIN — иначе из списка

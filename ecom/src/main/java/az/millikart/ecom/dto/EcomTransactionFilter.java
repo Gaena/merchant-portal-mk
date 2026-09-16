@@ -1,5 +1,6 @@
 package az.millikart.ecom.dto;
 
+import az.millikart.ecom.service.EcomPaymentType;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -17,6 +18,9 @@ public record EcomTransactionFilter(
         BigDecimal minAmount,
         BigDecimal maxAmount,
         // Номер заказа, ridByMerchant или RRN — точным совпадением.
-        String query
+        String query,
+        // SMS или DMS — по операциям заказа (Р-87); null — фильтра нет. Статуса здесь нет намеренно:
+        // он считается в Java после сборки заказа, и в SQL его не передать (EcomTransactionService).
+        EcomPaymentType paymentType
 ) {
 }

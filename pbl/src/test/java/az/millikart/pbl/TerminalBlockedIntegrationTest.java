@@ -46,6 +46,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -142,12 +143,11 @@ class TerminalBlockedIntegrationTest {
         verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
     }
 
-    // 12. Блокировка приходит, пока открытие стоит в очереди за замком ссылки
+    // 12. Блокировка приходит, пока замок ссылки держит чужая транзакция
 
-    // Почему терминал читается после захвата замка на строке ссылки: чужая транзакция держит
-    // замок, открытие встаёт в очередь (проверка до замка увидела бы терминал ещё ACTIVE),
-    // терминал блокируют и замок отдают — открытие обязано отказать. Перенеси проверку выше
-    // lockLinkOrThrow, и здесь зарегистрируется заказ на выведенном из строя терминале.
+    // Замок берётся с NOWAIT: пока чужая транзакция держит строку ссылки, открытие сразу получает
+    // отказ, а не ждёт в очереди, держа соединение пула. Когда замок отдан, повторное открытие
+    // обязано увидеть блокировку, случившуюся под ним, — поэтому терминал читается после замка.
     @Test
     void terminalBlockedWhileTheOpenWaitsForTheLock_stopsThePayment() throws Exception {
         // Ссылка и терминал изначально вполне платёжеспособны.
@@ -171,13 +171,17 @@ class TerminalBlockedIntegrationTest {
             assertThat(lockHeld.await(5, TimeUnit.SECONDS)).isTrue();
 
             assertThatThrownBy(() -> openLinkService.openAndBuildRedirect(linkId, "203.0.113.9", "curl"))
-                    .as("the open must see the block that landed while it waited for the lock")
-                    .isInstanceOf(InvalidStateException.class);
+                    .as("while another transaction holds the link, the open is refused at once")
+                    .isInstanceOf(PessimisticLockingFailureException.class);
 
             holder.get(5, TimeUnit.SECONDS);
         } finally {
             executor.shutdownNow();
         }
+
+        assertThatThrownBy(() -> openLinkService.openAndBuildRedirect(linkId, "203.0.113.9", "curl"))
+                .as("the next open must see the block that landed under the lock")
+                .isInstanceOf(InvalidStateException.class);
 
         verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
         assertThat(transactionRepository.count())

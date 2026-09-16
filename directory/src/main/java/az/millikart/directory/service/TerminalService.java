@@ -89,6 +89,15 @@ public class TerminalService {
         String name = request.name();
         String login = request.login();
         String merchantRid = trimToNull(request.merchantRid());
+        if (merchantRid != null && UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
+            // Справочник провайдера — карта всех его мерчантов, привязка по rid только у администратора
+            // (Р-80). Иначе руководитель забрал бы чужой rid, увидел бы чужую выписку, а разные тексты
+            // отказов ниже перечисляли бы мерчантов провайдера.
+            auditLogService.logDenied(AuditEntity.TERMINAL, NEW_TERMINAL, AuditAction.CREATE, actorUsername,
+                    UserPrincipal.getCompanyId(principal), "Denied: role " + UserPrincipal.getRawRole(principal)
+                            + " attempted to link provider terminal " + merchantRid);
+            throw new InvalidStateException("Access denied");
+        }
         if (merchantRid != null) {
             // Один терминал провайдера — одна наша компания. Иначе две компании смотрели бы
             // в одну выписку, и каждая видела бы платежи другой.
@@ -101,7 +110,7 @@ public class TerminalService {
                     .orElseThrow(() -> new BusinessException(
                             "Provider terminal " + merchantRid + " is not in the synchronised list"));
             name = row.title();
-            login = row.login();
+            login = row.gatewayLogin();
         }
         if (name == null || name.isBlank() || login == null || login.isBlank()) {
             throw new BusinessException("Terminal name and login are required unless merchantRid is given");

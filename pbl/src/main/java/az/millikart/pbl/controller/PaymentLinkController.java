@@ -12,6 +12,7 @@ import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -61,7 +62,9 @@ public class PaymentLinkController {
             @RequestParam(required = false) Integer terminal,
             @RequestParam(required = false) PaymentLinkStatus status,
             @AuthenticationPrincipal UserPrincipal principal) {
-        Pageable pageable = PageRequest.of(page, size);
+        // Новые сверху, id — уникальный хвост: без порядка строки переезжают между страницами (AGENTS.md §10).
+        Pageable pageable = PageRequest.of(page, size,
+                Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
         return paymentLinkService.list(terminal, status, pageable, principal);
     }
 

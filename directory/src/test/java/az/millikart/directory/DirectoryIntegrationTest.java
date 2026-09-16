@@ -118,6 +118,24 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.content[1].action", is("CREATE")));
     }
 
+    // Привязка по rid провайдера — только у администратора (Р-80): руководитель получает 403 до
+    // любых поисков по справочнику, и тексты отказов не выдают, есть ли такой rid.
+    @Test
+    public void headCannotLinkAProviderTerminalByRid() throws Exception {
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateCompanyRequest("comp-01", "MilliKart LLC"))))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateTerminalRequest(null, null, "term_pass", "comp-01", "E1120020"))))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     public void testTerminalLifecycleAndRBAC() throws Exception {
         CreateCompanyRequest createComp = new CreateCompanyRequest("comp-01", "MilliKart LLC");

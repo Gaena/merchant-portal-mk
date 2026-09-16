@@ -330,7 +330,12 @@ export const TerminalsPage: React.FC = () => {
   const editingLogin = terminals.find(t => t.id === editingTerminalId)?.login ?? '';
 
   // Логин, который уйдёт в проверку и в терминал: у администратора — из выбранной строки справочника.
-  const formLogin = (canSeePassword ? selectedProvider?.login ?? '' : form.login).trim();
+  // Basic-логин шлюза составной (TerminalSys/login), а справочник хранит логин без префикса — так же
+  // его дописывает directory при заведении терминала.
+  const providerLogin = (selectedProvider?.login ?? '').trim();
+  const formLogin = canSeePassword
+    ? (providerLogin && !providerLogin.startsWith('TerminalSys/') ? `TerminalSys/${providerLogin}` : providerLogin)
+    : form.login.trim();
 
   const runFormCheck = async () => {
     setFormCheck(null);

@@ -1099,6 +1099,9 @@ class PaymentLinkIntegrationTest {
     void reopen_singleUseLink_withAuthorizedTransaction_isRefused() throws Exception {
         PaymentLink link = linkFixture(UsageType.SINGLE, null);
         Transaction held = attemptFixture(link, TransactionStatus.AUTHORIZED);
+        // Открытие спрашивает эквайера о холде, прежде чем отказать: холд жив.
+        doReturn(Map.of("id", 11338, "status", "Authorized"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
 
         mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
                 .andExpect(status().isForbidden())
@@ -1109,16 +1112,19 @@ class PaymentLinkIntegrationTest {
                 transactionRepository.findById(held.getId()).orElseThrow().getStatus());
     }
 
-    // PENDING-попытка — это заказ, который никто не оплатил: переоткрытие гасит её и идёт дальше.
+    // Неоплаченная PENDING-попытка при переоткрытии не гасится вслепую: заказ у эквайера ещё живёт, и
+    // оплату по нему потеряли бы. Она остаётся PENDING (её закроет сверка), новая регистрируется рядом.
     @Test
-    void reopen_withPendingTransaction_marksItFailedAndProceeds() throws Exception {
+    void reopen_withUnpaidPendingTransaction_keepsItPendingAndProceeds() throws Exception {
         PaymentLink link = linkFixture(UsageType.SINGLE, null);
         Transaction abandoned = attemptFixture(link, TransactionStatus.PENDING);
+        doReturn(Map.of("id", 11338, "status", "Preparing"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
 
         mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
                 .andExpect(status().isFound());
 
-        Assertions.assertEquals(TransactionStatus.FAILED,
+        Assertions.assertEquals(TransactionStatus.PENDING,
                 transactionRepository.findById(abandoned.getId()).orElseThrow().getStatus());
 
         List<Transaction> attempts = transactionRepository.findByLinkIdOrderByCreatedAtDesc(link.getId());
@@ -1126,11 +1132,46 @@ class PaymentLinkIntegrationTest {
         Assertions.assertEquals(TransactionStatus.PENDING, attempts.getFirst().getStatus());
     }
 
+    // Плательщик оплатил старую страницу, но на страницу возврата не попал и открыл ссылку снова:
+    // эквайер говорит «оплачено», одноразовая ссылка занята, второго заказа нет.
+    @Test
+    void reopen_withPendingTransactionPaidAtAcquirer_refusesSecondPayment() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        attemptFixture(link, TransactionStatus.PENDING);
+        doReturn(Map.of("id", 11338, "status", "FullyPaid"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message", is("Single-use payment link has already been used")));
+
+        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    // Холд одноразовой ссылки банк снял сам, ничего не списав (Closed ← Authorized, Р-75): слот
+    // свободен, и ссылка снова открывается, а не отвечает «ждёт списания» вечно.
+    @Test
+    void reopen_singleUseLink_whoseHoldWasReleasedByTheBank_opensAgain() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        Transaction held = attemptFixture(link, TransactionStatus.AUTHORIZED);
+        doReturn(Map.of("id", 11338, "status", "Closed", "prevStatus", "Authorized",
+                "trans", List.of(Map.of("clearAmount", 0, "billingStatus", "Normal"))))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isFound());
+
+        Assertions.assertEquals(TransactionStatus.FAILED,
+                transactionRepository.findById(held.getId()).orElseThrow().getStatus());
+    }
+
     // Та же арифметика слотов на многоразовой ссылке: холд занимает слот так же, как платёж.
     @Test
     void multiUseLink_authorizedCountsTowardsLimit() throws Exception {
         PaymentLink link = linkFixture(UsageType.MULTIPLE, 1);
         attemptFixture(link, TransactionStatus.AUTHORIZED);
+        doReturn(Map.of("id", 11338, "status", "Authorized"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
 
         mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
                 .andExpect(status().isForbidden())

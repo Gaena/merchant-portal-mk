@@ -126,10 +126,16 @@ resilience4j:
         failureRateThreshold: 50
         waitDurationInOpenState: 10000ms
         permittedNumberOfCallsInHalfOpenState: 3
+        # Отказ шлюза конкретному терминалу — не сбой шлюза: не размыкает приём платежей всем.
+        ignoreExceptions:
+          - az.millikart.pbl.provider.AcquirerDeclinedException
   retry:
     instances:
       acquiring:
         maxAttempts: 3
         waitDuration: 500ms
+        # Повтор отказа даёт тот же отказ.
+        ignoreExceptions:
+          - az.millikart.pbl.provider.AcquirerDeclinedException
 
 

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import az.millikart.ecom.config.TxpgProperties;
 import az.millikart.ecom.dto.EcomTransactionFilter;
+import az.millikart.ecom.service.EcomPaymentType;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.Timestamp;
@@ -81,7 +82,7 @@ class TxpgTransactionRepositoryTest {
     @Test
     void theTerminalFilterNarrowsTheOrdersOnTopOfTheLoginScope() {
         Instant from = Instant.parse("2026-09-01T00:00:00Z");
-        EcomTransactionFilter narrowed = new EcomTransactionFilter(LOGINS, List.of("M-1"), from, NOW, null, null, null);
+        EcomTransactionFilter narrowed = new EcomTransactionFilter(LOGINS, List.of("M-1"), from, NOW, null, null, null, null);
 
         repository.findOrderIds(narrowed, null, 26);
         repository.streamPeriodRows(narrowed, row -> { });
@@ -94,6 +95,42 @@ class TxpgTransactionRepositoryTest {
         }
     }
 
+    // Р-87: тип оплаты — по операциям заказа, из тех же пар, что вид операции в Java. Условие стоит в
+    // выборе заказов, поэтому одно и то же и на странице, и в итогах периода.
+    @Test
+    void thePaymentTypeFilterLooksAtTheOperationsOfTheOrder_onThePageAndInTheTotals() {
+        Instant from = Instant.parse("2026-09-01T00:00:00Z");
+        EcomTransactionFilter dms = new EcomTransactionFilter(LOGINS, null, from, NOW, null, null, null,
+                EcomPaymentType.DMS);
+
+        repository.findOrderIds(dms, null, 26);
+        repository.streamPeriodRows(dms, row -> { });
+
+        List<Captured> queries = capturedQueries();
+        Assertions.assertEquals(2, queries.size());
+        for (Captured query : queries) {
+            String sql = query.sql().replaceAll("\\s+", " ");
+            Assertions.assertTrue(sql.contains("and exists (select 1 from TXPG.tran pt where pt.orderid = o.id and ("
+                    + "(pt.trantype = 'Purchase' and pt.phase = 'Auth') or (pt.trantype = 'Authorization' and pt.phase = 'Auth') "
+                    + "or (pt.trantype = 'Purchase' and pt.phase = 'Clearing') or (pt.trantype = 'Capture' and pt.phase = 'Charge')))"),
+                    sql);
+        }
+    }
+
+    @Test
+    void smsIsAPurchaseInOneMessage_andWithoutTheFilterThereIsNoTypeCondition() {
+        Instant from = Instant.parse("2026-09-01T00:00:00Z");
+        repository.findOrderIds(new EcomTransactionFilter(LOGINS, null, from, NOW, null, null, null,
+                EcomPaymentType.SMS), null, 26);
+        repository.findOrderIds(filter(from, NOW), null, 26);
+
+        List<Captured> queries = capturedQueries();
+        Assertions.assertTrue(queries.get(0).sql().replaceAll("\\s+", " ").contains(
+                "and exists (select 1 from TXPG.tran pt where pt.orderid = o.id and ((pt.trantype = 'Purchase' and pt.phase = 'Single')))"),
+                queries.get(0).sql());
+        Assertions.assertFalse(queries.get(1).sql().contains("TXPG.tran pt"), queries.get(1).sql());
+    }
+
     // Одна отсутствующая в схеме колонка роняет всю выписку (ORA-00904). Читаем только то, что есть
     // в SQL провайдера; пароль заказа не выбирается никогда.
     @Test
@@ -101,7 +138,7 @@ class TxpgTransactionRepositoryTest {
         EcomTransactionFilter filter = filter(Instant.parse("2026-09-01T00:00:00Z"), NOW);
 
         repository.findOrderIds(new EcomTransactionFilter(LOGINS, List.of("M-1"), filter.dateFrom(), filter.dateTo(),
-                BigDecimal.ONE, BigDecimal.TEN, "175533"), 175600L, 26);
+                BigDecimal.ONE, BigDecimal.TEN, "175533", null), 175600L, 26);
         repository.findRows(List.of(175533L), LOGINS, null);
         repository.streamPeriodRows(filter, row -> { });
 
@@ -115,15 +152,16 @@ class TxpgTransactionRepositoryTest {
     }
 
     // Р-76: при мультиклиринге заказ после списания остаётся Authorized. Скрыт только Authorized без
-    // одобренного списания — признак тот же, что у EcomOperationKind.CAPTURE.
+    // одобренного списания — признак строится из EcomOperationKind.CAPTURE_SIGNS, обе пары словаря (Р-86).
     @Test
     void anAuthorizedOrderIsHiddenOnlyUntilSomethingIsCaptured() {
         repository.findOrderIds(filter(Instant.parse("2026-09-01T00:00:00Z"), NOW), null, 26);
 
         String sql = capturedQueries().get(0).sql().replaceAll("\\s+", " ");
         Assertions.assertTrue(sql.contains("and (o.status not in (:unfinished_statuses) or (o.status = 'Authorized' "
-                + "and exists (select 1 from TXPG.tran c where c.orderid = o.id and c.trantype = 'Purchase' "
-                + "and c.phase = 'Clearing' and c.voidkind is null and c.pmoresultcode = 'Approved')))"), sql);
+                + "and exists (select 1 from TXPG.tran c where c.orderid = o.id "
+                + "and ((c.trantype = 'Purchase' and c.phase = 'Clearing') or (c.trantype = 'Capture' and c.phase = 'Charge')) "
+                + "and c.voidkind is null and c.pmoresultcode = 'Approved')))"), sql);
     }
 
     // Даты шлюза — местное время Баку без пояса: полночь по Баку — это 20:00 UTC накануне.
@@ -216,7 +254,7 @@ class TxpgTransactionRepositoryTest {
     }
 
     private static EcomTransactionFilter filter(Instant from, Instant to) {
-        return new EcomTransactionFilter(LOGINS, null, from, to, null, null, null);
+        return new EcomTransactionFilter(LOGINS, null, from, to, null, null, null, null);
     }
 
     private record Captured(String sql, MapSqlParameterSource params) {

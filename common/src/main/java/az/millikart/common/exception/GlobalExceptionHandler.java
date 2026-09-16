@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -79,6 +80,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(OptimisticLockingFailureException.class)
     public ResponseEntity<ErrorResponse> handleOptimisticLock(OptimisticLockingFailureException ex, HttpServletRequest request) {
         return build(HttpStatus.CONFLICT, "The resource was updated concurrently, please retry", request);
+    }
+
+    // Блокировка строки занята другим запросом (NOWAIT в pbl): до эквайера этот запрос не дошёл,
+    // повтор безопасен — поэтому 409, а не 500.
+    @ExceptionHandler(PessimisticLockingFailureException.class)
+    public ResponseEntity<ErrorResponse> handlePessimisticLock(PessimisticLockingFailureException ex, HttpServletRequest request) {
+        log.info("Refused {} {}: the row is locked by a concurrent request", request.getMethod(), request.getRequestURI());
+        return build(HttpStatus.CONFLICT, "The resource is being changed by another request, please retry", request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

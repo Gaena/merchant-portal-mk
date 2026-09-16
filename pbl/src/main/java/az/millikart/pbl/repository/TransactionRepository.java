@@ -19,6 +19,11 @@ import org.springframework.stereotype.Repository;
 public interface TransactionRepository extends JpaRepository<Transaction, UUID> {
     Optional<Transaction> findByProviderOrderId(String providerOrderId);
 
+    // Скаляр, а не сущность: денежная операция узнаёт ссылку, берёт её блокировку и только потом
+    // читает транзакцию. Загруженная до блокировки сущность осталась бы в persistence context старой.
+    @Query("SELECT t.link.id FROM Transaction t WHERE t.id = :id")
+    Optional<UUID> findLinkIdById(@Param("id") UUID id);
+
     // Ключ страницы возврата плательщика: ridByMerchant — случайный UUID на попытку оплаты, его, в
     // отличие от providerOrderId, не перебрать. Граф подтягивает ленивый link, из которого чек.
     @EntityGraph(attributePaths = "link")
