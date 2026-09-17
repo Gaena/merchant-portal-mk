@@ -109,7 +109,7 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, "SYSTEM_ADMIN", null, null))))
+                                new UpdateUserRequest(null, "SYSTEM_ADMIN", null, null, null))))
                 .andExpect(status().isOk());
 
         assertThat(single("UPDATE").getDetails())
@@ -140,7 +140,7 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, "BrandNewSecret123!", null))))
+                                new UpdateUserRequest(null, null, "BrandNewSecret123!", null, null))))
                 .andExpect(status().isOk());
 
         assertThat(single("PASSWORD_CHANGE").getDetails()).doesNotContain("BrandNewSecret123!");
@@ -315,7 +315,7 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, null, status))))
+                                new UpdateUserRequest(null, null, null, status, null))))
                 .andExpect(status().isOk());
     }
 

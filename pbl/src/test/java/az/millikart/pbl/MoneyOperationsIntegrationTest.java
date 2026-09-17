@@ -28,8 +28,11 @@ import az.millikart.pbl.provider.AcquiringClient;
 import az.millikart.pbl.provider.TxpgAcquiringClient;
 import az.millikart.pbl.provider.dto.MoneyOperationResult;
 import az.millikart.pbl.repository.PaymentLinkRepository;
+import az.millikart.pbl.domain.TransactionRefund;
 import az.millikart.pbl.repository.TerminalRepository;
+import az.millikart.pbl.repository.TransactionRefundRepository;
 import az.millikart.pbl.repository.TransactionRepository;
+import java.time.Instant;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -95,6 +98,9 @@ class MoneyOperationsIntegrationTest {
 
     @Autowired
     private TerminalRepository terminalRepository;
+
+    @Autowired
+    private TransactionRefundRepository transactionRefundRepository;
 
     @MockBean
     private AcquiringClient acquiringClient;
@@ -355,6 +361,14 @@ class MoneyOperationsIntegrationTest {
         Assertions.assertEquals("AC-REF-A", record.get("approvalCode"));
         Assertions.assertEquals("40.00", record.get("amount"));
         Assertions.assertNotNull(record.get("at"));
+
+        // Р-89: тот же возврат строкой — по её времени сводка главной вычитает возвраты периода.
+        // Время то же, что в свидетельстве: сводка и история операции не расходятся.
+        List<TransactionRefund> rows = transactionRefundRepository.findByTransactionIdOrderByRefundedAtAsc(settled.getId());
+        Assertions.assertEquals(1, rows.size(), "one confirmed refund, one row: " + rows);
+        Assertions.assertEquals(0, new BigDecimal("40.00").compareTo(rows.getFirst().getAmount()));
+        Assertions.assertEquals("RID-REF-A", rows.getFirst().getRidByPmo());
+        Assertions.assertEquals(Instant.parse((String) record.get("at")), rows.getFirst().getRefundedAt());
     }
 
     // Частичные возвраты накапливаются: два возврата — две записи, у каждой свои идентификаторы.
@@ -379,6 +393,10 @@ class MoneyOperationsIntegrationTest {
         Assertions.assertEquals("RID-SECOND", refunds.get(1).get("ridByPmo"));
         Assertions.assertEquals("20.00", refunds.get(1).get("amount"));
         Assertions.assertNotEquals(refunds.get(0).get("tranActionId"), refunds.get(1).get("tranActionId"));
+        Assertions.assertEquals(List.of(new BigDecimal("30.00"), new BigDecimal("20.00")),
+                transactionRefundRepository.findByTransactionIdOrderByRefundedAtAsc(settled.getId()).stream()
+                        .map(TransactionRefund::getAmount).toList(),
+                "each partial refund is its own row, in the order it was made");
 
         Transaction reloaded = reload(settled);
         Assertions.assertEquals(TransactionStatus.PARTIALLY_REFUNDED, reloaded.getStatus());
@@ -403,6 +421,8 @@ class MoneyOperationsIntegrationTest {
         Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(untouched.getRefundedAmount()),
                 "an unconfirmed refund must not be recorded locally");
         Assertions.assertTrue(refundsOf(settled).isEmpty(), "no trail for a refund that was not confirmed");
+        Assertions.assertTrue(transactionRefundRepository.findByTransactionIdOrderByRefundedAtAsc(settled.getId()).isEmpty(),
+                "an unconfirmed refund must not reach the dashboard either");
     }
 
     // То же для capture: 502, статус остаётся AUTHORIZED, снятое никуда не записывается.

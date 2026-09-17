@@ -105,6 +105,36 @@ export interface EcomTerminal {
 }
 
 /**
+ * Сводка главной (Р-91) — `GET /api/v1/ecom/dashboard/summary`: оплаты картой по всем терминалам скоупа по
+ * выписке провайдера. Заказы периода и деньги — те же, что во вкладке E-commerce; суммы — по валютам.
+ */
+export interface EcomDashboardTotals {
+  currency: string | null;
+  orderCount: number;
+  paidCount: number;
+  capturedAmount: number;
+  refundedAmount: number;
+  netAmount: number;
+  averagePaidAmount: number;
+}
+
+export interface EcomDashboard {
+  window: { from: string; to: string; zone: string };
+  totals: EcomDashboardTotals[];
+  statusCounts: Record<EcomStatus, number>;
+  /** Сутки в поясе отчёта, `YYYY-MM-DD`, пустые — с нулями. */
+  dailyTotals: { date: string; currency: string | null; netAmount: number; orderCount: number }[];
+  topTerminals: {
+    currency: string | null;
+    merchantRid: string | null;
+    login: string | null;
+    title: string | null;
+    netAmount: number;
+    orderCount: number;
+  }[];
+}
+
+/**
  * Тип оплаты заказа — `EcomPaymentType` на бэкенде (Р-87): определяется по операциям заказа.
  * SMS — оплата одним сообщением, DMS — холд и списание.
  */

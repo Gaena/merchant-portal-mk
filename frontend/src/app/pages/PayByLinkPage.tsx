@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate, useSearchParams } from 'react-router';
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { LinkPaymentsStats } from '../components/LinkPaymentsStats';
+import type { PeriodKey } from '../components/DashboardParts';
 import {
   Box,
   Paper,
@@ -32,6 +34,8 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   LinearProgress,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import {
   Link as LinkIcon,
@@ -47,6 +51,7 @@ import {
   FilterList as FilterIcon,
   Person as PersonIcon,
   AccessTime as TimeIcon,
+  Insights as StatsIcon,
 } from '@mui/icons-material';
 
 import {
@@ -118,6 +123,33 @@ const EXPIRY_MS: Record<ExpiryOption, number> = {
 };
 const EXPIRY_OPTIONS: ExpiryOption[] = ['h1', 'h24', 'h72', 'd7', 'd30'];
 
+/** Пустая форма создания ссылки. */
+const emptyForm = () => ({
+  terminalId: '', amount: '', currency: 'AZN', description: '', customerName: '',
+  customerEmail: '', customerPhone: '', usageType: 'SINGLE' as LinkUsageType, maxUses: '2',
+  expiry: 'h24' as ExpiryOption, paymentType: 'SMS' as PaymentType,
+});
+
+/**
+ * Форма, заполненная полями ссылки, — для кнопки «Создать новую ссылку с теми же данными» на
+ * карточке истёкшей или отменённой ссылки. Срок жизни — по умолчанию: прежний уже истёк.
+ * Терминала здесь нет: его подставляют, только когда известен список активных терминалов.
+ * Тип использования или оплаты вне словаря (`null`) заменяется значением по умолчанию: это
+ * выбор в форме, мерчант видит его до создания, а не подпись у существующей ссылки.
+ */
+const formFromLink = (link: PaymentLink) => ({
+  ...emptyForm(),
+  amount: String(link.amount),
+  currency: link.currency || 'AZN',
+  description: link.description,
+  customerName: link.customerName,
+  customerEmail: link.customerEmail,
+  customerPhone: link.customerPhone,
+  usageType: link.usageType ?? 'SINGLE',
+  maxUses: link.usageType === 'MULTIPLE' ? String(link.maxUses) : '2',
+  paymentType: link.paymentType ?? 'SMS',
+});
+
 /** Строка ответа списка или карточки — в `PaymentLink`. Одна на список и на ответ создания. */
 const mapLink = (l: any, fallbackTerminal?: number): PaymentLink => ({
   id: l.id,
@@ -152,11 +184,30 @@ const mapLink = (l: any, fallbackTerminal?: number): PaymentLink => ({
   terminalId: typeof l.terminal === 'number' ? l.terminal : fallbackTerminal,
 });
 
+/** Вкладки страницы: список ссылок (по умолчанию) и статистика оплат по ссылкам. */
+type PayByLinkTab = 'links' | 'stats';
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export const PayByLinkPage: React.FC = () => {
   const navigate = useNavigate();
   const { tObj } = useLanguage();
+  // Вкладка — в адресе (`?tab=stats`): ссылку на статистику можно отправить, обновление страницы
+  // её не сбрасывает. Нет параметра или он незнакомый — список. Переключение заменяет запись
+  // истории, а не добавляет: «назад» уводит со страницы, а не листает вкладки.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: PayByLinkTab = searchParams.get('tab') === 'stats' ? 'stats' : 'links';
+  const handleTabChange = (_: React.SyntheticEvent, value: PayByLinkTab) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (value === 'stats') next.set('tab', 'stats');
+      else next.delete('tab');
+      return next;
+    }, { replace: true });
+  };
+  // Период статистики хранится здесь: вкладка размонтируется при переключении, и выбор
+  // сбрасывался бы на 7 дней.
+  const [statsPeriod, setStatsPeriod] = useState<PeriodKey>('days7');
   const [links, setLinks] = useState<PaymentLink[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -176,19 +227,7 @@ export const PayByLinkPage: React.FC = () => {
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; error?: boolean }>({ open: false, message: '' });
 
   // Create form state
-  const [form, setForm] = useState({
-    terminalId: '',
-    amount: '',
-    currency: 'AZN',
-    description: '',
-    customerName: '',
-    customerEmail: '',
-    customerPhone: '',
-    usageType: 'SINGLE' as LinkUsageType,
-    maxUses: '2',
-    expiry: 'h24' as ExpiryOption,
-    paymentType: 'SMS' as PaymentType,
-  });
+  const [form, setForm] = useState(emptyForm);
   const [formError, setFormError] = useState('');
   const [generating, setGenerating] = useState(false);
   const [newlyCreatedLink, setNewlyCreatedLink] = useState<PaymentLink | null>(null);
@@ -274,11 +313,36 @@ export const PayByLinkPage: React.FC = () => {
       .catch(() => {});
   }, [fetchPaymentLinks]);
 
-  const emptyForm = () => ({
-    terminalId: '', amount: '', currency: 'AZN', description: '', customerName: '',
-    customerEmail: '', customerPhone: '', usageType: 'SINGLE' as LinkUsageType, maxUses: '2',
-    expiry: 'h24' as ExpiryOption, paymentType: 'SMS' as PaymentType,
-  });
+  /**
+   * «Создать новую ссылку с теми же данными» с карточки ссылки приходит сюда как `state.prefill`:
+   * форма открывается заполненной, а state сразу стирается из записи истории — иначе обновление
+   * страницы открывало бы форму снова. Из адреса уходит и `?tab=stats`: форма — над списком ссылок.
+   */
+  const location = useLocation();
+  const [prefillTerminalId, setPrefillTerminalId] = useState<number | null>(null);
+  useEffect(() => {
+    const prefill = (location.state as { prefill?: PaymentLink } | null)?.prefill;
+    if (!prefill) return;
+    setForm(formFromLink(prefill));
+    setPrefillTerminalId(prefill.terminalId ?? null);
+    setNewlyCreatedLink(null);
+    setFormError('');
+    setCreateOpen(true);
+    const params = new URLSearchParams(location.search);
+    params.delete('tab');
+    const search = params.toString();
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true, state: null });
+  }, [location, navigate]);
+
+  // Терминал ссылки встаёт в форму, только если он среди активных: на заблокированном бэкенд
+  // откажет в создании (P2-8). Иначе поле пустое, и форма предлагает первый активный. Пока
+  // список не пришёл, терминал ждёт: пустой список до ответа и «активных нет» не различить.
+  useEffect(() => {
+    if (prefillTerminalId === null || terminals.length === 0) return;
+    const active = terminals.some(t => t.id === prefillTerminalId);
+    setForm(f => ({ ...f, terminalId: active ? String(prefillTerminalId) : '' }));
+    setPrefillTerminalId(null);
+  }, [terminals, prefillTerminalId]);
 
   const handleGenerate = async () => {
     if (generating) return;
@@ -358,7 +422,7 @@ export const PayByLinkPage: React.FC = () => {
   return (
     <Box>
       {/* Header */}
-      <Box sx={{ mb: 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
+      <Box sx={{ mb: 2, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600, mb: 0.5 }}>
             {tObj.payByLink.title}
@@ -378,232 +442,251 @@ export const PayByLinkPage: React.FC = () => {
         </Button>
       </Box>
 
-      {/* Filters & Table */}
-      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
-        {/* Toolbar */}
-        <Box sx={{ p: 2.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', borderBottom: '1px solid', borderColor: 'divider' }}>
-          <FilterIcon color="action" />
-          {/* Без счётчиков в кнопках: они считались по одной странице, а не по всей выборке. */}
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={statusFilter}
-            onChange={(_, v) => { if (v !== null) { setStatusFilter(v); setPage(0); } }}
-          >
-            <ToggleButton value="all">{tObj.common.all}</ToggleButton>
-            <ToggleButton value="ACTIVE">{tObj.payByLink.statuses.ACTIVE}</ToggleButton>
-            <ToggleButton value="COMPLETED">{tObj.payByLink.statuses.COMPLETED}</ToggleButton>
-            <ToggleButton value="EXPIRED">{tObj.payByLink.statuses.EXPIRED}</ToggleButton>
-            <ToggleButton value="CANCELED">{tObj.payByLink.statuses.CANCELED}</ToggleButton>
-            <ToggleButton value="SUSPENDED">{tObj.payByLink.statuses.SUSPENDED}</ToggleButton>
-          </ToggleButtonGroup>
-          <Box sx={{ ml: 'auto' }}>
-            <Typography variant="body2" color="text.secondary">
-              {totalElements}
-            </Typography>
-          </Box>
+      {/* Кнопка создания — в шапке, над вкладками: ссылку создают и со статистики. */}
+      <Tabs value={tab} onChange={handleTabChange} sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}>
+        <Tab value="links" id="pay-by-link-tab-links" aria-controls="pay-by-link-panel-links"
+             icon={<LinkIcon />} iconPosition="start" label={tObj.payByLink.tabs.links} sx={{ minHeight: 48 }} />
+        <Tab value="stats" id="pay-by-link-tab-stats" aria-controls="pay-by-link-panel-stats"
+             icon={<StatsIcon />} iconPosition="start" label={tObj.payByLink.tabs.stats} sx={{ minHeight: 48 }} />
+      </Tabs>
+
+      {/* Статистика оплат по ссылкам (Р-91) монтируется только на своей вкладке: сводку pbl не
+          запрашивают, пока её не открыли, и при каждом открытии она свежая. */}
+      {tab === 'stats' && (
+        <Box role="tabpanel" id="pay-by-link-panel-stats" aria-labelledby="pay-by-link-tab-stats">
+          <LinkPaymentsStats period={statsPeriod} onPeriodChange={setStatsPeriod} />
         </Box>
+      )}
 
-        {/* Table */}
-        <TableContainer>
-          <Table>
-            <TableHead>
-              <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.linkId}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.customer}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.descriptionLabel.replace(' *', '')}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }} align="right">{tObj.payByLink.table.amount}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.type}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.status}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.usage}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.expires}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }} align="center">{tObj.payByLink.table.actions}</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {links.map(link => {
-                const cfg = getStatusConfig(link, tObj);
-                const expiryProgress = link.status === 'ACTIVE'
-                  ? Math.max(0, Math.min(100, ((link.expiresAt.getTime() - Date.now()) / (link.expiresAt.getTime() - link.createdAt.getTime())) * 100))
-                  : null;
+      {/* Filters & Table */}
+      {tab === 'links' && (
+        <Paper elevation={0} role="tabpanel" id="pay-by-link-panel-links" aria-labelledby="pay-by-link-tab-links"
+               sx={{ border: '1px solid', borderColor: 'divider' }}>
+          {/* Toolbar */}
+          <Box sx={{ p: 2.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', borderBottom: '1px solid', borderColor: 'divider' }}>
+            <FilterIcon color="action" />
+            {/* Без счётчиков в кнопках: они считались по одной странице, а не по всей выборке. */}
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={statusFilter}
+              onChange={(_, v) => { if (v !== null) { setStatusFilter(v); setPage(0); } }}
+            >
+              <ToggleButton value="all">{tObj.common.all}</ToggleButton>
+              <ToggleButton value="ACTIVE">{tObj.payByLink.statuses.ACTIVE}</ToggleButton>
+              <ToggleButton value="COMPLETED">{tObj.payByLink.statuses.COMPLETED}</ToggleButton>
+              <ToggleButton value="EXPIRED">{tObj.payByLink.statuses.EXPIRED}</ToggleButton>
+              <ToggleButton value="CANCELED">{tObj.payByLink.statuses.CANCELED}</ToggleButton>
+              <ToggleButton value="SUSPENDED">{tObj.payByLink.statuses.SUSPENDED}</ToggleButton>
+            </ToggleButtonGroup>
+            <Box sx={{ ml: 'auto' }}>
+              <Typography variant="body2" color="text.secondary">
+                {totalElements}
+              </Typography>
+            </Box>
+          </Box>
 
-                return (
-                  <TableRow
-                    key={link.id}
-                    hover
-                    onClick={() => navigate(`/pay-by-link/${link.id}`, { state: { link } })}
-                    sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'rgba(0,0,0,0.02)' } }}
-                  >
-                    {/* Link */}
-                    <TableCell>
-                      <Box>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'primary.main', letterSpacing: 0.5 }}>
-                          {link.shortCode}
-                        </Typography>
-                        <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.7rem' }}>
-                          {link.url}
-                        </Typography>
-                      </Box>
-                    </TableCell>
+          {/* Table */}
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.linkId}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.customer}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.descriptionLabel.replace(' *', '')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }} align="right">{tObj.payByLink.table.amount}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.type}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.status}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.usage}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{tObj.payByLink.table.expires}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }} align="center">{tObj.payByLink.table.actions}</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {links.map(link => {
+                  const cfg = getStatusConfig(link, tObj);
+                  const expiryProgress = link.status === 'ACTIVE'
+                    ? Math.max(0, Math.min(100, ((link.expiresAt.getTime() - Date.now()) / (link.expiresAt.getTime() - link.createdAt.getTime())) * 100))
+                    : null;
 
-                    {/* Customer */}
-                    <TableCell>
-                      {link.customerName ? (
+                  return (
+                    <TableRow
+                      key={link.id}
+                      hover
+                      onClick={() => navigate(`/pay-by-link/${link.id}`, { state: { link } })}
+                      sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'rgba(0,0,0,0.02)' } }}
+                    >
+                      {/* Link */}
+                      <TableCell>
                         <Box>
-                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            {link.customerName}
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'primary.main', letterSpacing: 0.5 }}>
+                            {link.shortCode}
                           </Typography>
+                          <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.7rem' }}>
+                            {link.url}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+
+                      {/* Customer */}
+                      <TableCell>
+                        {link.customerName ? (
+                          <Box>
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                              {link.customerName}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {link.customerEmail}
+                            </Typography>
+                          </Box>
+                        ) : (
+                          <Typography variant="body2" color="text.disabled" sx={{ fontStyle: 'italic' }}>
+                            {tObj.payByLink.customerNotSpecified}
+                          </Typography>
+                        )}
+                      </TableCell>
+
+                      {/* Description */}
+                      <TableCell>
+                        <Typography variant="body2" sx={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {link.description}
+                        </Typography>
+                      </TableCell>
+
+                      {/* Amount */}
+                      <TableCell align="right">
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          {formatCurrency(link.amount, link.currency)}
+                        </Typography>
+                      </TableCell>
+
+                      {/* Payment Type */}
+                      <TableCell>
+                        <Chip
+                          label={link.paymentType ?? '—'}
+                          size="small"
+                          variant="outlined"
+                          color={link.paymentType === 'DMS' ? 'warning' : link.paymentType === 'SMS' ? 'primary' : 'default'}
+                          sx={{ fontWeight: 700, fontFamily: 'monospace', fontSize: '0.7rem' }}
+                        />
+                      </TableCell>
+
+                      {/* Status */}
+                      <TableCell>
+                        <Chip
+                          icon={cfg.icon as React.ReactElement}
+                          label={cfg.label}
+                          color={cfg.color}
+                          size="small"
+                          variant={link.status === 'ACTIVE' ? 'filled' : 'outlined'}
+                          sx={{ fontWeight: 600 }}
+                        />
+                      </TableCell>
+
+                      {/* Usage */}
+                      <TableCell>
+                        {/* В списочном ответе счётчика платежей нет (P2-16): показывается только
+                            лимит, «0 из N» здесь был бы выдумкой. Число использований — на карточке. */}
+                        {link.usageType === 'MULTIPLE' ? (
+                          <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                            {tObj.payByLink.multipleUse} · {link.maxUses}
+                          </Typography>
+                        ) : (
                           <Typography variant="caption" color="text.secondary">
-                            {link.customerEmail}
+                            {link.usageType === 'SINGLE' ? tObj.payByLink.singleUse : '—'}
                           </Typography>
-                        </Box>
-                      ) : (
-                        <Typography variant="body2" color="text.disabled" sx={{ fontStyle: 'italic' }}>
-                          {tObj.payByLink.customerNotSpecified}
-                        </Typography>
-                      )}
-                    </TableCell>
+                        )}
+                      </TableCell>
 
-                    {/* Description */}
-                    <TableCell>
-                      <Typography variant="body2" sx={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {link.description}
-                      </Typography>
-                    </TableCell>
+                      {/* Expires */}
+                      <TableCell>
+                        {/* Дату оплаты вместо срока показываем только у завершённой ссылки (Р-47).
+                            У активной многоразовой с тремя платежами из пяти важнее, сколько ей
+                            осталось жить: срок — то, что ещё может измениться, а дата платежа
+                            видна на карточке. */}
+                        {link.status === 'COMPLETED' && link.paidAt ? (
+                          <Box>
+                            <Typography variant="caption" color="success.main" sx={{ fontWeight: 600 }}>
+                              {tObj.payByLink.paid}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                              {formatDateTime(link.paidAt)}
+                            </Typography>
+                          </Box>
+                        ) : (
+                          <Box>
+                            <Typography variant="caption" sx={{ fontWeight: 600, color: link.status === 'ACTIVE' && expiryProgress !== null && expiryProgress < 20 ? 'error.main' : 'text.primary' }}>
+                              {link.status === 'ACTIVE' ? formatTimeLeft(link.expiresAt) : formatDateTime(link.expiresAt)}
+                            </Typography>
+                            {link.status === 'ACTIVE' && expiryProgress !== null && (
+                              <LinearProgress
+                                variant="determinate"
+                                value={expiryProgress}
+                                color={expiryProgress < 20 ? 'error' : expiryProgress < 50 ? 'warning' : 'primary'}
+                                sx={{ mt: 0.5, height: 3, borderRadius: 2 }}
+                              />
+                            )}
+                          </Box>
+                        )}
+                      </TableCell>
 
-                    {/* Amount */}
-                    <TableCell align="right">
-                      <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                        {formatCurrency(link.amount, link.currency)}
-                      </Typography>
-                    </TableCell>
-
-                    {/* Payment Type */}
-                    <TableCell>
-                      <Chip
-                        label={link.paymentType ?? '—'}
-                        size="small"
-                        variant="outlined"
-                        color={link.paymentType === 'DMS' ? 'warning' : link.paymentType === 'SMS' ? 'primary' : 'default'}
-                        sx={{ fontWeight: 700, fontFamily: 'monospace', fontSize: '0.7rem' }}
-                      />
-                    </TableCell>
-
-                    {/* Status */}
-                    <TableCell>
-                      <Chip
-                        icon={cfg.icon as React.ReactElement}
-                        label={cfg.label}
-                        color={cfg.color}
-                        size="small"
-                        variant={link.status === 'ACTIVE' ? 'filled' : 'outlined'}
-                        sx={{ fontWeight: 600 }}
-                      />
-                    </TableCell>
-
-                    {/* Usage */}
-                    <TableCell>
-                      {/* В списочном ответе счётчика платежей нет (P2-16): показывается только
-                          лимит, «0 из N» здесь был бы выдумкой. Число использований — на карточке. */}
-                      {link.usageType === 'MULTIPLE' ? (
-                        <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                          {tObj.payByLink.multipleUse} · {link.maxUses}
-                        </Typography>
-                      ) : (
-                        <Typography variant="caption" color="text.secondary">
-                          {link.usageType === 'SINGLE' ? tObj.payByLink.singleUse : '—'}
-                        </Typography>
-                      )}
-                    </TableCell>
-
-                    {/* Expires */}
-                    <TableCell>
-                      {/* Дату оплаты вместо срока показываем только у завершённой ссылки (Р-47).
-                          У активной многоразовой с тремя платежами из пяти важнее, сколько ей
-                          осталось жить: срок — то, что ещё может измениться, а дата платежа
-                          видна на карточке. */}
-                      {link.status === 'COMPLETED' && link.paidAt ? (
-                        <Box>
-                          <Typography variant="caption" color="success.main" sx={{ fontWeight: 600 }}>
-                            {tObj.payByLink.paid}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                            {formatDateTime(link.paidAt)}
-                          </Typography>
-                        </Box>
-                      ) : (
-                        <Box>
-                          <Typography variant="caption" sx={{ fontWeight: 600, color: link.status === 'ACTIVE' && expiryProgress !== null && expiryProgress < 20 ? 'error.main' : 'text.primary' }}>
-                            {link.status === 'ACTIVE' ? formatTimeLeft(link.expiresAt) : formatDateTime(link.expiresAt)}
-                          </Typography>
-                          {link.status === 'ACTIVE' && expiryProgress !== null && (
-                            <LinearProgress
-                              variant="determinate"
-                              value={expiryProgress}
-                              color={expiryProgress < 20 ? 'error' : expiryProgress < 50 ? 'warning' : 'primary'}
-                              sx={{ mt: 0.5, height: 3, borderRadius: 2 }}
-                            />
-                          )}
-                        </Box>
-                      )}
-                    </TableCell>
-
-                    {/* Actions */}
-                    <TableCell align="center" onClick={e => e.stopPropagation()}>
-                      <Stack direction="row" spacing={0.5} justifyContent="center">
-                        <Tooltip title={tObj.payByLink.copyLink}>
-                          <span>
-                            <IconButton size="small" onClick={() => handleCopy(link.url)} disabled={link.status !== 'ACTIVE'}>
-                              <CopyIcon fontSize="small" />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                        <Tooltip title={tObj.payByLink.share}>
-                          <span>
-                            <IconButton size="small" onClick={() => handleShare(link)} disabled={link.status !== 'ACTIVE'}>
-                              <ShareIcon fontSize="small" />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                        <Tooltip title={tObj.payByLink.cancelLinkAction}>
-                          <span>
-                            <IconButton
-                              size="small"
-                              color="error"
-                              onClick={() => setCancelTarget(link)}
-                              disabled={link.status !== 'ACTIVE'}
-                            >
-                              <CancelIcon fontSize="small" />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                      </Stack>
+                      {/* Actions */}
+                      <TableCell align="center" onClick={e => e.stopPropagation()}>
+                        <Stack direction="row" spacing={0.5} justifyContent="center">
+                          <Tooltip title={tObj.payByLink.copyLink}>
+                            <span>
+                              <IconButton size="small" onClick={() => handleCopy(link.url)} disabled={link.status !== 'ACTIVE'}>
+                                <CopyIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title={tObj.payByLink.share}>
+                            <span>
+                              <IconButton size="small" onClick={() => handleShare(link)} disabled={link.status !== 'ACTIVE'}>
+                                <ShareIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title={tObj.payByLink.cancelLinkAction}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                color="error"
+                                onClick={() => setCancelTarget(link)}
+                                disabled={link.status !== 'ACTIVE'}
+                              >
+                                <CancelIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {links.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
+                      <LinkIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
+                      <Typography color="text.secondary">{tObj.payByLink.empty}</Typography>
                     </TableCell>
                   </TableRow>
-                );
-              })}
-              {links.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
-                    <LinkIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
-                    <Typography color="text.secondary">{tObj.payByLink.empty}</Typography>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
 
-        <TablePagination
-          rowsPerPageOptions={[10, 25, 50]}
-          component="div"
-          count={totalElements}
-          rowsPerPage={rowsPerPage}
-          page={page}
-          onPageChange={(_, p) => setPage(p)}
-          onRowsPerPageChange={e => { setRowsPerPage(parseInt(e.target.value)); setPage(0); }}
-        />
-      </Paper>
+          <TablePagination
+            rowsPerPageOptions={[10, 25, 50]}
+            component="div"
+            count={totalElements}
+            rowsPerPage={rowsPerPage}
+            page={page}
+            onPageChange={(_, p) => setPage(p)}
+            onRowsPerPageChange={e => { setRowsPerPage(parseInt(e.target.value)); setPage(0); }}
+          />
+        </Paper>
+      )}
 
       {/* ── Create Dialog ──────────────────────────────────────────────────── */}
       <Dialog open={createOpen} onClose={handleCloseCreate} maxWidth="sm" fullWidth scroll="paper">

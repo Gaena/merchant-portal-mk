@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -48,6 +49,11 @@ public class UserService {
     // глобальны: выдать такую роль или сменить пароль такой учётке с его companyId значило бы
     // получить данные всех компаний или права администратора.
     private static final Set<Role> HEAD_MANAGED_ROLES = EnumSet.of(Role.COMPANY_MANAGER, Role.COMPANY_EMPLOYEE);
+
+    // Роли, которые работают только внутри компании: без companyId у них нет ни одного своего терминала,
+    // и экран показывал бы им пустоту (Р-90).
+    private static final Set<Role> COMPANY_ROLES =
+            EnumSet.of(Role.COMPANY_HEAD, Role.COMPANY_MANAGER, Role.COMPANY_EMPLOYEE);
 
     private final UserRepository userRepository;
     private final CompanyRepository companyRepository;
@@ -190,6 +196,7 @@ public class UserService {
         // отмечается фактом, никогда значением.
         List<String> changes = new ArrayList<>();
         boolean passwordChanged = false;
+        boolean roleOrCompanyChanged = false;
         String previousStatus = user.getStatus();
 
         if (request.fullName() != null && !request.fullName().equals(user.getFullName())) {
@@ -215,8 +222,38 @@ public class UserService {
             if (!request.role().equals(user.getRole())) {
                 changes.add("role " + user.getRole() + " -> " + request.role());
                 user.setRole(request.role());
+                roleOrCompanyChanged = true;
             }
         }
+        // Р-90: компания. Раньше её в запросе не было вовсе, и пользователя, заведённого не в ту компанию,
+        // оставалось только удалить и завести заново. Переводит между компаниями только SYSTEM_ADMIN:
+        // руководитель своей компанией и ограничен (validateWriteAccess), чужую он не видит.
+        if (request.companyId() != null) {
+            String requestedCompanyId = request.companyId().isBlank() ? null : request.companyId().trim();
+            if (!Objects.equals(requestedCompanyId, user.getCompanyId())) {
+                if (actorRole != Role.SYSTEM_ADMIN) {
+                    auditLogService.logDenied(AuditEntity.USER, id.toString(), AuditAction.UPDATE, actorUsername, actorCompanyId,
+                            "Denied: role " + UserPrincipal.getRawRole(principal)
+                                    + " attempted to move user " + id + " to company " + requestedCompanyId);
+                    throw new InvalidStateException("Cannot move a user to another company");
+                }
+                if (requestedCompanyId != null && !companyRepository.existsById(requestedCompanyId)) {
+                    throw new BusinessException("Company not found");
+                }
+                changes.add("companyId " + user.getCompanyId() + " -> " + requestedCompanyId);
+                user.setCompanyId(requestedCompanyId);
+                roleOrCompanyChanged = true;
+            }
+        }
+        // Проверяется итог, а не запрос: и смена роли на роль компании, и снятие компании у руководителя
+        // дают одно и то же — пользователя компании без компании. Только когда запрос роль или компанию
+        // меняет: старую запись без компании нужно по-прежнему можно заблокировать или переименовать.
+        // Транзакция откатит всё, что уже присвоено выше.
+        if (roleOrCompanyChanged
+                && COMPANY_ROLES.contains(Role.fromValue(user.getRole()).orElse(null)) && user.getCompanyId() == null) {
+            throw new BusinessException("Role " + user.getRole() + " requires a company");
+        }
+
         boolean nonActiveStatusSet = false;
         if (request.status() != null) {
             nonActiveStatusSet = !STATUS_ACTIVE.equals(request.status());

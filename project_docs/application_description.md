@@ -188,6 +188,7 @@ erDiagram
     companies ||--o{ audit_logs : "company_id"
     terminals ||--o{ payment_links : "terminal_id"
     payment_links ||--o{ transactions : "link_id"
+    transactions ||--o{ transaction_refunds : "transaction_id"
     provider_terminals |o--o| terminals : "rid = merchant_rid, без внешнего ключа"
 
     companies {
@@ -302,6 +303,14 @@ erDiagram
         timestamp created_at
         timestamp updated_at
     }
+
+    transaction_refunds {
+        uuid id PK
+        uuid transaction_id FK "→ transactions.id, каскад на удаление"
+        numeric amount "Подтверждённый возврат"
+        timestamptz refunded_at "Время возврата; по нему сводка вычитает возвраты (Р-89)"
+        varchar rid_by_pmo "Ссылка эквайера на возврат"
+    }
 ```
 
 ### 4.2. Общая база
@@ -337,6 +346,7 @@ changeset'ы не редактируются.
 | `pbl` | `007-transaction-indexes.xml` | три индекса `transactions`: `(link_id, status)`, `(link_id, created_at desc)`, `(status, created_at)` |
 | `pbl` | `008-dashboard-indexes.xml` | индекс `transactions(created_at)` для сводки |
 | `pbl` | `009-rid-by-merchant.xml` | переименование `transactions.merchant_rid` → `rid_by_merchant` |
+| `pbl` | `010-transaction-refunds.xml` | `transaction_refunds` с индексами по `refunded_at` и `transaction_id`; на PostgreSQL — перенос подтверждённых возвратов из `provider_response.mpRefunds` (Р-89) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет |
 
@@ -500,6 +510,9 @@ sequenceDiagram
   `ecom.md` §2.
 - **Справочник терминалов провайдера** обновляется в `provider_terminals` по расписанию и по кнопке
   (`ecom.md` §3); по нему `directory` сверяет статусы наших терминалов (§6).
+- **Главная.** Сводка главной — тоже `ecom` (`GET /api/v1/ecom/dashboard/summary`, Р-91): оплаты картой по
+  всем терминалам компании за период, теми же правилами, что итоги выписки. Статистика оплат по платёжным
+  ссылкам — вкладка Pay by Link, сводка `pbl`.
 - **Экран.** Вкладка `/transactions/ecommerce` — выписка на API `ecom`: фильтры и итоги считает сервер,
   страница курсорная («показать ещё»), карточка заказа — `/transactions/ecommerce/:orderId`. Форма
   заведения терминала у системного администратора выбирает терминал из справочника провайдера.

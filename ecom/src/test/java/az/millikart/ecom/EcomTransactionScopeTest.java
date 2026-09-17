@@ -17,6 +17,7 @@ import az.millikart.common.security.UserPrincipal;
 import az.millikart.ecom.config.TxpgProperties;
 import az.millikart.ecom.domain.ProviderTerminal;
 import az.millikart.ecom.dto.CursorPage;
+import az.millikart.ecom.dto.EcomDashboardResponse;
 import az.millikart.ecom.dto.EcomStatsResponse;
 import az.millikart.ecom.dto.EcomTerminalResponse;
 import az.millikart.ecom.dto.EcomTransactionFilter;
@@ -395,6 +396,66 @@ class EcomTransactionScopeTest {
 
         Assertions.assertEquals(List.of("103"), next.content().stream().map(EcomTransactionResponse::orderId).toList());
         Assertions.assertNull(next.nextCursor());
+    }
+
+    // ─── Р-91: сводка главной ────────────────────────────────────────────────
+
+    // Пользователю без терминалов — пустая сводка, и в базу шлюза за ней не ходим, как и за выпиской.
+    @Test
+    void dashboardWithoutLinkedTerminals_isEmptyAndTheGatewayIsNotQueried() {
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
+
+        EcomDashboardResponse summary = service.dashboard(from, to, principal);
+
+        Assertions.assertTrue(summary.totals().isEmpty());
+        Assertions.assertTrue(summary.statusCounts().values().stream().allMatch(count -> count == 0L));
+        verifyNoInteractions(repository);
+    }
+
+    // Сводка — по всему скоупу, без сужения по терминалу и типу; суммы и статусы — тем же проходом по строкам
+    // периода, что итоги выписки, поэтому за тот же период они совпадают. Подпись терминала — из слепка.
+    @Test
+    void dashboardReadsTheWholeScope_andMatchesTheStatementTotals() {
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+        doAnswer(invocation -> {
+            Consumer<TxpgStatementRow> sink = invocation.getArgument(1);
+            TxpgRows.testStandExport().forEach(sink);
+            return null;
+        }).when(repository).streamPeriodRows(any(), any());
+        when(providerTerminals.findAllById(any())).thenReturn(List.of(
+                ProviderTerminal.builder().rid(TxpgRows.MERCHANT_RID).title("Bazar").login("BS00001").build()));
+
+        EcomDashboardResponse summary = service.dashboard(from, to, principal);
+        EcomStatsResponse stats = service.stats(from, to, null, null, principal);
+
+        ArgumentCaptor<EcomTransactionFilter> filter = ArgumentCaptor.forClass(EcomTransactionFilter.class);
+        verify(repository, times(2)).streamPeriodRows(filter.capture(), any());
+        Assertions.assertEquals(List.of("BS00001"), filter.getAllValues().getFirst().logins());
+        Assertions.assertNull(filter.getAllValues().getFirst().merchantRids());
+        Assertions.assertNull(filter.getAllValues().getFirst().paymentType());
+
+        Assertions.assertEquals(stats.statusCounts(), summary.statusCounts());
+        Assertions.assertEquals(stats.orderCount(),
+                summary.totals().stream().mapToLong(EcomDashboardResponse.CurrencyTotals::orderCount).sum());
+        for (EcomStatsResponse.CurrencyTotal total : stats.totals()) {
+            EcomDashboardResponse.CurrencyTotals same = summary.totals().stream()
+                    .filter(t -> java.util.Objects.equals(t.currency(), total.currency())).findFirst().orElseThrow();
+            Assertions.assertEquals(0, total.capturedAmount().compareTo(same.capturedAmount()));
+            Assertions.assertEquals(0, total.refundedAmount().compareTo(same.refundedAmount()));
+        }
+        Assertions.assertEquals("BS00001", summary.topTerminals().getFirst().login());
+        Assertions.assertEquals("Bazar", summary.topTerminals().getFirst().title());
+        Assertions.assertEquals("Asia/Baku", summary.window().zone());
+    }
+
+    @Test
+    void dashboardPeriodIsRequiredAndBounded() {
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+
+        Assertions.assertThrows(BusinessException.class, () -> service.dashboard(null, to, principal));
+        Assertions.assertThrows(BusinessException.class,
+                () -> service.dashboard(from, from.plus(400, ChronoUnit.DAYS), principal));
+        verifyNoInteractions(repository);
     }
 
     private EcomTransactionService serviceWith(int maxPageSize, int statusScanLimit) {

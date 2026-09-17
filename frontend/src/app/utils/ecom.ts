@@ -4,6 +4,7 @@ import {
   ECOM_STATUSES,
   parseEcomStatus,
   type EcomCurrencyTotal,
+  type EcomDashboard,
   type EcomOperation,
   type EcomOperationKind,
   type EcomOrder,
@@ -144,6 +145,57 @@ export const fetchEcomStats = async (
 ): Promise<EcomStats> => {
   const res = await apiClient.get('/api/v1/ecom/transactions/stats', { params: periodParams(query), signal });
   return mapStats(res.data);
+};
+
+/** Сводка главной (Р-91): период обязателен, разбор — здесь, как у всей выписки. */
+export const fetchEcomDashboard = async (dateFrom: Date, dateTo: Date, signal?: AbortSignal): Promise<EcomDashboard> => {
+  const res = await apiClient.get('/api/v1/ecom/dashboard/summary', {
+    params: { dateFrom: dateFrom.toISOString(), dateTo: dateTo.toISOString() },
+    signal,
+  });
+  const raw = res.data;
+  const statusCounts = Object.fromEntries(
+    ECOM_STATUSES.map(status => [status, amount(raw?.statusCounts?.[status]) ?? 0])
+  ) as Record<EcomStatus, number>;
+  return {
+    window: {
+      from: text(raw?.window?.from) ?? dateFrom.toISOString(),
+      to: text(raw?.window?.to) ?? dateTo.toISOString(),
+      zone: text(raw?.window?.zone) ?? '',
+    },
+    totals: Array.isArray(raw?.totals)
+      ? raw.totals.map((t: any) => ({
+          currency: text(t?.currency),
+          orderCount: amount(t?.orderCount) ?? 0,
+          paidCount: amount(t?.paidCount) ?? 0,
+          capturedAmount: amount(t?.capturedAmount) ?? 0,
+          refundedAmount: amount(t?.refundedAmount) ?? 0,
+          netAmount: amount(t?.netAmount) ?? 0,
+          averagePaidAmount: amount(t?.averagePaidAmount) ?? 0,
+        }))
+      : [],
+    statusCounts,
+    dailyTotals: Array.isArray(raw?.dailyTotals)
+      ? raw.dailyTotals
+          .filter((d: any) => typeof d?.date === 'string')
+          .map((d: any) => ({
+            date: d.date,
+            currency: text(d?.currency),
+            netAmount: amount(d?.netAmount) ?? 0,
+            orderCount: amount(d?.orderCount) ?? 0,
+          }))
+      : [],
+    topTerminals: Array.isArray(raw?.topTerminals)
+      ? raw.topTerminals.map((t: any) => ({
+          currency: text(t?.currency),
+          merchantRid: text(t?.merchantRid),
+          login: text(t?.login),
+          title: text(t?.title),
+          netAmount: amount(t?.netAmount) ?? 0,
+          orderCount: amount(t?.orderCount) ?? 0,
+        }))
+      : [],
+  };
 };
 
 export const fetchEcomTerminals = async (signal?: AbortSignal): Promise<EcomTerminal[]> => {

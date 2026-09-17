@@ -14,5 +14,6 @@
     <include file="changes/007-transaction-indexes.xml" relativeToChangelogFile="true"/>
     <include file="changes/008-dashboard-indexes.xml" relativeToChangelogFile="true"/>
     <include file="changes/009-rid-by-merchant.xml" relativeToChangelogFile="true"/>
+    <include file="changes/010-transaction-refunds.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

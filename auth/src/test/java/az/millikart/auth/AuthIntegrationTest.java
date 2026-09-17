@@ -197,7 +197,7 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$.content", hasSize(2)))
                 .andExpect(jsonPath("$.totalElements", is(2)));
 
-        UpdateUserRequest updateRequest = new UpdateUserRequest("Updated Name", null, "NewSecurePass123!", "ACTIVE");
+        UpdateUserRequest updateRequest = new UpdateUserRequest("Updated Name", null, "NewSecurePass123!", "ACTIVE", null);
         mockMvc.perform(patch("/api/v1/users/" + headId)
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -247,7 +247,7 @@ public class AuthIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + secondAdminId)
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, "Takeover12345!", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, "Takeover12345!", null, null))))
                 .andExpect(status().isForbidden());
     }
 
@@ -260,15 +260,106 @@ public class AuthIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + headId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED"))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null))))
                 .andExpect(status().isOk());
 
         mockMvc.perform(patch("/api/v1/users/" + headId)
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "ACTIVE"))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "ACTIVE", null))))
                 .andExpect(status().isForbidden());
         Assertions.assertEquals("BLOCKED", userRepository.findById(headId).orElseThrow().getStatus());
+    }
+
+    // ─── Р-90: смена компании ────────────────────────────────────────────────
+
+    // Пользователя, заведённого не в ту компанию, администратор переводит правкой, а не удалением и
+    // повторным заведением. Роль и компания меняются одним запросом.
+    @Test
+    public void admin_movesAUserToAnotherCompany_andChangesTheRole() throws Exception {
+        saveCompany("comp-02");
+        UUID userId = createUser("wrong@comp01.com", "COMPANY_EMPLOYEE", "comp-01");
+
+        mockMvc.perform(patch("/api/v1/users/" + userId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateUserRequest(null, "COMPANY_MANAGER", null, null, "comp-02"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.companyId", is("comp-02")))
+                .andExpect(jsonPath("$.role", is("COMPANY_MANAGER")));
+
+        User moved = userRepository.findById(userId).orElseThrow();
+        Assertions.assertEquals("comp-02", moved.getCompanyId());
+        Assertions.assertEquals("COMPANY_MANAGER", moved.getRole());
+    }
+
+    // Руководитель правит людей только своей компании и перевести их в чужую не может: иначе он
+    // отдавал бы сотрудника с доступом к своим данным в компанию, которую не видит.
+    @Test
+    public void companyHead_cannotMoveAUserToAnotherCompany() throws Exception {
+        saveCompany("comp-02");
+        createUser("head5@comp01.com", "COMPANY_HEAD", "comp-01");
+        UUID employeeId = createUser("emp5@comp01.com", "COMPANY_EMPLOYEE", "comp-01");
+        String headToken = login("head5@comp01.com");
+
+        mockMvc.perform(patch("/api/v1/users/" + employeeId)
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateUserRequest(null, null, null, null, "comp-02"))))
+                .andExpect(status().isForbidden());
+        Assertions.assertEquals("comp-01", userRepository.findById(employeeId).orElseThrow().getCompanyId());
+
+        // Та же компания — не перевод: запрос с нетронутым полем проходит.
+        mockMvc.perform(patch("/api/v1/users/" + employeeId)
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateUserRequest("Renamed", null, null, null, "comp-01"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    public void movingToACompanyThatDoesNotExist_isRefused() throws Exception {
+        UUID userId = createUser("emp6@comp01.com", "COMPANY_EMPLOYEE", "comp-01");
+
+        mockMvc.perform(patch("/api/v1/users/" + userId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateUserRequest(null, null, null, null, "no-such-company"))))
+                .andExpect(status().isBadRequest());
+        Assertions.assertEquals("comp-01", userRepository.findById(userId).orElseThrow().getCompanyId());
+    }
+
+    // Роль компании без компании бессмысленна: ни одного своего терминала. Снять компанию можно только
+    // вместе со сменой роли на роль вне компании, и весь запрос откатывается, если итог неверен.
+    @Test
+    public void aCompanyRoleCannotBeLeftWithoutACompany() throws Exception {
+        UUID headId = createUser("head7@comp01.com", "COMPANY_HEAD", "comp-01");
+
+        mockMvc.perform(patch("/api/v1/users/" + headId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateUserRequest("Should Not Stick", null, null, null, ""))))
+                .andExpect(status().isBadRequest());
+        User untouched = userRepository.findById(headId).orElseThrow();
+        Assertions.assertEquals("comp-01", untouched.getCompanyId());
+        Assertions.assertEquals("Test User", untouched.getFullName(), "the whole request is rolled back");
+
+        mockMvc.perform(patch("/api/v1/users/" + headId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateUserRequest(null, "AUDITOR", null, null, ""))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.companyId").doesNotExist());
+    }
+
+    private void saveCompany(String id) {
+        companyRepository.save(Company.builder().id(id).name("Company " + id).status("ACTIVE").build());
     }
 
     private UUID createUser(String username, String role, String companyId) throws Exception {

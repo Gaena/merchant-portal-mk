@@ -29,6 +29,7 @@ import {
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
+  Edit as EditIcon,
   Search as SearchIcon,
   Refresh as RefreshIcon,
   Group as GroupIcon
@@ -40,6 +41,18 @@ import { useDebounced } from '../hooks/useDebounced';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
 import type { UserDto, CompanyDto } from '../types/dto';
+import type { Role } from '../types/role';
+
+/**
+ * Роли, которые может выдать руководитель компании, — зеркало `UserService.HEAD_MANAGED_ROLES` (Р-85).
+ * Правит он только людей с этими ролями в своей компании и себя самого; остальное бэкенд отклонит (Р-62).
+ */
+const HEAD_MANAGED_ROLES: readonly Role[] = ['COMPANY_MANAGER', 'COMPANY_EMPLOYEE'];
+const ALL_ROLES: readonly Role[] = ['SYSTEM_ADMIN', 'AUDITOR', 'COMPANY_HEAD', 'COMPANY_MANAGER', 'COMPANY_EMPLOYEE'];
+/** Статусы, которые ставит правка: `DELETED` — только удалением (`DELETE /users/{id}`). */
+const EDITABLE_STATUSES = ['ACTIVE', 'BLOCKED'] as const;
+
+type EditForm = { fullName: string; role: string; companyId: string; status: string; password: string };
 
 export const UsersPage: React.FC = () => {
   const { user: currentUser } = useAuth();
@@ -52,6 +65,13 @@ export const UsersPage: React.FC = () => {
    */
   const isAdmin = currentUser?.role === 'SYSTEM_ADMIN';
   const ownCompanyId = currentUser?.companyId ?? '';
+  // Роли, которые этот пользователь портала может выдать при создании и правке.
+  const grantableRoles: readonly Role[] = isAdmin ? ALL_ROLES : HEAD_MANAGED_ROLES;
+  // Себя узнаём по логину: id пользователя в токене фронтенд не хранит, логин — это `sub` (email).
+  const isSelf = (u: UserDto) => (u.username || '').toLowerCase() === (currentUser?.email || '').toLowerCase();
+  // Кого можно править и удалять — те же правила, что `UserService.validateWriteAccess` (Р-85):
+  // администратор — всех, руководитель — себя и людей ниже своей роли; список ему и так отдают по его компании.
+  const canWrite = (u: UserDto) => isAdmin || isSelf(u) || HEAD_MANAGED_ROLES.includes(u.role as Role);
   const [usersList, setUsersList] = useState<UserDto[]>([]);
   // Удаление уходит на сервер только после подтверждения: оно мягкое, но необратимое из
   // портала (updateUser на удалённом отвечает «User not found») и гасит все сессии сразу.
@@ -63,13 +83,23 @@ export const UsersPage: React.FC = () => {
 
   // Dialog & Form
   const [userDialogOpen, setUserDialogOpen] = useState(false);
+  // Роль по умолчанию — первая из тех, что этот пользователь может выдать: у руководителя
+  // «Руководитель компании» больше не выдаётся (Р-85), и форма не должна с неё начинаться.
+  const defaultRole = isAdmin ? 'COMPANY_HEAD' : 'COMPANY_MANAGER';
   const [userForm, setUserForm] = useState({
     username: '',
     password: '',
     fullName: '',
-    role: 'COMPANY_HEAD',
+    role: defaultRole,
     companyId: ''
   });
+  const [notice, setNotice] = useState('');
+  // Правка пользователя (Р-90): окно формы, затем подтверждение со списком изменений.
+  const [editing, setEditing] = useState<UserDto | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>({ fullName: '', role: '', companyId: '', status: '', password: '' });
+  const [editError, setEditError] = useState('');
+  const [editConfirm, setEditConfirm] = useState<string[] | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
   const [userError, setUserError] = useState('');
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -169,7 +199,7 @@ export const UsersPage: React.FC = () => {
         username: '',
         password: '',
         fullName: '',
-        role: 'COMPANY_HEAD',
+        role: defaultRole,
         companyId: isAdmin ? (companiesList[0]?.id || '') : ''
       });
     } catch (err: any) {
@@ -197,6 +227,99 @@ export const UsersPage: React.FC = () => {
     } finally {
       setDeleteBusy(false);
       setPendingDelete(null);
+    }
+  };
+
+  const roleLabel = (role?: string): string => {
+    switch (role) {
+      case 'SYSTEM_ADMIN': return tObj.users.roles.systemAdmin;
+      case 'AUDITOR': return tObj.users.roles.auditor;
+      case 'COMPANY_HEAD': return tObj.users.roles.companyHead;
+      case 'COMPANY_MANAGER': return tObj.users.roles.companyManager;
+      case 'COMPANY_EMPLOYEE': return tObj.users.roles.companyEmployee;
+      // Роль вне словаря показывается как есть, а не подменяется знакомой (Р-48).
+      default: return role || '—';
+    }
+  };
+
+  const statusLabel = (status?: string): string =>
+    status === 'ACTIVE' || status === 'BLOCKED' ? tObj.users.statuses[status] : (status || '—');
+
+  const handleOpenEdit = (u: UserDto) => {
+    setEditError('');
+    setEditing(u);
+    setEditForm({
+      fullName: u.fullName || '',
+      role: u.role || '',
+      companyId: u.companyId || '',
+      status: u.status || 'ACTIVE',
+      password: '',
+    });
+  };
+
+  /**
+   * Что изменится, если сохранить форму. Пустой список — менять нечего, и запрос не уходит вовсе:
+   * PATCH без изменений всё равно оставил бы запись «No fields changed» в журнале аудита.
+   */
+  const pendingEditChanges = (): string[] => {
+    if (!editing) return [];
+    const changes: string[] = [];
+    if (editForm.fullName.trim() !== (editing.fullName || '')) {
+      changes.push(`${tObj.users.name}: ${editing.fullName || '—'} → ${editForm.fullName.trim() || '—'}`);
+    }
+    if (editForm.role !== (editing.role || '')) {
+      changes.push(`${tObj.users.role}: ${roleLabel(editing.role)} → ${roleLabel(editForm.role)}`);
+    }
+    if (isAdmin && editForm.companyId !== (editing.companyId || '')) {
+      changes.push(`${tObj.users.company}: ${getCompanyName(editing.companyId) || tObj.users.noCompany} → `
+        + `${getCompanyName(editForm.companyId) || tObj.users.noCompany}`);
+    }
+    if (editForm.status !== (editing.status || '')) {
+      changes.push(`${tObj.users.status}: ${statusLabel(editing.status)} → ${statusLabel(editForm.status)}`);
+    }
+    if (editForm.password) {
+      changes.push(tObj.users.passwordWillChange);
+    }
+    return changes;
+  };
+
+  const handleAskUpdate = () => {
+    if (!editing) return;
+    if (!editForm.fullName.trim()) {
+      setEditError(tObj.users.formIncomplete);
+      return;
+    }
+    setEditError('');
+    const changes = pendingEditChanges();
+    if (changes.length === 0) {
+      setEditing(null);
+      setNotice(tObj.users.editNothingChanged);
+      return;
+    }
+    setEditConfirm(changes);
+  };
+
+  const handleUpdateUser = async () => {
+    if (!editing || editBusy) return;
+    setEditBusy(true);
+    try {
+      // Только изменившиеся поля. Компанию шлёт только администратор; пустая строка — снять компанию.
+      const payload: Record<string, string> = {};
+      if (editForm.fullName.trim() !== (editing.fullName || '')) payload.fullName = editForm.fullName.trim();
+      if (editForm.role !== (editing.role || '')) payload.role = editForm.role;
+      if (isAdmin && editForm.companyId !== (editing.companyId || '')) payload.companyId = editForm.companyId;
+      if (editForm.status !== (editing.status || '')) payload.status = editForm.status;
+      if (editForm.password) payload.password = editForm.password;
+      const res = await apiClient.patch<UserDto>(`/api/v1/users/${editing.id}`, payload);
+      setUsersList(prev => prev.map(u => (u.id === editing.id ? res.data : u)));
+      setEditing(null);
+      setNotice(tObj.users.updated);
+    } catch (err: any) {
+      // Отказ остаётся в окне правки: там форма, которую нужно поправить.
+      setEditError(err.response?.data?.message || tObj.users.updateFailed);
+    } finally {
+      setEditBusy(false);
+      setEditConfirm(null);
     }
   };
 
@@ -232,6 +355,11 @@ export const UsersPage: React.FC = () => {
       {snackbar && (
         <Alert severity="error" sx={{ mb: 3 }} onClose={() => setSnackbar('')}>
           {snackbar}
+        </Alert>
+      )}
+      {notice && (
+        <Alert severity="info" sx={{ mb: 3 }} onClose={() => setNotice('')}>
+          {notice}
         </Alert>
       )}
 
@@ -292,24 +420,35 @@ export const UsersPage: React.FC = () => {
                   <TableCell sx={{ fontWeight: 600 }}>{u.username}</TableCell>
                   <TableCell>{u.fullName || '—'}</TableCell>
                   <TableCell>
-                    {/* Роль — как прислал сервер; подставлять несуществующую «USER» нельзя (Р-48). */}
-                    <Chip label={u.role || '—'} color="primary" size="small" variant="outlined" />
+                    {/* Роль — подписью из словаря; незнакомая — как прислал сервер (Р-48). */}
+                    <Chip label={roleLabel(u.role)} color="primary" size="small" variant="outlined" />
                   </TableCell>
                   <TableCell>{getCompanyName(u.companyId) || '—'}</TableCell>
                   <TableCell>
                     {/* Статус — из ответа: чип «Active» на всех строках подряд скрывал заблокированных. */}
                     <Chip
-                      label={u.status === 'ACTIVE' ? tObj.common.active : (u.status || '—')}
-                      color={u.status === 'ACTIVE' ? 'success' : 'default'}
+                      label={statusLabel(u.status)}
+                      color={u.status === 'ACTIVE' ? 'success' : u.status === 'BLOCKED' ? 'warning' : 'default'}
                       size="small"
                     />
                   </TableCell>
                   <TableCell align="center">
-                    <Tooltip title={tObj.common.delete}>
-                      <IconButton color="error" size="small" onClick={() => setPendingDelete(u)}>
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
+                    {/* Кнопки — только там, где бэкенд примет действие (Р-62, Р-85). Удалить себя
+                        из этого списка нельзя: так легко лишить себя доступа одним кликом. */}
+                    {canWrite(u) && (
+                      <Tooltip title={tObj.users.editUser}>
+                        <IconButton color="primary" size="small" onClick={() => handleOpenEdit(u)}>
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {canWrite(u) && !isSelf(u) && (
+                      <Tooltip title={tObj.common.delete}>
+                        <IconButton color="error" size="small" onClick={() => setPendingDelete(u)}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -366,13 +505,10 @@ export const UsersPage: React.FC = () => {
               onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))}
               fullWidth
             >
-              <MenuItem value="COMPANY_HEAD">{tObj.users.roles.companyHead}</MenuItem>
-              <MenuItem value="COMPANY_MANAGER">{tObj.users.roles.companyManager}</MenuItem>
-              <MenuItem value="COMPANY_EMPLOYEE">{tObj.users.roles.companyEmployee}</MenuItem>
-              <MenuItem value="AUDITOR">{tObj.users.roles.auditor}</MenuItem>
-              {/* Системного администратора назначает только системный администратор
-                  (`UserService.validateCreatePermission`): остальным пункт не предлагается. */}
-              {isAdmin && <MenuItem value="SYSTEM_ADMIN">{tObj.users.roles.systemAdmin}</MenuItem>}
+              {/* Только роли, которые бэкенд даст выдать: руководитель — менеджера и сотрудника (Р-85). */}
+              {grantableRoles.map(role => (
+                <MenuItem key={role} value={role}>{roleLabel(role)}</MenuItem>
+              ))}
             </TextField>
             {isAdmin && companiesList.length > 0 && (
               <TextField
@@ -398,6 +534,120 @@ export const UsersPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Edit User Dialog (Р-90) */}
+      <Dialog open={editing !== null} onClose={() => { if (!editBusy) setEditing(null); }} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>
+          {tObj.users.editDialogTitle}
+          {editing && (
+            <Box component="span" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.875rem', fontWeight: 400, color: 'text.secondary' }}>
+              {editing.username}
+            </Box>
+          )}
+        </DialogTitle>
+        <DialogContent>
+          {editing && (
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              {editError && <Alert severity="error">{editError}</Alert>}
+              <TextField
+                label={tObj.users.name}
+                value={editForm.fullName}
+                onChange={e => setEditForm(f => ({ ...f, fullName: e.target.value }))}
+                fullWidth
+                required
+              />
+              <TextField
+                select
+                label={tObj.users.role}
+                value={editForm.role}
+                onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))}
+                disabled={isSelf(editing)}
+                fullWidth
+              >
+                {/* Текущая роль остаётся в списке, даже если её нельзя выдать: иначе селект был бы пустым. */}
+                {[...new Set([...(editing.role ? [editing.role] : []), ...grantableRoles])].map(role => (
+                  <MenuItem key={role} value={role} disabled={!grantableRoles.includes(role as Role)}>
+                    {roleLabel(role)}
+                  </MenuItem>
+                ))}
+              </TextField>
+              {/* Перевести в другую компанию может только SYSTEM_ADMIN (Р-90). */}
+              {isAdmin && (
+                <TextField
+                  select
+                  label={tObj.users.company}
+                  value={editForm.companyId}
+                  onChange={e => setEditForm(f => ({ ...f, companyId: e.target.value }))}
+                  SelectProps={{ displayEmpty: true }}
+                  InputLabelProps={{ shrink: true }}
+                  fullWidth
+                >
+                  <MenuItem value="">{tObj.users.noCompany}</MenuItem>
+                  {companiesList.map(c => (
+                    <MenuItem key={c.id} value={c.id}>
+                      {c.name} ({c.id})
+                    </MenuItem>
+                  ))}
+                  {editing.companyId && !companiesList.some(c => c.id === editing.companyId) && (
+                    <MenuItem value={editing.companyId}>{editing.companyId}</MenuItem>
+                  )}
+                </TextField>
+              )}
+              <TextField
+                select
+                label={tObj.users.status}
+                value={editForm.status}
+                onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}
+                disabled={isSelf(editing)}
+                fullWidth
+              >
+                {[...new Set([...(editing.status ? [editing.status] : []), ...EDITABLE_STATUSES])].map(status => (
+                  <MenuItem key={status} value={status} disabled={!(EDITABLE_STATUSES as readonly string[]).includes(status)}>
+                    {statusLabel(status)}
+                  </MenuItem>
+                ))}
+              </TextField>
+              {isSelf(editing) && (
+                <Typography variant="caption" color="text.secondary">{tObj.users.selfHint}</Typography>
+              )}
+              <TextField
+                label={tObj.users.newPassword}
+                type="password"
+                autoComplete="new-password"
+                value={editForm.password}
+                onChange={e => setEditForm(f => ({ ...f, password: e.target.value }))}
+                helperText={tObj.users.newPasswordHint}
+                fullWidth
+              />
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditing(null)} disabled={editBusy}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={handleAskUpdate} disabled={editBusy}>{tObj.common.save}</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Confirm Edit Dialog: построчно, что именно изменится — роль, компания и статус меняют права. */}
+      <ConfirmDialog
+        open={editConfirm !== null}
+        title={<>{tObj.users.editConfirmTitle} {editing?.username}</>}
+        question={tObj.users.editConfirmQuestion}
+        confirmLabel={tObj.common.confirm}
+        confirmColor="primary"
+        busy={editBusy}
+        onConfirm={handleUpdateUser}
+        onCancel={() => setEditConfirm(null)}
+      >
+        <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+          <Stack spacing={1}>
+            {(editConfirm ?? []).map(change => (
+              <Typography key={change} variant="body2">{change}</Typography>
+            ))}
+          </Stack>
+        </Box>
+        <Alert severity="info" sx={{ mt: 2 }}>{tObj.users.editSessionsHint}</Alert>
+      </ConfirmDialog>
 
       {/* Confirm Delete Dialog */}
       <ConfirmDialog

@@ -10,12 +10,14 @@ import az.millikart.pbl.domain.PaymentLinkStatus;
 import az.millikart.pbl.domain.PaymentType;
 import az.millikart.pbl.domain.Terminal;
 import az.millikart.pbl.domain.Transaction;
+import az.millikart.pbl.domain.TransactionRefund;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
 import az.millikart.pbl.provider.AcquiringClient;
 import az.millikart.pbl.provider.StubAcquirerConfig;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
+import az.millikart.pbl.repository.TransactionRefundRepository;
 import az.millikart.pbl.repository.TransactionRepository;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -66,6 +68,7 @@ public class DashboardSummaryTest {
     @Autowired private TerminalRepository terminalRepository;
     @Autowired private PaymentLinkRepository paymentLinkRepository;
     @Autowired private TransactionRepository transactionRepository;
+    @Autowired private TransactionRefundRepository transactionRefundRepository;
     @Autowired private AcquiringClient acquiringClient;
 
     private ZoneId reportZone;
@@ -153,7 +156,9 @@ public class DashboardSummaryTest {
     // а не выпадает из выручки целиком, как считала прежняя главная.
     @Test
     public void refundedPayment_staysPaid_andOnlyReducesNet() throws Exception {
-        seed(link(TERMINAL_A, "AZN"), TransactionStatus.PARTIALLY_REFUNDED, "100.00", "100.00", "30.00", Instant.now());
+        Transaction payment = seed(link(TERMINAL_A, "AZN"), TransactionStatus.PARTIALLY_REFUNDED,
+                "100.00", "100.00", "30.00", Instant.now());
+        refund(payment, "30.00", Instant.now());
 
         JsonNode azn = totals(summary(headAToken, ""), "AZN");
         Assertions.assertEquals(1, azn.get("paidCount").asLong(), "the money did arrive");
@@ -161,6 +166,53 @@ public class DashboardSummaryTest {
         Assertions.assertEquals(new BigDecimal("100.00"), amount(azn, "paidAmount"));
         Assertions.assertEquals(new BigDecimal("30.00"), amount(azn, "refundedAmount"));
         Assertions.assertEquals(new BigDecimal("70.00"), amount(azn, "netAmount"));
+    }
+
+    // Р-89: возврат вычитается в день возврата. Платёж был десять дней назад, за окном по умолчанию, а
+    // вернули сегодня: в окне оплат нет, возвращено 30, выручка сегодня — минус 30. До Р-89 возврат
+    // считался по дате платежа, и этих 30 в «возвращено за период» не было вовсе.
+    @Test
+    public void refundOfAnOlderPayment_countsOnTheDayItWasMade() throws Exception {
+        Transaction older = seed(link(TERMINAL_A, "AZN"), TransactionStatus.PARTIALLY_REFUNDED,
+                "100.00", null, "30.00", Instant.now().minus(10, ChronoUnit.DAYS));
+        refund(older, "30.00", Instant.now());
+
+        JsonNode body = summary(headAToken, "");
+        JsonNode azn = totals(body, "AZN");
+        Assertions.assertEquals(0, azn.get("paidCount").asLong(), "the payment itself is outside the window");
+        Assertions.assertEquals(new BigDecimal("0.00"), amount(azn, "paidAmount"));
+        Assertions.assertEquals(new BigDecimal("30.00"), amount(azn, "refundedAmount"));
+        Assertions.assertEquals(new BigDecimal("-30.00"), amount(azn, "netAmount"));
+
+        LocalDate today = LocalDate.now(reportZone);
+        for (JsonNode day : body.get("dailyTotals")) {
+            BigDecimal expected = LocalDate.parse(day.get("date").asText()).equals(today)
+                    ? new BigDecimal("-30.00") : new BigDecimal("0.00");
+            Assertions.assertEquals(0, expected.compareTo(new BigDecimal(day.get("netAmount").asText())),
+                    "the refund lands on the day it was made, " + day);
+        }
+
+        JsonNode top = body.get("topTerminals");
+        Assertions.assertEquals(1, top.size(), "a terminal with only a refund in the window is still listed");
+        Assertions.assertEquals(new BigDecimal("-30.00"), amount(top.get(0), "netAmount"));
+    }
+
+    // Обратная сторона: окно, закрытое до возврата, показывает платёж целиком. Прошлые дни не
+    // переписываются задним числом возвратом, сделанным позже.
+    @Test
+    public void refundAfterTheWindow_doesNotRewriteThePastWindow() throws Exception {
+        Instant paidAt = Instant.now().minus(3, ChronoUnit.DAYS);
+        Transaction payment = seed(link(TERMINAL_A, "AZN"), TransactionStatus.PARTIALLY_REFUNDED,
+                "100.00", null, "40.00", paidAt);
+        refund(payment, "40.00", Instant.now());
+
+        Instant from = paidAt.minus(1, ChronoUnit.DAYS);
+        Instant to = paidAt.plus(1, ChronoUnit.DAYS);
+        JsonNode azn = totals(summary(headAToken, "?from=" + from + "&to=" + to), "AZN");
+        Assertions.assertEquals(new BigDecimal("100.00"), amount(azn, "paidAmount"));
+        Assertions.assertEquals(new BigDecimal("0.00"), amount(azn, "refundedAmount"),
+                "the refund was made after this window closed");
+        Assertions.assertEquals(new BigDecimal("100.00"), amount(azn, "netAmount"));
     }
 
     // Колонки currency у transactions нет вовсе — она на payment_links, и туда попадает любой
@@ -375,6 +427,16 @@ public class DashboardSummaryTest {
                     (double) delta, saved.getId());
         }
         return saved;
+    }
+
+    // refunded_at — TIMESTAMP WITH TIME ZONE: момент хранится как есть, сдвигать его, как created_at, не нужно.
+    private void refund(Transaction transaction, String amount, Instant at) {
+        transactionRefundRepository.saveAndFlush(TransactionRefund.builder()
+                .transaction(transaction)
+                .amount(new BigDecimal(amount))
+                .refundedAt(at)
+                .ridByPmo("RID-" + UUID.randomUUID())
+                .build());
     }
 
     private JsonNode summary(String token, String query) throws Exception {

@@ -28,7 +28,6 @@ import {
   Search as SearchIcon,
 } from '@mui/icons-material';
 import { useLanguage } from '../context/LanguageContext';
-import { useDebounced } from '../hooks/useDebounced';
 import {
   ECOM_PAYMENT_TYPES,
   ECOM_STATUSES,
@@ -76,6 +75,40 @@ const defaultPeriod = (): { from: Date; to: Date } => {
   return { from, to };
 };
 
+// Фильтры выписки. На экране — черновик, в запрос уходит только применённая копия (Р-88): каждый запрос
+// страницы и итогов — проход по периоду на боевой базе провайдера, и отмена в браузере его там не
+// останавливает. Перебор фильтров по одному полю складывал бы такие запросы в очередь.
+type Filters = {
+  dateFrom: Date | null;
+  dateTo: Date | null;
+  merchantRids: string[];
+  minAmount: string;
+  maxAmount: string;
+  search: string;
+  status: EcomStatus | null;
+  paymentType: EcomPaymentType | null;
+};
+
+const defaultFilters = (): Filters => {
+  const { from, to } = defaultPeriod();
+  return {
+    dateFrom: from, dateTo: to, merchantRids: [], minAmount: '', maxAmount: '', search: '',
+    status: null, paymentType: null,
+  };
+};
+
+const sameDate = (a: Date | null, b: Date | null) => (a?.getTime() ?? null) === (b?.getTime() ?? null);
+
+const sameFilters = (a: Filters, b: Filters): boolean =>
+  sameDate(a.dateFrom, b.dateFrom)
+  && sameDate(a.dateTo, b.dateTo)
+  && [...a.merchantRids].sort().join('\n') === [...b.merchantRids].sort().join('\n')
+  && a.minAmount === b.minAmount
+  && a.maxAmount === b.maxAmount
+  && a.search === b.search
+  && a.status === b.status
+  && a.paymentType === b.paymentType;
+
 // Текст отказа сервера (400 за период, 403 без компании) или null — тогда на экране общая подпись.
 const serverMessage = (err: unknown): string | null =>
   axios.isAxiosError(err) && typeof err.response?.data?.message === 'string' ? err.response.data.message : null;
@@ -83,8 +116,8 @@ const serverMessage = (err: unknown): string | null =>
 /**
  * Вкладка E-commerce — выписка провайдера из сервиса `ecom` (Р-65, `project_docs/ecom.md` §2).
  *
- * Всё считает сервер: период и фильтры уходят в запрос, итоги — отдельным `/stats` по всему периоду,
- * а не по загруженным строкам. Страница курсорная, поэтому «показать ещё», а не номера страниц:
+ * Всё считает сервер: период и фильтры уходят в запрос по «Применить» (Р-88), итоги — отдельным `/stats`
+ * по всему периоду, а не по загруженным строкам. Страница курсорная, поэтому «показать ещё», а не номера страниц:
  * общего числа строк у выписки нет намеренно.
  */
 export const EcommerceTransactionListPage: React.FC = () => {
@@ -92,18 +125,19 @@ export const EcommerceTransactionListPage: React.FC = () => {
   const navigate = useNavigate();
   const t = tObj.ecommerce;
 
-  const [dateFrom, setDateFrom] = useState<Date | null>(() => defaultPeriod().from);
-  const [dateTo, setDateTo] = useState<Date | null>(() => defaultPeriod().to);
-  const [merchantRids, setMerchantRids] = useState<string[]>([]);
-  const [minAmount, setMinAmount] = useState('');
-  const [maxAmount, setMaxAmount] = useState('');
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<EcomStatus | null>(null);
-  const [paymentType, setPaymentType] = useState<EcomPaymentType | null>(null);
+  // Поля ниже — черновик; запросы идут только по `applied`. При открытии страницы оба совпадают,
+  // и выписка за период по умолчанию грузится один раз.
+  const [initialFilters] = useState(defaultFilters);
+  const [dateFrom, setDateFrom] = useState<Date | null>(initialFilters.dateFrom);
+  const [dateTo, setDateTo] = useState<Date | null>(initialFilters.dateTo);
+  const [merchantRids, setMerchantRids] = useState<string[]>(initialFilters.merchantRids);
+  const [minAmount, setMinAmount] = useState(initialFilters.minAmount);
+  const [maxAmount, setMaxAmount] = useState(initialFilters.maxAmount);
+  const [search, setSearch] = useState(initialFilters.search);
+  const [status, setStatus] = useState<EcomStatus | null>(initialFilters.status);
+  const [paymentType, setPaymentType] = useState<EcomPaymentType | null>(initialFilters.paymentType);
+  const [applied, setApplied] = useState<Filters>(initialFilters);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
-  const debouncedSearch = useDebounced(search, 400);
-  const debouncedMin = useDebounced(minAmount, 400);
-  const debouncedMax = useDebounced(maxAmount, 400);
 
   const [terminals, setTerminals] = useState<EcomTerminal[]>([]);
   const [orders, setOrders] = useState<EcomOrder[]>([]);
@@ -118,20 +152,48 @@ export const EcommerceTransactionListPage: React.FC = () => {
 
   const problem = periodProblem(dateFrom, dateTo);
 
+  const draft = useMemo<Filters>(
+    () => ({ dateFrom, dateTo, merchantRids, minAmount, maxAmount, search, status, paymentType }),
+    [dateFrom, dateTo, merchantRids, minAmount, maxAmount, search, status, paymentType]
+  );
+  const dirty = !sameFilters(draft, applied);
+
+  // Период применённых фильтров всегда валиден: с ошибкой периода «Применить» недоступна.
   const query = useMemo<EcomQuery | null>(() => (
-    problem || !dateFrom || !dateTo
+    !applied.dateFrom || !applied.dateTo
       ? null
       : {
-          dateFrom, dateTo, merchantRids, minAmount: debouncedMin, maxAmount: debouncedMax, query: debouncedSearch,
-          status, paymentType,
+          dateFrom: applied.dateFrom, dateTo: applied.dateTo, merchantRids: applied.merchantRids,
+          minAmount: applied.minAmount, maxAmount: applied.maxAmount, query: applied.search,
+          status: applied.status, paymentType: applied.paymentType,
         }
-  ), [problem, dateFrom, dateTo, merchantRids, debouncedMin, debouncedMax, debouncedSearch, status, paymentType]);
+  ), [applied]);
 
   // Итоги зависят от периода, терминалов и типа оплаты. Сумма, поиск и статус на них не влияют:
-  // итоги и так разложены по статусам (ecom.md §2.5).
+  // итоги и так разложены по статусам (ecom.md §2.5), поэтому их смена итоги не перезапрашивает.
+  const { dateFrom: appliedFrom, dateTo: appliedTo, merchantRids: appliedRids, paymentType: appliedType } = applied;
   const statsQuery = useMemo(() => (
-    problem || !dateFrom || !dateTo ? null : { dateFrom, dateTo, merchantRids, paymentType }
-  ), [problem, dateFrom, dateTo, merchantRids, paymentType]);
+    !appliedFrom || !appliedTo
+      ? null
+      : { dateFrom: appliedFrom, dateTo: appliedTo, merchantRids: appliedRids, paymentType: appliedType }
+  ), [appliedFrom, appliedTo, appliedRids, appliedType]);
+
+  const applyFilters = () => {
+    if (!problem && dirty) setApplied(draft);
+  };
+
+  const resetFilters = () => {
+    const defaults = defaultFilters();
+    setDateFrom(defaults.dateFrom);
+    setDateTo(defaults.dateTo);
+    setMerchantRids(defaults.merchantRids);
+    setMinAmount(defaults.minAmount);
+    setMaxAmount(defaults.maxAmount);
+    setSearch(defaults.search);
+    setStatus(defaults.status);
+    setPaymentType(defaults.paymentType);
+    setApplied(defaults);
+  };
 
   const terminalIndex = useMemo(
     () => new Map(terminals.map(terminal => [terminal.merchantRid, terminal])),
@@ -239,8 +301,16 @@ export const EcommerceTransactionListPage: React.FC = () => {
         </Typography>
       </Box>
 
-      {/* Фильтры: всё уходит в запрос, на экране ничего не отсеивается. */}
-      <Paper elevation={0} sx={{ p: 3, mb: 3, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+      {/* Фильтры — черновик: в запрос уходят по «Применить» или Enter (Р-88), на экране ничего не отсеивается. */}
+      <Paper
+        component="form"
+        onSubmit={(e: React.FormEvent) => {
+          e.preventDefault();
+          applyFilters();
+        }}
+        elevation={0}
+        sx={{ p: 3, mb: 3, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}
+      >
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 2fr' }, gap: 2 }}>
           <TextField
             label={t.periodFrom}
@@ -355,6 +425,19 @@ export const EcommerceTransactionListPage: React.FC = () => {
             {t.periodHint}
           </Typography>
         )}
+        <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+          <Button type="submit" variant="contained" disabled={!!problem || !dirty}>
+            {t.applyFilters}
+          </Button>
+          <Button type="button" variant="text" onClick={resetFilters}>
+            {t.resetFilters}
+          </Button>
+          {dirty && !problem && (
+            <Typography variant="body2" color="warning.main">
+              {t.filtersChanged}
+            </Typography>
+          )}
+        </Box>
       </Paper>
 
       {/* Итоги периода: считает сервер по всем заказам периода, суммы — по валютам. */}
@@ -382,29 +465,15 @@ export const EcommerceTransactionListPage: React.FC = () => {
               </Stack>
             ))}
           </Stack>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-            {/* Клик по чипу ставит этот статус в фильтр, повторный — снимает. */}
-            {ECOM_STATUSES.filter(value => stats.statusCounts[value] > 0).map(value => {
-              const scheme = getStatusColorScheme(value);
-              const selected = status === value;
-              return (
-                <Chip
-                  key={value}
-                  label={`${t.statuses[value]}: ${stats.statusCounts[value]}`}
-                  title={t.statusChipHint}
-                  onClick={() => setStatus(selected ? null : value)}
-                  variant={selected ? 'filled' : 'outlined'}
-                  sx={{
-                    bgcolor: scheme.light,
-                    color: scheme.contrastText,
-                    fontWeight: 600,
-                    borderColor: selected ? scheme.main : 'transparent',
-                    borderWidth: 2,
-                    borderStyle: 'solid',
-                  }}
-                />
-              );
-            })}
+          {/* Разбивка по статусам — только цифры: фильтр статуса стоит в форме выше. */}
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 3, rowGap: 1 }}>
+            {ECOM_STATUSES.filter(value => stats.statusCounts[value] > 0).map(value => (
+              <Box key={value} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: getStatusColorScheme(value).main }} />
+                <Typography variant="body2" color="text.secondary">{t.statuses[value]}:</Typography>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>{stats.statusCounts[value]}</Typography>
+              </Box>
+            ))}
           </Box>
         </Paper>
       )}
