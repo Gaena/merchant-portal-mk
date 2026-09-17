@@ -638,10 +638,11 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
 -   **Query Parameters:**
     -   `from`: ISO-8601 instant, optional (e.g. `2026-08-18T00:00:00Z`)
     -   `to`: ISO-8601 instant, optional
--   **Description (P3-7):** Everything the merchant dashboard shows, counted **in the database**.
-    Scope (Р-89): payments made through the portal's **payment links** only. Card payments that reach
-    the gateway from a merchant's own website are not portal transactions; they are in the `ecom`
-    statement.
+-   **Description (P3-7):** Payment link statistics, counted **in the database**. Scope (Р-89): payments
+    made through the portal's **payment links** only. Since Р-91 it is shown on the **Statistics** tab of the Pay by Link page
+    (`/pay-by-link?tab=stats`) and requested only when that tab is opened;
+    the home page counts all card payments of the company's terminals from the `ecom` statement
+    (`ecom.md` §2.8).
     Defaults to seven whole calendar days ending today, in the report time zone. Access is the same
     gate as §5.7, including its treatment of a caller without a company: `200 OK` with zeros, not
     `403`. No audit record is written — §5.7 writes none either, and these are the same rows.

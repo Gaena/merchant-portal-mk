@@ -1058,15 +1058,16 @@ export const PayByLinkDetailPage: React.FC = () => {
             {/* Quick actions */}
             {(link.status === 'EXPIRED' || link.status === 'CANCELED') && (
               <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
-                <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1rem', mb: 2 }}>Quick Actions</Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1rem', mb: 2 }}>{tObj.payByLinkDetail.quickActions}</Typography>
                 <Divider sx={{ mb: 2 }} />
+                {/* `prefill` читает `PayByLinkPage`: открывает форму создания с полями этой ссылки. */}
                 <Button
                   fullWidth
                   variant="contained"
                   startIcon={<RepeatIcon />}
                   onClick={() => navigate('/pay-by-link', { state: { prefill: link } })}
                 >
-                  Create New Link (Same Details)
+                  {tObj.payByLinkDetail.createSameLink}
                 </Button>
               </Paper>
             )}

@@ -40,6 +40,8 @@ export interface TranslationDictionary {
     update: string;
     /** Общий отказ загрузки экрана или его части. */
     loadFailed: string;
+    /** Периоды панелей: главной и статистики по ссылкам (Р-89, Р-91). */
+    periods: { today: string; days7: string; days30: string; days90: string };
   };
   nav: {
     home: string;
@@ -67,11 +69,37 @@ export interface TranslationDictionary {
   };
   home: {
     title: string;
-    /** Р-89: панель — по оплатам платёжных ссылок портала; весь эквайринг — вкладка E-commerce. */
+    /** Р-91: главная — оплаты картой по всем терминалам компании по выписке провайдера. */
     subtitle: string;
+    /** То же для SYSTEM_ADMIN и AUDITOR: по всем терминалам портала. */
+    subtitleAll: string;
     openStatement: string;
     period: string;
-    periods: { today: string; days7: string; days30: string; days90: string };
+    loadFailed: string;
+    empty: string;
+    metrics: {
+      netRevenue: string;
+      netRevenueHint: string;
+      paidCount: string;
+      paidCountHint: string;
+      refunded: string;
+      refundedHint: string;
+      averagePayment: string;
+    };
+    charts: {
+      daily: string;
+      statuses: string;
+      statusesHint: string;
+      terminals: string;
+    };
+    recentOrders: {
+      title: string;
+      empty: string;
+    };
+  };
+  /** Р-91: статистика во вкладке Pay by Link — только оплаты по платёжным ссылкам (сводка `pbl`, Р-89). */
+  linkStats: {
+    subtitle: string;
     loadFailed: string;
     empty: string;
     metrics: {
@@ -92,17 +120,6 @@ export interface TranslationDictionary {
       terminals: string;
       links: string;
       linksHint: string;
-    };
-    recentTransactions: {
-      title: string;
-      providerOrderId: string;
-      ridByMerchant: string;
-      id: string;
-      date: string;
-      terminal: string;
-      amount: string;
-      status: string;
-      empty: string;
     };
   };
   settings: {
@@ -128,6 +145,11 @@ export interface TranslationDictionary {
   payByLink: {
     title: string;
     subtitle: string;
+    /** Вкладки страницы: список ссылок и статистика оплат по ним. */
+    tabs: {
+      links: string;
+      stats: string;
+    };
     createButton: string;
     createTitle: string;
     createSubtitle: string;
@@ -210,6 +232,12 @@ export interface TranslationDictionary {
     copyUrl: string;
     cancelLink: string;
     finalizeDMS: string;
+    /**
+     * Панель у истёкшей и отменённой ссылки: кнопка открывает форму создания на странице
+     * Pay by Link, заполненную полями этой ссылки (терминал — только если он активен).
+     */
+    quickActions: string;
+    createSameLink: string;
     tabs: {
       overview: string;
       transactions: string;
@@ -665,6 +693,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       create: 'Create',
       update: 'Update',
       loadFailed: 'Could not load the data.',
+      periods: { today: 'Today', days7: '7 days', days30: '30 days', days90: '90 days' },
     },
     nav: {
       home: 'Home Page',
@@ -691,12 +720,36 @@ export const translations: Record<Language, TranslationDictionary> = {
     },
     home: {
       title: 'Merchant Dashboard',
-      subtitle: 'Payments made through the portal\'s payment links, counted in the database over the selected period. Card payments from your website are in the E-commerce statement.',
+      subtitle: 'Card payments across all of the company\'s terminals, from the provider\'s statement, for orders created in the period.',
+      subtitleAll: 'Card payments across all terminals of the portal, from the provider\'s statement, for orders created in the period.',
       openStatement: 'Open E-commerce statement',
       period: 'Period',
-      periods: { today: 'Today', days7: '7 days', days30: '30 days', days90: '90 days' },
       loadFailed: 'Could not load the dashboard summary.',
-      empty: 'No payments in this period.',
+      empty: 'No orders in this period.',
+      metrics: {
+        netRevenue: 'Net revenue',
+        netRevenueHint: 'Captured minus refunds, for orders of the period',
+        paidCount: 'Paid orders',
+        paidCountHint: 'Including orders refunded later',
+        refunded: 'Refunded',
+        refundedHint: 'Refunds for orders of the period',
+        averagePayment: 'Average order',
+      },
+      charts: {
+        daily: 'Revenue by day',
+        statuses: 'Orders by status',
+        statusesHint: 'Statuses as in the E-commerce statement',
+        terminals: 'Terminals by revenue',
+      },
+      recentOrders: {
+        title: 'Latest orders',
+        empty: 'No orders in this period.',
+      },
+    },
+    linkStats: {
+      subtitle: 'Payments made through the portal\'s payment links only. Refunds count on the day they were made.',
+      loadFailed: 'Could not load the payment link statistics.',
+      empty: 'No payment link payments in this period.',
       metrics: {
         netRevenue: 'Net revenue',
         netRevenueHint: 'Received minus refunds made in the period',
@@ -713,17 +766,6 @@ export const translations: Record<Language, TranslationDictionary> = {
         terminals: 'Terminals by revenue',
         links: 'Payment links created',
         linksHint: 'Current status of the links created in the period',
-      },
-      recentTransactions: {
-        title: 'Latest payments',
-        providerOrderId: 'Provider Order ID',
-        ridByMerchant: 'RID by merchant',
-        id: 'Transaction',
-        date: 'Date & time',
-        terminal: 'Terminal',
-        amount: 'Amount',
-        status: 'Status',
-        empty: 'No payments recorded yet.',
       },
     },
     settings: {
@@ -749,6 +791,10 @@ export const translations: Record<Language, TranslationDictionary> = {
     payByLink: {
       title: 'Pay by Link',
       subtitle: 'Create, share and manage instant payment links for your customers via SMS, Email or Messaging apps.',
+      tabs: {
+        links: 'Links',
+        stats: 'Statistics',
+      },
       createButton: 'Create Payment Link',
       createTitle: 'Create New Payment Link',
       createSubtitle: 'Generate a secure payment link to request money from a customer.',
@@ -826,6 +872,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       copyUrl: 'Copy Link URL',
       cancelLink: 'Cancel Link',
       finalizeDMS: 'Complete DMS Payment',
+      quickActions: 'Quick Actions',
+      createSameLink: 'Create New Link (Same Details)',
       tabs: {
         overview: 'Overview',
         transactions: 'Transactions',
@@ -1203,6 +1251,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       create: 'Yarat',
       update: 'Yenilə',
       loadFailed: 'Məlumatı yükləmək mümkün olmadı.',
+      periods: { today: 'Bu gün', days7: '7 gün', days30: '30 gün', days90: '90 gün' },
     },
     nav: {
       home: 'Ana Səhifə',
@@ -1229,12 +1278,36 @@ export const translations: Record<Language, TranslationDictionary> = {
     },
     home: {
       title: 'Merchant Paneli',
-      subtitle: 'Portalın ödəniş linkləri ilə edilən ödənişlər, seçilmiş dövr üzrə bazada hesablanır. Saytınızdan kartla ödənişlər E-commerce çıxarışındadır.',
+      subtitle: 'Şirkətin bütün terminalları üzrə kartla ödənişlər — provayderin çıxarışına görə, dövrdə yaradılmış sifarişlər üzrə.',
+      subtitleAll: 'Portalın bütün terminalları üzrə kartla ödənişlər — provayderin çıxarışına görə, dövrdə yaradılmış sifarişlər üzrə.',
       openStatement: 'E-commerce çıxarışını aç',
       period: 'Dövr',
-      periods: { today: 'Bu gün', days7: '7 gün', days30: '30 gün', days90: '90 gün' },
       loadFailed: 'İcmalı yükləmək mümkün olmadı.',
-      empty: 'Bu dövrdə ödəniş yoxdur.',
+      empty: 'Bu dövrdə sifariş yoxdur.',
+      metrics: {
+        netRevenue: 'Xalis gəlir',
+        netRevenueHint: 'Dövrün sifarişləri üzrə silinən məbləğ, geri qaytarmalar çıxılmaqla',
+        paidCount: 'Ödənilmiş sifarişlər',
+        paidCountHint: 'Sonradan geri qaytarılanlar daxil',
+        refunded: 'Geri qaytarılıb',
+        refundedHint: 'Dövrün sifarişləri üzrə geri qaytarmalar',
+        averagePayment: 'Orta sifariş',
+      },
+      charts: {
+        daily: 'Günlər üzrə gəlir',
+        statuses: 'Statuslar üzrə sifarişlər',
+        statusesHint: 'Statuslar E-commerce çıxarışında olduğu kimi',
+        terminals: 'Gəlirə görə terminallar',
+      },
+      recentOrders: {
+        title: 'Son sifarişlər',
+        empty: 'Bu dövrdə sifariş yoxdur.',
+      },
+    },
+    linkStats: {
+      subtitle: 'Yalnız portalın ödəniş linkləri ilə edilən ödənişlər. Geri qaytarmalar edildiyi gün hesablanır.',
+      loadFailed: 'Ödəniş linkləri üzrə statistikanı yükləmək mümkün olmadı.',
+      empty: 'Bu dövrdə ödəniş linkləri ilə ödəniş yoxdur.',
       metrics: {
         netRevenue: 'Xalis gəlir',
         netRevenueHint: 'Alınan məbləğ, dövrdə edilən geri qaytarmalar çıxılmaqla',
@@ -1251,17 +1324,6 @@ export const translations: Record<Language, TranslationDictionary> = {
         terminals: 'Gəlirə görə terminallar',
         links: 'Yaradılmış ödəniş linkləri',
         linksHint: 'Dövrdə yaradılmış linklərin cari statusu',
-      },
-      recentTransactions: {
-        title: 'Son ödənişlər',
-        providerOrderId: 'Provayder Sifariş ID',
-        ridByMerchant: 'RID by merchant',
-        id: 'Əməliyyat',
-        date: 'Tarix və vaxt',
-        terminal: 'Terminal',
-        amount: 'Məbləğ',
-        status: 'Status',
-        empty: 'Hələ ödəniş yoxdur.',
       },
     },
     settings: {
@@ -1287,6 +1349,10 @@ export const translations: Record<Language, TranslationDictionary> = {
     payByLink: {
       title: 'Linklə Ödəniş',
       subtitle: 'Müştəriləriniz üçün instant ödəniş linkləri yaradın, SMS, E-poçt və ya messencerlər vasitəsilə paylaşın.',
+      tabs: {
+        links: 'Linklər',
+        stats: 'Statistika',
+      },
       createButton: 'Ödəniş Linki Yarat',
       createTitle: 'Yeni Ödəniş Linki Yarat',
       createSubtitle: 'Müştəridən ödəniş qəbul etmək üçün təhlükəsiz link hazırlayın.',
@@ -1364,6 +1430,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       copyUrl: 'Link URL-ni Kopyala',
       cancelLink: 'Linki Ləğv Et',
       finalizeDMS: 'DMS Ödənişini Tamamla',
+      quickActions: 'Sürətli Əməliyyatlar',
+      createSameLink: 'Eyni Məlumatlarla Yeni Link Yarat',
       tabs: {
         overview: 'Xülasə',
         transactions: 'Əməliyyatlar',
@@ -1741,6 +1809,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       create: 'Создать',
       update: 'Обновить',
       loadFailed: 'Не удалось загрузить данные.',
+      periods: { today: 'Сегодня', days7: '7 дней', days30: '30 дней', days90: '90 дней' },
     },
     nav: {
       home: 'Главная',
@@ -1767,12 +1836,36 @@ export const translations: Record<Language, TranslationDictionary> = {
     },
     home: {
       title: 'Панель мерчанта',
-      subtitle: 'Оплаты по платёжным ссылкам портала, посчитаны в базе за выбранный период. Оплаты картой с вашего сайта — в выписке E-commerce.',
+      subtitle: 'Оплаты картой по всем терминалам компании — по выписке провайдера, по заказам, созданным за период.',
+      subtitleAll: 'Оплаты картой по всем терминалам портала — по выписке провайдера, по заказам, созданным за период.',
       openStatement: 'Открыть выписку E-commerce',
       period: 'Период',
-      periods: { today: 'Сегодня', days7: '7 дней', days30: '30 дней', days90: '90 дней' },
       loadFailed: 'Не удалось загрузить сводку.',
-      empty: 'За период платежей нет.',
+      empty: 'За период заказов нет.',
+      metrics: {
+        netRevenue: 'Выручка',
+        netRevenueHint: 'Списано за вычетом возвратов по заказам периода',
+        paidCount: 'Оплаченных заказов',
+        paidCountHint: 'Включая позже возвращённые',
+        refunded: 'Возвращено',
+        refundedHint: 'Возвраты по заказам периода',
+        averagePayment: 'Средний чек',
+      },
+      charts: {
+        daily: 'Выручка по дням',
+        statuses: 'Заказы по статусам',
+        statusesHint: 'Статусы — как в выписке E-commerce',
+        terminals: 'Терминалы по выручке',
+      },
+      recentOrders: {
+        title: 'Последние заказы',
+        empty: 'За период заказов нет.',
+      },
+    },
+    linkStats: {
+      subtitle: 'Только оплаты по платёжным ссылкам портала. Возвраты считаются в день, когда их провели.',
+      loadFailed: 'Не удалось загрузить статистику по ссылкам.',
+      empty: 'За период оплат по ссылкам нет.',
       metrics: {
         netRevenue: 'Выручка',
         netRevenueHint: 'Получено за вычетом возвратов, проведённых за период',
@@ -1789,17 +1882,6 @@ export const translations: Record<Language, TranslationDictionary> = {
         terminals: 'Терминалы по выручке',
         links: 'Созданные платёжные ссылки',
         linksHint: 'Текущий статус ссылок, созданных за период',
-      },
-      recentTransactions: {
-        title: 'Последние платежи',
-        providerOrderId: 'ID заказа провайдера',
-        ridByMerchant: 'RID by merchant',
-        id: 'Операция',
-        date: 'Дата и время',
-        terminal: 'Терминал',
-        amount: 'Сумма',
-        status: 'Статус',
-        empty: 'Платежей пока нет.',
       },
     },
     settings: {
@@ -1825,6 +1907,10 @@ export const translations: Record<Language, TranslationDictionary> = {
     payByLink: {
       title: 'Оплата по ссылке (Pay by Link)',
       subtitle: 'Создавайте, отправляйте и управляйте платежными ссылками для клиентов через SMS, Email и мессенджеры.',
+      tabs: {
+        links: 'Ссылки',
+        stats: 'Статистика',
+      },
       createButton: 'Создать ссылку',
       createTitle: 'Создать новую платежную ссылку',
       createSubtitle: 'Сформируйте безопасную ссылку для получения оплаты от клиента.',
@@ -1902,6 +1988,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       copyUrl: 'Скопировать URL',
       cancelLink: 'Отменить ссылку',
       finalizeDMS: 'Завершить DMS платеж',
+      quickActions: 'Быстрые действия',
+      createSameLink: 'Создать новую ссылку с теми же данными',
       tabs: {
         overview: 'Обзор',
         transactions: 'Транзакции',

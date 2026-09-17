@@ -6,6 +6,7 @@ import az.millikart.common.security.UserPrincipal;
 import az.millikart.ecom.config.TxpgProperties;
 import az.millikart.ecom.domain.ProviderTerminal;
 import az.millikart.ecom.dto.CursorPage;
+import az.millikart.ecom.dto.EcomDashboardResponse;
 import az.millikart.ecom.dto.EcomStatsResponse;
 import az.millikart.ecom.dto.EcomTerminalResponse;
 import az.millikart.ecom.dto.EcomTransactionFilter;
@@ -151,6 +152,44 @@ public class EcomTransactionService {
         repository.streamPeriodRows(
                 new EcomTransactionFilter(scoped.logins(), rids, dateFrom, dateTo, null, null, null, type), accumulator);
         return accumulator.result();
+    }
+
+    // Р-91: сводка главной — по всем терминалам скоупа (у SYSTEM_ADMIN и AUDITOR — по всем нашим), по тем же
+    // заказам периода и тем же правилам денег, что итоги выписки. Один проход по строкам периода: главная
+    // открывается чаще выписки, и второго запроса к боевой базе шлюза на неё быть не должно.
+    public EcomDashboardResponse dashboard(Instant dateFrom, Instant dateTo, UserPrincipal principal) {
+        EcomScope scoped = scope.scopeFor(principal);
+        requireWindow(dateFrom, dateTo);
+        EcomDashboardAccumulator accumulator = new EcomDashboardAccumulator(properties.getZone());
+        if (!scoped.logins().isEmpty()) {
+            repository.streamPeriodRows(
+                    new EcomTransactionFilter(scoped.logins(), null, dateFrom, dateTo, null, null, null, null),
+                    accumulator);
+        } else {
+            log.info("No terminals in scope for the dashboard; returning an empty summary");
+        }
+
+        List<EcomDashboardAccumulator.RankedTerminal> ranked = accumulator.topTerminals();
+        List<String> rids = ranked.stream().map(EcomDashboardAccumulator.RankedTerminal::merchantRid)
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        Map<String, ProviderTerminal> known = rids.isEmpty() ? Map.of() : providerTerminals.findAllById(rids).stream()
+                .collect(Collectors.toMap(ProviderTerminal::getRid, Function.identity()));
+        List<EcomDashboardResponse.TerminalTotal> topTerminals = ranked.stream()
+                .map(terminal -> {
+                    ProviderTerminal snapshot = terminal.merchantRid() == null ? null : known.get(terminal.merchantRid());
+                    return new EcomDashboardResponse.TerminalTotal(terminal.currency(), terminal.merchantRid(),
+                            snapshot != null ? snapshot.getLogin() : null,
+                            snapshot != null && snapshot.getTitle() != null ? snapshot.getTitle() : terminal.merchantTitle(),
+                            terminal.netAmount(), terminal.orderCount());
+                })
+                .toList();
+
+        return new EcomDashboardResponse(
+                new EcomDashboardResponse.Window(dateFrom, dateTo, properties.getZone().getId()),
+                accumulator.totals(),
+                accumulator.statusCounts(),
+                accumulator.dailyTotals(dateFrom, dateTo),
+                topTerminals);
     }
 
     // Источник фильтра — терминалы скоупа из нашей базы, без похода в шлюз: у провайдера терминал
