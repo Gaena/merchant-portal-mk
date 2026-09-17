@@ -535,6 +535,26 @@ export interface TranslationDictionary {
     formIncomplete: string;
     createFailed: string;
     deleteFailed: string;
+    /** Правка пользователя (Р-90): имя, роль, компания, статус, новый пароль — через подтверждение. */
+    editUser: string;
+    editDialogTitle: string;
+    editConfirmTitle: string;
+    editConfirmQuestion: string;
+    editNothingChanged: string;
+    /** Роль и компания вступают в силу при следующем обновлении сессии пользователя. */
+    editSessionsHint: string;
+    noCompany: string;
+    newPassword: string;
+    newPasswordHint: string;
+    passwordWillChange: string;
+    /** Свою роль и статус в этом окне не поменять: так себя легко лишить доступа. */
+    selfHint: string;
+    updated: string;
+    updateFailed: string;
+    statuses: {
+      ACTIVE: string;
+      BLOCKED: string;
+    };
   };
   auditLogs: {
     title: string;
@@ -1086,6 +1106,20 @@ export const translations: Record<Language, TranslationDictionary> = {
       formIncomplete: 'Fill in every required field',
       createFailed: 'Could not create the user',
       deleteFailed: 'Could not delete the user',
+      editUser: 'Edit user',
+      editDialogTitle: 'Edit user',
+      editConfirmTitle: 'Save changes to user',
+      editConfirmQuestion: 'The following will change. Role, company and status decide what this person can see and do — check the list before confirming.',
+      editNothingChanged: 'Nothing changed — no request was sent.',
+      editSessionsHint: 'A new role or company takes effect when the user\'s session next refreshes, within 15 minutes. Blocking ends the sessions at once.',
+      noCompany: 'No company',
+      newPassword: 'New password (optional)',
+      newPasswordHint: 'Leave empty to keep the current password. At least 12 characters with upper and lower case, a digit and a symbol.',
+      passwordWillChange: 'The password will be replaced',
+      selfHint: 'You cannot change your own role or status here.',
+      updated: 'User updated',
+      updateFailed: 'Could not update the user',
+      statuses: { ACTIVE: 'Active', BLOCKED: 'Blocked' },
     },
     auditLogs: {
       title: 'Audit Logs',
@@ -1610,6 +1644,20 @@ export const translations: Record<Language, TranslationDictionary> = {
       formIncomplete: 'Bütün məcburi sahələri doldurun',
       createFailed: 'İstifadəçini yaratmaq mümkün olmadı',
       deleteFailed: 'İstifadəçini silmək mümkün olmadı',
+      editUser: 'İstifadəçini redaktə et',
+      editDialogTitle: 'İstifadəçini redaktə et',
+      editConfirmTitle: 'İstifadəçidəki dəyişiklikləri saxla',
+      editConfirmQuestion: 'Aşağıdakılar dəyişəcək. Rol, şirkət və status bu şəxsin nəyi görə və edə biləcəyini müəyyən edir — təsdiqləməzdən əvvəl siyahını yoxlayın.',
+      editNothingChanged: 'Heç nə dəyişməyib — sorğu göndərilmədi.',
+      editSessionsHint: 'Yeni rol və ya şirkət istifadəçinin sessiyası növbəti dəfə yeniləndikdə, 15 dəqiqə ərzində qüvvəyə minir. Bloklama sessiyaları dərhal bitirir.',
+      noCompany: 'Şirkətsiz',
+      newPassword: 'Yeni parol (istəyə bağlı)',
+      newPasswordHint: 'Cari parolu saxlamaq üçün boş buraxın. Ən azı 12 simvol: böyük və kiçik hərf, rəqəm və xüsusi simvol.',
+      passwordWillChange: 'Parol dəyişdiriləcək',
+      selfHint: 'Öz rolunuzu və statusunuzu burada dəyişə bilməzsiniz.',
+      updated: 'İstifadəçi yeniləndi',
+      updateFailed: 'İstifadəçini yeniləmək mümkün olmadı',
+      statuses: { ACTIVE: 'Aktiv', BLOCKED: 'Bloklanıb' },
     },
     auditLogs: {
       title: 'Audit Jurnalı',
@@ -2134,6 +2182,20 @@ export const translations: Record<Language, TranslationDictionary> = {
       formIncomplete: 'Заполните все обязательные поля',
       createFailed: 'Не удалось создать пользователя',
       deleteFailed: 'Не удалось удалить пользователя',
+      editUser: 'Изменить пользователя',
+      editDialogTitle: 'Изменить пользователя',
+      editConfirmTitle: 'Сохранить изменения пользователя',
+      editConfirmQuestion: 'Изменится следующее. Роль, компания и статус решают, что этот человек видит и может делать, — проверьте список перед подтверждением.',
+      editNothingChanged: 'Ничего не изменилось — запрос не отправлен.',
+      editSessionsHint: 'Новая роль или компания вступит в силу при следующем обновлении сессии пользователя, в течение 15 минут. Блокировка завершает сессии сразу.',
+      noCompany: 'Без компании',
+      newPassword: 'Новый пароль (необязательно)',
+      newPasswordHint: 'Оставьте пустым, чтобы не менять. Не меньше 12 символов: заглавные и строчные буквы, цифра и спецсимвол.',
+      passwordWillChange: 'Пароль будет заменён',
+      selfHint: 'Свою роль и статус здесь поменять нельзя.',
+      updated: 'Пользователь обновлён',
+      updateFailed: 'Не удалось обновить пользователя',
+      statuses: { ACTIVE: 'Активен', BLOCKED: 'Заблокирован' },
     },
     auditLogs: {
       title: 'Журнал аудита',

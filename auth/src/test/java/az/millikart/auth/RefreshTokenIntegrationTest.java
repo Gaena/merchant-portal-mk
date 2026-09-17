@@ -313,7 +313,7 @@ public class RefreshTokenIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + headId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminAccess)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED"))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("BLOCKED")));
 
