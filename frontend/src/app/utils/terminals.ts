@@ -33,11 +33,12 @@ export const buildTerminalIndex = (raw: unknown): Record<number, TerminalOptionD
 };
 
 /**
- * Подпись терминала: логин, иначе имя, иначе номер, иначе прочерк.
+ * Подпись терминала: логин, иначе имя, иначе прочерк.
  *
  * Значение, похожее на UUID, отбрасывается: в поля терминала раньше попадал `ridByMerchant`
- * платежа, и такую строку нельзя показывать как терминал. Прочерк означает «терминала уже нет» —
- * выдумывать подпись по id (`TRM-…`, «Default Terminal») нельзя.
+ * платежа, и такую строку нельзя показывать как терминал. Прочерк означает «подписать нечем» —
+ * терминала уже нет или у него нет логина и имени. Номер терминала на экран не выводится (Р-81),
+ * а выдумывать подпись по id (`TRM-…`, «Default Terminal») нельзя.
  */
 export const terminalLabel = (terminal: {
   terminalLogin?: string;
@@ -48,7 +49,6 @@ export const terminalLabel = (terminal: {
 
   if (usable(terminal.terminalLogin)) return terminal.terminalLogin as string;
   if (usable(terminal.terminalName)) return terminal.terminalName as string;
-  if (terminal.terminalId) return `#${terminal.terminalId}`;
   return '—';
 };
 

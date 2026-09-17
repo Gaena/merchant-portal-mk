@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import {
   Alert,
   Box,
+  Button,
   Card,
   CardContent,
   Chip,
@@ -16,11 +17,14 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from '@mui/material';
 import {
   AttachMoney as MoneyIcon,
   MoneyOff as RefundIcon,
+  OpenInNew as OpenIcon,
   PointOfSale as TerminalIcon,
   Receipt as ReceiptIcon,
   TrendingUp as TrendingUpIcon,
@@ -30,8 +34,6 @@ import {
   AreaChart,
   CartesianGrid,
   Cell,
-  Line,
-  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -44,31 +46,38 @@ import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
 import { formatCurrency, formatDateTime } from '../utils/format';
 import { parseTransactionStatus } from '../types/transaction';
-import { statusLabel } from '../i18n/translations';
-import { getPaymentMethodLabel } from '../utils/format';
-import { parsePaymentMethod } from '../types/transaction';
 import type { DashboardSummary, DashboardCurrencyTotals, TerminalOptionDto } from '../types/dto';
 import { buildTerminalIndex, terminalLabel } from '../utils/terminals';
+import { getStatusColorScheme } from '../utils/statusColors';
+import { parseLinkStatus, getLinkStatusColors } from '../utils/payByLinkData';
+import { linkStatusLabel, statusLabel, type Language } from '../i18n/translations';
 
-// P3-7: страница больше ничего не считает. До этого она тянула две выборки без пагинации
-// (то есть двадцать строк по умолчанию), сводила их в браузере и подписывала результат
-// «All system transactions» и «Real…». Теперь всё считает база одним запросом, а окно и часовой
-// пояс приходят в ответе — подпись под графиками берётся оттуда, а не из константы.
+// P3-7: страница ничего не считает — сводку отдаёт `GET /api/v1/dashboard/summary`, окно и часовой пояс
+// приходят в ответе. Р-89: панель — по оплатам платёжных ссылок портала (весь эквайринг — выписка
+// E-commerce), возвраты вычитаются по дате возврата, период выбирается.
 const RECENT_LIMIT = 10;
 
-const STATUS_COLORS: Record<string, string> = {
-  SUCCESS: '#2e7d32',
-  AUTHORIZED: '#ed6c02',
-  PENDING: '#0288d1',
-  REFUNDED: '#9c27b0',
-  PARTIALLY_REFUNDED: '#7b1fa2',
-  FAILED: '#c62828',
+type PeriodKey = 'today' | 'days7' | 'days30' | 'days90';
+
+const PERIOD_DAYS: Record<PeriodKey, number> = { today: 1, days7: 7, days30: 30, days90: 90 };
+
+// Целые сутки, включая сегодняшние, от полуночи браузера: на графике — целые столбики. Потолок
+// бэкенда — 92 дня, 90 в него укладываются.
+const periodWindow = (key: PeriodKey): { from: Date; to: Date } => {
+  const from = new Date();
+  from.setDate(from.getDate() - (PERIOD_DAYS[key] - 1));
+  from.setHours(0, 0, 0, 0);
+  return { from, to: new Date() };
 };
+
+const LOCALES: Record<Language, string> = { en: 'en-GB', az: 'az-Latn-AZ', ru: 'ru-RU' };
 
 export const HomePage: React.FC = () => {
   const navigate = useNavigate();
-  const { tObj } = useLanguage();
+  const { tObj, language } = useLanguage();
+  const t = tObj.home;
 
+  const [period, setPeriod] = useState<PeriodKey>('days7');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [recent, setRecent] = useState<any[]>([]);
   // Транзакция несёт только `terminalId`; подпись терминала — его логин, и он приходит
@@ -76,77 +85,105 @@ export const HomePage: React.FC = () => {
   const [terminalIndex, setTerminalIndex] = useState<Record<number, TerminalOptionDto>>({});
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [recentFailed, setRecentFailed] = useState(false);
 
+  // Сводка — за выбранный период.
   useEffect(() => {
     const controller = new AbortController();
+    const { from, to } = periodWindow(period);
     setLoading(true);
-    Promise.all([
-      apiClient.get<DashboardSummary>('/api/v1/dashboard/summary', { signal: controller.signal }),
-      // Ровно столько строк, сколько показываем, и с явным размером страницы: без него
-      // сервер отдаёт свои двадцать, а таблица молча режет их до десяти. Порядок — серверный
-      // (createdAt desc, P3-7), иначе «последние» были бы просто какими-то.
-      apiClient.get('/api/v1/transactions', {
-        params: { page: 0, size: RECENT_LIMIT },
-        signal: controller.signal,
-      }),
-    ])
-      .then(([summaryRes, recentRes]) => {
-        setSummary(summaryRes.data);
-        setRecent(recentRes.data?.content ?? []);
+    apiClient.get<DashboardSummary>('/api/v1/dashboard/summary', {
+      params: { from: from.toISOString(), to: to.toISOString() },
+      signal: controller.signal,
+    })
+      .then(res => {
+        setSummary(res.data);
         setFailed(false);
       })
       .catch(err => {
         if (axios.isCancel(err)) return;
+        setSummary(null);
         setFailed(true);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
+    return () => controller.abort();
+  }, [period]);
+
+  // Последние платежи от периода не зависят: это первая страница списка, порядок серверный
+  // (createdAt desc, P3-7), размер — явный.
+  useEffect(() => {
+    const controller = new AbortController();
+    apiClient.get('/api/v1/transactions', { params: { page: 0, size: RECENT_LIMIT }, signal: controller.signal })
+      .then(res => {
+        setRecent(res.data?.content ?? []);
+        setRecentFailed(false);
+      })
+      .catch(err => {
+        if (axios.isCancel(err)) return;
+        setRecent([]);
+        setRecentFailed(true);
+      });
     apiClient.get('/api/v1/terminals/options', { signal: controller.signal })
       .then(res => setTerminalIndex(buildTerminalIndex(res.data)))
       .catch(() => {});
-
     return () => controller.abort();
   }, []);
 
   const currencies = summary?.totals ?? [];
+  const locale = LOCALES[language];
 
   return (
     <Box>
       {/* Header */}
-      <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <Box>
+      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap' }}>
+        <Box sx={{ maxWidth: 760 }}>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.5 }}>
-            {tObj.home.title}
+            {t.title}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            {tObj.home.subtitle}
+            {t.subtitle}
           </Typography>
           {summary && (
             <Typography variant="caption" color="text.secondary">
-              {tObj.home.period}: {formatInZone(summary.window.from, summary.window.zone)} — {formatInZone(summary.window.to, summary.window.zone)}
+              {t.period}: {formatInZone(summary.window.from, summary.window.zone)} — {formatInZone(summary.window.to, summary.window.zone)}
               {' · '}{summary.window.zone}
             </Typography>
           )}
         </Box>
-        {loading && <CircularProgress size={28} />}
+        <Stack spacing={1.5} alignItems={{ xs: 'flex-start', md: 'flex-end' }}>
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            {loading && <CircularProgress size={24} />}
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={period}
+              onChange={(_, value: PeriodKey | null) => { if (value) setPeriod(value); }}
+            >
+              {(Object.keys(PERIOD_DAYS) as PeriodKey[]).map(key => (
+                <ToggleButton key={key} value={key}>{t.periods[key]}</ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+          </Stack>
+          <Button size="small" endIcon={<OpenIcon />} onClick={() => navigate('/transactions/ecommerce')}>
+            {t.openStatement}
+          </Button>
+        </Stack>
       </Box>
 
-      {failed && <Alert severity="error" sx={{ mb: 3 }}>{tObj.home.loadFailed}</Alert>}
+      {failed && <Alert severity="error" sx={{ mb: 3 }}>{t.loadFailed}</Alert>}
 
       {summary && currencies.length === 0 && !failed && (
-        <Alert severity="info" sx={{ mb: 3 }}>{tObj.home.empty}</Alert>
+        <Alert severity="info" sx={{ mb: 3 }}>{t.empty}</Alert>
       )}
 
       {/* Деньги — отдельным блоком на каждую валюту. Свести их в одну карточку нельзя:
           сложенные манаты с евро дают число, которого не существует. */}
-      {currencies.map(totals => (
+      {summary && currencies.map(totals => (
         <Box key={totals.currency} sx={{ mb: 4 }}>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
             <Chip label={totals.currency} size="small" color="primary" />
-            <Typography variant="caption" color="text.secondary">
-              {tObj.home.metrics.netRevenueHint}
-            </Typography>
           </Stack>
 
           <Box
@@ -158,66 +195,72 @@ export const HomePage: React.FC = () => {
             }}
           >
             <MetricCard
-              title={tObj.home.metrics.netRevenue}
+              title={t.metrics.netRevenue}
+              hint={t.metrics.netRevenueHint}
               value={formatCurrency(Number(totals.netAmount), totals.currency)}
               icon={<TrendingUpIcon sx={{ fontSize: 32 }} />}
               color="#2e7d32"
             />
             <MetricCard
-              title={tObj.home.metrics.paidCount}
+              title={t.metrics.paidCount}
+              hint={t.metrics.paidCountHint}
               value={String(totals.paidCount)}
               icon={<ReceiptIcon sx={{ fontSize: 32 }} />}
               color="#1976d2"
             />
             <MetricCard
-              title={tObj.home.metrics.refunded}
+              title={t.metrics.refunded}
+              hint={t.metrics.refundedHint}
               value={formatCurrency(Number(totals.refundedAmount), totals.currency)}
               icon={<RefundIcon sx={{ fontSize: 32 }} />}
               color="#9c27b0"
             />
             <MetricCard
-              title={tObj.home.metrics.averagePayment}
+              title={t.metrics.averagePayment}
               value={formatCurrency(Number(totals.averagePaidAmount), totals.currency)}
               icon={<MoneyIcon sx={{ fontSize: 32 }} />}
               color="#ed6c02"
             />
           </Box>
 
-          <DailyChart summary={summary} totals={totals} title={tObj.home.charts.daily} />
+          <DailyChart summary={summary} totals={totals} title={t.charts.daily} locale={locale} />
         </Box>
       ))}
 
-      {/* Исходы и часы */}
       {summary && (
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, 1fr)' }, gap: 3, mb: 4 }}>
-          <Panel title={tObj.home.charts.statuses}>
-            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, alignItems: 'center', gap: 3 }}>
-              <ResponsiveContainer width="50%" height={200}>
-                <PieChart>
-                  <Tooltip />
-                  <Pie
-                    data={summary.statusBreakdown.filter(item => item.count > 0)}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={2}
-                    dataKey="count"
-                    nameKey="status"
-                  >
-                    {summary.statusBreakdown.filter(item => item.count > 0).map(item => (
-                      <Cell key={item.status} fill={STATUS_COLORS[item.status] ?? '#9e9e9e'} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-              <Stack spacing={1.5} sx={{ flex: 1 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(3, 1fr)' }, gap: 3, mb: 4 }}>
+          {/* Попытки, а не исходы платежей: каждое открытие ссылки заводит операцию, брошенная
+              становится FAILED. Цвета — общие для всего приложения (`utils/statusColors.ts`). */}
+          <Panel title={t.charts.attempts} hint={t.charts.attemptsHint}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 2 }}>
+              <Box sx={{ width: '100%', height: 180 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Tooltip formatter={(value: any, name: any) => [value, statusLabel(tObj, parseTransactionStatus(name), String(name))]} />
+                    <Pie
+                      data={summary.statusBreakdown.filter(item => item.count > 0)}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={75}
+                      paddingAngle={2}
+                      dataKey="count"
+                      nameKey="status"
+                    >
+                      {summary.statusBreakdown.filter(item => item.count > 0).map(item => (
+                        <Cell key={item.status} fill={getStatusColorScheme(parseTransactionStatus(item.status)).main} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              </Box>
+              <Stack spacing={1}>
                 {/* Все шесть статусов, включая нулевые: пропущенная доля читается как
                     «такого не бывает», а не как «за период не случилось». */}
                 {summary.statusBreakdown.map(item => (
                   <Box key={item.status} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: STATUS_COLORS[item.status] ?? '#9e9e9e' }} />
+                      <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: getStatusColorScheme(parseTransactionStatus(item.status)).main }} />
                       <Typography variant="body2">{statusLabel(tObj, parseTransactionStatus(item.status), item.status)}</Typography>
                     </Box>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.count}</Typography>
@@ -227,34 +270,16 @@ export const HomePage: React.FC = () => {
             </Box>
           </Panel>
 
-          <Panel title={tObj.home.charts.hourly}>
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={summary.hourlyTotals}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                <XAxis dataKey="hour" stroke="#666" style={{ fontSize: '12px' }} />
-                <YAxis stroke="#666" allowDecimals={false} style={{ fontSize: '12px' }} />
-                <Tooltip />
-                <Line type="monotone" dataKey="transactionCount" stroke="#1976d2" strokeWidth={3} dot={{ r: 3 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </Panel>
-        </Box>
-      )}
-
-      {/* Терминалы и ссылки */}
-      {summary && (
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, 1fr)' }, gap: 3, mb: 4 }}>
-          <Panel title={tObj.home.charts.terminals}>
+          <Panel title={t.charts.terminals}>
             <Stack spacing={2.5}>
               {summary.topTerminals.map(terminal => (
                 <Box key={`${terminal.currency}-${terminal.terminalId}`}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    {/* Логин из таблицы терминалов — по нему мерчант терминал и опознаёт;
-                        имя идёт пояснением. Если терминала уже нет — только его номер,
-                        без придуманного префикса и подставного имени. */}
+                    {/* Логин — по нему мерчант терминал и опознаёт; имя — пояснение. Терминала,
+                        которого уже нет, подписать нечем: прочерк, а не номер (Р-81). */}
                     <Box>
                       <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: 'monospace' }}>
-                        {terminal.terminalLogin ?? terminal.terminalName ?? `#${terminal.terminalId}`}
+                        {terminal.terminalLogin ?? terminal.terminalName ?? '—'}
                       </Typography>
                       {terminal.terminalName && terminal.terminalName !== terminal.terminalLogin && (
                         <Typography variant="caption" color="text.secondary">
@@ -279,31 +304,30 @@ export const HomePage: React.FC = () => {
               {summary.topTerminals.length === 0 && (
                 <Box sx={{ py: 4, textAlign: 'center' }}>
                   <TerminalIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
-                  <Typography color="text.secondary">{tObj.home.empty}</Typography>
+                  <Typography color="text.secondary">{t.empty}</Typography>
                 </Box>
               )}
             </Stack>
           </Panel>
 
-          <Panel title={`${tObj.home.charts.links} · ${summary.paymentLinks.total}`}>
-            {/* Два независимых разбиения, а не один график: тип платежа и тип использования —
-                разные оси по одному и тому же набору ссылок, и в общих осях их столбцы
-                складывались бы в удвоенное число ссылок. */}
-            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>{tObj.home.charts.byPaymentType}</Typography>
-            <Stack spacing={1} sx={{ mb: 3 }}>
-              {summary.paymentLinks.byPaymentType.map(item => (
-                <CountRow key={item.paymentType} label={getPaymentMethodLabel(parsePaymentMethod(item.paymentType))} count={item.count} />
-              ))}
-            </Stack>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>{tObj.home.charts.byUsageType}</Typography>
-            <Stack spacing={1}>
-              {summary.paymentLinks.byUsageType.map(item => (
-                <CountRow
-                  key={item.usageType}
-                  label={item.usageType === 'SINGLE' ? tObj.payByLink.singleUse : item.usageType === 'MULTIPLE' ? tObj.payByLink.multipleUse : item.usageType}
-                  count={item.count}
-                />
-              ))}
+          {/* Созданные за период ссылки по их текущему статусу: сколько оплачено, истекло, отменено.
+              Разбивка по типам (SMS/DMS, одно- и многоразовые) о работе ссылок ничего не говорила. */}
+          <Panel title={`${t.charts.links} · ${summary.paymentLinks.total}`} hint={t.charts.linksHint}>
+            <Stack spacing={1.25}>
+              {summary.paymentLinks.byStatus.map(item => {
+                const parsed = parseLinkStatus(item.status);
+                return (
+                  <Box key={item.status} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Chip
+                      size="small"
+                      label={linkStatusLabel(tObj, parsed, item.status)}
+                      color={getLinkStatusColors(parsed).color}
+                      variant="outlined"
+                    />
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.count}</Typography>
+                  </Box>
+                );
+              })}
             </Stack>
           </Panel>
         </Box>
@@ -311,19 +335,16 @@ export const HomePage: React.FC = () => {
 
       {/* Последние платежи */}
       <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
-        <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>
-            {tObj.home.recentTransactions.title}
-          </Typography>
-          <Chip label={recent.length} size="small" color="primary" variant="outlined" />
-        </Box>
+        <Typography variant="h6" sx={{ fontWeight: 600, mb: 3 }}>
+          {t.recentTransactions.title}
+        </Typography>
 
         {/* «Платежей ещё нет» — только когда список действительно пуст, а не когда он не загрузился. */}
         {recent.length === 0 ? (
           <Box sx={{ py: 5, textAlign: 'center' }}>
             <ReceiptIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
             <Typography color="text.secondary">
-              {failed ? tObj.common.loadFailed : tObj.home.recentTransactions.empty}
+              {recentFailed ? tObj.common.loadFailed : t.recentTransactions.empty}
             </Typography>
           </Box>
         ) : (
@@ -331,29 +352,25 @@ export const HomePage: React.FC = () => {
             <Table size="small">
               <TableHead>
                 <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.providerOrderId}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.ridByMerchant}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.date}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.terminal}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.ip}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.device}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="right">{tObj.home.recentTransactions.amount}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.status}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{tObj.home.recentTransactions.id}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t.recentTransactions.providerOrderId}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t.recentTransactions.ridByMerchant}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t.recentTransactions.date}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t.recentTransactions.terminal}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }} align="right">{t.recentTransactions.amount}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t.recentTransactions.status}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t.recentTransactions.id}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {recent.map((tx: any) => {
                   const parsed = parseTransactionStatus(tx.status);
                   const raw = tx.status === null || tx.status === undefined ? undefined : String(tx.status);
+                  const scheme = getStatusColorScheme(parsed);
                   return (
                     <TableRow
                       key={tx.id}
                       hover
-                      // Без router state: карточка грузит себя сама (GET /api/v1/transactions/{id},
-                      // P3-7). Прежний переход собирал историю статусов из двух событий с одним
-                      // временем, нулевую комиссию и подставное описание — и карточка рисовала
-                      // это как факт.
+                      // Без router state: карточка грузит себя сама (GET /api/v1/transactions/{id}, P3-7).
                       onClick={() => navigate(`/transactions/${tx.id}`)}
                       sx={{ cursor: 'pointer' }}
                     >
@@ -381,14 +398,6 @@ export const HomePage: React.FC = () => {
                           })}
                         </Typography>
                       </TableCell>
-                      {/* Настоящее значение или прочерк: прежде вместо незаписанного
-                          подставлялись адрес и браузер по умолчанию. */}
-                      <TableCell>
-                        <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>{tx.clientIp || '—'}</Typography>
-                      </TableCell>
-                      <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        <Typography variant="caption" color="text.secondary">{tx.userAgent || '—'}</Typography>
-                      </TableCell>
                       <TableCell align="right">
                         <Typography variant="caption" sx={{ fontWeight: 700 }}>
                           {formatCurrency(Number(tx.amount) || 0, tx.currency)}
@@ -396,10 +405,10 @@ export const HomePage: React.FC = () => {
                       </TableCell>
                       <TableCell>
                         <Chip
-                          label={parsed ?? raw ?? '—'}
+                          label={statusLabel(tObj, parsed, raw)}
                           size="small"
                           sx={{ fontWeight: 700, fontSize: '0.65rem', height: 20,
-                                color: '#fff', bgcolor: STATUS_COLORS[parsed ?? ''] ?? '#9e9e9e' }}
+                                color: scheme.contrastText, bgcolor: scheme.light }}
                         />
                       </TableCell>
                       <TableCell>
@@ -425,40 +434,45 @@ export const HomePage: React.FC = () => {
 
 // ─── мелкие куски разметки ────────────────────────────────────────────────────
 
-const Panel: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+const Panel: React.FC<{ title: string; hint?: string; children: React.ReactNode }> = ({ title, hint, children }) => (
   <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
-    <Typography variant="h6" sx={{ fontWeight: 600, mb: 3 }}>{title}</Typography>
+    <Typography variant="h6" sx={{ fontWeight: 600, mb: hint ? 0.5 : 3 }}>{title}</Typography>
+    {hint && (
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2.5 }}>{hint}</Typography>
+    )}
     {children}
   </Paper>
 );
 
-const MetricCard: React.FC<{ title: string; value: string; icon: React.ReactNode; color: string }> = ({
-  title, value, icon, color,
+const MetricCard: React.FC<{ title: string; hint?: string; value: string; icon: React.ReactNode; color: string }> = ({
+  title, hint, value, icon, color,
 }) => (
   <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
     <CardContent>
       <Box sx={{ p: 1.5, mb: 2, width: 'fit-content', borderRadius: 2, bgcolor: `${color}1a`, color }}>{icon}</Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{title}</Typography>
       <Typography variant="h5" sx={{ fontWeight: 700 }}>{value}</Typography>
+      {hint && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>{hint}</Typography>
+      )}
     </CardContent>
   </Card>
 );
 
-const CountRow: React.FC<{ label: string; count: number }> = ({ label, count }) => (
-  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-    <Typography variant="body2">{label}</Typography>
-    <Typography variant="body2" sx={{ fontWeight: 600 }}>{count}</Typography>
-  </Box>
-);
-
 // Один график на валюту: общая ось Y для манатов и евро — то же сложение разных денег,
-// только нарисованное.
-const DailyChart: React.FC<{ summary: DashboardSummary; totals: DashboardCurrencyTotals; title: string }> = ({
-  summary, totals, title,
+// только нарисованное. Дата подписи — на языке интерфейса, а не `09-15`.
+const DailyChart: React.FC<{ summary: DashboardSummary; totals: DashboardCurrencyTotals; title: string; locale: string }> = ({
+  summary, totals, title, locale,
 }) => {
+  const formatDay = useMemo(
+    () => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short', timeZone: 'UTC' }),
+    [locale]
+  );
   const data = summary.dailyTotals
     .filter(day => day.currency === totals.currency)
-    .map(day => ({ date: day.date.slice(5), net: Number(day.netAmount), count: day.transactionCount }));
+    // `date` — календарная дата пояса отчёта без времени; читаем её как полночь UTC и форматируем в UTC,
+    // чтобы пояс браузера не сдвинул подпись на соседний день.
+    .map(day => ({ date: formatDay.format(new Date(`${day.date}T00:00:00Z`)), net: Number(day.netAmount), count: day.transactionCount }));
 
   return (
     <Panel title={`${title} · ${totals.currency}`}>
@@ -489,7 +503,7 @@ function formatInZone(iso: string, zone: string): string {
 }
 
 // Доля самого крупного терминала этой валюты. Ширина полосы — оформление, и сравнивается
-// только внутри одной валюты.
+// только внутри одной валюты; отрицательная выручка (одни возвраты за период) — минимальная полоса.
 function terminalWidth(summary: DashboardSummary, currency: string, netAmount: string): string {
   const sameCurrency = summary.topTerminals.filter(item => item.currency === currency);
   const top = Number(sameCurrency[0]?.netAmount) || 0;

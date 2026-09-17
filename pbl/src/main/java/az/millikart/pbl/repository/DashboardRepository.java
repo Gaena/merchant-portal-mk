@@ -29,10 +29,10 @@ import org.springframework.data.repository.query.Param;
 @org.springframework.stereotype.Repository
 public interface DashboardRepository extends Repository<Transaction, UUID> {
 
-    // [самый ранний момент корзины, валюта, статус, число операций, сумма списанного,
-    // сумма возвратов]. Одна группировка на итоги, разбивку по статусам, посуточную выручку
-    // и распределение по часам: четыре независимых запроса могли бы разойтись между собой,
-    // и сумма по дням не сошлась бы с итогом.
+    // [самый ранний момент корзины, валюта, статус, число операций, сумма списанного]. Одна
+    // группировка на итоги, разбивку по статусам, посуточную выручку и распределение по часам:
+    // четыре независимых запроса могли бы разойтись между собой, и сумма по дням не сошлась бы
+    // с итогом. Возвратов здесь нет: они считаются по своему времени, а не по времени платежа (Р-89).
     //
     // coalesce(capturedAmount, amount): captured_amount равен null у всех SMS-платежей (списания
     // не было) и меньше amount после частичного списания — брать amount значило бы показать
@@ -46,8 +46,7 @@ public interface DashboardRepository extends Repository<Transaction, UUID> {
                    pl.currency,
                    t.status,
                    COUNT(t),
-                   SUM(COALESCE(t.capturedAmount, t.amount)),
-                   SUM(t.refundedAmount)
+                   SUM(COALESCE(t.capturedAmount, t.amount))
             FROM Transaction t JOIN t.link pl
             WHERE t.createdAt >= :from AND t.createdAt < :to
               AND (:unscoped = TRUE OR pl.terminalId IN :terminalIds)
@@ -59,7 +58,7 @@ public interface DashboardRepository extends Repository<Transaction, UUID> {
                                          @Param("unscoped") boolean unscoped,
                                          @Param("terminalIds") Collection<Integer> terminalIds);
 
-    // [terminalId, валюта, статус, число операций, сумма списанного, сумма возвратов].
+    // [terminalId, валюта, статус, число операций, сумма списанного].
     // Имя терминала не джойнится: Terminal — отдельная сущность, ссылки на неё у PaymentLink нет
     // (там голый terminal_id), поэтому имена сервис добирает одним findAllById по готовому топу.
     @Query("""
@@ -67,8 +66,7 @@ public interface DashboardRepository extends Repository<Transaction, UUID> {
                    pl.currency,
                    t.status,
                    COUNT(t),
-                   SUM(COALESCE(t.capturedAmount, t.amount)),
-                   SUM(t.refundedAmount)
+                   SUM(COALESCE(t.capturedAmount, t.amount))
             FROM Transaction t JOIN t.link pl
             WHERE t.createdAt >= :from AND t.createdAt < :to
               AND (:unscoped = TRUE OR pl.terminalId IN :terminalIds)
@@ -78,6 +76,39 @@ public interface DashboardRepository extends Repository<Transaction, UUID> {
                                        @Param("to") Instant to,
                                        @Param("unscoped") boolean unscoped,
                                        @Param("terminalIds") Collection<Integer> terminalIds);
+
+    // Р-89: [самый ранний момент корзины, валюта, сумма возвратов] — возвраты, **проведённые** в окне,
+    // по времени возврата и в валюте ссылки. Платёж мог быть раньше окна: сегодняшний возврат по
+    // платежу прошлого месяца уменьшает сегодняшнюю выручку, а не переписывает прошлый месяц.
+    // Корзины часовые по той же причине, что у транзакций: сутки и час считает сервис.
+    @Query("""
+            SELECT MIN(r.refundedAt),
+                   pl.currency,
+                   SUM(r.amount)
+            FROM TransactionRefund r JOIN r.transaction t JOIN t.link pl
+            WHERE r.refundedAt >= :from AND r.refundedAt < :to
+              AND (:unscoped = TRUE OR pl.terminalId IN :terminalIds)
+            GROUP BY CAST(r.refundedAt AS LocalDate), EXTRACT(HOUR FROM r.refundedAt), pl.currency
+            """)
+    List<Object[]> refundsByHourBucket(@Param("from") Instant from,
+                                       @Param("to") Instant to,
+                                       @Param("unscoped") boolean unscoped,
+                                       @Param("terminalIds") Collection<Integer> terminalIds);
+
+    // Р-89: [terminalId, валюта, сумма возвратов] — те же возвраты окна по терминалам.
+    @Query("""
+            SELECT pl.terminalId,
+                   pl.currency,
+                   SUM(r.amount)
+            FROM TransactionRefund r JOIN r.transaction t JOIN t.link pl
+            WHERE r.refundedAt >= :from AND r.refundedAt < :to
+              AND (:unscoped = TRUE OR pl.terminalId IN :terminalIds)
+            GROUP BY pl.terminalId, pl.currency
+            """)
+    List<Object[]> refundsByTerminal(@Param("from") Instant from,
+                                     @Param("to") Instant to,
+                                     @Param("unscoped") boolean unscoped,
+                                     @Param("terminalIds") Collection<Integer> terminalIds);
 
     // [статус ссылки, тип платежа, тип использования, число ссылок]. Одна группировка на три
     // разбиения: комбинаций не больше двух десятков, сворачивает их сервис.

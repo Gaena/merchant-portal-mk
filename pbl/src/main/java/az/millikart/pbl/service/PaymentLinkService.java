@@ -4,6 +4,7 @@ import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentLinkStatus;
 import az.millikart.pbl.domain.Terminal;
 import az.millikart.pbl.domain.Transaction;
+import az.millikart.pbl.domain.TransactionRefund;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
 import az.millikart.pbl.dto.CompleteDmsRequest;
@@ -36,6 +37,7 @@ import az.millikart.pbl.provider.ProviderPayloads;
 import az.millikart.pbl.provider.dto.MoneyOperationResult;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
+import az.millikart.pbl.repository.TransactionRefundRepository;
 import az.millikart.pbl.repository.TransactionRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -75,6 +77,7 @@ public class PaymentLinkService {
 
     private final PaymentLinkRepository paymentLinkRepository;
     private final TransactionRepository transactionRepository;
+    private final TransactionRefundRepository transactionRefundRepository;
     private final TerminalRepository terminalRepository;
     private final AcquiringClient acquiringClient;
     private final PaymentLinkMapper mapper;
@@ -87,6 +90,7 @@ public class PaymentLinkService {
 
     public PaymentLinkService(PaymentLinkRepository paymentLinkRepository,
                                TransactionRepository transactionRepository,
+                               TransactionRefundRepository transactionRefundRepository,
                                TerminalRepository terminalRepository,
                                AcquiringClient acquiringClient,
                                PaymentLinkMapper mapper,
@@ -98,6 +102,7 @@ public class PaymentLinkService {
                                @Value("${pbl.link.max-ttl}") Duration maxLinkTtl) {
         this.paymentLinkRepository = paymentLinkRepository;
         this.transactionRepository = transactionRepository;
+        this.transactionRefundRepository = transactionRefundRepository;
         this.terminalRepository = terminalRepository;
         this.acquiringClient = acquiringClient;
         this.mapper = mapper;
@@ -569,7 +574,7 @@ public class PaymentLinkService {
         if (capture.raw() != null) {
             mergedResponse.putAll(ProviderPayloads.withoutSecrets(capture.raw()));
         }
-        mergedResponse.put(CAPTURE_KEY, moneyOperationRecord(capture, request.amount()));
+        mergedResponse.put(CAPTURE_KEY, moneyOperationRecord(capture, request.amount(), Instant.now()));
         transaction.setProviderResponse(mergedResponse);
 
         // P0-8: сколько эквайер реально склирил — отдельно от amount, который остаётся
@@ -685,7 +690,10 @@ public class PaymentLinkService {
         if (mergedResponse.get(REFUNDS_KEY) instanceof List<?> previous) {
             refunds.addAll(previous);
         }
-        refunds.add(moneyOperationRecord(result, request.amount()));
+        // Один момент на свидетельство и на строку возврата: сводка и история операции не должны
+        // расходиться даже на миллисекунды (Р-89).
+        Instant refundedAt = Instant.now();
+        refunds.add(moneyOperationRecord(result, request.amount(), refundedAt));
         mergedResponse.put(REFUNDS_KEY, refunds);
         transaction.setProviderResponse(mergedResponse);
 
@@ -698,6 +706,13 @@ public class PaymentLinkService {
             transaction.setStatus(TransactionStatus.PARTIALLY_REFUNDED);
         }
         transactionRepository.save(transaction);
+        // Р-89: возврат строкой со своим временем — по нему сводка главной вычитает возвраты за период.
+        transactionRefundRepository.save(TransactionRefund.builder()
+                .transaction(transaction)
+                .amount(request.amount())
+                .refundedAt(refundedAt)
+                .ridByPmo(result.ridByPmo())
+                .build());
 
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, transactionId.toString(),
                 AuditAction.REFUND, UserPrincipal.getUsername(principal), companyId,
@@ -737,13 +752,13 @@ public class PaymentLinkService {
     // сумма и время записи. Значения строками, чтобы в колонке лежало ровно то, что можно
     // процитировать: сумма в той же форме с двумя знаками, в какой ушла эквайеру. UNNECESSARY здесь
     // не бросит — assertCapturableScale уже отверг всё, что длиннее двух знаков.
-    private static Map<String, Object> moneyOperationRecord(MoneyOperationResult result, BigDecimal amount) {
+    private static Map<String, Object> moneyOperationRecord(MoneyOperationResult result, BigDecimal amount, Instant at) {
         Map<String, Object> evidence = new HashMap<>();
         evidence.put("tranActionId", result.tranActionId());
         evidence.put("ridByPmo", result.ridByPmo());
         evidence.put("approvalCode", result.approvalCode());
         evidence.put("amount", amount.setScale(2, RoundingMode.UNNECESSARY).toPlainString());
-        evidence.put("at", Instant.now().toString());
+        evidence.put("at", at.toString());
         return evidence;
     }
 

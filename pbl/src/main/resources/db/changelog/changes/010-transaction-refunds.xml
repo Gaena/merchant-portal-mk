@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Р-89: подтверждённые возвраты — строками, со временем возврата.
+
+         До этого время возврата жило только в provider_response.mpRefunds (JSON, след для споров), а
+         у транзакции была одна накопленная сумма refunded_amount. Сводка главной вычитала её из выручки
+         по дате **платежа**: возврат сегодня по платежу прошлого месяца в «возвращено за период» не
+         попадал, а выручка прошлых дней менялась задним числом. Сгруппировать JSON по времени средствами
+         SQL одинаково на PostgreSQL и H2 тестов нельзя — отсюда таблица.
+
+         refunded_at — TIMESTAMP WITH TIME ZONE намеренно, в отличие от created_at: перенос ниже читает
+         ISO-8601 instant из JSON, и колонка с поясом хранит ровно этот момент, не завися от пояса
+         сессии. Каскад на удаление транзакции — чтобы тесты, очищающие transactions, не упирались в
+         ключ; в работе транзакции не удаляются.
+
+         Одна операция на changeset под своим преконтролем (002, 008). Id несут имя модуля: таблица
+         DATABASECHANGELOG одна на все сервисы (AGENTS.md §10). -->
+
+    <changeSet id="10-pbl-create-transaction-refunds" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="transaction_refunds"/>
+            </not>
+        </preConditions>
+        <createTable tableName="transaction_refunds">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="transaction_id" type="uuid">
+                <constraints nullable="false"
+                             foreignKeyName="fk_transaction_refunds_transaction"
+                             referencedTableName="transactions" referencedColumnNames="id"
+                             deleteCascade="true"/>
+            </column>
+            <column name="amount" type="numeric(19,2)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="refunded_at" type="TIMESTAMP WITH TIME ZONE">
+                <constraints nullable="false"/>
+            </column>
+            <!-- tran.match.ridByPmo подтверждённого возврата — ссылка эквайера, весомая в споре. -->
+            <column name="rid_by_pmo" type="varchar(255)"/>
+        </createTable>
+    </changeSet>
+
+    <!-- Сводка режет возвраты по диапазону refunded_at, как транзакции по created_at (008). -->
+    <changeSet id="10-pbl-index-transaction-refunds-refunded-at" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="transaction_refunds" indexName="idx_transaction_refunds_refunded_at"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="transaction_refunds" indexName="idx_transaction_refunds_refunded_at"><column name="refunded_at"/></createIndex>
+    </changeSet>
+
+    <changeSet id="10-pbl-index-transaction-refunds-transaction" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="transaction_refunds" indexName="idx_transaction_refunds_transaction"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="transaction_refunds" indexName="idx_transaction_refunds_transaction"><column name="transaction_id"/></createIndex>
+    </changeSet>
+
+    <!-- Перенос уже подтверждённых возвратов из provider_response.mpRefunds (P1-8b): сумма строкой с
+         двумя знаками и момент Instant.toString() (PaymentLinkService.moneyOperationRecord). Только
+         PostgreSQL: разбор JSON у H2 другой, а в тестовой H2 переносить нечего. Возвраты старше P1-8b
+         записи в mpRefunds не имеют, и дату им не выдумываем (Р-48): их сводка не вычитает. Повторный
+         запуск ничего не задвоит — транзакции, у которых строки уже есть, пропускаются. -->
+    <changeSet id="10-pbl-backfill-transaction-refunds" author="millikart">
+        <sql dbms="postgresql">
+            INSERT INTO transaction_refunds (id, transaction_id, amount, refunded_at, rid_by_pmo)
+            SELECT gen_random_uuid(),
+                   t.id,
+                   CAST(r.value ->> 'amount' AS numeric(19,2)),
+                   CAST(r.value ->> 'at' AS timestamptz),
+                   r.value ->> 'ridByPmo'
+              FROM transactions t
+             CROSS JOIN LATERAL jsonb_array_elements(
+                       CASE WHEN jsonb_typeof(CAST(t.provider_response AS jsonb) -> 'mpRefunds') = 'array'
+                            THEN CAST(t.provider_response AS jsonb) -> 'mpRefunds'
+                            ELSE CAST('[]' AS jsonb)
+                       END) AS r(value)
+             WHERE r.value ->> 'amount' IS NOT NULL
+               AND r.value ->> 'at' IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM transaction_refunds x WHERE x.transaction_id = t.id)
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

@@ -639,6 +639,9 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
     -   `from`: ISO-8601 instant, optional (e.g. `2026-08-18T00:00:00Z`)
     -   `to`: ISO-8601 instant, optional
 -   **Description (P3-7):** Everything the merchant dashboard shows, counted **in the database**.
+    Scope (Р-89): payments made through the portal's **payment links** only. Card payments that reach
+    the gateway from a merchant's own website are not portal transactions; they are in the `ecom`
+    statement.
     Defaults to seven whole calendar days ending today, in the report time zone. Access is the same
     gate as §5.7, including its treatment of a caller without a company: `200 OK` with zeros, not
     `403`. No audit record is written — §5.7 writes none either, and these are the same rows.
@@ -663,6 +666,16 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
     (`SUCCESS`, `REFUNDED`, `PARTIALLY_REFUNDED`): `amount` stays the *authorised* figure after a
     partial capture, and a refunded payment did receive money — it should shrink by the refund, not
     vanish from revenue. `netAmount = paidAmount - refundedAmount`.
+-   **Refunds by refund date (Р-89):** `paidAmount` counts payments **created** in the window;
+    `refundedAmount` counts refunds **made** in the window, read from `transaction_refunds.refunded_at`,
+    whatever the date of the payment. A refund made today for last month's payment lowers today's net —
+    and does not rewrite last month, which is what counting it by the payment date did. A currency,
+    day or terminal with only refunds in the window therefore has a negative `netAmount`.
+    `refundedCount` stays a count of **payments** of the window that are now refunded, fully or
+    partially. Refunds confirmed before `mpRefunds` existed (P1-8b) have no row and are not subtracted.
+-   **Attempts, not payments:** `statusBreakdown` and `hourlyTotals` count transactions, and every
+    opening of a link creates one (`PENDING`, later `FAILED` if abandoned). The dashboard labels the
+    breakdown "payment attempts"; `hourlyTotals` is no longer drawn.
 -   **Empty buckets are present:** all six `TransactionStatus` values, all 24 hours, and every
     calendar day of the window, zeros included. A missing day reads as "no data"; a zero day reads
     as "nobody paid", and only the second one is true.

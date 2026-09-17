@@ -117,7 +117,11 @@ public class DashboardService {
 
         List<Object[]> buckets = dashboardRepository.aggregateByHourBucket(
                 resolvedFrom, resolvedTo, unscoped, terminalIds);
+        List<Object[]> refundBuckets = dashboardRepository.refundsByHourBucket(
+                resolvedFrom, resolvedTo, unscoped, terminalIds);
         List<Object[]> byTerminal = dashboardRepository.aggregateByTerminal(
+                resolvedFrom, resolvedTo, unscoped, terminalIds);
+        List<Object[]> refundsByTerminal = dashboardRepository.refundsByTerminal(
                 resolvedFrom, resolvedTo, unscoped, terminalIds);
         List<Object[]> links = dashboardRepository.aggregateLinks(
                 resolvedFrom, resolvedTo, unscoped, terminalIds);
@@ -128,6 +132,7 @@ public class DashboardService {
         Map<Integer, Long> perHour = new TreeMap<>();
 
         foldBuckets(buckets, perCurrency, perStatus, perDay, perHour);
+        foldRefunds(refundBuckets, perCurrency, perDay);
 
         return new DashboardSummaryResponse(
                 new Window(resolvedFrom, resolvedTo, zone.getId()),
@@ -135,7 +140,7 @@ public class DashboardService {
                 statusBreakdown(perStatus),
                 dailyTotals(resolvedFrom, resolvedTo, perCurrency.keySet(), perDay),
                 hourlyTotals(perHour),
-                topTerminals(byTerminal),
+                topTerminals(byTerminal, refundsByTerminal),
                 linkTotals(links));
     }
 
@@ -171,13 +176,28 @@ public class DashboardService {
             TransactionStatus status = (TransactionStatus) row[2];
             long count = asLong(row[3]);
             BigDecimal captured = asAmount(row[4]);
-            BigDecimal refunded = asAmount(row[5]);
 
-            perCurrency.computeIfAbsent(currency, key -> new Accumulator()).add(status, count, captured, refunded);
+            perCurrency.computeIfAbsent(currency, key -> new Accumulator()).add(status, count, captured);
             perStatus.merge(status, count, Long::sum);
             perDay.computeIfAbsent(new DayKey(moment.toLocalDate(), currency), key -> new Accumulator())
-                    .add(status, count, captured, refunded);
+                    .add(status, count, captured);
             perHour.merge(moment.getHour(), count, Long::sum);
+        }
+    }
+
+    // Р-89: возвраты окна — в сутки и валюту **возврата**. В счётчики операций и статусов они не
+    // входят: возврат — не новая операция, а движение денег по старой. Валюта, в которой были только
+    // возвраты, получает свою строку итогов с отрицательной выручкой — так и было.
+    private void foldRefunds(List<Object[]> refunds,
+                             Map<String, Accumulator> perCurrency,
+                             Map<DayKey, Accumulator> perDay) {
+        for (Object[] row : refunds) {
+            ZonedDateTime moment = asInstant(row[0]).atZone(zone);
+            String currency = (String) row[1];
+            BigDecimal amount = asAmount(row[2]);
+            perCurrency.computeIfAbsent(currency, key -> new Accumulator()).addRefund(amount);
+            perDay.computeIfAbsent(new DayKey(moment.toLocalDate(), currency), key -> new Accumulator())
+                    .addRefund(amount);
         }
     }
 
@@ -245,14 +265,18 @@ public class DashboardService {
     }
 
     // Топ пять внутри каждой валюты: «первые пять по сумме» поверх разных валют было бы
-    // сравнением манатов с евро.
-    private List<TerminalTotal> topTerminals(List<Object[]> rows) {
+    // сравнением манатов с евро. Выручка терминала — оплаты окна минус возвраты окна (Р-89).
+    private List<TerminalTotal> topTerminals(List<Object[]> rows, List<Object[]> refunds) {
         Map<TerminalKey, Accumulator> perTerminal = new LinkedHashMap<>();
         for (Object[] row : rows) {
             Integer terminalId = (Integer) row[0];
             String currency = (String) row[1];
             perTerminal.computeIfAbsent(new TerminalKey(terminalId, currency), key -> new Accumulator())
-                    .add((TransactionStatus) row[2], asLong(row[3]), asAmount(row[4]), asAmount(row[5]));
+                    .add((TransactionStatus) row[2], asLong(row[3]), asAmount(row[4]));
+        }
+        for (Object[] row : refunds) {
+            perTerminal.computeIfAbsent(new TerminalKey((Integer) row[0], (String) row[1]), key -> new Accumulator())
+                    .addRefund(asAmount(row[2]));
         }
 
         Map<String, List<Map.Entry<TerminalKey, Accumulator>>> byCurrency = perTerminal.entrySet().stream()
@@ -366,8 +390,9 @@ public class DashboardService {
     private record TerminalKey(Integer terminalId, String currency) {
     }
 
-    // Накопитель одной корзины. Деньги складываются только по PAID_STATUSES: суммы у FAILED
-    // база тоже посчитала, но платежом они не были.
+    // Накопитель одной корзины. Оплаты складываются только по PAID_STATUSES: суммы у FAILED
+    // база тоже посчитала, но платежом они не были. Возвраты приходят отдельно, по своему времени
+    // (Р-89); refundedCount — платежи окна, которые сейчас возвращены, это про платежи, а не про деньги.
     private static final class Accumulator {
         private long transactionCount;
         private long paidCount;
@@ -377,12 +402,11 @@ public class DashboardService {
         private BigDecimal paidAmount = BigDecimal.ZERO;
         private BigDecimal refundedAmount = BigDecimal.ZERO;
 
-        private void add(TransactionStatus status, long count, BigDecimal captured, BigDecimal refunded) {
+        private void add(TransactionStatus status, long count, BigDecimal captured) {
             transactionCount += count;
             if (TransactionStatus.PAID_STATUSES.contains(status)) {
                 paidCount += count;
                 paidAmount = paidAmount.add(captured);
-                refundedAmount = refundedAmount.add(refunded);
             }
             if (status == TransactionStatus.FAILED) {
                 failedCount += count;
@@ -393,6 +417,10 @@ public class DashboardService {
             if (status == TransactionStatus.REFUNDED || status == TransactionStatus.PARTIALLY_REFUNDED) {
                 refundedCount += count;
             }
+        }
+
+        private void addRefund(BigDecimal amount) {
+            refundedAmount = refundedAmount.add(amount);
         }
 
         private BigDecimal net() {

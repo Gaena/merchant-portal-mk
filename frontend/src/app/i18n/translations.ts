@@ -67,25 +67,31 @@ export interface TranslationDictionary {
   };
   home: {
     title: string;
+    /** Р-89: панель — по оплатам платёжных ссылок портала; весь эквайринг — вкладка E-commerce. */
     subtitle: string;
+    openStatement: string;
     period: string;
+    periods: { today: string; days7: string; days30: string; days90: string };
     loadFailed: string;
     empty: string;
     metrics: {
       netRevenue: string;
       netRevenueHint: string;
       paidCount: string;
+      paidCountHint: string;
       refunded: string;
+      /** Возвраты считаются по дате возврата, а не платежа (Р-89). */
+      refundedHint: string;
       averagePayment: string;
     };
     charts: {
       daily: string;
-      hourly: string;
-      statuses: string;
+      /** Каждое открытие ссылки — попытка; брошенная становится «Неуспешной». Это не исходы платежей. */
+      attempts: string;
+      attemptsHint: string;
       terminals: string;
       links: string;
-      byPaymentType: string;
-      byUsageType: string;
+      linksHint: string;
     };
     recentTransactions: {
       title: string;
@@ -94,8 +100,6 @@ export interface TranslationDictionary {
       id: string;
       date: string;
       terminal: string;
-      ip: string;
-      device: string;
       amount: string;
       status: string;
       empty: string;
@@ -667,25 +671,28 @@ export const translations: Record<Language, TranslationDictionary> = {
     },
     home: {
       title: 'Merchant Dashboard',
-      subtitle: 'Payments, revenue and terminals, counted in the database over the period below.',
+      subtitle: 'Payments made through the portal\'s payment links, counted in the database over the selected period. Card payments from your website are in the E-commerce statement.',
+      openStatement: 'Open E-commerce statement',
       period: 'Period',
+      periods: { today: 'Today', days7: '7 days', days30: '30 days', days90: '90 days' },
       loadFailed: 'Could not load the dashboard summary.',
       empty: 'No payments in this period.',
       metrics: {
         netRevenue: 'Net revenue',
-        netRevenueHint: 'Received minus refunds',
+        netRevenueHint: 'Received minus refunds made in the period',
         paidCount: 'Payments received',
+        paidCountHint: 'Including payments refunded later',
         refunded: 'Refunded',
+        refundedHint: 'Refunds made in the period, whenever the payment was',
         averagePayment: 'Average payment',
       },
       charts: {
         daily: 'Revenue by day',
-        hourly: 'Payments by hour of day',
-        statuses: 'Payment outcomes',
+        attempts: 'Payment attempts',
+        attemptsHint: 'Every opening of a payment link is an attempt; an abandoned one ends up failed.',
         terminals: 'Terminals by revenue',
-        links: 'Payment links',
-        byPaymentType: 'By payment type',
-        byUsageType: 'By usage type',
+        links: 'Payment links created',
+        linksHint: 'Current status of the links created in the period',
       },
       recentTransactions: {
         title: 'Latest payments',
@@ -694,8 +701,6 @@ export const translations: Record<Language, TranslationDictionary> = {
         id: 'Transaction',
         date: 'Date & time',
         terminal: 'Terminal',
-        ip: 'Payer IP',
-        device: 'Device',
         amount: 'Amount',
         status: 'Status',
         empty: 'No payments recorded yet.',
@@ -1190,25 +1195,28 @@ export const translations: Record<Language, TranslationDictionary> = {
     },
     home: {
       title: 'Merchant Paneli',
-      subtitle: 'Ödənişlər, gəlir və terminallar — aşağıdakı dövr üzrə bazada hesablanır.',
+      subtitle: 'Portalın ödəniş linkləri ilə edilən ödənişlər, seçilmiş dövr üzrə bazada hesablanır. Saytınızdan kartla ödənişlər E-commerce çıxarışındadır.',
+      openStatement: 'E-commerce çıxarışını aç',
       period: 'Dövr',
+      periods: { today: 'Bu gün', days7: '7 gün', days30: '30 gün', days90: '90 gün' },
       loadFailed: 'İcmalı yükləmək mümkün olmadı.',
       empty: 'Bu dövrdə ödəniş yoxdur.',
       metrics: {
         netRevenue: 'Xalis gəlir',
-        netRevenueHint: 'Alınan məbləğ, geri qaytarmalar çıxılmaqla',
+        netRevenueHint: 'Alınan məbləğ, dövrdə edilən geri qaytarmalar çıxılmaqla',
         paidCount: 'Alınan ödənişlər',
+        paidCountHint: 'Sonradan geri qaytarılanlar daxil',
         refunded: 'Geri qaytarılıb',
+        refundedHint: 'Dövrdə edilən geri qaytarmalar, ödənişin tarixindən asılı olmayaraq',
         averagePayment: 'Orta ödəniş',
       },
       charts: {
         daily: 'Günlər üzrə gəlir',
-        hourly: 'Sutkanın saatları üzrə ödənişlər',
-        statuses: 'Ödənişlərin nəticələri',
+        attempts: 'Ödəniş cəhdləri',
+        attemptsHint: 'Ödəniş linkinin hər açılışı bir cəhddir; yarımçıq qalan cəhd uğursuz olur.',
         terminals: 'Gəlirə görə terminallar',
-        links: 'Ödəniş linkləri',
-        byPaymentType: 'Ödəniş növü üzrə',
-        byUsageType: 'İstifadə növü üzrə',
+        links: 'Yaradılmış ödəniş linkləri',
+        linksHint: 'Dövrdə yaradılmış linklərin cari statusu',
       },
       recentTransactions: {
         title: 'Son ödənişlər',
@@ -1217,8 +1225,6 @@ export const translations: Record<Language, TranslationDictionary> = {
         id: 'Əməliyyat',
         date: 'Tarix və vaxt',
         terminal: 'Terminal',
-        ip: 'Ödəyicinin IP-si',
-        device: 'Cihaz',
         amount: 'Məbləğ',
         status: 'Status',
         empty: 'Hələ ödəniş yoxdur.',
@@ -1713,25 +1719,28 @@ export const translations: Record<Language, TranslationDictionary> = {
     },
     home: {
       title: 'Панель мерчанта',
-      subtitle: 'Платежи, выручка и терминалы — посчитаны в базе за период ниже.',
+      subtitle: 'Оплаты по платёжным ссылкам портала, посчитаны в базе за выбранный период. Оплаты картой с вашего сайта — в выписке E-commerce.',
+      openStatement: 'Открыть выписку E-commerce',
       period: 'Период',
+      periods: { today: 'Сегодня', days7: '7 дней', days30: '30 дней', days90: '90 дней' },
       loadFailed: 'Не удалось загрузить сводку.',
       empty: 'За период платежей нет.',
       metrics: {
         netRevenue: 'Выручка',
-        netRevenueHint: 'Получено за вычетом возвратов',
+        netRevenueHint: 'Получено за вычетом возвратов, проведённых за период',
         paidCount: 'Платежей получено',
+        paidCountHint: 'Включая позже возвращённые',
         refunded: 'Возвращено',
+        refundedHint: 'Возвраты, проведённые за период, когда бы ни был платёж',
         averagePayment: 'Средний платёж',
       },
       charts: {
         daily: 'Выручка по дням',
-        hourly: 'Платежи по часам суток',
-        statuses: 'Исходы платежей',
+        attempts: 'Попытки оплаты',
+        attemptsHint: 'Каждое открытие платёжной ссылки — попытка; брошенная становится неуспешной.',
         terminals: 'Терминалы по выручке',
-        links: 'Платёжные ссылки',
-        byPaymentType: 'По типу платежа',
-        byUsageType: 'По типу использования',
+        links: 'Созданные платёжные ссылки',
+        linksHint: 'Текущий статус ссылок, созданных за период',
       },
       recentTransactions: {
         title: 'Последние платежи',
@@ -1740,8 +1749,6 @@ export const translations: Record<Language, TranslationDictionary> = {
         id: 'Операция',
         date: 'Дата и время',
         terminal: 'Терминал',
-        ip: 'IP плательщика',
-        device: 'Устройство',
         amount: 'Сумма',
         status: 'Статус',
         empty: 'Платежей пока нет.',
