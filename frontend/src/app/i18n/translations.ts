@@ -366,8 +366,10 @@ export interface TranslationDictionary {
     paymentTypes: Record<EcomPaymentType, string>;
     /** Потолок просмотра дошёл, а совпадений в просмотренной части нет: дальше — «показать ещё». */
     noMatchesYet: string;
-    /** Подсказка к чипам итогов: клик ставит статус в фильтр. */
-    statusChipHint: string;
+    /** Фильтры уходят в запрос только по кнопке (Р-88): каждый запрос выписки идёт в боевую базу провайдера. */
+    applyFilters: string;
+    resetFilters: string;
+    filtersChanged: string;
     stats: {
       orders: string;
       captured: string;
@@ -913,7 +915,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       allPaymentTypes: 'All types',
       paymentTypes: { SMS: 'SMS (single message)', DMS: 'DMS (hold and capture)' },
       noMatchesYet: 'No orders with this status among the orders checked so far. Load more to keep looking.',
-      statusChipHint: 'Show only this status',
+      applyFilters: 'Apply',
+      resetFilters: 'Reset',
+      filtersChanged: 'Filters changed — press Apply to update the statement.',
       stats: {
         orders: 'Orders',
         captured: 'Captured',
@@ -1434,7 +1438,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       allPaymentTypes: 'Bütün növlər',
       paymentTypes: { SMS: 'SMS (tək mesaj)', DMS: 'DMS (bloklama və silinmə)' },
       noMatchesYet: 'Yoxlanılmış sifarişlər arasında bu statusda sifariş yoxdur. Axtarışı davam etdirmək üçün daha çox yükləyin.',
-      statusChipHint: 'Yalnız bu statusu göstər',
+      applyFilters: 'Tətbiq et',
+      resetFilters: 'Sıfırla',
+      filtersChanged: 'Filtrlər dəyişib — çıxarışı yeniləmək üçün «Tətbiq et» düyməsini basın.',
       stats: {
         orders: 'Sifarişlər',
         captured: 'Silinib',
@@ -1955,7 +1961,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       allPaymentTypes: 'Все типы',
       paymentTypes: { SMS: 'SMS (одним сообщением)', DMS: 'DMS (холд и списание)' },
       noMatchesYet: 'Среди просмотренных заказов с этим статусом нет. Нажмите «показать ещё», чтобы искать дальше.',
-      statusChipHint: 'Показать только этот статус',
+      applyFilters: 'Применить',
+      resetFilters: 'Сбросить',
+      filtersChanged: 'Фильтры изменены — нажмите «Применить», чтобы обновить выписку.',
       stats: {
         orders: 'Заказов',
         captured: 'Списано',
