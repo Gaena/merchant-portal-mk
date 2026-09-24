@@ -14,13 +14,15 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-// Строки шлюза → заказы с историей (Р-74) и деньги заказа (Р-75). В Java, а не в SQL: правила
+// Строки шлюза → заказы с историей (Р-74), деньги (Р-75) и статус заказа (Р-92). В Java, а не в SQL: правила
 // проверяются тестом на выгрузке стенда, а запрос к Oracle провайдера нам проверить нечем.
 public final class EcomOrderAssembler {
 
     private static final Logger log = LoggerFactory.getLogger(EcomOrderAssembler.class);
 
     private static final String APPROVED = "Approved";
+
+    private static final List<EcomOperationKind.TypePhase> DMS_SIGNS = EcomPaymentType.DMS.signs();
 
     private static final Comparator<TxpgStatementRow> BY_TIME =
             Comparator.comparing(TxpgStatementRow::tranAt, Comparator.nullsLast(Comparator.naturalOrder()));
@@ -45,7 +47,12 @@ public final class EcomOrderAssembler {
         BigDecimal refunded = BigDecimal.ZERO;
         boolean approvedPayment = false;
         boolean anyApproved = false;
+        boolean refundApproved = false;
+        boolean moneyMoved = false;
+        boolean dms = false;
         for (TxpgStatementRow row : orderRows) {
+            // Тип заказа — как в фильтре типа оплаты (Р-87): по любой его операции, одобренной или нет.
+            dms |= DMS_SIGNS.contains(new EcomOperationKind.TypePhase(row.tranType(), row.phase()));
             if (!APPROVED.equals(row.resultCode())) {
                 continue;
             }
@@ -59,15 +66,22 @@ public final class EcomOrderAssembler {
                 case REVERSAL -> {
                     if (!"Auth".equals(row.phase())) {
                         captured = captured.subtract(cleared.abs());
+                        moneyMoved |= cleared.signum() != 0;
                     }
                 }
-                case REFUND -> refunded = refunded.add(cleared.abs());
+                case REFUND -> {
+                    refundApproved = true;
+                    refunded = refunded.add(cleared.abs());
+                    moneyMoved |= cleared.signum() != 0;
+                }
                 // Отрицательное списание без voidkind по контракту (§5.8.8) — возврат или реверсал.
                 case CAPTURE, PURCHASE -> {
                     approvedPayment = true;
+                    moneyMoved |= cleared.signum() != 0;
                     if (cleared.signum() >= 0) {
                         captured = captured.add(cleared);
                     } else {
+                        refundApproved = true;
                         refunded = refunded.add(cleared.negate());
                     }
                 }
@@ -84,8 +98,11 @@ public final class EcomOrderAssembler {
             captured = BigDecimal.ZERO;
         }
         EcomStatus status = EcomStatusResolver.resolve(
-                captured, refunded, head.orderAmount(), approvedPayment, !anyApproved, head.orderStatus());
-        if (status == EcomStatus.REFUNDED && captured.signum() <= 0) {
+                EcomStatusResolver.byProviderStatus(head.orderStatus(), head.orderPrevStatus(), refundApproved),
+                EcomStatusResolver.byMoney(
+                        captured, refunded, head.orderAmount(), approvedPayment, !anyApproved, head.orderStatus()),
+                dms, moneyMoved);
+        if (refunded.signum() > 0 && captured.signum() <= 0 && !approvedPayment) {
             log.warn("Order {} carries refunds of {} with nothing captured or authorized; "
                     + "the operation dictionary needs checking", head.orderId(), refunded);
         }

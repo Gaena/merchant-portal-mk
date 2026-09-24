@@ -2,8 +2,8 @@ package az.millikart.ecom.service;
 
 import java.math.BigDecimal;
 
-// Статус заказа на вкладке — по деньгам одобренных операций, а не по кодам заказа: словарь
-// order_.status провайдер не утверждал, а суммы однозначны. Правило сверху вниз — ecom.md §2.3.
+// Статус заказа на вкладке — по статусу заказа у провайдера, а по деньгам одобренных операций — только
+// у DMS со списаниями и там, где статус провайдера ничего не говорит (Р-92). Правило — ecom.md §2.3.
 public final class EcomStatusResolver {
 
     // Значения платёжных ссылок плюс два своих: PARTIALLY_PAID — списано меньше суммы заказа, у
@@ -21,14 +21,55 @@ public final class EcomStatusResolver {
     }
 
     private static final String AUTHORIZED_ORDER = "Authorized";
+    private static final String CLOSED_ORDER = "Closed";
 
     private EcomStatusResolver() {
+    }
+
+    // FullyPaid — всегда успех, сумма не сверяется. SMS — по статусу провайдера. DMS — по деньгам, пока в
+    // истории есть clearamt: мультиклиринг держит заказ Authorized и после списания (Р-76). Статус, который
+    // ничего не говорит (Preparing, незнакомый), — по деньгам (Р-92).
+    public static EcomStatus resolve(EcomStatus byProvider, EcomStatus byMoney, boolean dms, boolean moneyMoved) {
+        if (byProvider == null) {
+            return byMoney;
+        }
+        if (byProvider == EcomStatus.SUCCESS) {
+            return byProvider;
+        }
+        return dms && moneyMoved ? byMoney : byProvider;
+    }
+
+    // Словарь — контракт §5.8.8 и выгрузка стенда 14.09.2026; Declined и Failed — как в pbl
+    // (ProviderOrderStatus). Сверка точная и регистрозависимая: незнакомая форма — null, а не отказ (Р-20).
+    // Closed — не результат, а закрытие заказа: результат несёт предыдущий статус.
+    public static EcomStatus byProviderStatus(String status, String prevStatus, boolean refundApproved) {
+        if (CLOSED_ORDER.equals(status)) {
+            // Closed после Authorized — провайдер сам снял холд, который не списали.
+            if (AUTHORIZED_ORDER.equals(prevStatus)) {
+                return EcomStatus.CANCELED;
+            }
+            return CLOSED_ORDER.equals(prevStatus) ? null : byProviderStatus(prevStatus, null, refundApproved);
+        }
+        if (status == null) {
+            return null;
+        }
+        return switch (status) {
+            case "FullyPaid" -> EcomStatus.SUCCESS;
+            // PartPaid по контракту — частично отменён или возвращён, на стенде — и оплачен меньше суммы.
+            // Отличаем по наличию возврата, не по суммам: у SMS суммы не сверяются.
+            case "PartPaid" -> refundApproved ? EcomStatus.PARTIALLY_REFUNDED : EcomStatus.PARTIALLY_PAID;
+            case "Refused" -> EcomStatus.REFUNDED;
+            case "Cancelled" -> EcomStatus.CANCELED;
+            case "Rejected", "Declined", "Failed", "Expired" -> EcomStatus.FAILED;
+            case AUTHORIZED_ORDER -> EcomStatus.AUTHORIZED;
+            default -> null;
+        };
     }
 
     // capturedAmount — уже за вычетом реверсалов. approvedPayment — была одобрена авторизация или
     // покупка. onlyDeclined — операции были, и ни одна не одобрена; одобренная, но не разобранная
     // операция отказом не считается: платёж с незнакомым кодом не должен читаться как неуспешный.
-    public static EcomStatus resolve(BigDecimal capturedAmount,
+    public static EcomStatus byMoney(BigDecimal capturedAmount,
                                      BigDecimal refundedAmount,
                                      BigDecimal orderAmount,
                                      boolean approvedPayment,

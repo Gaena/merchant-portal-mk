@@ -79,6 +79,7 @@ class EcomOrderAssemblerTest {
 
     // Пустая фаза у операции с типом нового словаря — не списание и не холд, а UNKNOWN. Раньше здесь
     // стоял row.phase().equals(...), и одна такая строка роняла NullPointerException всю выписку.
+    // Статус — FullyPaid провайдера (Р-92), хотя в деньги не вошло ничего.
     @Test
     void operationWithoutPhase_isUnknown_andDoesNotBreakTheStatement() {
         EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(
@@ -89,7 +90,7 @@ class EcomOrderAssemblerTest {
         Assertions.assertEquals(List.of("UNKNOWN", "UNKNOWN"),
                 order.operations().stream().map(EcomOperationResponse::kind).toList());
         Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(order.capturedAmount()));
-        Assertions.assertEquals("PENDING", order.status());
+        Assertions.assertEquals("SUCCESS", order.status());
     }
 
     @Test
@@ -229,7 +230,7 @@ class EcomOrderAssemblerTest {
     }
 
     // Все сочетания статусов из выгрузки стенда 14.09.2026 — по заказу на каждое. Расходится с кодом
-    // провайдера намеренно одно: Rejected после одобренного холда или полного возврата — статус по деньгам.
+    // провайдера одно: DMS Rejected после полного возврата — в истории есть clearamt, статус по деньгам (Р-92).
     @Test
     void everyProviderStatusSeenOnTheStand_mapsAsExpected() {
         Map<String, String> statuses = EcomOrderAssembler.assemble(TxpgRows.providerStatusesSeenOnTheStand()).stream()
@@ -249,9 +250,63 @@ class EcomOrderAssemblerTest {
                 Map.entry("175203", "REFUNDED 100/100"),        // Refused ← Authorized
                 Map.entry("175204", "CANCELED 0/0"),            // Cancelled ← Preparing: холд
                 Map.entry("175164", "CANCELED 0/0"),            // Cancelled ← Preparing: покупка
-                Map.entry("175378", "CANCELED 0/0"),            // Rejected ← Authorized
+                Map.entry("175378", "FAILED 0/0"),              // Rejected ← Authorized: clearamt пуст (Р-92)
                 Map.entry("175246", "REFUNDED 12/12")),         // Rejected ← Refused
                 statuses);
+    }
+
+    // Требование заказчика (Р-92): FullyPaid — успех, сумма не сверяется. У SMS clearamt бывает пуст,
+    // и по деньгам такой заказ выходил отменённым.
+    @Test
+    void singleMessageFullyPaid_isSuccess_evenWithoutClearAmount() {
+        EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(order("176100", "FullyPaid",
+                "Preparing", "10", op("Purchase", "Single", null, "Approved", "10", null))));
+
+        Assertions.assertEquals("SUCCESS", order.status());
+        Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(order.capturedAmount()));
+    }
+
+    // Списано меньше суммы заказа, но провайдер пишет FullyPaid — это успех, а не частичная оплата (Р-92).
+    @Test
+    void singleMessageFullyPaid_isSuccess_evenForLessThanTheOrder() {
+        EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(order("176101", "FullyPaid",
+                "Preparing", "10", single("8"))));
+
+        Assertions.assertEquals("SUCCESS", order.status());
+        Assertions.assertEquals(0, new BigDecimal("8").compareTo(order.capturedAmount()));
+    }
+
+    // DMS с FullyPaid, в выписке которого нет списания, — тоже успех: статус провайдера важнее истории.
+    @Test
+    void holdOrderFullyPaid_isSuccess_evenWithoutACapture() {
+        EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(order("176102", "FullyPaid",
+                "Authorized", "20", auth("20"))));
+
+        Assertions.assertEquals("SUCCESS", order.status());
+        Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(order.capturedAmount()));
+    }
+
+    // DMS, у которого clearamt пуст на всех операциях: по деньгам вышло бы «отменён», провайдер пишет
+    // Refused — показывается его статус (Р-92).
+    @Test
+    void holdOrderWithoutClearAmounts_takesTheProviderStatus() {
+        EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(order("176103", "Refused",
+                "Authorized", "20", auth("20"), op("Purchase", "Clearing", null, "Approved", "20", null),
+                op("Refund", "Single", null, "Approved", "20", null))));
+
+        Assertions.assertEquals("REFUNDED", order.status());
+        Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(order.capturedAmount()));
+        Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(order.refundedAmount()));
+    }
+
+    // SMS читается только по статусу провайдера: Rejected после возврата — отказ, как у провайдера (Р-92).
+    @Test
+    void singleMessageOrder_takesTheProviderStatus_overTheMoney() {
+        EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(order("176104", "Rejected",
+                "Refused", "12", single("12"), op("Refund", "Single", null, "Approved", "12", "-12"))));
+
+        Assertions.assertEquals("FAILED", order.status());
+        Assertions.assertEquals(0, new BigDecimal("12").compareTo(order.refundedAmount()));
     }
 
     // Контракт (§5.8.8): отрицательный clearAmount — возврат или реверсал, даже без voidkind.
@@ -284,7 +339,7 @@ class EcomOrderAssemblerTest {
     }
 
     // Одобренная операция незнакомого вида видна в истории, но не в деньгах — и заказ не выдаётся
-    // за неуспешный: платёж с новым кодом провайдера мог и пройти.
+    // за неуспешный: платёж с новым кодом провайдера мог и пройти. Статус — FullyPaid провайдера (Р-92).
     @Test
     void approvedButUnknownOperation_isShownButNotCounted_andNotReportedAsFailed() {
         EcomTransactionResponse order = onlyOrder(EcomOrderAssembler.assemble(order("175806", "FullyPaid", "Preparing",
@@ -292,7 +347,7 @@ class EcomOrderAssemblerTest {
 
         Assertions.assertEquals("UNKNOWN", order.operations().get(0).kind());
         Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(order.capturedAmount()));
-        Assertions.assertEquals("PENDING", order.status());
+        Assertions.assertEquals("SUCCESS", order.status());
     }
 
     @Test

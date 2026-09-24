@@ -4890,6 +4890,33 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
 
 ---
 
+### 24.09.2026 — статус заказа выписки `ecom` по статусу провайдера (Р-92)
+
+- **Зачем.** Требование заказчика: статус заказа — по последнему статусу заказа у провайдера. `FullyPaid` —
+  «успешно» без сверки суммы; SMS — только статус заказа; DMS — по `clearamt`, но без списаний в истории —
+  по статусу провайдера. До этого статус выводился из сумм, и оплаченный заказ с пустым `clearamt` выходил
+  «отменённым», а `FullyPaid` со списанным меньше суммы — «частично оплаченным».
+- **ecom.** `EcomStatusResolver`: прежнее правило стало `byMoney`, добавлены словарь `byProviderStatus`
+  (`FullyPaid`, `PartPaid`, `Refused`, `Cancelled`, `Rejected`/`Declined`/`Failed`/`Expired`, `Authorized`;
+  `Closed` — по предыдущему статусу, `Closed` ← `Authorized` — `CANCELED`; `PartPaid` с одобренным возвратом —
+  `PARTIALLY_REFUNDED`) и выбор `resolve`. `EcomOrderAssembler.money` определяет тип заказа по парам
+  `EcomPaymentType.DMS` (как фильтр Р-87), признак «в истории есть ненулевой `clearamt`» и наличие одобренного
+  возврата. Суммы, SQL и фильтр Р-71 не менялись. На выгрузке стенда статус сменился у одного заказа —
+  175378 (`Rejected` ← `Authorized`, холд не списан): был `CANCELED`, стал `FAILED`.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `EcomStatusResolverTest` — денежные тесты переведены на `byMoney`,
+  новые: `FullyPaid` при любых деньгах, SMS по статусу, DMS со списаниями по деньгам и без них по статусу,
+  молчащий статус → деньги, словарь провайдера, `PartPaid` с возвратом, `Closed` по предыдущему статусу,
+  незнакомые формы статуса. `EcomOrderAssemblerTest` — ожидание 175378 в
+  `everyProviderStatusSeenOnTheStand_mapsAsExpected`, `FullyPaid` вместо `PENDING` в
+  `operationWithoutPhase_isUnknown_andDoesNotBreakTheStatement` и
+  `approvedButUnknownOperation_isShownButNotCounted_andNotReportedAsFailed`; новые: SMS `FullyPaid` без
+  `clearamt` и со списанным меньше суммы, DMS `FullyPaid` без списания, DMS без `clearamt` по статусу, SMS
+  по статусу поверх денег. `./gradlew :ecom:compileTestJava`, `npm run typecheck` — без ошибок.
+- Документы: `decisions.md` (Р-92), `ecom.md` §2.3, `AGENTS.md` §10, `technical_handover.md` §4.6, комментарий
+  в `frontend/src/app/types/ecom.ts`.
+
+---
+
 ## Описания закрытых задач
 
 > Перенесено из `AGENTS.md` §10 («Закрытые блокеры» и записи, попавшие в «Тонкости») 13.09.2026
