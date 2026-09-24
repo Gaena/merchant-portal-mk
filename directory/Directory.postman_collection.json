@@ -89,6 +89,31 @@
 					"response": []
 				},
 				{
+					"name": "Free Provider Logins",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/companies/provider-logins",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"companies",
+								"provider-logins"
+							]
+						},
+						"description": "Free multimerchant logins for the company form (Р-95), SYSTEM_ADMIN only: logins from the provider login snapshot that pass the company login check (active, with an active merchant) and that no company uses, deleted ones included. Each carries the titles of its active merchants."
+					}
+				},
+				{
 					"name": "Get Company by ID",
 					"request": {
 						"method": "GET",
@@ -232,7 +257,7 @@
 								"terminals"
 							]
 						},
-						"description": "Creates a terminal from the provider directory (GET /api/v1/ecom/provider-terminals). SYSTEM_ADMIN only since 24.09.2026 (Р-93); name and login come from the directory, a terminal has no password - the acquirer is reached with the company credentials."
+						"description": "Creates a terminal from the provider directory, SYSTEM_ADMIN only since 24.09.2026 (Р-93): name, login and terminal number (terminalRid) come from the directory, a terminal has no password. The merchant must be linked to the company multimerchant login (Р-96) - pick one from Provider Terminals for a Company."
 					},
 					"response": []
 				},
@@ -302,6 +327,37 @@
 						"description": "Lightweight terminal feed for selectors and name lookups (decision R-45, 22.08.2026). Returns a bare array of {id, name, status} — no pagination, and no terminal credentials: login and password are absent from the DTO, not masked. BLOCKED terminals ARE included on purpose: the link form takes only ACTIVE ones from the answer, while the transaction screen needs every terminal to keep naming the terminal an old payment went through. Access rules are the same as GET /api/v1/terminals."
 					},
 					"response": []
+				},
+				{
+					"name": "Provider Terminals for a Company",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/terminals/provider-terminals?companyId={{companyId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"terminals",
+								"provider-terminals"
+							],
+							"query": [
+								{
+									"key": "companyId",
+									"value": "{{companyId}}"
+								}
+							]
+						},
+						"description": "Provider terminals the company may add (Р-96), SYSTEM_ADMIN only: active directory rows with a terminal number whose merchant is linked to the company multimerchant login and that no company has added yet."
+					}
 				},
 				{
 					"name": "Get Terminal by ID",

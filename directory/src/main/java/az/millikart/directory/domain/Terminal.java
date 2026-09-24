@@ -66,6 +66,11 @@ public class Terminal {
     @Column(name = "merchant_rid")
     private String merchantRid;
 
+    // Номер терминала у провайдера (terminal.rid): с ним pbl создаёт заказ (Р-96). Из справочника при
+    // заведении, дальше его ведёт сверка. Пусто у терминалов, заведённых до Р-96 без справочника.
+    @Column(name = "terminal_rid")
+    private String terminalRid;
+
     @Column(name = "created_by")
     private String createdBy;
 

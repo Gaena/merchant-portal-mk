@@ -93,7 +93,7 @@ public class PaymentLinkLastPaidAtTest {
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Test Terminal")
-                .login("TerminalSys/Admin")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId("test-company")
                 .build());
 

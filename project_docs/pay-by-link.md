@@ -150,11 +150,10 @@ Creates a new payment link resource.
   "customer": {
     "fullName": "John Doe",
     "email": "test@test.com",
-    "phone": "994509771884"
+    "phone": "+994509771884"
   },
   "paymentType": "DMS",
-  "usageType": "MULTIPLE",
-  "maxPayments": 25,
+  "usageType": "SINGLE",
   "expiresAt": "2026-07-10T15:00:00Z",
   "metadata": {
     "campaign": "summer_sale"
@@ -166,14 +165,22 @@ Creates a new payment link resource.
 
 -   `terminal`: Required, Integer. Must be a terminal the caller's company owns **and be `ACTIVE`**:
     a blocked terminal takes no new payments (P2-8), and creating a link on one answers `400`
-    naming the terminal
+    naming the terminal. Since 24.09.2026 (Р-96) it must also carry the provider terminal number
+    (`terminal_rid`, set when the terminal is added from the provider directory): without it the order
+    could not be created, so the link is refused with `400` (`Terminal … has no provider terminal number…`)
 -   `amount`: Required, Decimal (Positive, > 0)
 -   `currency`: Required, String (ISO 4217, 3 letters, e.g., "AZN")
 -   `paymentType`: Required, Enum (`SMS`, `DMS`)
 -   `usageType`: Required, Enum (`SINGLE`, `MULTIPLE`)
 -   `maxPayments`: Required if `usageType` is `MULTIPLE`, Integer (> 0)
+-   `customer`: Optional, **single-use links only** (since 24.09.2026, Р-96): a multi-use link is paid by
+    different people, so a customer with any filled field on a `MULTIPLE` link — on creation or in
+    `PATCH` — is `400 customer can only be set on a single-use link`, not silently dropped
 -   `customer.email`: Optional, valid email format
--   `customer.phone`: Optional, valid phone format
+-   `customer.phone`: Optional, an **Azerbaijani number**: `+994`, `994` or `0` followed by 9 digits;
+    spaces, dashes and brackets are allowed. Stored as `+994XXXXXXXXX`. Anything else is
+    `400 customer.phone must be an Azerbaijani number: +994 and 9 digits` — the acquirer takes the
+    country code and the number separately
 -   `expiresAt`: Optional, ISO-8601 instant. Omitted, the link gets the configured default lifetime (`pbl.link.default-ttl`, **24 hours**) — links are never created without an expiry. Supplied, it must be in the future and no later than `pbl.link.max-ttl` (**90 days**) from the moment the link is created; either violation is a `400` naming the ceiling
 
 ### 5.1.1. Link Lifetime
@@ -387,6 +394,13 @@ Retrieves a paginated list of links. Automatic company boundaries are enforced f
     a hold, the latest hold is re-checked too: an authorization the bank released without a capture
     (`Closed` after `Authorized`, no positive `clearAmount` in `order.trans[]`) becomes `FAILED` and
     frees its slot. The link lock is taken with `NOWAIT`: a concurrent open gets `409` at once.
+-   **Order at the acquirer (since 24.09.2026, Р-96):** `POST /order?terminalRid=<terminal_rid>` with the
+    company credentials (Р-93). The body carries the customer of a **single-use** link in
+    `order.tdsPresetAreq` for 3-D Secure — `cardholderName` (customer name), `email`, and `mobilePhone`
+    as `{"subscriber": "703301025", "cc": "994"}` — only the filled fields, and no block at all when none
+    is filled. A multi-use link sends no customer, even one stored before Р-96; a stored phone that is
+    not an Azerbaijani number is left out. `billingAddress`, `homePhone`, `workPhone` and `surcharge` are
+    not sent. `ridByMerchant` and `subMerchant` stay as before.
 -   **Response:** `302 Found` (Redirects to provider HPP), `403 Forbidden` (link is
     EXPIRED/CANCELED/COMPLETED/SUSPENDED, its terminal is blocked, already paid, or held by an
     authorized payment awaiting capture),
@@ -703,7 +717,7 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
   "statusBreakdown": [ { "status": "PENDING", "count": 4 } ],
   "dailyTotals": [ { "date": "2026-08-18", "currency": "AZN", "netAmount": 5120.00, "transactionCount": 41 } ],
   "hourlyTotals": [ { "hour": 0, "transactionCount": 3 } ],
-  "topTerminals": [ { "currency": "AZN", "terminalId": 1, "terminalLogin": "main_ecom",
+  "topTerminals": [ { "currency": "AZN", "terminalId": 1, "terminalRid": "00044558", "terminalLogin": "main_ecom",
                       "terminalName": "Main e-commerce", "netAmount": 31000.00, "transactionCount": 190 } ],
   "paymentLinks": {
     "total": 57,
@@ -732,7 +746,8 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
     audit journal, and no order reaches the provider.
 -   **Description (since 13.09.2026, decision Р-70):** the only provider request that proves both that
     the login and password are right and that a payment can be created is creating an order, so the
-    check places a real `Order_SMS` for 1.00 AZN with the company credentials of the terminal (Р-93). It is never paid:
+    check places a real `Order_SMS` for 1.00 AZN with the company credentials of the terminal (Р-93) on
+    the terminal's provider number (`?terminalRid=…`, Р-96); a terminal without that number is `400`. It is never paid:
     the provider expires it after ten minutes, and the statement only takes completed orders (Р-71).
     The provider agreed to this load. Lives in `pbl`, not next to the other terminal endpoints, because
     only `pbl` talks to the provider while `/api/v1/terminals` is routed to `directory`.

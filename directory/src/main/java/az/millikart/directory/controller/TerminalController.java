@@ -4,6 +4,7 @@ import az.millikart.common.dto.PagedResponse;
 import az.millikart.common.search.SearchTerms;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.directory.dto.CreateTerminalRequest;
+import az.millikart.directory.dto.ProviderTerminalOption;
 import az.millikart.directory.dto.TerminalOptionResponse;
 import az.millikart.directory.dto.TerminalResponse;
 import az.millikart.directory.dto.UpdateTerminalRequest;
@@ -66,6 +67,14 @@ public class TerminalController {
     @GetMapping("/options")
     public List<TerminalOptionResponse> options(@AuthenticationPrincipal UserPrincipal principal) {
         return terminalService.listTerminalOptions(principal);
+    }
+
+    // Терминалы провайдера для формы заведения терминала компании (Р-96). Литеральный путь Spring
+    // сопоставляет раньше /{id}.
+    @GetMapping("/provider-terminals")
+    public List<ProviderTerminalOption> providerTerminals(@RequestParam(required = false) String companyId,
+                                                          @AuthenticationPrincipal UserPrincipal principal) {
+        return terminalService.listProviderTerminals(companyId, principal);
     }
 
     @GetMapping("/{id}")

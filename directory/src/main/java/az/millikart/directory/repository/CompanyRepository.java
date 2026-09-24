@@ -1,6 +1,7 @@
 package az.millikart.directory.repository;
 
 import az.millikart.directory.domain.Company;
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -31,4 +32,8 @@ public interface CompanyRepository extends JpaRepository<Company, String> {
     boolean existsByProviderLogin(String providerLogin);
 
     boolean existsByProviderLoginAndIdNot(String providerLogin, String id);
+
+    // Занятые логины — у всех компаний, удалённые тоже: уникальный индекс их не освобождает (Р-95).
+    @Query("select c.providerLogin from Company c where c.providerLogin is not null")
+    List<String> findAllProviderLogins();
 }

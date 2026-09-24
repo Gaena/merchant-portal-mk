@@ -123,6 +123,11 @@ const EXPIRY_MS: Record<ExpiryOption, number> = {
 };
 const EXPIRY_OPTIONS: ExpiryOption[] = ['h1', 'h24', 'h72', 'd7', 'd30'];
 
+// Азербайджанский номер: +994, 994 или 0 и 9 цифр; пробелы, дефисы и скобки допустимы (Р-96). Зеркало
+// CustomerPhone в pbl — меняется вместе с ним.
+const isAzerbaijaniPhone = (value: string): boolean =>
+  /^(?:\+994|994|0)\d{9}$/.test(value.trim().replace(/[\s\-()]/g, ''));
+
 /** Пустая форма создания ссылки. */
 const emptyForm = () => ({
   terminalId: '', amount: '', currency: 'AZN', description: '', customerName: '',
@@ -142,9 +147,10 @@ const formFromLink = (link: PaymentLink) => ({
   amount: String(link.amount),
   currency: link.currency || 'AZN',
   description: link.description,
-  customerName: link.customerName,
-  customerEmail: link.customerEmail,
-  customerPhone: link.customerPhone,
+  // У многоразовой ссылки клиента нет (Р-96): у старых он мог остаться в базе, но в новую не переносится.
+  customerName: link.usageType === 'MULTIPLE' ? '' : link.customerName,
+  customerEmail: link.usageType === 'MULTIPLE' ? '' : link.customerEmail,
+  customerPhone: link.usageType === 'MULTIPLE' ? '' : link.customerPhone,
   usageType: link.usageType ?? 'SINGLE',
   maxUses: link.usageType === 'MULTIPLE' ? String(link.maxUses) : '2',
   paymentType: link.paymentType ?? 'SMS',
@@ -366,6 +372,11 @@ export const PayByLinkPage: React.FC = () => {
       setFormError(tObj.payByLink.invalidMaxUses);
       return;
     }
+    // Телефон — только азербайджанский (Р-96), то же правило, что CustomerPhone на бэкенде.
+    if (form.usageType === 'SINGLE' && form.customerPhone.trim() && !isAzerbaijaniPhone(form.customerPhone)) {
+      setFormError(tObj.payByLink.customerPhoneInvalid);
+      return;
+    }
     setFormError('');
     setGenerating(true);
 
@@ -392,7 +403,8 @@ export const PayByLinkPage: React.FC = () => {
         email: form.customerEmail.trim() || null,
         phone: form.customerPhone.trim() || null,
       };
-      if (customer.fullName || customer.email || customer.phone) {
+      // Клиент — только у одноразовой ссылки: у многоразовой бэкенд его отвергает (Р-96).
+      if (form.usageType === 'SINGLE' && (customer.fullName || customer.email || customer.phone)) {
         payload.customer = customer;
       }
 
@@ -846,7 +858,8 @@ export const PayByLinkPage: React.FC = () => {
                 helperText={tObj.payByLink.descriptionHint}
               />
 
-              {/* Customer */}
+              {/* Customer — только у одноразовой ссылки (Р-96): многоразовой платят разные люди. */}
+              {form.usageType === 'SINGLE' && (
               <Box>
                 <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 700, color: 'text.primary' }}>
                   {tObj.payByLink.customerSection}
@@ -872,10 +885,13 @@ export const PayByLinkPage: React.FC = () => {
                       label={tObj.payByLink.customerPhoneLabel}
                       value={form.customerPhone}
                       onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))}
+                      placeholder="+994 70 330 10 25"
+                      helperText={tObj.payByLink.customerPhoneHint}
                     />
                   </Box>
                 </Stack>
               </Box>
+              )}
 
               {/* Link Options. Полей «redirect URL», «внутренняя заметка» и «отправить письмо»
                   здесь больше нет: бэкенд их не принимает и письма не шлёт — контролы собирали

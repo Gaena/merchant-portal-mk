@@ -1,8 +1,8 @@
 package az.millikart.directory.repository;
 
 import az.millikart.directory.domain.Terminal;
-import java.util.Optional;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -41,6 +41,10 @@ public interface TerminalRepository extends JpaRepository<Terminal, Integer> {
 
     /** Один терминал провайдера — одна наша компания: связь проверяется перед заведением. */
     Optional<Terminal> findByMerchantRid(String merchantRid);
+
+    // Коды мерчантов, уже заведённых у нас: один терминал провайдера — одна наша компания.
+    @Query("select t.merchantRid from Terminal t where t.merchantRid is not null")
+    List<String> findAllMerchantRids();
 
     // Номер нового терминала — из последовательности базы (Р-81, 007-terminal-id-sequence.xml).
     // Явно, а не @GeneratedValue: сущность с заданным номером по-прежнему сохраняется как есть.

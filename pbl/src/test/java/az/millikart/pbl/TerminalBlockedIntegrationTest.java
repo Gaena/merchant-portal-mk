@@ -135,7 +135,7 @@ class TerminalBlockedIntegrationTest {
                 // Плательщику сообщают, что ссылка недоступна, и ничего про терминал.
                 .hasMessageNotContainingAny("terminal", "BLOCKED", String.valueOf(BLOCKED_TERMINAL));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
         assertThat(transactionRepository.count()).isZero();
     }
 
@@ -149,7 +149,7 @@ class TerminalBlockedIntegrationTest {
         assertThatThrownBy(() -> openLinkService.openAndBuildRedirect(linkId, "203.0.113.9", "curl"))
                 .isInstanceOf(InvalidStateException.class);
 
-        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // 12. Блокировка приходит, пока замок ссылки держит чужая транзакция
@@ -192,7 +192,7 @@ class TerminalBlockedIntegrationTest {
                 .as("the next open must see the block that landed under the lock")
                 .isInstanceOf(InvalidStateException.class);
 
-        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
         assertThat(transactionRepository.count())
                 .as("no payment attempt may exist for a terminal blocked before the lock was granted")
                 .isZero();
@@ -349,7 +349,7 @@ class TerminalBlockedIntegrationTest {
         return Terminal.builder()
                 .id(id)
                 .name("Terminal " + id)
-                .login("TerminalSys/Admin")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId("test-company")
                 .status(status)
                 .build();

@@ -71,6 +71,7 @@ export const mapTransaction = (
     ridByMerchant: optionalText(raw.ridByMerchant),
     providerOrderId: optionalText(raw.providerOrderId),
     terminalId: raw.terminalId,
+    terminalRid: terminal?.terminalRid ?? undefined,
     terminalLogin: terminal?.login,
     terminalName: terminal?.name,
     clientIp: optionalText(raw.clientIp),

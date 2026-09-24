@@ -5,8 +5,11 @@ import jakarta.persistence.PersistenceContext;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +47,33 @@ public class ProviderLoginSnapshotRepository {
                 .createNativeQuery("SELECT COUNT(*) FROM provider_logins")
                 .getSingleResult();
         return rows.longValue() > 0;
+    }
+
+    // Логин, который пройдёт проверку компании: сам Active и с активными связями; merchants — названия
+    // мерчантов этих связей, чтобы администратор узнал мерчанта не по логину (Р-95).
+    public record EligibleLogin(String login, List<String> merchants) {
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<EligibleLogin> eligibleLogins() {
+        if (tableMissing()) {
+            return List.of();
+        }
+        List<Object[]> rows = entityManager
+                .createNativeQuery("SELECT login, merchant_title FROM provider_logins "
+                        + "WHERE login_status = 'Active' AND link_status = 'Active' AND merchant_rid IS NOT NULL "
+                        + "ORDER BY login, merchant_title")
+                .getResultList();
+        Map<String, List<String>> byLogin = new LinkedHashMap<>();
+        for (Object[] row : rows) {
+            List<String> merchants = byLogin.computeIfAbsent(String.valueOf(row[0]), login -> new ArrayList<>());
+            if (row[1] != null) {
+                merchants.add(String.valueOf(row[1]));
+            }
+        }
+        return byLogin.entrySet().stream()
+                .map(entry -> new EligibleLogin(entry.getKey(), List.copyOf(entry.getValue())))
+                .toList();
     }
 
     // login — без префикса владельца, как его хранит провайдер. Сравнение точное.

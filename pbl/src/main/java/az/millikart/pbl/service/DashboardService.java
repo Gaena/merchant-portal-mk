@@ -306,6 +306,7 @@ public class DashboardService {
             TerminalKey key = entry.getKey();
             Terminal terminal = terminals.get(key.terminalId());
             result.add(new TerminalTotal(key.currency(), key.terminalId(),
+                    terminal != null ? terminal.getTerminalRid() : null,
                     terminal != null ? terminal.getLogin() : null,
                     terminal != null ? terminal.getName() : null,
                     money(entry.getValue().net()), entry.getValue().transactionCount));

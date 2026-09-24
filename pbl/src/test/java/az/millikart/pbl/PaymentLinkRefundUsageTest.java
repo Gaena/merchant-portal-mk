@@ -110,14 +110,14 @@ class PaymentLinkRefundUsageTest {
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Test Terminal")
-                .login("TerminalSys/Admin")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId("test-company")
                 .build());
 
         headToken = "Bearer " + jwtProvider.generateToken(
                 "head-user", "head-user@test.com", "COMPANY_HEAD", "test-company");
 
-        when(acquiringClient.createEcomOrder(any(), any(), any(), anyString()))
+        when(acquiringClient.createEcomOrder(any(), any(), any(), any(), anyString()))
                 .thenAnswer(invocation -> {
                     long orderId = providerOrderIds.incrementAndGet();
                     return new EcomCreateOrderResponse(new EcomCreateOrderResponse.Order(
@@ -183,7 +183,7 @@ class PaymentLinkRefundUsageTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", containsString("usage limit")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // 3. Частичный возврат — тоже использование
@@ -271,7 +271,7 @@ class PaymentLinkRefundUsageTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Payment link has an authorized payment awaiting capture")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // 8. Понижение maxPayments учитывает возвращённые платежи

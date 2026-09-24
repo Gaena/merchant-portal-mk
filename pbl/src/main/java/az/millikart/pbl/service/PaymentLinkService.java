@@ -1,5 +1,6 @@
 package az.millikart.pbl.service;
 
+import az.millikart.pbl.domain.CustomerPhone;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentLinkStatus;
 import az.millikart.pbl.domain.Terminal;
@@ -137,10 +138,14 @@ public class PaymentLinkService {
             throw new BusinessException("terminal " + request.terminal()
                     + " is blocked and cannot take new payments; unblock it or use another terminal");
         }
-        // Без кредов компании ссылка родилась бы нерабочей: открытие упало бы на обращении к провайдеру (Р-93).
+        // Без кредов компании и номера терминала ссылка родилась бы нерабочей: открытие упало бы на
+        // обращении к провайдеру (Р-93, Р-96).
         providerCredentials.forTerminal(terminal);
+        providerCredentials.terminalRidOf(terminal);
 
         CustomerDto customer = request.customer();
+        requireCustomerAllowed(request.usageType(), customer);
+        String customerPhone = normalizedPhone(customer);
         String providerRef = "RID-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
         // P1-9: срок есть у каждой ссылки. Раньше expires_at оставался NULL — планировщик не находил
@@ -161,7 +166,7 @@ public class PaymentLinkService {
                 .description(request.description())
                 .customerName(customer != null ? customer.fullName() : null)
                 .customerEmail(customer != null ? customer.email() : null)
-                .customerPhone(customer != null ? customer.phone() : null)
+                .customerPhone(customerPhone)
                 .paymentType(request.paymentType())
                 .usageType(request.usageType())
                 .maxPayments(request.usageType() == UsageType.MULTIPLE ? request.maxPayments() : null)
@@ -286,6 +291,8 @@ public class PaymentLinkService {
         }
         if (request.customer() != null) {
             CustomerDto customer = request.customer();
+            requireCustomerAllowed(link.getUsageType(), customer);
+            String phone = normalizedPhone(customer);
             // В аудит — только имена полей: значения здесь персональные данные.
             if (customer.fullName() != null && !customer.fullName().equals(link.getCustomerName())) {
                 changes.add("customerName");
@@ -295,9 +302,9 @@ public class PaymentLinkService {
                 changes.add("customerEmail");
                 link.setCustomerEmail(customer.email());
             }
-            if (customer.phone() != null && !customer.phone().equals(link.getCustomerPhone())) {
+            if (phone != null && !phone.equals(link.getCustomerPhone())) {
                 changes.add("customerPhone");
-                link.setCustomerPhone(customer.phone());
+                link.setCustomerPhone(phone);
             }
         }
         if (request.expiresAt() != null) {
@@ -389,6 +396,30 @@ public class PaymentLinkService {
     // подрезание: срок, о котором мерчант не просил, хуже отклонённого запроса — ссылка умрёт в
     // момент, которого никто не планировал. createdAt — точка отсчёта потолка: при создании это
     // «сейчас», при правке — created_at самой ссылки (почему — в месте вызова).
+    // Клиент — у одноразовой ссылки: у многоразовой платят разные люди, и одно имя на всех провайдеру врало
+    // бы (Р-96). Пришёл через API у многоразовой — отказ, а не молчаливый пропуск: отправитель должен знать,
+    // что данные не сохранены.
+    private static void requireCustomerAllowed(UsageType usageType, CustomerDto customer) {
+        if (usageType == UsageType.MULTIPLE && customer != null
+                && (hasText(customer.fullName()) || hasText(customer.email()) || hasText(customer.phone()))) {
+            throw new BusinessException("customer can only be set on a single-use link");
+        }
+    }
+
+    // Телефон — только азербайджанский, хранится как +994XXXXXXXXX (Р-96): провайдер ждёт код страны и номер
+    // раздельно. Пустой — null.
+    private static String normalizedPhone(CustomerDto customer) {
+        if (customer == null || !hasText(customer.phone())) {
+            return null;
+        }
+        return CustomerPhone.normalize(customer.phone())
+                .orElseThrow(() -> new BusinessException("customer.phone must be an Azerbaijani number: +994 and 9 digits"));
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
     private Instant validateExpiresAt(Instant expiresAt, Instant createdAt) {
         if (!expiresAt.isAfter(Instant.now())) {
             log.warn("Refusing expiresAt {}: it is not in the future", expiresAt);

@@ -280,7 +280,7 @@ class PblAuditIntegrationTest {
         return Terminal.builder()
                 .id(id)
                 .name("Terminal " + id)
-                .login("TerminalSys/Admin")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId(companyId)
                 .build();
     }

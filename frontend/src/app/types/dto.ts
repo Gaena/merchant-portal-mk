@@ -19,6 +19,8 @@ export interface TerminalDto {
   id: number;
   name: string;
   login: string;
+  /** Номер терминала у провайдера (`terminal.rid`, Р-96) — основная подпись; нет у заведённых до Р-96. */
+  terminalRid?: string | null;
   companyId: string;
   /** Бэкенд присылает всегда; поле необязательное только ради ответов, снятых до P2-8. */
   status?: TerminalStatus;
@@ -38,6 +40,8 @@ export interface TerminalOptionDto {
    * где тот показан, — см. `utils/terminals.ts`.
    */
   login: string;
+  /** Номер терминала у провайдера (Р-96) — подписывает терминал раньше логина. */
+  terminalRid?: string | null;
   /** Бэкенд присылает всегда; поле необязательное только ради ответов, снятых до P2-8. */
   status?: TerminalStatus;
 }
@@ -51,15 +55,24 @@ export const isTerminalActive = (terminal: Pick<TerminalDto, 'status'>): boolean
   terminal.status !== 'BLOCKED';
 
 /**
- * Терминал из справочника провайдера (`GET /api/v1/ecom/provider-terminals`, только SYSTEM_ADMIN).
- * `rid` — reference id мерчанта у провайдера, он же `merchantRid` нашего терминала (Р-67, Р-79).
+ * Терминал провайдера для формы заведения терминала компании (`GET /api/v1/terminals/provider-terminals`,
+ * Р-96): только мерчанты логина компании, ещё не заведённые у нас. `rid` — код мерчанта (`merchantRid`),
+ * `terminalRid` — номер терминала у провайдера.
  */
-export interface ProviderTerminalDto {
+export interface ProviderTerminalOption {
   rid: string;
   title: string | null;
   login: string | null;
-  active: boolean;
-  lastSeenAt?: string | null;
+  terminalRid: string;
+}
+
+/**
+ * Свободный логин мультимерчанта для формы компании (`GET /api/v1/companies/provider-logins`, Р-95):
+ * `login` — целиком, с префиксом; `merchants` — названия его активных мерчантов.
+ */
+export interface ProviderLoginOption {
+  login: string;
+  merchants: string[];
 }
 
 /** Итог обновления слепка логинов мультимерчантов провайдера (Р-94). */
@@ -142,7 +155,9 @@ export interface DashboardCurrencyTotals {
 export interface DashboardTerminalTotal {
   currency: string;
   terminalId: number;
-  /** Логин из таблицы терминалов — основная подпись; `null`, если терминала уже нет. */
+  /** Номер терминала у провайдера (Р-96) — основная подпись; `null` у терминалов без номера. */
+  terminalRid?: string | null;
+  /** Логин из таблицы терминалов — подпись, когда номера нет; `null`, если терминала уже нет. */
   terminalLogin: string | null;
   /** Имя из таблицы терминалов; `null`, если терминала уже нет — выдумывать его нельзя. */
   terminalName: string | null;

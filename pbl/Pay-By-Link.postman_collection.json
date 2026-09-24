@@ -38,7 +38,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"merchantOrderId\": \"ORDER-{{$timestamp}}\",\n  \"terminal\": 123456789,\n  \"amount\": 1500.50,\n  \"currency\": \"AZN\",\n  \"description\": \"Payment for order #{{$timestamp}}\",\n  \"customer\": {\n    \"fullName\": \"John Doe\",\n    \"email\": \"test@test.com\",\n    \"phone\": \"994509771884\"\n  },\n  \"paymentType\": \"DMS\",\n  \"usageType\": \"MULTIPLE\",\n  \"maxPayments\": 25,\n  \"metadata\": {\n    \"campaign\": \"summer_sale\",\n    \"internalId\": \"998877\"\n  }\n}",
+							"raw": "{\n  \"merchantOrderId\": \"ORDER-{{$timestamp}}\",\n  \"terminal\": 123456789,\n  \"amount\": 1500.5,\n  \"currency\": \"AZN\",\n  \"description\": \"Payment for order #{{$timestamp}}\",\n  \"customer\": {\n    \"fullName\": \"John Doe\",\n    \"email\": \"test@test.com\",\n    \"phone\": \"+994509771884\"\n  },\n  \"paymentType\": \"DMS\",\n  \"usageType\": \"SINGLE\",\n  \"metadata\": {\n    \"campaign\": \"summer_sale\",\n    \"internalId\": \"998877\"\n  }\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -56,7 +56,7 @@
 								"payment-links"
 							]
 						},
-						"description": "Creates a new payment link. The `test` script for this request automatically saves the returned `id` to the `linkId` collection variable for use in other requests.\n\nEvery link has a lifetime. `expiresAt` is optional here: left out, as in this body, the link expires after the configured default (`pbl.link.default-ttl`, 24 hours). Supplied, it must be an ISO-8601 instant in the future and no later than `pbl.link.max-ttl` (90 days) from the moment the link is created - either violation is a 400 naming the latest date allowed. The response carries the resulting `expiresAt` back."
+						"description": "Creates a new payment link. The `test` script for this request automatically saves the returned `id` to the `linkId` collection variable for use in other requests.\n\nEvery link has a lifetime. `expiresAt` is optional here: left out, as in this body, the link expires after the configured default (`pbl.link.default-ttl`, 24 hours). Supplied, it must be an ISO-8601 instant in the future and no later than `pbl.link.max-ttl` (90 days) from the moment the link is created - either violation is a 400 naming the latest date allowed. The response carries the resulting `expiresAt` back.\n\nThe customer is for a single-use link only (Р-96): on a MULTIPLE link it is a 400. The phone must be an Azerbaijani number (+994, 994 or 0 and 9 digits) and is stored as +994XXXXXXXXX; name, email and phone go to the acquirer in order.tdsPresetAreq. The terminal must carry its provider terminal number."
 					},
 					"response": []
 				},

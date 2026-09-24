@@ -162,9 +162,10 @@ export const LinkPaymentsStats: React.FC<{ period: PeriodKey; onPeriodChange: (p
                       {/* Терминал без логина и имени — прочерк, а не номер (Р-81). */}
                       <Box>
                         <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: 'monospace' }}>
-                          {terminal.terminalLogin ?? terminal.terminalName ?? '—'}
+                          {terminal.terminalRid ?? terminal.terminalLogin ?? terminal.terminalName ?? '—'}
                         </Typography>
-                        {terminal.terminalName && terminal.terminalName !== terminal.terminalLogin && (
+                        {terminal.terminalName
+                          && terminal.terminalName !== (terminal.terminalRid ?? terminal.terminalLogin) && (
                           <Typography variant="caption" color="text.secondary">{terminal.terminalName}</Typography>
                         )}
                       </Box>

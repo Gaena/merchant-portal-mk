@@ -3,15 +3,18 @@ package az.millikart.directory.service;
 import az.millikart.common.dto.PagedResponse;
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.InvalidStateException;
+import az.millikart.directory.domain.Company;
 import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.domain.TerminalStatus;
 import az.millikart.directory.domain.TerminalStatusSource;
 import az.millikart.directory.dto.CreateTerminalRequest;
+import az.millikart.directory.dto.ProviderTerminalOption;
 import az.millikart.directory.dto.TerminalOptionResponse;
 import az.millikart.directory.dto.TerminalResponse;
 import az.millikart.directory.dto.UpdateTerminalRequest;
 import az.millikart.directory.repository.CompanyRepository;
 import az.millikart.directory.repository.PaymentLinkStatusRepository;
+import az.millikart.directory.repository.ProviderLoginSnapshotRepository;
 import az.millikart.directory.repository.ProviderTerminalStatusRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.common.audit.AuditAction;
@@ -22,7 +25,9 @@ import az.millikart.common.search.SearchTerms;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -47,10 +52,13 @@ public class TerminalService {
     // entityId отказа в заведении: номер терминалу выдаётся только при сохранении (Р-81).
     private static final String NEW_TERMINAL = "NEW";
 
+    private static final String PROVIDER_ACTIVE = "Active";
+
     private final TerminalRepository terminalRepository;
     private final CompanyRepository companyRepository;
     private final PaymentLinkStatusRepository paymentLinkStatusRepository;
     private final ProviderTerminalStatusRepository providerTerminals;
+    private final ProviderLoginSnapshotRepository providerLogins;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -58,12 +66,14 @@ public class TerminalService {
                            CompanyRepository companyRepository,
                            PaymentLinkStatusRepository paymentLinkStatusRepository,
                            ProviderTerminalStatusRepository providerTerminals,
+                           ProviderLoginSnapshotRepository providerLogins,
                            AuditLogService auditLogService,
                            ApplicationEventPublisher eventPublisher) {
         this.terminalRepository = terminalRepository;
         this.companyRepository = companyRepository;
         this.paymentLinkStatusRepository = paymentLinkStatusRepository;
         this.providerTerminals = providerTerminals;
+        this.providerLogins = providerLogins;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
     }
@@ -88,9 +98,8 @@ public class TerminalService {
             throw new InvalidStateException("Access denied");
         }
 
-        if (!companyRepository.existsById(request.companyId())) {
-            throw new BusinessException("Company with ID '" + request.companyId() + "' not found");
-        }
+        Company company = companyRepository.findById(request.companyId())
+                .orElseThrow(() -> new BusinessException("Company with ID '" + request.companyId() + "' not found"));
 
         // Один терминал провайдера — одна наша компания. Иначе две компании смотрели бы
         // в одну выписку, и каждая видела бы платежи другой.
@@ -103,8 +112,14 @@ public class TerminalService {
                 .findByRid(merchantRid)
                 .orElseThrow(() -> new BusinessException(
                         "Provider terminal " + merchantRid + " is not in the synchronised list"));
-        if (row.title() == null || row.title().isBlank() || row.gatewayLogin() == null) {
-            throw new BusinessException("Provider terminal " + merchantRid + " has no name or login in the synchronised list");
+        if (row.title() == null || row.title().isBlank() || row.gatewayLogin() == null
+                || row.terminalRid() == null || row.terminalRid().isBlank()) {
+            throw new BusinessException("Provider terminal " + merchantRid
+                    + " has no name, login or terminal number in the synchronised list");
+        }
+        if (!merchantsOfCompanyLogin(company).contains(merchantRid)) {
+            throw new BusinessException("Provider terminal " + merchantRid
+                    + " does not belong to the multimerchant login of company " + company.getId());
         }
 
         // Номер берётся последним, когда все проверки пройдены: отказ не должен тратить номера.
@@ -112,6 +127,7 @@ public class TerminalService {
                 .id(Math.toIntExact(terminalRepository.nextId()))
                 .name(row.title())
                 .login(row.gatewayLogin())
+                .terminalRid(row.terminalRid())
                 .companyId(request.companyId())
                 .merchantRid(merchantRid)
                 .createdBy(actorUsername)
@@ -165,8 +181,48 @@ public class TerminalService {
                 : terminalRepository.findAllByCompanyIdOrderByNameAscIdAsc(requireOwnCompany(principal));
 
         return terminals.stream()
-                .map(t -> new TerminalOptionResponse(t.getId(), t.getName(), t.getLogin(), t.getStatus()))
+                .map(t -> new TerminalOptionResponse(t.getId(), t.getName(), t.getLogin(), t.getTerminalRid(), t.getStatus()))
                 .collect(Collectors.toList());
+    }
+
+    // Терминалы провайдера для формы заведения (Р-96): мерчанты логина компании, активные в справочнике, с
+    // номером терминала и ещё не заведённые у нас. Только SYSTEM_ADMIN — он и заводит терминалы.
+    @Transactional(readOnly = true)
+    public List<ProviderTerminalOption> listProviderTerminals(String companyId, UserPrincipal principal) {
+        if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
+            auditLogService.logDenied(AuditEntity.TERMINAL, "ALL", AuditAction.LIST,
+                    UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                    "Denied: role " + UserPrincipal.getRawRole(principal) + " attempted to list provider terminals");
+            throw new InvalidStateException("Access denied");
+        }
+        if (companyId == null || companyId.isBlank()) {
+            throw new BusinessException("companyId is required");
+        }
+        Company company = companyRepository.findById(companyId)
+                .orElseThrow(() -> new BusinessException("Company with ID '" + companyId + "' not found"));
+        Set<String> merchants = merchantsOfCompanyLogin(company);
+        Set<String> linked = new HashSet<>(terminalRepository.findAllMerchantRids());
+        return providerTerminals.rowsByRid().values().stream()
+                .filter(row -> row.active() && merchants.contains(row.rid()) && !linked.contains(row.rid())
+                        && row.terminalRid() != null && !row.terminalRid().isBlank())
+                .sorted(Comparator.comparing((ProviderTerminalStatusRepository.ProviderTerminalRow row) ->
+                        row.title() != null ? row.title() : "").thenComparing(ProviderTerminalStatusRepository.ProviderTerminalRow::rid))
+                .map(row -> new ProviderTerminalOption(row.rid(), row.title(), row.login(), row.terminalRid()))
+                .toList();
+    }
+
+    // Мерчанты, чьи терминалы компания вправе завести (Р-96): активные связи её логина мультимерчанта в
+    // слепке. Иначе компания ходила бы к провайдеру своими кредами за чужого мерчанта.
+    private Set<String> merchantsOfCompanyLogin(Company company) {
+        String providerLogin = company.getProviderLogin();
+        if (providerLogin == null || !providerLogin.startsWith(CompanyService.MULTI_MERCHANT_PREFIX)) {
+            return Set.of();
+        }
+        return providerLogins.linksOf(providerLogin.substring(CompanyService.MULTI_MERCHANT_PREFIX.length())).stream()
+                .filter(link -> PROVIDER_ACTIVE.equals(link.loginStatus()) && PROVIDER_ACTIVE.equals(link.linkStatus())
+                        && link.merchantRid() != null)
+                .map(ProviderLoginSnapshotRepository.LoginLink::merchantRid)
+                .collect(Collectors.toSet());
     }
 
     // Возвращает не только флаг: роль без права на список получает отказ прямо здесь.
@@ -360,6 +416,7 @@ public class TerminalService {
                 terminal.getId(),
                 terminal.getName(),
                 terminal.getLogin(),
+                terminal.getTerminalRid(),
                 terminal.getCompanyId(),
                 terminal.getStatus(),
                 terminal.getCreatedBy(),

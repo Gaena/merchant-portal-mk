@@ -10,7 +10,9 @@ import java.util.UUID;
 
 public interface AcquiringClient {
     // Все вызовы — с кредами компании терминала, а не терминала (Р-93).
-    EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, UUID ridByMerchant, String hppRedirectUrl);
+    // Заказ создаётся на терминале провайдера: POST /order?terminalRid=… (Р-96).
+    EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
+                                            UUID ridByMerchant, String hppRedirectUrl);
 
     // Обе денежные операции возвращают результат, только если эквайер подтвердил её через
     // tran.match.ridByPmo; принятый, но неподтверждённый ответ — PaymentOutcomeUnknownException,
@@ -31,5 +33,5 @@ public interface AcquiringClient {
      *
      * Никогда не бросает: любой исход — это результат, который надо показать администратору.
      */
-    TerminalCheckResult checkOrderCreation(ProviderCredentials credentials);
+    TerminalCheckResult checkOrderCreation(ProviderCredentials credentials, String terminalRid);
 }

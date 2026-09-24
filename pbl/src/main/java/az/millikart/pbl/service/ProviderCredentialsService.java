@@ -42,4 +42,16 @@ public class ProviderCredentialsService {
                 });
         return new ProviderCredentials(stored.login(), cipher.decrypt(stored.encryptedPassword()));
     }
+
+    // Номер терминала у провайдера, с которым создаётся заказ (Р-96). Нет — отказ до провайдера: заказ без
+    // терминала он не примет, а терминал без номера — заведённый до Р-96 без справочника.
+    public String terminalRidOf(Terminal terminal) {
+        String terminalRid = terminal.getTerminalRid();
+        if (terminalRid == null || terminalRid.isBlank()) {
+            log.warn("Terminal {} has no provider terminal number", terminal.getId());
+            throw new BusinessException("Terminal " + terminal.getId()
+                    + " has no provider terminal number and cannot take payments; link it from the provider directory");
+        }
+        return terminalRid;
+    }
 }

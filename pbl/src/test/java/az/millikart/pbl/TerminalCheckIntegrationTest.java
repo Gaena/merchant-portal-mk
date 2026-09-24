@@ -37,6 +37,9 @@ class TerminalCheckIntegrationTest {
     private static final ProviderCredentials COMPANY_CREDENTIALS = new ProviderCredentials(
             CompanyCredentialsFixture.loginOf("comp-01"), CompanyCredentialsFixture.passwordOf("comp-01"));
 
+    // Номер терминала у провайдера — «Тест» заводит пробный заказ на нём (Р-96).
+    private static final String TERMINAL_RID = "TID-stored-login";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -65,7 +68,7 @@ class TerminalCheckIntegrationTest {
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Checked terminal")
-                .login("stored-login")
+                .login("stored-login").terminalRid("TID-stored-login")
                 .companyId("comp-01")
                 .build());
 
@@ -76,7 +79,7 @@ class TerminalCheckIntegrationTest {
     // Провайдеру уходят расшифрованные креды компании, а не логин терминала; в ответе — только исход.
     @Test
     void existingTerminal_isCheckedWithItsCompanyCredentials() throws Exception {
-        when(acquiringClient.checkOrderCreation(COMPANY_CREDENTIALS)).thenReturn(TerminalCheckResult.ok());
+        when(acquiringClient.checkOrderCreation(COMPANY_CREDENTIALS, TERMINAL_RID)).thenReturn(TerminalCheckResult.ok());
 
         mockMvc.perform(post("/api/v1/acquiring/terminal-checks/{id}", TERMINAL_ID)
                         .header(HttpHeaders.AUTHORIZATION, adminToken))
@@ -84,13 +87,13 @@ class TerminalCheckIntegrationTest {
                 .andExpect(jsonPath("$.outcome", Matchers.is("OK")))
                 .andExpect(jsonPath("$.password").doesNotExist());
 
-        verify(acquiringClient).checkOrderCreation(COMPANY_CREDENTIALS);
+        verify(acquiringClient).checkOrderCreation(COMPANY_CREDENTIALS, TERMINAL_RID);
     }
 
     // Неверные креды — это результат проверки, а не сбой запроса: 200 и понятный исход.
     @Test
     void wrongPassword_comesBackAsAnOutcomeNotAnError() throws Exception {
-        when(acquiringClient.checkOrderCreation(COMPANY_CREDENTIALS))
+        when(acquiringClient.checkOrderCreation(COMPANY_CREDENTIALS, TERMINAL_RID))
                 .thenReturn(new TerminalCheckResult(TerminalCheckResult.Outcome.INVALID_CREDENTIALS,
                         "InvalidLogin", "Invalid login or password"));
 
@@ -109,7 +112,7 @@ class TerminalCheckIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, headToken))
                 .andExpect(status().isForbidden());
 
-        verify(acquiringClient, never()).checkOrderCreation(any());
+        verify(acquiringClient, never()).checkOrderCreation(any(), any());
     }
 
     @Test
@@ -118,7 +121,7 @@ class TerminalCheckIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken))
                 .andExpect(status().isNotFound());
 
-        verify(acquiringClient, never()).checkOrderCreation(any());
+        verify(acquiringClient, never()).checkOrderCreation(any(), any());
     }
 
     // Компания без кредов — отказ до провайдера (Р-93): иначе он ответил бы InvalidLogin, и администратор
@@ -132,7 +135,21 @@ class TerminalCheckIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", Matchers.containsString("has no acquirer credentials")));
 
-        verify(acquiringClient, never()).checkOrderCreation(any());
+        verify(acquiringClient, never()).checkOrderCreation(any(), any());
+    }
+
+    // Терминал без номера у провайдера (заведён до Р-96 без справочника) — отказ до провайдера: заказ без
+    // терминала провайдер не примет.
+    @Test
+    void terminalWithoutProviderNumber_isRefusedBeforeTheProvider() throws Exception {
+        jdbcTemplate.update("UPDATE terminals SET terminal_rid = NULL WHERE id = ?", TERMINAL_ID);
+
+        mockMvc.perform(post("/api/v1/acquiring/terminal-checks/{id}", TERMINAL_ID)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", Matchers.containsString("has no provider terminal number")));
+
+        verify(acquiringClient, never()).checkOrderCreation(any(), any());
     }
 
     // Проверка терминала до заведения снята (Р-93): логина и пароля у терминала больше нет.
@@ -142,6 +159,6 @@ class TerminalCheckIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken))
                 .andExpect(status().isNotFound());
 
-        verify(acquiringClient, never()).checkOrderCreation(any());
+        verify(acquiringClient, never()).checkOrderCreation(any(), any());
     }
 }

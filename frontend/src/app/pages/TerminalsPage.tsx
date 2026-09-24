@@ -50,13 +50,19 @@ import {
   type TerminalCheckResponse,
 } from '../utils/terminalCheck';
 import { isTerminalActive } from '../types/dto';
+import { terminalLabel } from '../utils/terminals';
 import type {
   TerminalDto,
   CompanyDto,
   TerminalStatus,
-  ProviderTerminalDto,
+  ProviderTerminalOption,
   ProviderTerminalSyncOutcome,
 } from '../types/dto';
+
+// Подпись терминала на этой странице — тем же правилом, что везде (utils/terminals.ts): номер терминала у
+// провайдера (Р-96), у заведённых до него — логин.
+const terminalDtoLabel = (terminal: TerminalDto): string =>
+  terminalLabel({ terminalRid: terminal.terminalRid, terminalLogin: terminal.login });
 
 export const TerminalsPage: React.FC = () => {
   const { tObj } = useLanguage();
@@ -111,9 +117,9 @@ export const TerminalsPage: React.FC = () => {
   const [checking, setChecking] = useState<number | null>(null);
   // Справочник терминалов провайдера для формы заведения (Р-67, Р-79). Его видит только SYSTEM_ADMIN,
   // он же и заводит терминалы (Р-93).
-  const [providerTerminals, setProviderTerminals] = useState<ProviderTerminalDto[]>([]);
+  const [providerTerminals, setProviderTerminals] = useState<ProviderTerminalOption[]>([]);
   const [providerState, setProviderState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
-  const [selectedProvider, setSelectedProvider] = useState<ProviderTerminalDto | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<ProviderTerminalOption | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<ProviderTerminalSyncOutcome | null>(null);
   // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
@@ -192,10 +198,20 @@ export const TerminalsPage: React.FC = () => {
     fetchCompanies();
   }, [fetchCompanies]);
 
-  const loadProviderTerminals = async () => {
+  // Терминалы для заведения — только мерчанты логина выбранной компании, ещё не заведённые у нас (Р-96).
+  // Список зависит от компании, поэтому перечитывается при её смене.
+  const loadProviderTerminals = async (companyId: string) => {
+    setSelectedProvider(null);
+    if (!companyId) {
+      setProviderTerminals([]);
+      setProviderState('idle');
+      return;
+    }
     setProviderState('loading');
     try {
-      const res = await apiClient.get('/api/v1/ecom/provider-terminals');
+      const res = await apiClient.get<ProviderTerminalOption[]>('/api/v1/terminals/provider-terminals', {
+        params: { companyId },
+      });
       setProviderTerminals(Array.isArray(res.data) ? res.data : []);
       setProviderState('ready');
     } catch {
@@ -212,7 +228,7 @@ export const TerminalsPage: React.FC = () => {
     try {
       const res = await apiClient.post<ProviderTerminalSyncOutcome>('/api/v1/ecom/provider-terminals/sync');
       setSyncResult(res.data);
-      await loadProviderTerminals();
+      await loadProviderTerminals(form.companyId);
     } catch (err: any) {
       setError(err.response?.data?.message || tObj.terminals.providerTerminalLoadFailed);
     } finally {
@@ -223,10 +239,10 @@ export const TerminalsPage: React.FC = () => {
   const handleOpenCreate = () => {
     setError('');
     setEditingTerminalId(null);
-    setForm({ name: '', companyId: defaultCompanyId() });
-    setSelectedProvider(null);
+    const companyId = defaultCompanyId();
+    setForm({ name: '', companyId });
     setSyncResult(null);
-    loadProviderTerminals();
+    loadProviderTerminals(companyId);
     setCreateOpen(true);
   };
 
@@ -290,7 +306,8 @@ export const TerminalsPage: React.FC = () => {
 
   // Терминал в заголовках окон подписан логином, как везде (Р-59): номер терминала на экране не
   // показывается — его выдаёт база и знать его пользователю незачем (Р-81).
-  const editingLogin = terminals.find(t => t.id === editingTerminalId)?.login ?? '';
+  const editingTerminal = terminals.find(t => t.id === editingTerminalId);
+  const editingLogin = editingTerminal ? terminalDtoLabel(editingTerminal) : '';
 
   const handleUpdate = async () => {
     if (!editingTerminalId || editBusy) return;
@@ -386,7 +403,7 @@ export const TerminalsPage: React.FC = () => {
       const res = await apiClient.patch(`/api/v1/terminals/${terminal.id}`, { status });
       setTerminals(prev => prev.map(t => (t.id === terminal.id ? res.data : t)));
       // Терминал в сообщении — логином, как везде (Р-59); номер пользователю ни к чему (Р-81).
-      setSnackbar(`${terminal.login}: ${status === 'BLOCKED' ? tObj.terminals.blockedNotice : tObj.terminals.unblockedNotice}`);
+      setSnackbar(`${terminalDtoLabel(terminal)}: ${status === 'BLOCKED' ? tObj.terminals.blockedNotice : tObj.terminals.unblockedNotice}`);
     } catch (err: any) {
       setPageError(err.response?.data?.message || tObj.terminals.statusChangeFailed);
     } finally {
@@ -459,7 +476,7 @@ export const TerminalsPage: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
-                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.login}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.terminal}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.name}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.company}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.status}</TableCell>
@@ -475,7 +492,7 @@ export const TerminalsPage: React.FC = () => {
                   {/* Логин впереди: по нему мерчант терминал и опознаёт, имя он придумывает
                       сам, а номер — внутренний. */}
                   <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: active ? 'primary.main' : 'text.disabled' }}>
-                    {term.login}
+                    {terminalDtoLabel(term)}
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{term.name}</TableCell>
                   <TableCell>
@@ -576,7 +593,7 @@ export const TerminalsPage: React.FC = () => {
         maxWidth="xs"
         title={<>
           {statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockAction : tObj.terminals.unblockAction}
-          {' '}{statusChange?.terminal.login}
+          {' '}{statusChange ? terminalDtoLabel(statusChange.terminal) : ''}
         </>}
         question={statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockExplains : tObj.terminals.unblockExplains}
         confirmLabel={statusChange?.nextStatus === 'BLOCKED' ? tObj.terminals.blockAction : tObj.terminals.unblockAction}
@@ -606,7 +623,11 @@ export const TerminalsPage: React.FC = () => {
                 fullWidth
                 label={`${tObj.terminals.company} *`}
                 value={form.companyId}
-                onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}
+                onChange={e => {
+                  const companyId = e.target.value;
+                  setForm(f => ({ ...f, companyId }));
+                  loadProviderTerminals(companyId);
+                }}
                 helperText={tObj.terminals.companyHint}
               >
                 {companies.map((comp) => (
@@ -626,13 +647,13 @@ export const TerminalsPage: React.FC = () => {
                 value={selectedProvider}
                 loading={providerState === 'loading'}
                 onChange={(_, value) => setSelectedProvider(value)}
-                getOptionLabel={option => [option.login, option.title].filter(Boolean).join(' — ') || option.rid}
+                getOptionLabel={option => [option.terminalRid, option.title].filter(Boolean).join(' — ') || option.rid}
                 isOptionEqualToValue={(option, value) => option.rid === value.rid}
                 renderOption={({ key, ...optionProps }, option) => (
                   <li key={key} {...optionProps}>
                     <Box>
                       <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                        {option.login || '—'}
+                        {option.terminalRid}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {option.title || '—'} · {option.rid}
@@ -654,7 +675,7 @@ export const TerminalsPage: React.FC = () => {
                     {tObj.terminals.name}: <b>{selectedProvider.title || '—'}</b>
                   </Typography>
                   <Typography variant="body2">
-                    {tObj.terminals.login}: <b style={{ fontFamily: 'monospace' }}>{selectedProvider.login || '—'}</b>
+                    {tObj.terminals.terminal}: <b style={{ fontFamily: 'monospace' }}>{selectedProvider.terminalRid}</b>
                   </Typography>
                 </Box>
               )}

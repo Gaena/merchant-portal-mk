@@ -42,9 +42,9 @@ public class ProviderLoginSyncService {
         try {
             rows = source.fetchMultiMerchantLogins();
         } catch (RuntimeException e) {
-            log.error("Provider login sync skipped: the gateway could not be queried ({}). "
-                    + "The previous snapshot is kept as is.", e.getMessage(), e);
-            return SyncOutcome.skipped("gateway unavailable");
+            String reason = ProviderSyncFailure.reason(e);
+            log.error("Provider login sync skipped: {}. The previous snapshot is kept as is.", reason, e);
+            return SyncOutcome.skipped(reason);
         }
         if (rows == null || rows.isEmpty()) {
             log.error("Provider login sync skipped: the gateway returned no multimerchant logins at all. "

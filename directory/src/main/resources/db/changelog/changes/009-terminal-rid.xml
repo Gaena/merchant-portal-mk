@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Р-96: номер терминала у провайдера (terminal.rid) — pbl передаёт его при создании заказа
+      (POST /order?terminalRid=…). Заполняется при заведении терминала из справочника и обновляется
+      сверкой. Пусто у терминалов, заведённых до Р-96 без справочника: платежи по ним — 400.
+      Колонку добавляет и pbl (012) под тем же преконтролем.
+    -->
+    <changeSet id="9-directory-terminal-rid" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="terminals"/>
+            <not>
+                <columnExists tableName="terminals" columnName="terminal_rid"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="terminals">
+            <column name="terminal_rid" type="varchar(64)"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

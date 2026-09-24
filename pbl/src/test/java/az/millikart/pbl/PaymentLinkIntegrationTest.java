@@ -138,7 +138,7 @@ class PaymentLinkIntegrationTest {
         Terminal terminal = Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Test Terminal")
-                .login("TerminalSys/Admin")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId("test-company")
                 .build();
         terminalRepository.save(terminal);
@@ -146,7 +146,7 @@ class PaymentLinkIntegrationTest {
         Terminal foreignTerminal = Terminal.builder()
                 .id(FOREIGN_TERMINAL_ID)
                 .name("Other Company Terminal")
-                .login("TerminalSys/Other")
+                .login("TerminalSys/Other").terminalRid("TID-Other")
                 .companyId("other-company")
                 .build();
         terminalRepository.save(foreignTerminal);
@@ -169,12 +169,8 @@ class PaymentLinkIntegrationTest {
         return builder.header(HttpHeaders.AUTHORIZATION, token);
     }
 
+    // Многоразовая ссылка — без клиента: у неё его не бывает (Р-96).
     private ObjectNode validCreateRequest() {
-        ObjectNode customer = objectMapper.createObjectNode();
-        customer.put("fullName", "John Doe");
-        customer.put("email", "test@test.com");
-        customer.put("phone", "994509771884");
-
         ObjectNode metadata = objectMapper.createObjectNode();
         metadata.put("campaign", "summer_sale");
 
@@ -184,7 +180,6 @@ class PaymentLinkIntegrationTest {
         request.put("amount", new BigDecimal("1500.50"));
         request.put("currency", "AZN");
         request.put("description", "Payment for order #123456");
-        request.set("customer", customer);
         request.put("paymentType", "DMS");
         request.put("usageType", "MULTIPLE");
         request.put("maxPayments", 25);
@@ -251,6 +246,54 @@ class PaymentLinkIntegrationTest {
                         .content(objectMapper.writeValueAsString(validCreateRequest())))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("has no acquirer credentials")));
+    }
+
+    // Клиент — только у одноразовой ссылки (Р-96): у многоразовой отказ, а не молчаливый пропуск.
+    @Test
+    void createPaymentLink_multiUseWithACustomer_returns400() throws Exception {
+        ObjectNode request = validCreateRequest();
+        request.set("customer", objectMapper.createObjectNode().put("fullName", "John Doe"));
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("customer can only be set on a single-use link")));
+    }
+
+    // Телефон — только азербайджанский и хранится как +994XXXXXXXXX: провайдер ждёт код и номер раздельно.
+    @Test
+    void createPaymentLink_customerPhone_isNormalizedOrRefused() throws Exception {
+        ObjectNode request = smsSingleCreateRequest();
+        request.put("description", "Phone fixture");
+        request.set("customer", objectMapper.createObjectNode().put("fullName", "Test Testov")
+                .put("email", "test@test.az").put("phone", "0 (70) 330-10-25"));
+        String body = mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID id = UUID.fromString(objectMapper.readTree(body).get("id").asText());
+        Assertions.assertEquals("+994703301025", paymentLinkRepository.findById(id).orElseThrow().getCustomerPhone());
+
+        request.set("customer", objectMapper.createObjectNode().put("phone", "+7 999 123 45 67"));
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("customer.phone must be an Azerbaijani number: +994 and 9 digits")));
+    }
+
+    // Без номера терминала у провайдера ссылка родилась бы нерабочей: заказ создаётся на терминале (Р-96).
+    @Test
+    void createPaymentLink_terminalWithoutProviderNumber_returns400() throws Exception {
+        jdbcTemplate.update("UPDATE terminals SET terminal_rid = NULL WHERE id = ?", TERMINAL_ID);
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validCreateRequest())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("has no provider terminal number")));
     }
 
     @Test
@@ -554,7 +597,7 @@ class PaymentLinkIntegrationTest {
         verify(acquiringClient).createEcomOrder(any(),
                 eq(new ProviderCredentials(CompanyCredentialsFixture.loginOf("test-company"),
                         CompanyCredentialsFixture.passwordOf("test-company"))),
-                any(), anyString());
+                eq("TID-Admin"), any(), anyString());
     }
 
     // --- P0-9: order password не попадает ни в provider_response, ни в лог ------------------
@@ -1138,7 +1181,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Payment link has an authorized payment awaiting capture")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
         Assertions.assertEquals(TransactionStatus.AUTHORIZED,
                 transactionRepository.findById(held.getId()).orElseThrow().getStatus());
     }
@@ -1176,7 +1219,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Single-use payment link has already been used")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // Холд одноразовой ссылки банк снял сам, ничего не списав (Closed ← Authorized, Р-75): слот
@@ -1208,7 +1251,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Payment link has an authorized payment awaiting capture")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // --- P1-7: рассчитанный платёж должен считаться один раз --------------------------------
@@ -1383,7 +1426,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Payment link has expired")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // Свёртка PaymentLinkScheduler ходит раз в пять минут. Она была верна и P1-9 её не трогал —

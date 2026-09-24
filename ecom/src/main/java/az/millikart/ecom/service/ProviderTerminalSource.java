@@ -10,7 +10,8 @@ public interface ProviderTerminalSource {
     // недопустим — отсутствие в списке читается как «выключен», и оборванная выборка погасила бы живые.
     List<ProviderTerminalRow> fetchActive();
 
-    // Строка выгрузки: мерчант у провайдера, его название и логин терминала.
-    record ProviderTerminalRow(String rid, String title, String login) {
+    // Строка выгрузки: мерчант у провайдера, его название, логин терминала и номер терминала
+    // (terminal.rid) — его pbl передаёт при создании заказа (Р-96).
+    record ProviderTerminalRow(String rid, String title, String login, String terminalRid) {
     }
 }

@@ -162,6 +162,9 @@ export interface TranslationDictionary {
     customerNameLabel: string;
     customerEmailLabel: string;
     customerPhoneLabel: string;
+    /** Телефон клиента — только азербайджанский номер (Р-96): провайдер ждёт код страны и номер раздельно. */
+    customerPhoneHint: string;
+    customerPhoneInvalid: string;
     usageTypeLabel: string;
     singleUse: string;
     multipleUse: string;
@@ -472,6 +475,8 @@ export interface TranslationDictionary {
     syncApplied: string;
     syncSkipped: string;
     login: string;
+    /** Колонка и подпись терминала — номер терминала у провайдера (Р-96), у старых — логин. */
+    terminal: string;
     /**
      * Кнопка «Тест» и её исходы. Проверка — пробный заказ у провайдера с кредами компании терминала
      * (Р-93); различать нужно все четыре исхода: следующий шаг у каждого свой (`utils/terminalCheck.ts`).
@@ -532,6 +537,8 @@ export interface TranslationDictionary {
      */
     providerLogin: string;
     providerLoginHint: string;
+    /** Свободных логинов мультимерчантов в справочнике нет (Р-95). */
+    providerLoginEmpty: string;
     /** Итог обновления справочника логинов мультимерчантов (Р-94) — по кнопке в форме компании. */
     loginsSyncApplied: string;
     loginsSyncSkipped: string;
@@ -819,6 +826,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       customerNameLabel: 'Customer Name',
       customerEmailLabel: 'Customer Email',
       customerPhoneLabel: 'Customer Phone',
+      customerPhoneHint: 'Azerbaijani number: +994 and 9 digits',
+      customerPhoneInvalid: 'The customer phone must be an Azerbaijani number: +994 and 9 digits, e.g. +994 70 330 10 25',
       usageTypeLabel: 'Usage Type',
       singleUse: 'Single Use (One Payment)',
       multipleUse: 'Multiple Uses (Reusable Link)',
@@ -1076,13 +1085,14 @@ export const translations: Record<Language, TranslationDictionary> = {
       editDialogTitle: 'Edit Terminal Details',
       name: 'Terminal Name',
       providerTerminal: 'Provider terminal',
-      providerTerminalHint: 'Name and login come from the provider directory. A terminal has no password: the acquirer is reached with the company credentials.',
-      providerTerminalEmpty: 'The provider directory is empty. Refresh it — the scheduled update may not have run yet.',
+      providerTerminalHint: 'Only terminals of merchants linked to the company login that are not added yet. Name, login and terminal number come from the provider directory; a terminal has no password.',
+      providerTerminalEmpty: 'No free terminals of this company’s merchants in the provider directory. Refresh it; if the terminal still does not appear, it is inactive at the provider, already added, or its merchant is not linked to the company login.',
       providerTerminalLoadFailed: 'Could not load the provider directory.',
       syncDirectory: 'Refresh directory',
       syncApplied: 'Directory refreshed. Terminals received',
       syncSkipped: 'Directory was not refreshed',
       login: 'Merchant Login ID',
+      terminal: 'Terminal',
       testAction: 'Test',
       checkOk: 'Company credentials accepted, a payment can be created',
       checkInvalid: 'Invalid company login or password',
@@ -1134,7 +1144,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       activateTitle: 'Mark company active?',
       activateQuestion: 'The company is marked active again. Nothing else changes.',
       providerLogin: 'Acquirer login',
-      providerLoginHint: 'The full multimerchant login: MultiMerchantSys/<login>. It must be active in the provider directory with at least one active merchant — refresh the directory if the login was created just now.',
+      providerLoginHint: 'A multimerchant login from the provider directory: only active logins with active merchants that no other company uses. Created just now — refresh the directory.',
+      providerLoginEmpty: 'No free multimerchant logins in the directory. Refresh it; if the login still does not appear, it is not created at the provider, is inactive, has no active merchants or belongs to another company.',
       loginsSyncApplied: 'Directory refreshed. Multimerchant logins received',
       loginsSyncSkipped: 'Login directory was not refreshed',
       providerPassword: 'Acquirer password',
@@ -1388,6 +1399,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       customerNameLabel: 'Müştərinin Adı',
       customerEmailLabel: 'Müştərinin E-poçtu',
       customerPhoneLabel: 'Müştərinin Telefonu',
+      customerPhoneHint: 'Azərbaycan nömrəsi: +994 və 9 rəqəm',
+      customerPhoneInvalid: 'Müştərinin telefonu Azərbaycan nömrəsi olmalıdır: +994 və 9 rəqəm, məsələn +994 70 330 10 25',
       usageTypeLabel: 'İstifadə Növü',
       singleUse: 'Bir dəfəlik (Tək ödəniş)',
       multipleUse: 'Çox dəfəlik (Təkrar istifadə)',
@@ -1645,13 +1658,14 @@ export const translations: Record<Language, TranslationDictionary> = {
       editDialogTitle: 'Terminal Parametrlərini Redaktə Et',
       name: 'Terminalın Adı',
       providerTerminal: 'Provayder terminalı',
-      providerTerminalHint: 'Ad və login provayder kataloqundan gəlir. Terminalın şifrəsi yoxdur: provayderə şirkətin məlumatları ilə müraciət olunur.',
-      providerTerminalEmpty: 'Provayder kataloqu boşdur. Onu yeniləyin — planlı yenilənmə hələ işləməmiş ola bilər.',
+      providerTerminalHint: 'Yalnız şirkət logininə bağlı merçantların hələ əlavə edilməmiş terminalları. Ad, login və terminal nömrəsi provayder kataloqundan gəlir; terminalın şifrəsi yoxdur.',
+      providerTerminalEmpty: 'Kataloqda bu şirkətin merçantlarının boş terminalı yoxdur. Kataloqu yeniləyin; terminal yenə görünmürsə, o provayderdə aktiv deyil, artıq əlavə edilib və ya merçantı şirkət logininə bağlı deyil.',
       providerTerminalLoadFailed: 'Provayder kataloqunu yükləmək mümkün olmadı.',
       syncDirectory: 'Kataloqu yenilə',
       syncApplied: 'Kataloq yeniləndi. Alınan terminallar',
       syncSkipped: 'Kataloq yenilənmədi',
       login: 'Mərfəti Terminal Logini',
+      terminal: 'Terminal',
       testAction: 'Test',
       checkOk: 'Şirkətin məlumatları qəbul edildi, ödəniş yaratmaq olar',
       checkInvalid: 'Şirkətin logini və ya şifrəsi yanlışdır',
@@ -1703,7 +1717,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       activateTitle: 'Şirkət aktiv işarələnsin?',
       activateQuestion: 'Şirkət yenidən aktiv işarələnəcək. Başqa heç nə dəyişmir.',
       providerLogin: 'Provayder logini',
-      providerLoginHint: 'Multimerçant logini tam şəkildə: MultiMerchantSys/<login>. O, provayder kataloqunda aktiv olmalı və ən azı bir aktiv merçantı olmalıdır — login indicə yaradılıbsa, kataloqu yeniləyin.',
+      providerLoginHint: 'Provayder kataloqundan multimerçant logini: yalnız aktiv merçantları olan, başqa şirkətin istifadə etmədiyi aktiv loginlər. İndicə yaradılıbsa — kataloqu yeniləyin.',
+      providerLoginEmpty: 'Kataloqda boş multimerçant logini yoxdur. Kataloqu yeniləyin; login yenə görünmürsə, o provayderdə yaradılmayıb, aktiv deyil, aktiv merçantı yoxdur və ya başqa şirkətə aiddir.',
       loginsSyncApplied: 'Kataloq yeniləndi. Alınan multimerçant loginləri',
       loginsSyncSkipped: 'Login kataloqu yenilənmədi',
       providerPassword: 'Provayder şifrəsi',
@@ -1957,6 +1972,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       customerNameLabel: 'Имя клиента',
       customerEmailLabel: 'Email клиента',
       customerPhoneLabel: 'Телефон клиента',
+      customerPhoneHint: 'Азербайджанский номер: +994 и 9 цифр',
+      customerPhoneInvalid: 'Телефон клиента — только азербайджанский номер: +994 и 9 цифр, например +994 70 330 10 25',
       usageTypeLabel: 'Тип использования',
       singleUse: 'Одноразовая (Один платеж)',
       multipleUse: 'Многоразовая (Многократная оплата)',
@@ -2214,13 +2231,14 @@ export const translations: Record<Language, TranslationDictionary> = {
       editDialogTitle: 'Редактировать параметры терминала',
       name: 'Название терминала',
       providerTerminal: 'Терминал провайдера',
-      providerTerminalHint: 'Название и логин берутся из справочника провайдера. Пароля у терминала нет: к провайдеру ходят с логином и паролем компании.',
-      providerTerminalEmpty: 'Справочник провайдера пуст. Обновите его — плановое обновление могло ещё не пройти.',
+      providerTerminalHint: 'Только терминалы мерчантов, привязанных к логину компании, и ещё не заведённые. Название, логин и номер терминала — из справочника провайдера; пароля у терминала нет.',
+      providerTerminalEmpty: 'Свободных терминалов мерчантов этой компании в справочнике нет. Обновите справочник; если терминал так и не появился — он выключен у провайдера, уже заведён или его мерчант не привязан к логину компании.',
       providerTerminalLoadFailed: 'Не удалось загрузить справочник провайдера.',
       syncDirectory: 'Обновить справочник',
       syncApplied: 'Справочник обновлён. Получено терминалов',
       syncSkipped: 'Справочник не обновлён',
       login: 'Логин терминала мерчанта',
+      terminal: 'Терминал',
       testAction: 'Тест',
       checkOk: 'Данные компании приняты, платёж создать можно',
       checkInvalid: 'Неверный логин или пароль компании',
@@ -2272,7 +2290,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       activateTitle: 'Пометить компанию активной?',
       activateQuestion: 'Компания снова будет помечена активной. Больше ничего не меняется.',
       providerLogin: 'Логин к провайдеру',
-      providerLoginHint: 'Логин мультимерчанта целиком: MultiMerchantSys/<логин>. Он должен быть активен в справочнике провайдера и иметь хотя бы одного активного мерчанта — только что заведённый подтяните кнопкой «Обновить справочник».',
+      providerLoginHint: 'Логин мультимерчанта из справочника провайдера: в списке только активные логины с активными мерчантами, не занятые другой компанией. Только что заведённый — «Обновить справочник».',
+      providerLoginEmpty: 'Свободных логинов мультимерчантов в справочнике нет. Обновите справочник; если логин так и не появился — он не заведён у провайдера, выключен, без активных мерчантов или уже у другой компании.',
       loginsSyncApplied: 'Справочник обновлён. Получено логинов мультимерчантов',
       loginsSyncSkipped: 'Справочник логинов не обновлён',
       providerPassword: 'Пароль к провайдеру',

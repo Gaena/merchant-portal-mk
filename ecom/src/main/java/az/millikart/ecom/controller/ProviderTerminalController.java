@@ -47,7 +47,7 @@ public class ProviderTerminalController {
                 : repository.findByActiveTrueOrderByTitleAsc();
         return terminals.stream()
                 .map(t -> new ProviderTerminalResponse(
-                        t.getRid(), t.getTitle(), t.getLogin(), t.isActive(), t.getLastSeenAt()))
+                        t.getRid(), t.getTitle(), t.getLogin(), t.getTerminalRid(), t.isActive(), t.getLastSeenAt()))
                 .toList();
     }
 

@@ -73,7 +73,7 @@ public class ProviderTerminalStatusRepository {
     }
 
     /** Строка слепка: то, что провайдер знает о своём терминале. Пароля у него мы не спрашиваем. */
-    public record ProviderTerminalRow(String rid, String title, String login, boolean active) {
+    public record ProviderTerminalRow(String rid, String title, String login, boolean active, String terminalRid) {
 
         static final String TERMINAL_OWNER_PREFIX = "TerminalSys/";
 
@@ -95,7 +95,7 @@ public class ProviderTerminalStatusRepository {
             return Optional.empty();
         }
         List<Object[]> rows = entityManager
-                .createNativeQuery("SELECT rid, title, login, active FROM provider_terminals WHERE rid = :rid")
+                .createNativeQuery("SELECT rid, title, login, active, terminal_rid FROM provider_terminals WHERE rid = :rid")
                 .setParameter("rid", rid)
                 .getResultList();
         if (rows.isEmpty()) {
@@ -111,7 +111,7 @@ public class ProviderTerminalStatusRepository {
             return Map.of();
         }
         List<Object[]> rows = entityManager
-                .createNativeQuery("SELECT rid, title, login, active FROM provider_terminals")
+                .createNativeQuery("SELECT rid, title, login, active, terminal_rid FROM provider_terminals")
                 .getResultList();
         Map<String, ProviderTerminalRow> byRid = new HashMap<>();
         for (Object[] row : rows) {
@@ -127,7 +127,8 @@ public class ProviderTerminalStatusRepository {
                 String.valueOf(row[0]),
                 row[1] != null ? String.valueOf(row[1]) : null,
                 row[2] != null ? String.valueOf(row[2]) : null,
-                Boolean.TRUE.equals(row[3]));
+                Boolean.TRUE.equals(row[3]),
+                row[4] != null ? String.valueOf(row[4]) : null);
     }
 
     private boolean snapshotTableMissing() {

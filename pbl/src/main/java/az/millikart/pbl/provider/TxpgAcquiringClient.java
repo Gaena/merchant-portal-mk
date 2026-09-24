@@ -2,8 +2,10 @@ package az.millikart.pbl.provider;
 
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.PaymentOutcomeUnknownException;
+import az.millikart.pbl.domain.CustomerPhone;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentType;
+import az.millikart.pbl.domain.UsageType;
 import az.millikart.pbl.provider.dto.EcomCreateOrderRequest;
 import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
 import az.millikart.pbl.provider.dto.MoneyOperationResult;
@@ -65,9 +67,11 @@ public class TxpgAcquiringClient implements AcquiringClient {
     @Override
     @CircuitBreaker(name = "acquiring")
     @Retry(name = "acquiring")
-    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, UUID ridByMerchant, String hppRedirectUrl) {
+    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
+                                                   UUID ridByMerchant, String hppRedirectUrl) {
         String url = UriComponentsBuilder.fromUriString(gatewayBaseUrl)
                 .path(createOrderPath)
+                .queryParam("terminalRid", terminalRid)
                 .toUriString();
 
         String typeRid = (link.getPaymentType() == PaymentType.DMS) ? "Order_DMS" : "Order_SMS";
@@ -83,12 +87,14 @@ public class TxpgAcquiringClient implements AcquiringClient {
                         link.getDescription() != null ? link.getDescription() : "Payment via Pay-By-Link",
                         "az",
                         hppRedirectUrl,
-                        subMerchant
+                        subMerchant,
+                        tdsPresetAreqOf(link)
                 )
         );
 
-        log.info("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, RidByMerchant: {}, Type: {}, Amount: {} {}",
-                ProviderPayloads.urlForLog(url), credentials.login(), ridByMerchant, typeRid, link.getAmount(), link.getCurrency());
+        log.info("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, TerminalRid: {}, RidByMerchant: {}, Type: {}, Amount: {} {}",
+                ProviderPayloads.urlForLog(url), credentials.login(), terminalRid, ridByMerchant, typeRid,
+                link.getAmount(), link.getCurrency());
         log.debug("PROVIDER REQ BODY [createEcomOrder]: {}", request);
 
         try {
@@ -253,6 +259,27 @@ public class TxpgAcquiringClient implements AcquiringClient {
         }
     }
 
+    // Данные клиента для 3DS (Р-96): только у одноразовой ссылки — у многоразовой клиента нет — и только
+    // заполненные поля. Телефон, который не разбирается как азербайджанский (ссылки до Р-96), не уходит.
+    private static EcomCreateOrderRequest.TdsPresetAreq tdsPresetAreqOf(PaymentLink link) {
+        if (link.getUsageType() != UsageType.SINGLE) {
+            return null;
+        }
+        String name = blankToNull(link.getCustomerName());
+        String email = blankToNull(link.getCustomerEmail());
+        EcomCreateOrderRequest.Phone phone = CustomerPhone.subscriberOf(link.getCustomerPhone())
+                .map(subscriber -> new EcomCreateOrderRequest.Phone(subscriber, CustomerPhone.COUNTRY_CODE))
+                .orElse(null);
+        if (name == null && email == null && phone == null) {
+            return null;
+        }
+        return new EcomCreateOrderRequest.TdsPresetAreq(name, email, phone);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
     // Код ошибки, которым провайдер отвечает на неверный логин или пароль — с Р-93 это креды компании.
     private static final String INVALID_LOGIN = "InvalidLogin";
 
@@ -272,10 +299,11 @@ public class TxpgAcquiringClient implements AcquiringClient {
      * может прислать и в 200, и в 4xx, и разбирать надо тело в обоих случаях.
      */
     @Override
-    public TerminalCheckResult checkOrderCreation(ProviderCredentials credentials) {
+    public TerminalCheckResult checkOrderCreation(ProviderCredentials credentials, String terminalRid) {
         String login = credentials.login();
         String url = UriComponentsBuilder.fromUriString(gatewayBaseUrl)
                 .path(createOrderPath)
+                .queryParam("terminalRid", terminalRid)
                 .toUriString();
 
         EcomCreateOrderRequest request = new EcomCreateOrderRequest(
@@ -287,7 +315,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
                         "Terminal credentials check",
                         "az",
                         gatewayBaseUrl,
-                        new EcomCreateOrderRequest.SubMerchant("https://millikart.az/")
+                        new EcomCreateOrderRequest.SubMerchant("https://millikart.az/"),
+                        null
                 )
         );
 

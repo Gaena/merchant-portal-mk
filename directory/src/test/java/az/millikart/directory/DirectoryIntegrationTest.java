@@ -161,7 +161,7 @@ public class DirectoryIntegrationTest {
                         .content(objectMapper.writeValueAsString(createComp)))
                 .andExpect(status().isCreated());
 
-        DirectoryTestFixtures.providerTerminal(jdbcTemplate, "E1120020", "Main Terminal", "BS00001");
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", "E1120020", "Main Terminal", "BS00001");
         String created = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -170,6 +170,7 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.id", notNullValue()))
                 .andExpect(jsonPath("$.name", is("Main Terminal")))
                 .andExpect(jsonPath("$.login", is("TerminalSys/BS00001")))
+                .andExpect(jsonPath("$.terminalRid", is("TID-E1120020")))
                 .andExpect(jsonPath("$.createdBy", is("admin@millikart.az")))
                 .andReturn().getResponse().getContentAsString();
         int terminalId = objectMapper.readTree(created).get("id").asInt();
@@ -254,7 +255,7 @@ public class DirectoryIntegrationTest {
         createCompany("comp-01", "MilliKart LLC");
 
         int first = createTerminal("First Terminal", "comp-01", adminToken);
-        DirectoryTestFixtures.providerTerminal(jdbcTemplate, "RID-SECOND", "Second Terminal", "BS00002");
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", "RID-SECOND", "Second Terminal", "BS00002");
         String body = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -605,6 +606,94 @@ public class DirectoryIntegrationTest {
                 .isEqualTo("MultiMerchantSys/comp-01");
     }
 
+    // Логин компании выбирается из справочника (Р-95): в списке только то, что пройдёт проверку при
+    // сохранении, и ничего занятого — ни живой компанией, ни удалённой (уникальный индекс держит и её логин).
+    @Test
+    public void freeProviderLogins_listOnlyLoginsThatPassTheCheck_andAreNotTaken() throws Exception {
+        jdbcTemplate.update("DELETE FROM provider_logins WHERE login = 'free-login'");
+        jdbcTemplate.update("INSERT INTO provider_logins (login, login_status, link_status, merchant_rid, merchant_title) "
+                + "VALUES ('free-login', 'Active', 'Active', 'M-A', 'Shop A'), ('free-login', 'Active', 'Active', 'M-B', 'Shop B'), "
+                + "('free-login', 'Active', 'Blocked', 'M-C', 'Shop C')");
+        DirectoryTestFixtures.providerLogin(jdbcTemplate, "blocked-login", "Blocked", "Active", "M-2");
+        DirectoryTestFixtures.providerLogin(jdbcTemplate, "lonely-login", "Active", null, null);
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Deleted LLC");
+        mockMvc.perform(delete("/api/v1/companies/comp-02").header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isNoContent());
+
+        String body = mockMvc.perform(get("/api/v1/companies/provider-logins")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        List<String> logins = objectMapper.readTree(body).findValuesAsText("login");
+        assertThat(logins).contains("MultiMerchantSys/free-login", "MultiMerchantSys/comp-03")
+                .doesNotContain("MultiMerchantSys/comp-01", "MultiMerchantSys/comp-02",
+                        "MultiMerchantSys/blocked-login", "MultiMerchantSys/lonely-login");
+        JsonNode free = null;
+        for (JsonNode option : objectMapper.readTree(body)) {
+            if ("MultiMerchantSys/free-login".equals(option.get("login").asText())) {
+                free = option;
+            }
+        }
+        assertThat(free).isNotNull();
+        assertThat(free.get("merchants").toString()).isEqualTo("[\"Shop A\",\"Shop B\"]");
+    }
+
+    @Test
+    public void freeProviderLogins_areForASystemAdminOnly() throws Exception {
+        mockMvc.perform(get("/api/v1/companies/provider-logins")
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/companies/provider-logins")
+                        .header(HttpHeaders.AUTHORIZATION, auditorToken))
+                .andExpect(status().isForbidden());
+    }
+
+    // Терминал компании — только мерчант её логина мультимерчанта (Р-96)
+
+    @Test
+    public void createTerminal_ofAMerchantOutsideTheCompanyLogin_isRefused() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        DirectoryTestFixtures.providerTerminal(jdbcTemplate, "RID-FOREIGN", "Foreign Shop", "FS00001");
+
+        mockMvc.perform(post("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-FOREIGN"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("does not belong to the multimerchant login of company comp-01")));
+
+        assertThat(terminalRepository.findByMerchantRid("RID-FOREIGN")).isEmpty();
+    }
+
+    // В списке для формы — только активные терминалы мерчантов логина компании, ещё не заведённые у нас.
+    @Test
+    public void providerTerminals_forACompany_listOnlyItsFreeMerchants() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", "RID-FREE", "Free Shop", "FR00001");
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", "RID-TAKEN", "Taken Shop", "TK00001");
+        DirectoryTestFixtures.providerTerminal(jdbcTemplate, "RID-OFF", "Off Shop", "OF00001", false);
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-01", "RID-OFF");
+        DirectoryTestFixtures.providerTerminal(jdbcTemplate, "RID-FOREIGN", "Foreign Shop", "FS00001");
+        mockMvc.perform(post("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-TAKEN"))))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/v1/terminals/provider-terminals").param("companyId", "comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].rid", is("RID-FREE")))
+                .andExpect(jsonPath("$[0].login", is("FR00001")))
+                .andExpect(jsonPath("$[0].terminalRid", is("TID-RID-FREE")));
+        mockMvc.perform(get("/api/v1/terminals/provider-terminals").param("companyId", "comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1))
+                .andExpect(status().isForbidden());
+    }
+
     // Фикстуры
 
     private void assertCompanyRefused(String providerLogin, String reason) throws Exception {
@@ -635,7 +724,7 @@ public class DirectoryIntegrationTest {
     // из справочника провайдера, поэтому сначала — строка справочника с этим названием (Р-93).
     private int createTerminal(String name, String companyId, String token) throws Exception {
         String rid = "RID-" + UUID.randomUUID().toString().substring(0, 8);
-        DirectoryTestFixtures.providerTerminal(jdbcTemplate, rid, name, "term_login");
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, companyId, rid, name, "term_login");
         CreateTerminalRequest request = new CreateTerminalRequest(companyId, rid);
         String body = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, token)

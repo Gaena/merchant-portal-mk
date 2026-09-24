@@ -33,6 +33,10 @@ public class ProviderTerminal {
     @Column(name = "login")
     private String login;
 
+    // Номер терминала у провайдера (terminal.rid), Р-96.
+    @Column(name = "terminal_rid")
+    private String terminalRid;
+
     @Column(name = "active", nullable = false)
     @Builder.Default
     private boolean active = true;

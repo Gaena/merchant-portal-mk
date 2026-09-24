@@ -4996,6 +4996,84 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
 
 ---
 
+### 24.09.2026 — логин компании выбирается из справочника (Р-95)
+
+- **Зачем.** Предложение заказчика: не вводить логин компании руками, а выбирать из логинов провайдера,
+  ещё не заведённых у нас.
+- **directory.** `GET /api/v1/companies/provider-logins` (`SYSTEM_ADMIN`, отказ — `COMPANY` / `LIST` в
+  журнал): логины `provider_logins`, годные к проверке Р-94, минус занятые любой компанией, включая
+  удалённые (`CompanyRepository.findAllProviderLogins`), с префиксом `MultiMerchantSys/` и названиями
+  мерчантов активных связей (`ProviderLoginSnapshotRepository.eligibleLogins`). `POST`/`PATCH` не менялись.
+- **Фронтенд.** В формах компании поле логина заменено выбором с поиском (логин и под ним мерчанты); в
+  окне «Доступ к провайдеру» в список добавлен текущий логин компании; после «Обновить справочник» список
+  перечитывается; пустой список объясняет, почему логина может не быть. Ручного ввода нет. Тексты — на
+  трёх языках.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `DirectoryIntegrationTest` —
+  `freeProviderLogins_listOnlyLoginsThatPassTheCheck_andAreNotTaken`,
+  `freeProviderLogins_areForASystemAdminOnly`. `:directory:compileTestJava`, `npm run typecheck`,
+  `npx oxlint src/app` — без ошибок.
+- Документы: `decisions.md` (Р-95), `directory.md` §3.1, `AGENTS.md` §6, §9, `admin_guide.md` §4,
+  `technical_handover.md` §4.2, Postman-коллекция `directory`.
+
+---
+
+### 24.09.2026 — причина несостоявшейся синхронизации справочников
+
+- **Зачем.** На локальной схеме `TXPG` без `LOGIN2MERCHANT` синхронизация логинов отвечала `gateway
+  unavailable`, хотя шлюз был доступен, а не хватало таблицы.
+- **ecom.** `ProviderSyncFailure.reason`: нет соединения (`DataAccessResourceFailureException`) — `gateway
+  unavailable: …`, иначе — `gateway query failed: …`, с первой строкой самой глубокой причины. Используют
+  обе синхронизации — терминалов и логинов; та же строка — в логе и в `skippedBecause`.
+- **Локальная схема `TXPG`** (контейнер `oracle-free`, вне репозитория) дополнена по выгрузке заказчика:
+  `LOGIN2MERCHANT`, логин 523 `MultiMerchantSys` `bazarstore@company.com`, мерчанты 584 и 585, у
+  `LOGIN.TERMINALID` снят `NOT NULL`. Слепок логинов снялся: 4 связи.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `ProviderTerminalSyncTest.aFailedQueryChangesNothing` (обрыв
+  соединения), `ProviderLoginSyncTest.aFailedQueryKeepsThePreviousSnapshot_andNamesTheDatabaseError`
+  (`ORA-00942`). `:ecom:compileTestJava` — без ошибок.
+- Документы: `ecom.md` §3.2.
+
+---
+
+### 24.09.2026 — терминал мультимерчанта в заказе, терминалы только мерчантов компании, клиент ссылки (Р-96)
+
+- **Зачем.** Заказчик прислал запросы провайдера (логины и терминалы, цепочка «логин мультимерчанта →
+  `login2merchant` → мерчант → логин `TerminalSys` → терминал») и новый пример создания заказа:
+  `POST /order?terminalRid=…` с кредами компании и `tdsPresetAreq` с данными клиента.
+- **ecom.** Справочник терминалов берёт `t.rid` и только логины `TerminalSys` (миграция `004`:
+  `provider_terminals.terminal_rid`). На выгрузке стенда фильтр чинит мерчантов с логинами `TerminalUser`
+  (TEST 3, мерчант 1), которые справочник считал неоднозначными и не обновлял.
+- **directory.** Миграция `009`: `terminals.terminal_rid`. Заведение берёт номер из справочника и требует,
+  чтобы мерчант был связан активной связью с логином компании (`provider_logins`), иначе 400; строка без
+  номера — 400. `GET /api/v1/terminals/provider-terminals?companyId=` (`SYSTEM_ADMIN`) — терминалы мерчантов
+  логина компании, активные, с номером и ещё не заведённые. Сверка переносит смену номера, как логин и
+  название. `terminalRid` — в `TerminalResponse` и `TerminalOptionResponse`.
+- **pbl.** Миграция `012`: `terminals.terminal_rid`. `ProviderCredentialsService.terminalRidOf` — без
+  номера 400 до провайдера (создание и открытие ссылки, «Тест»). `createEcomOrder` и `checkOrderCreation`
+  шлют `?terminalRid=…`; в заказ добавлен `tdsPresetAreq` — имя, почта и телефон клиента одноразовой ссылки,
+  только заполненные, телефон как `{cc, subscriber}`; персональные данные в лог не идут. `CustomerPhone`:
+  азербайджанский номер (`+994`/`994`/`0` и 9 цифр) хранится как `+994XXXXXXXXX`, иное — 400. Клиент у
+  многоразовой ссылки при создании и правке — 400. `terminalRid` — в `topTerminals` сводки ссылок.
+- **Фронтенд.** Подпись терминала — `terminalRid`, у старых — логин (`utils/terminals.ts`, страницы
+  терминалов, ссылок, операции, статистика). Форма терминала берёт список по компании и перечитывает его
+  при смене компании. Форма ссылки: блок «Клиент» только у одноразовой, проверка телефона, подсказка;
+  «Создать новую ссылку с теми же данными» не переносит клиента многоразовой. Тексты на трёх языках.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `ecom` — `TxpgProviderTerminalSourceTest` (`t.rid`, фильтр
+  `TerminalSys`), `ProviderTerminalSyncTest.theLoginAndTitleAlwaysFollowTheProvider` (номер);
+  `directory` — `createTerminal_ofAMerchantOutsideTheCompanyLogin_isRefused`,
+  `providerTerminals_forACompany_listOnlyItsFreeMerchants`, номер в `testTerminalLifecycleAndRBAC`,
+  `TerminalStatusReconciliationTest.aProviderLoginChangeReachesOurTerminal`, поля фида в
+  `DirectoryListPaginationTest`, фикстуры `DirectoryTestFixtures.companyTerminal`/`linkMerchant`;
+  `pbl` — `CustomerPhoneTest` (новый), `TxpgAcquiringClientTest` (номер в адресе, `tdsPresetAreq`, его
+  отсутствие у многоразовой и без годных полей), `PaymentLinkIntegrationTest` (клиент у многоразовой,
+  телефон, терминал без номера, номер в заказе), `TerminalCheckIntegrationTest` (терминал без номера);
+  фикстуры терминалов с `terminalRid`, многоразовая ссылка в фикстуре — без клиента.
+  `compileTestJava` по `directory`, `ecom`, `pbl`, `npm run typecheck`, `npx oxlint src/app` — без ошибок.
+- Документы: `decisions.md` (Р-96), `AGENTS.md` §5, §7, §9, §10, `directory.md`, `pay-by-link.md`,
+  `ecom.md` §3, `application_description.md`, `deployment_guide.md` §8.3, `admin_guide.md` §5,
+  `technical_handover.md` §4.2, Postman-коллекции `directory` и `pbl`.
+
+---
+
 ## Описания закрытых задач
 
 > Перенесено из `AGENTS.md` §10 («Закрытые блокеры» и записи, попавшие в «Тонкости») 13.09.2026

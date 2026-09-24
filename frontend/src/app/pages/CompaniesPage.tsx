@@ -28,6 +28,7 @@ import {
   TablePagination,
   Tooltip,
   InputAdornment,
+  Autocomplete,
 } from '@mui/material';
 import {
   Business as BusinessIcon,
@@ -43,7 +44,7 @@ import {
 
 import { useLanguage } from '../context/LanguageContext';
 import type { TranslationDictionary } from '../i18n/translations';
-import type { CompanyDto, ProviderTerminalSyncOutcome } from '../types/dto';
+import type { CompanyDto, ProviderLoginOption, ProviderTerminalSyncOutcome } from '../types/dto';
 
 /** Действие, ждущее подтверждения. Пока оно не подтверждено, на сервер ничего не уходит. */
 type PendingAction =
@@ -82,6 +83,10 @@ export const CompaniesPage: React.FC = () => {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<ProviderTerminalSyncOutcome | null>(null);
   const [syncError, setSyncError] = useState('');
+  // Логин не вводится, а выбирается из свободных логинов справочника (Р-95): в списке только то, что
+  // пройдёт проверку при сохранении. Проверка на сервере остаётся — логин могут занять или выключить.
+  const [loginOptions, setLoginOptions] = useState<ProviderLoginOption[]>([]);
+  const [loginOptionsState, setLoginOptionsState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [searchQuery, setSearchQuery] = useState('');
   // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
   // чтобы не слать запрос на каждую букву.
@@ -156,18 +161,33 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
+  const loadLoginOptions = async () => {
+    setLoginOptionsState('loading');
+    try {
+      const res = await apiClient.get<ProviderLoginOption[]>('/api/v1/companies/provider-logins');
+      setLoginOptions(Array.isArray(res.data) ? res.data : []);
+      setLoginOptionsState('ready');
+    } catch {
+      setLoginOptions([]);
+      setLoginOptionsState('failed');
+    }
+  };
+
   const openCredentials = (company: CompanyDto) => {
     setCredsCompany(company);
     setCredsForm({ providerLogin: company.providerLogin ?? '', providerPassword: '' });
     setCredsError('');
     setSyncResult(null);
     setSyncError('');
+    loadLoginOptions();
   };
 
   const openCreate = () => {
     setError('');
     setSyncResult(null);
     setSyncError('');
+    setForm(f => ({ ...f, providerLogin: '' }));
+    loadLoginOptions();
     setCreateOpen(true);
   };
 
@@ -178,6 +198,7 @@ export const CompaniesPage: React.FC = () => {
     try {
       const res = await apiClient.post<ProviderTerminalSyncOutcome>('/api/v1/ecom/provider-terminals/sync');
       setSyncResult(res.data);
+      await loadLoginOptions();
     } catch (err: any) {
       setSyncError(err.response?.data?.message || tObj.terminals.providerTerminalLoadFailed);
     } finally {
@@ -185,7 +206,44 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
-  // Кнопка и её итог — в обеих формах, где вводят логин: заведение компании и смена доступа.
+  // Выбор логина — в обеих формах: заведение компании и смена доступа. current — логин, уже стоящий у
+  // компании: он занят ею самой, поэтому в списке свободных его нет, а остаться на нём должно быть можно.
+  const loginPicker = (value: string, onChange: (login: string) => void, current?: string | null) => {
+    const options = current && !loginOptions.some(option => option.login === current)
+      ? [{ login: current, merchants: [] }, ...loginOptions]
+      : loginOptions;
+    return (
+      <Box>
+        <Autocomplete
+          options={options}
+          value={options.find(option => option.login === value) ?? null}
+          loading={loginOptionsState === 'loading'}
+          onChange={(_, option) => onChange(option?.login ?? '')}
+          getOptionLabel={option => option.login}
+          isOptionEqualToValue={(option, selected) => option.login === selected.login}
+          renderOption={({ key, ...optionProps }, option) => (
+            <li key={key} {...optionProps}>
+              <Box>
+                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{option.login}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {option.merchants.length > 0 ? option.merchants.join(', ') : '—'}
+                </Typography>
+              </Box>
+            </li>
+          )}
+          renderInput={params => (
+            <TextField {...params} label={`${tObj.companies.providerLogin} *`} helperText={tObj.companies.providerLoginHint} />
+          )}
+        />
+        {loginOptionsState === 'failed' && <Alert severity="error" sx={{ mt: 1 }}>{tObj.common.loadFailed}</Alert>}
+        {loginOptionsState === 'ready' && options.length === 0 && (
+          <Alert severity="info" sx={{ mt: 1 }}>{tObj.companies.providerLoginEmpty}</Alert>
+        )}
+      </Box>
+    );
+  };
+
+  // Кнопка и её итог — в обеих формах, где выбирают логин: заведение компании и смена доступа.
   const directorySync = (
     <Box>
       <Button size="small" startIcon={<SyncIcon />} disabled={syncing} onClick={syncProviderDirectory}>
@@ -443,15 +501,7 @@ export const CompaniesPage: React.FC = () => {
               placeholder="e.g. Acme Supermarket LLC"
               fullWidth
             />
-            <TextField
-              label={`${tObj.companies.providerLogin} *`}
-              value={form.providerLogin}
-              onChange={e => setForm(f => ({ ...f, providerLogin: e.target.value }))}
-              placeholder="MultiMerchantSys/…"
-              helperText={tObj.companies.providerLoginHint}
-              autoComplete="off"
-              fullWidth
-            />
+            {loginPicker(form.providerLogin, login => setForm(f => ({ ...f, providerLogin: login })))}
             {directorySync}
             <TextField
               label={`${tObj.companies.providerPassword} *`}
@@ -476,15 +526,9 @@ export const CompaniesPage: React.FC = () => {
         <DialogContent>
           {credsError && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{credsError}</Alert>}
           <Stack spacing={2.5} sx={{ mt: 1 }}>
-            <TextField
-              label={`${tObj.companies.providerLogin} *`}
-              value={credsForm.providerLogin}
-              onChange={e => setCredsForm(f => ({ ...f, providerLogin: e.target.value }))}
-              placeholder="MultiMerchantSys/…"
-              helperText={tObj.companies.providerLoginHint}
-              autoComplete="off"
-              fullWidth
-            />
+            {loginPicker(credsForm.providerLogin,
+              login => setCredsForm(f => ({ ...f, providerLogin: login })),
+              credsCompany?.providerLogin)}
             {directorySync}
             <TextField
               label={tObj.companies.newProviderPassword}

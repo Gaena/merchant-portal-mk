@@ -375,7 +375,7 @@ public class TerminalBlockingIntegrationTest {
     // Терминал выбирается из справочника провайдера (Р-93): сначала строка справочника с этим названием.
     private int createTerminal(String name) throws Exception {
         String rid = "RID-" + UUID.randomUUID().toString().substring(0, 8);
-        DirectoryTestFixtures.providerTerminal(jdbcTemplate, rid, name, "term_login");
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", rid, name, "term_login");
         String body = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)

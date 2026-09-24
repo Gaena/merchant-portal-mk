@@ -131,19 +131,26 @@ public class TerminalStatusReconciliationService {
     private void alignIdentity(Terminal terminal, ProviderTerminalStatusRepository.ProviderTerminalRow row) {
         String login = row.gatewayLogin();
         String title = row.title() != null && !row.title().isBlank() ? row.title() : null;
+        String terminalRid = row.terminalRid() != null && !row.terminalRid().isBlank() ? row.terminalRid() : null;
         boolean loginChanged = login != null && !login.equals(terminal.getLogin());
         boolean titleChanged = title != null && !title.equals(terminal.getName());
-        if (!loginChanged && !titleChanged) {
+        // Номер терминала у провайдера — с ним pbl создаёт заказ (Р-96); сменился — заказ ушёл бы на старый.
+        boolean terminalRidChanged = terminalRid != null && !terminalRid.equals(terminal.getTerminalRid());
+        if (!loginChanged && !titleChanged && !terminalRidChanged) {
             return;
         }
         String details = "Provider terminal " + row.rid() + " changed for terminal " + terminal.getId() + ":"
                 + (loginChanged ? " login " + terminal.getLogin() + " -> " + login : "")
-                + (titleChanged ? " name " + terminal.getName() + " -> " + title : "");
+                + (titleChanged ? " name " + terminal.getName() + " -> " + title : "")
+                + (terminalRidChanged ? " terminal " + terminal.getTerminalRid() + " -> " + terminalRid : "");
         if (loginChanged) {
             terminal.setLogin(login);
         }
         if (titleChanged) {
             terminal.setName(title);
+        }
+        if (terminalRidChanged) {
+            terminal.setTerminalRid(terminalRid);
         }
         terminal.setUpdatedBy(SYSTEM_ACTOR);
         terminalRepository.save(terminal);

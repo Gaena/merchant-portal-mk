@@ -185,8 +185,8 @@ public class OpenLinkService {
 
         log.debug("Using redirect URL for provider: {}", hppRedirectUrl);
 
-        EcomCreateOrderResponse response = acquiringClient.createEcomOrder(
-                link, providerCredentials.forTerminal(terminal), ridByMerchant, hppRedirectUrl);
+        EcomCreateOrderResponse response = acquiringClient.createEcomOrder(link, providerCredentials.forTerminal(terminal),
+                providerCredentials.terminalRidOf(terminal), ridByMerchant, hppRedirectUrl);
         if (response == null || response.order() == null) {
             log.error("Failed to register order at provider for ridByMerchant: {}", ridByMerchant);
             throw new BusinessException("Failed to register order with provider");

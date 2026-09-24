@@ -9,6 +9,7 @@ import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.PaymentOutcomeUnknownException;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentType;
+import az.millikart.pbl.domain.UsageType;
 import az.millikart.pbl.provider.ProviderCredentials;
 import az.millikart.pbl.provider.TxpgAcquiringClient;
 import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
@@ -48,6 +49,9 @@ class TxpgAcquiringClientTest {
     // Креды компании (Р-93): с ними идёт каждый вызов к провайдеру.
     private static final ProviderCredentials COMPANY_CREDENTIALS =
             new ProviderCredentials("TerminalSys/Admin", "company-password");
+
+    // Номер терминала у провайдера (Р-96): уходит в адрес создания заказа, POST /order?terminalRid=….
+    private static final String TERMINAL_RID = "00044558";
     private static final BigDecimal AMOUNT = new BigDecimal("100.00");
 
     // Ответ на refund из §5.7 контракта, дословно.
@@ -205,7 +209,7 @@ class TxpgAcquiringClientTest {
         server.expect(requestTo(Matchers.containsString("/order/" + ORDER_ID)))
                 .andExpect(MockRestRequestMatchers.header("Authorization", basic))
                 .andRespond(withSuccess("{\"order\":{\"status\":\"FullyPaid\"}}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andExpect(MockRestRequestMatchers.header("Authorization", basic))
                 .andRespond(withSuccess("{\"order\":{\"id\":987654,\"password\":\"p\",\"hppUrl\":\"https://x\"}}",
                         MediaType.APPLICATION_JSON));
@@ -213,7 +217,7 @@ class TxpgAcquiringClientTest {
         client.completeDms(ORDER_ID, "order-password", COMPANY_CREDENTIALS, AMOUNT);
         client.refund(ORDER_ID, "order-password", COMPANY_CREDENTIALS, AMOUNT);
         client.getOrderStatus(ORDER_ID, "order-password", COMPANY_CREDENTIALS);
-        client.checkOrderCreation(COMPANY_CREDENTIALS);
+        client.checkOrderCreation(COMPANY_CREDENTIALS, TERMINAL_RID);
 
         server.verify();
         Assertions.assertTrue(allLogs().noneMatch(m -> m.contains("company-password")),
@@ -523,7 +527,7 @@ class TxpgAcquiringClientTest {
     // конечно, возвращается: из него строится редирект плательщика.
     @Test
     void createEcomOrder_neverLogsTheOrderPassword() {
-        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andExpect(MockRestRequestMatchers.method(HttpMethod.POST))
                 .andRespond(withSuccess(CREATED_ORDER_BODY, MediaType.APPLICATION_JSON));
         PaymentLink link = PaymentLink.builder()
@@ -533,7 +537,7 @@ class TxpgAcquiringClientTest {
                 .description("P0-9 fixture")
                 .build();
 
-        EcomCreateOrderResponse response = client.createEcomOrder(link, COMPANY_CREDENTIALS,
+        EcomCreateOrderResponse response = client.createEcomOrder(link, COMPANY_CREDENTIALS, TERMINAL_RID,
                 UUID.randomUUID(), "https://pay.example.com/api/v1/payment-links/redirect/x");
 
         server.verify();
@@ -541,6 +545,56 @@ class TxpgAcquiringClientTest {
         Assertions.assertTrue(allLogs().anyMatch(m -> m.contains("PROVIDER RESP BODY [createEcomOrder]")),
                 "the DEBUG body line must have been captured, or this test proves nothing: " + allLogs().toList());
         assertNoLogLineContains(ORDER_PASSWORD);
+    }
+
+    // Р-96: заказ создаётся на терминале провайдера — номер в адресе. Клиент одноразовой ссылки уходит в
+    // tdsPresetAreq, телефон раздельно — код страны и номер; billingAddress, homePhone, workPhone — нет.
+    // Персональные данные в лог не попадают.
+    @Test
+    void createEcomOrder_sendsTheTerminalAndTheCustomerOfASingleUseLink() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=00044558"))
+                .andExpect(MockRestRequestMatchers.content().json("""
+                        {"order": {"typeRid": "Order_SMS", "tdsPresetAreq": {"cardholderName": "Test Testov",
+                         "email": "test@test.az", "mobilePhone": {"subscriber": "703301025", "cc": "994"}}}}""", false))
+                .andExpect(MockRestRequestMatchers.jsonPath("$.order.billingAddress").doesNotExist())
+                .andExpect(MockRestRequestMatchers.jsonPath("$.order.tdsPresetAreq.homePhone").doesNotExist())
+                .andRespond(withSuccess(CREATED_ORDER_BODY, MediaType.APPLICATION_JSON));
+        PaymentLink link = PaymentLink.builder()
+                .paymentType(PaymentType.SMS).usageType(UsageType.SINGLE)
+                .amount(new BigDecimal("5.00")).currency("AZN").description("Р-96 fixture")
+                .customerName("Test Testov").customerEmail("test@test.az").customerPhone("+994703301025")
+                .build();
+
+        client.createEcomOrder(link, COMPANY_CREDENTIALS, TERMINAL_RID, UUID.randomUUID(),
+                "https://pay.example.com/api/v1/payment-links/redirect/x");
+
+        server.verify();
+        assertNoLogLineContains("test@test.az");
+        assertNoLogLineContains("703301025");
+    }
+
+    // У многоразовой ссылки клиента нет, даже если он остался в базе с прошлых времён; телефон, который не
+    // разбирается как азербайджанский, не уходит, — и без полей блока нет вовсе.
+    @Test
+    void createEcomOrder_multiUseLinkOrNoUsableCustomer_sendsNoTdsPresetAreq() {
+        for (int i = 0; i < 2; i++) {
+            server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
+                    .andExpect(MockRestRequestMatchers.jsonPath("$.order.tdsPresetAreq").doesNotExist())
+                    .andRespond(withSuccess(CREATED_ORDER_BODY, MediaType.APPLICATION_JSON));
+        }
+        PaymentLink multiUse = PaymentLink.builder()
+                .paymentType(PaymentType.SMS).usageType(UsageType.MULTIPLE)
+                .amount(new BigDecimal("5.00")).currency("AZN").description("multi")
+                .customerName("Legacy Name").customerEmail("legacy@test.az").build();
+        PaymentLink oldPhoneOnly = PaymentLink.builder()
+                .paymentType(PaymentType.SMS).usageType(UsageType.SINGLE)
+                .amount(new BigDecimal("5.00")).currency("AZN").description("old phone")
+                .customerPhone("call me after six").build();
+
+        client.createEcomOrder(multiUse, COMPANY_CREDENTIALS, TERMINAL_RID, UUID.randomUUID(), "https://pay.example.com/r/1");
+        client.createEcomOrder(oldPhoneOnly, COMPANY_CREDENTIALS, TERMINAL_RID, UUID.randomUUID(), "https://pay.example.com/r/2");
+
+        server.verify();
     }
 
     // Гарантия, на которой держится предыдущий случай: рекорд печатает все компоненты, поэтому
@@ -625,25 +679,25 @@ class TxpgAcquiringClientTest {
     // Заказ заведён — значит сразу и логин с паролем верны, и оплаты терминалу разрешены.
     @Test
     void terminalCheck_orderCreated_isOk() {
-        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andExpect(MockRestRequestMatchers.method(HttpMethod.POST))
                 .andExpect(MockRestRequestMatchers.header("Authorization", Matchers.startsWith("Basic ")))
                 .andRespond(withSuccess("{\"order\":{\"id\":987654,\"password\":\"p\",\"hppUrl\":\"https://x\"}}",
                         MediaType.APPLICATION_JSON));
 
         Assertions.assertEquals(TerminalCheckResult.Outcome.OK,
-                client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right")).outcome());
+                client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID).outcome());
         server.verify();
     }
 
     // Ровно тот ответ, что прислал провайдер на неверный пароль.
     @Test
     void terminalCheck_invalidLogin_isInvalidCredentials() {
-        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andRespond(withSuccess("{\"errorCode\":\"InvalidLogin\",\"errorDescription\":\"Invalid login or password\"}",
                         MediaType.APPLICATION_JSON));
 
-        TerminalCheckResult result = client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "wrong"));
+        TerminalCheckResult result = client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "wrong"), TERMINAL_RID);
 
         Assertions.assertEquals(TerminalCheckResult.Outcome.INVALID_CREDENTIALS, result.outcome());
         Assertions.assertEquals("InvalidLogin", result.providerErrorCode());
@@ -653,23 +707,23 @@ class TxpgAcquiringClientTest {
     // Тот же код может прийти и в 4xx — разбирать надо тело, а не статус.
     @Test
     void terminalCheck_invalidLoginInA4xx_isStillInvalidCredentials() {
-        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andRespond(withBadRequest().contentType(MediaType.APPLICATION_JSON)
                         .body("{\"errorCode\":\"InvalidLogin\",\"errorDescription\":\"Invalid login or password\"}"));
 
         Assertions.assertEquals(TerminalCheckResult.Outcome.INVALID_CREDENTIALS,
-                client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "wrong")).outcome());
+                client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "wrong"), TERMINAL_RID).outcome());
     }
 
     // Пароль подошёл, но заказ завести не дали — это не «неверный пароль», и выдать его за
     // такой нельзя: администратор пошёл бы менять ключ, который исправен.
     @Test
     void terminalCheck_otherProviderError_isRejectedWithItsWords() {
-        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andRespond(withSuccess("{\"errorCode\":\"MerchantBlocked\",\"errorDescription\":\"Merchant is blocked\"}",
                         MediaType.APPLICATION_JSON));
 
-        TerminalCheckResult result = client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"));
+        TerminalCheckResult result = client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID);
 
         Assertions.assertEquals(TerminalCheckResult.Outcome.REJECTED, result.outcome());
         Assertions.assertEquals("Merchant is blocked", result.providerMessage());
@@ -678,21 +732,21 @@ class TxpgAcquiringClientTest {
     // 5xx ничего не говорит о терминале. «Пароль неверный» здесь был бы ложью.
     @Test
     void terminalCheck_serverError_isUnreachableNotInvalid() {
-        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andRespond(withServerError());
 
         Assertions.assertEquals(TerminalCheckResult.Outcome.UNREACHABLE,
-                client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right")).outcome());
+                client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID).outcome());
     }
 
     // Проверка идёт без повторов: каждый повтор — ещё один пробный заказ у провайдера.
     @Test
     void terminalCheck_isSentExactlyOnce() {
         server.expect(org.springframework.test.web.client.ExpectedCount.once(),
-                        requestTo("https://gateway.txpg.example.com/order"))
+                        requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andRespond(withServerError());
 
-        client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"));
+        client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID);
 
         server.verify();
     }
@@ -700,11 +754,11 @@ class TxpgAcquiringClientTest {
     // Пароль терминала не должен оказаться в логах ни на каком уровне.
     @Test
     void terminalCheck_neverLogsThePassword() {
-        server.expect(requestTo("https://gateway.txpg.example.com/order"))
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andRespond(withSuccess("{\"errorCode\":\"InvalidLogin\",\"errorDescription\":\"Invalid login or password\"}",
                         MediaType.APPLICATION_JSON));
 
-        client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "super-secret-terminal-password"));
+        client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "super-secret-terminal-password"), TERMINAL_RID);
 
         Assertions.assertTrue(logEvents.list.stream()
                         .noneMatch(event -> event.getFormattedMessage().contains("super-secret-terminal-password")),

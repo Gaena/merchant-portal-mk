@@ -5,9 +5,11 @@ import az.millikart.common.search.SearchTerms;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.directory.dto.CompanyResponse;
 import az.millikart.directory.dto.CreateCompanyRequest;
+import az.millikart.directory.dto.ProviderLoginOption;
 import az.millikart.directory.dto.UpdateCompanyRequest;
 import az.millikart.directory.service.CompanyService;
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -56,6 +58,13 @@ public class CompanyController {
                 Math.max(page, 0),
                 Math.clamp(size, 1, MAX_PAGE_SIZE));
         return companyService.listCompanies(pageable, principal, SearchTerms.normalize(search));
+    }
+
+    // Свободные логины мультимерчантов для формы компании (Р-95). Литеральный путь Spring сопоставляет
+    // раньше, чем /{id}, поэтому код компании provider-logins сюда не попадёт.
+    @GetMapping("/provider-logins")
+    public List<ProviderLoginOption> providerLogins(@AuthenticationPrincipal UserPrincipal principal) {
+        return companyService.listFreeProviderLogins(principal);
     }
 
     @GetMapping("/{id}")

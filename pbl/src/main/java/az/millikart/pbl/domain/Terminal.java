@@ -35,6 +35,11 @@ public class Terminal {
     @Column(name = "company_id", nullable = true)
     private String companyId;
 
+    // Номер терминала у провайдера: с ним создаётся заказ (POST /order?terminalRid=…, Р-96). Пишет
+    // directory; пусто у терминалов, заведённых до Р-96 без справочника, — платежи по ним 400.
+    @Column(name = "terminal_rid")
+    private String terminalRid;
+
     // Пустым не бывает: колонка not null default 'ACTIVE' (005-terminal-status.xml).
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)

@@ -231,7 +231,8 @@ erDiagram
     terminals {
         integer id PK
         varchar name "Название"
-        varchar login "Логин у провайдера — подпись терминала; к шлюзу не уходит"
+        varchar login "Логин у провайдера; к шлюзу не уходит"
+        varchar terminal_rid "Номер терминала у провайдера — в заказ и в подпись (Р-96)"
         varchar company_id FK "→ companies.id"
         varchar status "ACTIVE / BLOCKED"
         varchar status_source "MANUAL / PROVIDER — кто выключил"
@@ -246,6 +247,7 @@ erDiagram
         varchar rid PK "merchantRid у провайдера"
         varchar title
         varchar login
+        varchar terminal_rid "terminal.rid провайдера (Р-96)"
         boolean active
         integer missing_runs "Сколько обновлений подряд терминал не приходил"
         timestamptz first_seen_at
@@ -350,6 +352,7 @@ changeset'ы не редактируются.
 | `directory` | `006-terminal-status-source.xml` | `terminals.status_source` (по умолчанию `MANUAL`), `terminals.merchant_rid`, уникальный индекс `uk_terminals_merchant_rid` |
 | `directory` | `007-terminal-id-sequence.xml` | последовательность `terminals_id_seq` — номера терминалов выдаёт база, продолжая после наибольшего существующего |
 | `directory` | `008-company-provider-credentials.xml` | `companies.provider_login` и `provider_password`, уникальный индекс `ux_companies_provider_login`; удаление `terminals.password` (Р-93) |
+| `directory` | `009-terminal-rid.xml` | `terminals.terminal_rid` — номер терминала у провайдера (Р-96) |
 | `pbl` | `001-initial-schema.xml` | `payment_links`, `transactions`; `terminals`, если ещё нет |
 | `pbl` | `002-add-indexes.xml` | индексы ссылок и транзакций |
 | `pbl` | `003-add-client-ip-and-user-agent.xml` | `transactions.client_ip`, `user_agent` |
@@ -361,9 +364,11 @@ changeset'ы не редактируются.
 | `pbl` | `009-rid-by-merchant.xml` | переименование `transactions.merchant_rid` → `rid_by_merchant` |
 | `pbl` | `010-transaction-refunds.xml` | `transaction_refunds` с индексами по `refunded_at` и `transaction_id`; на PostgreSQL — перенос подтверждённых возвратов из `provider_response.mpRefunds` (Р-89) |
 | `pbl` | `011-company-provider-credentials.xml` | `companies`, если ещё нет (в виде `auth/002`), колонки кредов, если их нет; удаление `terminals.password` (Р-93) |
+| `pbl` | `012-terminal-rid.xml` | `terminals.terminal_rid`, если его ещё нет (Р-96) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет |
 | `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам и индекс по логину (Р-94) |
+| `ecom` | `004-provider-terminal-rid.xml` | `provider_terminals.terminal_rid` (Р-96) |
 
 ### 4.4. Начальные данные
 
@@ -404,11 +409,11 @@ changeset'ы не редактируются.
 |:---|:---|:---|
 | `users`, `refresh_tokens` | `auth` | — |
 | `companies` | `directory` | `auth` — название компании нативным запросом для поиска пользователей; `pbl` — логин и пароль компании к провайдеру (Р-93) |
-| `terminals` | `directory` | `pbl` — компания и статус терминала для заказов у шлюза; `ecom` — логин для скоупа выписки, `merchant_rid` для её фильтра |
+| `terminals` | `directory` | `pbl` — компания, статус и `terminal_rid` терминала для заказов у шлюза; `ecom` — логин для скоупа выписки, `merchant_rid` для её фильтра |
 | `payment_links`, `transactions` | `pbl` | `directory` — статусы ссылок нативным запросом при блокировке и разблокировке терминала, в той же транзакции |
 | `audit_logs` | все сервисы через `common` | `directory` — чтение журнала |
-| `provider_terminals` | `ecom` | `directory` — нативным запросом для сверки статусов терминалов |
-| `provider_logins` | `ecom` | `directory` — нативным запросом для проверки логина компании при её сохранении (Р-94) |
+| `provider_terminals` | `ecom` | `directory` — нативным запросом для сверки статусов терминалов и для заведения терминала (название, логин, `terminal_rid`) |
+| `provider_logins` | `ecom` | `directory` — нативным запросом для проверки логина компании при её сохранении (Р-94) и мерчанта терминала при его заведении (Р-96) |
 
 Цепочка статуса терминала: `ecom` обновляет слепок `provider_terminals` → `directory` сверяет с
 ним `terminals` и приостанавливает или возвращает ссылки → `pbl` не выпускает новые платежи по

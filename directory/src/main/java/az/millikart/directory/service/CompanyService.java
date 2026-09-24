@@ -3,6 +3,7 @@ package az.millikart.directory.service;
 import az.millikart.directory.domain.Company;
 import az.millikart.directory.dto.CompanyResponse;
 import az.millikart.directory.dto.CreateCompanyRequest;
+import az.millikart.directory.dto.ProviderLoginOption;
 import az.millikart.directory.dto.UpdateCompanyRequest;
 import az.millikart.common.dto.PagedResponse;
 import az.millikart.common.exception.BusinessException;
@@ -19,7 +20,9 @@ import az.millikart.common.search.SearchTerms;
 import az.millikart.common.security.CredentialCipher;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -134,6 +137,24 @@ public class CompanyService {
         return PagedResponse.of(page, page.getContent().stream()
                 .map(company -> mapToResponse(company, actorRole))
                 .collect(Collectors.toList()));
+    }
+
+    // Логины для формы компании (Р-95): годные к проверке (requireActiveMultiMerchantLogin) и не занятые
+    // ни одной компанией. Только SYSTEM_ADMIN — это карта мультимерчантов провайдера. Список — удобство:
+    // между его загрузкой и сохранением логин могут занять или выключить, поэтому проверка при сохранении остаётся.
+    @Transactional(readOnly = true)
+    public List<ProviderLoginOption> listFreeProviderLogins(UserPrincipal principal) {
+        if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
+            auditLogService.logDenied(AuditEntity.COMPANY, "ALL", AuditAction.LIST,
+                    UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                    "Denied: role " + UserPrincipal.getRawRole(principal) + " attempted to list provider logins");
+            throw new InvalidStateException("Access denied");
+        }
+        Set<String> taken = new HashSet<>(companyRepository.findAllProviderLogins());
+        return providerLogins.eligibleLogins().stream()
+                .map(login -> new ProviderLoginOption(MULTI_MERCHANT_PREFIX + login.login(), login.merchants()))
+                .filter(option -> !taken.contains(option.login()))
+                .toList();
     }
 
     @Transactional(readOnly = true)

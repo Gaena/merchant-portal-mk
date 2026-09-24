@@ -84,7 +84,7 @@ class SecurityBoundaryIntegrationTest {
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Security Boundary Terminal")
-                .login("TerminalSys/Boundary")
+                .login("TerminalSys/Boundary").terminalRid("TID-Boundary")
                 .companyId("boundary-company")
                 .build());
 

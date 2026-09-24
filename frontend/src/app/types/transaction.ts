@@ -132,6 +132,8 @@ export interface Transaction {
    * Подписывает терминал во всех списках и на карточке операции — см. `utils/terminals.ts`.
    */
   terminalLogin?: string;
+  /** Номер терминала у провайдера (Р-96), из того же фида; подписывает терминал раньше логина. */
+  terminalRid?: string;
   clientIp?: string;
   userAgent?: string;
   /** Причина отказа словами эквайера (`failureReason`); только у FAILED с известной причиной. */

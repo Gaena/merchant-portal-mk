@@ -23,7 +23,8 @@ public class StubAcquiringClient implements AcquiringClient {
     private static final Logger log = LoggerFactory.getLogger(StubAcquiringClient.class);
 
     @Override
-    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, UUID ridByMerchant, String hppRedirectUrl) {
+    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
+                                                   UUID ridByMerchant, String hppRedirectUrl) {
         long orderId = (long) (Math.random() * 1000000000L);
         String hppUrl = "https://gateway.txpg.example.com/pay?rid=" + orderId;
         log.info("[STUB PROVIDER] createEcomOrder for ridByMerchant: {}, amount: {}, generated orderId: {}", ridByMerchant, link.getAmount(), orderId);
@@ -56,7 +57,7 @@ public class StubAcquiringClient implements AcquiringClient {
     // Заглушка принимает любые учётные данные: тесты, которым нужен другой исход проверки,
     // подменяют клиента моком и диктуют ответ сами.
     @Override
-    public TerminalCheckResult checkOrderCreation(ProviderCredentials credentials) {
+    public TerminalCheckResult checkOrderCreation(ProviderCredentials credentials, String terminalRid) {
         log.info("[STUB PROVIDER] checkOrderCreation for login: {}", credentials.login());
         return TerminalCheckResult.ok();
     }

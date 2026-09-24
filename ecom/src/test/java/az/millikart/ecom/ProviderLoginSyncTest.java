@@ -10,12 +10,14 @@ import az.millikart.ecom.repository.ProviderLoginRepository;
 import az.millikart.ecom.service.ProviderLoginSource;
 import az.millikart.ecom.service.ProviderLoginSource.ProviderLoginRow;
 import az.millikart.ecom.service.ProviderLoginSyncService;
+import java.sql.SQLSyntaxErrorException;
 import java.util.List;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.jdbc.BadSqlGrammarException;
 
 // Слепок логинов мультимерчантов (Р-94): по нему directory проверяет логин компании при сохранении.
 // Сбой или пустой ответ шлюза не должны стереть слепок — иначе ни одну компанию нельзя было бы завести.
@@ -32,14 +34,19 @@ class ProviderLoginSyncTest {
         service = new ProviderLoginSyncService(source, repository);
     }
 
+    // Запрос дошёл, но таблицы нет (локальная схема без LOGIN2MERCHANT, 24.09.2026): причина — ошибка базы,
+    // а не «шлюз недоступен», иначе администратор ищет обрыв связи там, где его нет.
     @Test
-    void aFailedQueryKeepsThePreviousSnapshot() {
-        when(source.fetchMultiMerchantLogins()).thenThrow(new IllegalStateException("connection refused"));
+    void aFailedQueryKeepsThePreviousSnapshot_andNamesTheDatabaseError() {
+        when(source.fetchMultiMerchantLogins()).thenThrow(new BadSqlGrammarException("fetch logins", "select …",
+                new SQLSyntaxErrorException("ORA-00942: table or view \"TXPG\".\"LOGIN2MERCHANT\" does not exist\n"
+                        + "Help: https://docs.oracle.com/error-help/db/ora-00942/")));
 
         ProviderLoginSyncService.SyncOutcome outcome = service.sync();
 
         Assertions.assertFalse(outcome.applied());
-        Assertions.assertEquals("gateway unavailable", outcome.skippedBecause());
+        Assertions.assertEquals("gateway query failed: ORA-00942: table or view \"TXPG\".\"LOGIN2MERCHANT\" does not exist",
+                outcome.skippedBecause());
         verify(repository, never()).deleteAllInBatch();
     }
 

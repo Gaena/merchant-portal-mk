@@ -50,9 +50,9 @@ public class ProviderTerminalSyncService {
         try {
             rows = source.fetchActive();
         } catch (RuntimeException e) {
-            log.error("Provider terminal sync skipped: the gateway could not be queried ({}). "
-                    + "The previous snapshot is kept as is.", e.getMessage(), e);
-            return SyncOutcome.skipped("gateway unavailable");
+            String reason = ProviderSyncFailure.reason(e);
+            log.error("Provider terminal sync skipped: {}. The previous snapshot is kept as is.", reason, e);
+            return SyncOutcome.skipped(reason);
         }
 
         // У работающего эквайринга не бывает нуля терминалов: пустой ответ — оборванная выборка
@@ -100,6 +100,7 @@ public class ProviderTerminalSyncService {
             // сверка directory (Р-67), иначе терминал однажды перестанет ходить в шлюз.
             terminal.setTitle(row.title());
             terminal.setLogin(row.login());
+            terminal.setTerminalRid(row.terminalRid());
             terminal.setActive(true);
             terminal.setMissingRuns(0);
             terminal.setLastSeenAt(now);

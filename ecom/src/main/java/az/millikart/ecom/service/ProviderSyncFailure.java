@@ -1,0 +1,24 @@
+package az.millikart.ecom.service;
+
+import org.springframework.core.NestedExceptionUtils;
+import org.springframework.dao.DataAccessResourceFailureException;
+
+// Причина несостоявшегося опроса справочника — для лога и для ответа администратору на кнопку. Раньше
+// любая ошибка называлась «gateway unavailable», и отсутствующая таблица шлюза выглядела обрывом связи.
+final class ProviderSyncFailure {
+
+    private ProviderSyncFailure() {
+    }
+
+    // Нет соединения — «unavailable»; запрос дошёл, но база его отвергла (ORA-00942 и т. п.) — «query
+    // failed». Текст — первая строка самой глубокой причины: у Oracle вторая — ссылка на справку.
+    static String reason(RuntimeException e) {
+        String kind = e instanceof DataAccessResourceFailureException ? "gateway unavailable" : "gateway query failed";
+        Throwable cause = NestedExceptionUtils.getMostSpecificCause(e);
+        String message = cause.getMessage();
+        if (message == null || message.isBlank()) {
+            return kind + ": " + cause.getClass().getSimpleName();
+        }
+        return kind + ": " + message.strip().lines().findFirst().orElse(message).strip();
+    }
+}

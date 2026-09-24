@@ -749,12 +749,14 @@ export const PayByLinkDetailPage: React.FC = () => {
                   <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                     <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
                       {terminalLabel({
+                        terminalRid: terminalIndex[link.terminalId as number]?.terminalRid,
                         terminalLogin: terminalIndex[link.terminalId as number]?.login,
                         terminalName: terminalIndex[link.terminalId as number]?.name,
                         terminalId: link.terminalId
                       })}
                     </Typography>
                     {terminalSubLabel({
+                      terminalRid: terminalIndex[link.terminalId as number]?.terminalRid,
                       terminalLogin: terminalIndex[link.terminalId as number]?.login,
                       terminalName: terminalIndex[link.terminalId as number]?.name
                     }) && (

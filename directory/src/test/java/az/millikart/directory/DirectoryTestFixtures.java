@@ -36,10 +36,27 @@ final class DirectoryTestFixtures {
     // Строка справочника провайдера. Таблицу держит ecom, в базе тестов directory её нет, а завести
     // терминал теперь можно только выбором из справочника (Р-93). Колонки — те, что читает directory.
     static void providerTerminal(JdbcTemplate jdbc, String rid, String title, String login) {
+        providerTerminal(jdbc, rid, title, login, true);
+    }
+
+    // Номер терминала у провайдера — "TID-" + код мерчанта (Р-96).
+    static void providerTerminal(JdbcTemplate jdbc, String rid, String title, String login, boolean active) {
         jdbc.execute("CREATE TABLE IF NOT EXISTS provider_terminals (rid varchar(64) PRIMARY KEY, "
-                + "title varchar(256), login varchar(128), active boolean NOT NULL DEFAULT true)");
+                + "title varchar(256), login varchar(128), active boolean NOT NULL DEFAULT true, terminal_rid varchar(64))");
         jdbc.update("DELETE FROM provider_terminals WHERE rid = ?", rid);
-        jdbc.update("INSERT INTO provider_terminals (rid, title, login, active) VALUES (?, ?, ?, true)",
-                rid, title, login);
+        jdbc.update("INSERT INTO provider_terminals (rid, title, login, active, terminal_rid) VALUES (?, ?, ?, ?, ?)",
+                rid, title, login, active, "TID-" + rid);
+    }
+
+    // Терминал провайдера, который компания вправе завести: мерчант связан с её логином мультимерчанта (Р-96).
+    static void companyTerminal(JdbcTemplate jdbc, String companyId, String rid, String title, String login) {
+        providerTerminal(jdbc, rid, title, login);
+        linkMerchant(jdbc, companyId, rid);
+    }
+
+    // Ещё одна активная связь логина компании с мерчантом — к тем, что уже в слепке.
+    static void linkMerchant(JdbcTemplate jdbc, String companyId, String merchantRid) {
+        jdbc.update("INSERT INTO provider_logins (login, login_status, link_status, merchant_rid) VALUES (?, 'Active', 'Active', ?)",
+                companyId, merchantRid);
     }
 }

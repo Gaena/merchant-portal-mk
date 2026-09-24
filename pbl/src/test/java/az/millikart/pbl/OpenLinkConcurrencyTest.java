@@ -92,11 +92,11 @@ class OpenLinkConcurrencyTest {
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Test Terminal")
-                .login("TerminalSys/Admin")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId("test-company")
                 .build());
 
-        when(acquiringClient.createEcomOrder(any(), any(), any(), anyString()))
+        when(acquiringClient.createEcomOrder(any(), any(), any(), any(), anyString()))
                 .thenAnswer(invocation -> {
                     Thread.sleep(PROVIDER_DELAY_MILLIS);
                     long orderId = orderIds.incrementAndGet();
@@ -121,7 +121,7 @@ class OpenLinkConcurrencyTest {
                 "exactly one of the two simultaneous opens may be served: " + outcomes);
         Assertions.assertEquals(1, transactionRepository.count(),
                 "a one-time link must not end up with two payment attempts");
-        verify(acquiringClient, times(1)).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, times(1)).createEcomOrder(any(), any(), any(), any(), anyString());
 
         List<Transaction> attempts = transactionRepository.findByLinkIdOrderByCreatedAtDesc(linkId);
         Assertions.assertEquals(TransactionStatus.PENDING, attempts.getFirst().getStatus());
@@ -138,7 +138,7 @@ class OpenLinkConcurrencyTest {
         Assertions.assertEquals(1, outcomes.stream().filter(Outcome::succeeded).count(),
                 "a multi-use link with maxPayments=1 may serve one of two simultaneous opens: " + outcomes);
         Assertions.assertEquals(1, transactionRepository.count());
-        verify(acquiringClient, times(1)).createEcomOrder(any(), any(), any(), anyString());
+        verify(acquiringClient, times(1)).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // Пускает открытия одной ссылки по общему стартовому выстрелу, чтобы они оказались внутри

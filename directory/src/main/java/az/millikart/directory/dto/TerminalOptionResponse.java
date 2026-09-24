@@ -15,6 +15,7 @@ public record TerminalOptionResponse(
         Integer id,
         String name,
         String login,
+        String terminalRid,
         TerminalStatus status
 ) {
 }

@@ -40,7 +40,8 @@ public class TerminalCheckService {
         requireSystemAdmin(principal, String.valueOf(terminalId), "terminal " + terminalId);
         Terminal terminal = terminalRepository.findById(terminalId)
                 .orElseThrow(() -> new ResourceNotFoundException("Terminal not found: " + terminalId));
-        TerminalCheckResult result = acquiringClient.checkOrderCreation(providerCredentials.forTerminal(terminal));
+        TerminalCheckResult result = acquiringClient.checkOrderCreation(providerCredentials.forTerminal(terminal),
+                providerCredentials.terminalRidOf(terminal));
         record(String.valueOf(terminalId), terminal.getCompanyId(), principal,
                 "Checked payment creation on terminal " + terminalId + " with the company credentials", result);
         return TerminalCheckResponse.of(result);

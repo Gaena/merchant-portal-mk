@@ -51,11 +51,12 @@ public record DashboardSummaryResponse(
     public record HourlyCount(int hour, long transactionCount) {
     }
 
-    // terminalLogin — то, по чему мерчант узнаёт терминал; имя идёт подписью под ним. Оба null,
+    // terminalRid — номер терминала у провайдера, основная подпись (Р-96); без него — логин. Всё null,
     // если терминала в таблице уже нет: выдумывать подпись по id нельзя.
     public record TerminalTotal(
             String currency,
             Integer terminalId,
+            String terminalRid,
             String terminalLogin,
             String terminalName,
             BigDecimal netAmount,

@@ -11,7 +11,8 @@ import org.springframework.stereotype.Repository;
 
 // Справочник терминалов провайдера — по SQL провайдера от 14.09.2026 (Р-79): e-commerce терминалы
 // процессинга 70 (TID на PBY), у которых активны и логин, и терминал. Выключенный у провайдера
-// пропадает из выгрузки, и через три опроса гаснет наш терминал со ссылками (Р-66).
+// пропадает из выгрузки, и через три опроса гаснет наш терминал со ссылками (Р-66). Только логины
+// TerminalSys и с terminal.rid — по запросу провайдера от 24.09.2026 (Р-96).
 @Repository
 public class TxpgProviderTerminalSource implements ProviderTerminalSource {
 
@@ -25,19 +26,21 @@ public class TxpgProviderTerminalSource implements ProviderTerminalSource {
     }
 
     // Ключ — merchant.rid: по нему выписка находит заказы, и у провайдера один терминал — один мерчант
-    // (Р-67). Название — мерчанта, как в выписке. Исключение наружу не гасится: вызывающий обязан
-    // отличить «терминалов нет» от «спросить не удалось».
+    // (Р-67). Название — мерчанта, как в выписке. Без фильтра ownerkind логины TerminalUser того же
+    // терминала делали мерчанта неоднозначным, и он не обновлялся никогда (Р-96).
     @Override
     public List<ProviderTerminalRow> fetchActive() {
         String sql = """
                 select m.rid   rid,
                        m.title title,
-                       l.login login
+                       l.login login,
+                       t.rid   terminal_rid
                   from %1$s.login l
                   join %1$s.terminal    t  on t.id = l.terminalid
                   join %1$s.terminalpmo tp on tp.terminalid = t.id
                   join %1$s.merchant    m  on m.id = t.merchantid
-                 where l.status = 'Active'
+                 where l.ownerkind = 'TerminalSys'
+                   and l.status = 'Active'
                    and t.status = 'Active'
                  order by m.rid, l.login
                 """.formatted(properties.getSchema());
@@ -45,7 +48,8 @@ public class TxpgProviderTerminalSource implements ProviderTerminalSource {
         return jdbc.query(sql, new MapSqlParameterSource() , (rs, rowNum) -> new ProviderTerminalRow(
                 rs.getString("rid"),
                 rs.getString("title"),
-                rs.getString("login")
+                rs.getString("login"),
+                rs.getString("terminal_rid")
         ));
     }
 }
