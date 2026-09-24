@@ -2,6 +2,7 @@ package az.millikart.directory;
 
 import static az.millikart.directory.DirectoryTestFixtures.company;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -79,6 +80,7 @@ public class DirectoryIntegrationTest {
         auditLogRepository.deleteAll();
         terminalRepository.deleteAll();
         companyRepository.deleteAll();
+        DirectoryTestFixtures.providerLogins(jdbcTemplate, "comp-01", "comp-02", "comp-03", "new-login");
 
         adminToken = "Bearer " + jwtProvider.generateToken("000", "admin@millikart.az", "SYSTEM_ADMIN", null);
         headTokenCompany1 = "Bearer " + jwtProvider.generateToken("111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
@@ -435,7 +437,7 @@ public class DirectoryIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(company("comp-01", "MilliKart LLC"))))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.providerLogin", is("TerminalSys/comp-01")))
+                .andExpect(jsonPath("$.providerLogin", is("MultiMerchantSys/comp-01")))
                 .andReturn().getResponse().getContentAsString();
 
         assertThat(body).doesNotContain("secret-comp-01").doesNotContain("providerPassword");
@@ -452,7 +454,7 @@ public class DirectoryIntegrationTest {
         assertThat(providerLoginIn(mockMvc.perform(get("/api/v1/companies/comp-01")
                         .header(HttpHeaders.AUTHORIZATION, adminToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()))
-                .isEqualTo("TerminalSys/comp-01");
+                .isEqualTo("MultiMerchantSys/comp-01");
         assertThat(providerLoginIn(mockMvc.perform(get("/api/v1/companies/comp-01")
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany1))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()))
@@ -460,7 +462,7 @@ public class DirectoryIntegrationTest {
         String auditorList = mockMvc.perform(get("/api/v1/companies")
                         .header(HttpHeaders.AUTHORIZATION, auditorToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
-        assertThat(auditorList).doesNotContain("TerminalSys/comp-01");
+        assertThat(auditorList).doesNotContain("MultiMerchantSys/comp-01");
     }
 
     @Test
@@ -472,17 +474,17 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-03", "Third LLC", "TerminalSys/comp-01", "x"))))
+                                new CreateCompanyRequest("comp-03", "Third LLC", "MultiMerchantSys/comp-01", "x"))))
                 .andExpect(status().isConflict());
         mockMvc.perform(patch("/api/v1/companies/comp-02")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"providerLogin\": \"TerminalSys/comp-01\"}"))
+                        .content("{\"providerLogin\": \"MultiMerchantSys/comp-01\"}"))
                 .andExpect(status().isConflict());
 
         assertThat(companyRepository.existsById("comp-03")).isFalse();
         assertThat(companyRepository.findById("comp-02").orElseThrow().getProviderLogin())
-                .isEqualTo("TerminalSys/comp-02");
+                .isEqualTo("MultiMerchantSys/comp-02");
     }
 
     // Смена кредов — обычный UPDATE компании; пароль ложится шифротекстом, в журнал — только факт смены.
@@ -494,9 +496,9 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/companies/comp-01")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"providerLogin\": \"TerminalSys/new-login\", \"providerPassword\": \"new-secret\"}"))
+                        .content("{\"providerLogin\": \"MultiMerchantSys/new-login\", \"providerPassword\": \"new-secret\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.providerLogin", is("TerminalSys/new-login")));
+                .andExpect(jsonPath("$.providerLogin", is("MultiMerchantSys/new-login")));
 
         String stored = companyRepository.findById("comp-01").orElseThrow().getProviderPassword();
         assertThat(credentialCipher.decrypt(stored)).isEqualTo("new-secret");
@@ -504,7 +506,7 @@ public class DirectoryIntegrationTest {
                 .filter(record -> "UPDATE".equals(record.getAction()))
                 .toList();
         assertThat(updates).singleElement().satisfies(record -> {
-            assertThat(record.getDetails()).contains("Provider login changed from 'TerminalSys/comp-01' to 'TerminalSys/new-login'");
+            assertThat(record.getDetails()).contains("Provider login changed from 'MultiMerchantSys/comp-01' to 'MultiMerchantSys/new-login'");
             assertThat(record.getDetails()).contains("Provider password changed").doesNotContain("new-secret");
         });
     }
@@ -540,7 +542,81 @@ public class DirectoryIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // Логин компании — только активный мультимерчант из слепка ecom (Р-94)
+
+    @Test
+    public void providerLogin_mustBeAMultiMerchantLogin() throws Exception {
+        DirectoryTestFixtures.providerLogin(jdbcTemplate, "terminal-login", "Active", "Active", "M-1");
+
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateCompanyRequest("comp-01", "MilliKart LLC", "TerminalSys/terminal-login", "x"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Provider login must be a multimerchant login: MultiMerchantSys/<login>")));
+
+        assertThat(companyRepository.existsById("comp-01")).isFalse();
+    }
+
+    // Три отказа отличаются текстом: администратору нужно знать, идти ли к провайдеру или обновить справочник.
+    @Test
+    public void providerLogin_unknownInactiveOrWithoutMerchants_isRefused() throws Exception {
+        DirectoryTestFixtures.providerLogin(jdbcTemplate, "blocked-login", "Blocked", "Active", "M-2");
+        DirectoryTestFixtures.providerLogin(jdbcTemplate, "lonely-login", "Active", null, null);
+        DirectoryTestFixtures.providerLogin(jdbcTemplate, "unlinked-login", "Active", "Blocked", "M-3");
+
+        assertCompanyRefused("MultiMerchantSys/nobody", "is not in the synchronised list of multimerchant logins");
+        assertCompanyRefused("MultiMerchantSys/blocked-login", "is not active at the provider");
+        assertCompanyRefused("MultiMerchantSys/lonely-login", "has no active merchants at the provider");
+        assertCompanyRefused("MultiMerchantSys/unlinked-login", "has no active merchants at the provider");
+    }
+
+    // Пустой слепок — ecom ещё не снимал логины или не развёрнут: проверить не по чему, и компания не
+    // заводится (решение 24.09.2026).
+    @Test
+    public void emptyLoginSnapshot_refusesTheCompany() throws Exception {
+        jdbcTemplate.update("DELETE FROM provider_logins");
+
+        assertCompanyRefused("MultiMerchantSys/comp-01", "has not been synchronised yet");
+    }
+
+    // Смена логина проверяется так же, а правка без смены логина слепок не трогает: логин, пропавший у
+    // провайдера после сохранения, правке названия не мешает.
+    @Test
+    public void loginChange_isChecked_butOtherEditsIgnoreTheSnapshot() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        jdbcTemplate.update("DELETE FROM provider_logins WHERE login = 'comp-01'");
+
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\": \"Renamed LLC\", \"providerLogin\": \"MultiMerchantSys/comp-01\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name", is("Renamed LLC")));
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"providerLogin\": \"MultiMerchantSys/nobody\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("is not in the synchronised list")));
+
+        assertThat(companyRepository.findById("comp-01").orElseThrow().getProviderLogin())
+                .isEqualTo("MultiMerchantSys/comp-01");
+    }
+
     // Фикстуры
+
+    private void assertCompanyRefused(String providerLogin, String reason) throws Exception {
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateCompanyRequest("comp-refused", "Refused LLC", providerLogin, "x"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString(reason)));
+        assertThat(companyRepository.existsById("comp-refused")).as(providerLogin).isFalse();
+    }
 
     private String providerLoginIn(String companyJson) throws Exception {
         JsonNode login = objectMapper.readTree(companyJson).path("providerLogin");

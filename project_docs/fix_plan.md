@@ -4948,7 +4948,7 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
   «Терминалы»: снята колонка пароля и его показ, поля логина и пароля в формах, ручное заведение и «Тест»
   до сохранения; кнопка добавления — только `SYSTEM_ADMIN` (`TERMINAL_CREATE_ROLES`). Тексты — на трёх
   языках, ключи пароля терминала удалены из словаря.
-- **Тесты** (прогоняет пользователь): `CredentialCipherTest` (новый); `directory` —
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `CredentialCipherTest` (новый); `directory` —
   `DirectoryIntegrationTest` (новые: креды обязательны, пароль шифротекстом и не в ответе, логин только
   администратору, уникальность логина, смена кредов в журнале без пароля, пустой пароль не меняет,
   пароля терминала нет; заведение терминала только администратором, `createTerminal_asManager_returns201`
@@ -4963,6 +4963,36 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
 - Документы: `decisions.md` (Р-93), `AGENTS.md` §4, §5, §6, §7, §9, §10, §11, `directory.md`, `pay-by-link.md`,
   `application_description.md`, `deployment_guide.md` (§8.1, §8.3, §20), `technical_handover.md` (§4.1,
   §4.2, §4.4, §4.6), `admin_guide.md`, `README.md`, `.env.example`, Postman-коллекция `directory`.
+
+---
+
+### 24.09.2026 — логин компании сверяется со слепком логинов мультимерчантов (Р-94)
+
+- **Зачем.** Заказчик прислал запрос логинов провайдера (`login`, `login2merchant`, `merchant` и др.):
+  при заведении компании и смене её логина проверять, что логин — активный мультимерчант с мерчантами.
+- **Запрос.** Присланный тянул лишнее: `terminal`, `terminalpmo`, `pmo` присоединялись через
+  `l.terminalid`, у `MultiMerchantSys` он пуст — терминалов запрос не давал; логин искался без `ownerkind`;
+  статусы не фильтровались; подпись «linked directly» для мультимерчанта неверна. Взяты
+  `login → login2merchant → merchant` и пять колонок, `ownerkind = 'MultiMerchantSys'`.
+- **ecom.** Миграция `003`: `provider_logins` (строка на связь «логин — мерчант», логин без связей —
+  строкой с пустым мерчантом). `TxpgProviderLoginSource`, `ProviderLoginSyncService` (замена слепка целиком;
+  сбой и пустой ответ не применяются), `ProviderTerminalSyncScheduler` обновляет оба слепка, каждый в своей
+  попытке. `POST /api/v1/ecom/provider-terminals/sync` обновляет оба и отдаёт `logins` рядом с прежними
+  полями.
+- **directory.** `ProviderLoginSnapshotRepository` читает слепок нативно; `CompanyService` при создании и
+  смене логина требует `MultiMerchantSys/`, непустой слепок, логин в нём, `Active` и активную связь с
+  мерчантом — иначе 400 с причиной. Правка без смены логина слепок не читает.
+- **Фронтенд.** В формах компании (заведение и «Доступ к провайдеру») — кнопка «Обновить справочник» с
+  итогом по логинам и подсказка про `MultiMerchantSys/<логин>`; тексты на трёх языках.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `ProviderLoginSyncTest`, `TxpgProviderLoginSourceTest` (новые);
+  `DirectoryIntegrationTest` — четыре новых (только мультимерчант; нет в слепке, выключен, без мерчантов;
+  пустой слепок; смена логина проверяется, правка без неё — нет), логины компаний в прежних тестах —
+  `MultiMerchantSys/…`; фикстура `DirectoryTestFixtures.providerLogins` в `DirectoryIntegrationTest`,
+  `AuditLogIntegrationTest`, `TerminalBlockingIntegrationTest`. `compileTestJava` по `directory` и `ecom`,
+  `npm run typecheck`, `npx oxlint src/app` — без ошибок.
+- Документы: `decisions.md` (Р-94), `ecom.md` §1, §3.2, §3.3, `directory.md` §3.1, `AGENTS.md` §5, §10,
+  `application_description.md`, `admin_guide.md`, `technical_handover.md` §4.2, `deployment_guide.md` §8.3,
+  `README.md`, Postman-коллекция `directory`.
 
 ---
 

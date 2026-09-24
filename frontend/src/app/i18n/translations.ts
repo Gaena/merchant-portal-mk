@@ -532,6 +532,9 @@ export interface TranslationDictionary {
      */
     providerLogin: string;
     providerLoginHint: string;
+    /** Итог обновления справочника логинов мультимерчантов (Р-94) — по кнопке в форме компании. */
+    loginsSyncApplied: string;
+    loginsSyncSkipped: string;
     providerPassword: string;
     providerPasswordHint: string;
     newProviderPassword: string;
@@ -1131,7 +1134,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       activateTitle: 'Mark company active?',
       activateQuestion: 'The company is marked active again. Nothing else changes.',
       providerLogin: 'Acquirer login',
-      providerLoginHint: 'The full login with its owner prefix, e.g. TerminalSys/merchant. Every request of the company to the acquirer is sent under it.',
+      providerLoginHint: 'The full multimerchant login: MultiMerchantSys/<login>. It must be active in the provider directory with at least one active merchant — refresh the directory if the login was created just now.',
+      loginsSyncApplied: 'Directory refreshed. Multimerchant logins received',
+      loginsSyncSkipped: 'Login directory was not refreshed',
       providerPassword: 'Acquirer password',
       providerPasswordHint: 'Stored encrypted. Nobody can view it later — it can only be replaced.',
       newProviderPassword: 'New acquirer password (optional)',
@@ -1698,7 +1703,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       activateTitle: 'Şirkət aktiv işarələnsin?',
       activateQuestion: 'Şirkət yenidən aktiv işarələnəcək. Başqa heç nə dəyişmir.',
       providerLogin: 'Provayder logini',
-      providerLoginHint: 'Logini tam, sahib prefiksi ilə daxil edin, məsələn TerminalSys/merchant. Şirkətin provayderə bütün sorğuları onunla göndərilir.',
+      providerLoginHint: 'Multimerçant logini tam şəkildə: MultiMerchantSys/<login>. O, provayder kataloqunda aktiv olmalı və ən azı bir aktiv merçantı olmalıdır — login indicə yaradılıbsa, kataloqu yeniləyin.',
+      loginsSyncApplied: 'Kataloq yeniləndi. Alınan multimerçant loginləri',
+      loginsSyncSkipped: 'Login kataloqu yenilənmədi',
       providerPassword: 'Provayder şifrəsi',
       providerPasswordHint: 'Şifrələnmiş saxlanılır. Sonra onu görmək olmaz — yalnız əvəz etmək.',
       newProviderPassword: 'Yeni provayder şifrəsi (istəyə görə)',
@@ -2265,7 +2272,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       activateTitle: 'Пометить компанию активной?',
       activateQuestion: 'Компания снова будет помечена активной. Больше ничего не меняется.',
       providerLogin: 'Логин к провайдеру',
-      providerLoginHint: 'Логин целиком, с префиксом владельца, например TerminalSys/merchant. С ним уходят все запросы компании к провайдеру.',
+      providerLoginHint: 'Логин мультимерчанта целиком: MultiMerchantSys/<логин>. Он должен быть активен в справочнике провайдера и иметь хотя бы одного активного мерчанта — только что заведённый подтяните кнопкой «Обновить справочник».',
+      loginsSyncApplied: 'Справочник обновлён. Получено логинов мультимерчантов',
+      loginsSyncSkipped: 'Справочник логинов не обновлён',
       providerPassword: 'Пароль к провайдеру',
       providerPasswordHint: 'Хранится зашифрованным. Посмотреть его потом нельзя — только заменить.',
       newProviderPassword: 'Новый пароль к провайдеру (необязательно)',

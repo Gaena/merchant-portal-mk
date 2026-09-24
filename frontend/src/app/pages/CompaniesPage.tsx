@@ -38,11 +38,12 @@ import {
   Block as BlockIcon,
   Search as SearchIcon,
   VpnKey as KeyIcon,
+  Sync as SyncIcon,
 } from '@mui/icons-material';
 
 import { useLanguage } from '../context/LanguageContext';
 import type { TranslationDictionary } from '../i18n/translations';
-import type { CompanyDto } from '../types/dto';
+import type { CompanyDto, ProviderTerminalSyncOutcome } from '../types/dto';
 
 /** Действие, ждущее подтверждения. Пока оно не подтверждено, на сервер ничего не уходит. */
 type PendingAction =
@@ -76,6 +77,11 @@ export const CompaniesPage: React.FC = () => {
   const [credsError, setCredsError] = useState('');
   const [credsConfirm, setCredsConfirm] = useState<string[] | null>(null);
   const [credsBusy, setCredsBusy] = useState(false);
+  // Логин компании бэкенд сверяет со справочником логинов мультимерчантов (Р-94). Логин, только что
+  // заведённый у провайдера, попадёт туда с расписанием — или сразу по этой кнопке.
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<ProviderTerminalSyncOutcome | null>(null);
+  const [syncError, setSyncError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
   // чтобы не слать запрос на каждую букву.
@@ -154,7 +160,47 @@ export const CompaniesPage: React.FC = () => {
     setCredsCompany(company);
     setCredsForm({ providerLogin: company.providerLogin ?? '', providerPassword: '' });
     setCredsError('');
+    setSyncResult(null);
+    setSyncError('');
   };
+
+  const openCreate = () => {
+    setError('');
+    setSyncResult(null);
+    setSyncError('');
+    setCreateOpen(true);
+  };
+
+  const syncProviderDirectory = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    setSyncError('');
+    try {
+      const res = await apiClient.post<ProviderTerminalSyncOutcome>('/api/v1/ecom/provider-terminals/sync');
+      setSyncResult(res.data);
+    } catch (err: any) {
+      setSyncError(err.response?.data?.message || tObj.terminals.providerTerminalLoadFailed);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Кнопка и её итог — в обеих формах, где вводят логин: заведение компании и смена доступа.
+  const directorySync = (
+    <Box>
+      <Button size="small" startIcon={<SyncIcon />} disabled={syncing} onClick={syncProviderDirectory}>
+        {syncing ? tObj.common.loading : tObj.terminals.syncDirectory}
+      </Button>
+      {syncResult?.logins && (
+        <Alert severity={syncResult.logins.applied ? 'success' : 'warning'} sx={{ mt: 1 }}>
+          {syncResult.logins.applied
+            ? `${tObj.companies.loginsSyncApplied}: ${syncResult.logins.logins}`
+            : `${tObj.companies.loginsSyncSkipped}: ${syncResult.logins.skippedBecause ?? '—'}`}
+        </Alert>
+      )}
+      {syncError && <Alert severity="error" sx={{ mt: 1 }}>{syncError}</Alert>}
+    </Box>
+  );
 
   // Что изменится, если сохранить. Пусто — запрос не уходит: PATCH без изменений всё равно оставил бы
   // запись в журнале аудита.
@@ -252,7 +298,7 @@ export const CompaniesPage: React.FC = () => {
             {tObj.common.refresh}
           </Button>
           {isAdmin && (
-            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateOpen(true)}>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
               {tObj.companies.addCompany}
             </Button>
           )}
@@ -401,11 +447,12 @@ export const CompaniesPage: React.FC = () => {
               label={`${tObj.companies.providerLogin} *`}
               value={form.providerLogin}
               onChange={e => setForm(f => ({ ...f, providerLogin: e.target.value }))}
-              placeholder="TerminalSys/…"
+              placeholder="MultiMerchantSys/…"
               helperText={tObj.companies.providerLoginHint}
               autoComplete="off"
               fullWidth
             />
+            {directorySync}
             <TextField
               label={`${tObj.companies.providerPassword} *`}
               type="password"
@@ -433,10 +480,12 @@ export const CompaniesPage: React.FC = () => {
               label={`${tObj.companies.providerLogin} *`}
               value={credsForm.providerLogin}
               onChange={e => setCredsForm(f => ({ ...f, providerLogin: e.target.value }))}
+              placeholder="MultiMerchantSys/…"
               helperText={tObj.companies.providerLoginHint}
               autoComplete="off"
               fullWidth
             />
+            {directorySync}
             <TextField
               label={tObj.companies.newProviderPassword}
               type="password"

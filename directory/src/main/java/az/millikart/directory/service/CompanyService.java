@@ -9,6 +9,7 @@ import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.ConflictException;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.directory.repository.CompanyRepository;
+import az.millikart.directory.repository.ProviderLoginSnapshotRepository;
 
 import az.millikart.common.audit.AuditAction;
 import az.millikart.common.audit.AuditEntity;
@@ -18,6 +19,7 @@ import az.millikart.common.search.SearchTerms;
 import az.millikart.common.security.CredentialCipher;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
+import java.util.List;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,19 +41,26 @@ public class CompanyService {
     // Маркер мягкого удаления: такая компания невидима на всех путях чтения.
     private static final String STATUS_DELETED = "DELETED";
 
+    // Логин компании к провайдеру — только мультимерчант (Р-94): Basic-логин MultiMerchantSys/<login>.
+    static final String MULTI_MERCHANT_PREFIX = "MultiMerchantSys/";
+    private static final String PROVIDER_ACTIVE = "Active";
+
     private final CompanyRepository companyRepository;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
     private final CredentialCipher credentialCipher;
+    private final ProviderLoginSnapshotRepository providerLogins;
 
     public CompanyService(CompanyRepository companyRepository,
                           AuditLogService auditLogService,
                           ApplicationEventPublisher eventPublisher,
-                          CredentialCipher credentialCipher) {
+                          CredentialCipher credentialCipher,
+                          ProviderLoginSnapshotRepository providerLogins) {
         this.companyRepository = companyRepository;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
         this.credentialCipher = credentialCipher;
+        this.providerLogins = providerLogins;
     }
 
     @Transactional
@@ -73,6 +82,7 @@ public class CompanyService {
         if (companyRepository.existsById(request.id())) {
             throw new BusinessException("Company with ID '" + request.id() + "' already exists");
         }
+        requireActiveMultiMerchantLogin(request.providerLogin());
         requireFreeProviderLogin(request.providerLogin(), null);
 
         Company company = Company.builder()
@@ -172,6 +182,7 @@ public class CompanyService {
         }
         String providerLogin = request.providerLogin();
         if (providerLogin != null && !providerLogin.isBlank() && !providerLogin.equals(company.getProviderLogin())) {
+            requireActiveMultiMerchantLogin(providerLogin);
             requireFreeProviderLogin(providerLogin, company.getId());
             changes.append("Provider login changed from '").append(company.getProviderLogin()).append("' to '").append(providerLogin).append("'. ");
             company.setProviderLogin(providerLogin);
@@ -266,6 +277,30 @@ public class CompanyService {
                 : companyRepository.existsByProviderLoginAndIdNot(providerLogin, companyId);
         if (taken) {
             throw new ConflictException("Provider login is already used by another company");
+        }
+    }
+
+    // Логин проверяется по слепку ecom только при сохранении — создании или смене логина (Р-94); уже
+    // сохранённые логины слепок не трогает. Нет слепка — отказ: проверить логин не по чему.
+    private void requireActiveMultiMerchantLogin(String providerLogin) {
+        if (!providerLogin.startsWith(MULTI_MERCHANT_PREFIX) || providerLogin.length() == MULTI_MERCHANT_PREFIX.length()) {
+            throw new BusinessException("Provider login must be a multimerchant login: " + MULTI_MERCHANT_PREFIX + "<login>");
+        }
+        if (!providerLogins.synchronised()) {
+            throw new BusinessException("The provider login list has not been synchronised yet; "
+                    + "refresh the provider directory and try again");
+        }
+        String login = providerLogin.substring(MULTI_MERCHANT_PREFIX.length());
+        List<ProviderLoginSnapshotRepository.LoginLink> links = providerLogins.linksOf(login);
+        if (links.isEmpty()) {
+            throw new BusinessException("Provider login " + providerLogin
+                    + " is not in the synchronised list of multimerchant logins");
+        }
+        if (links.stream().noneMatch(link -> PROVIDER_ACTIVE.equals(link.loginStatus()))) {
+            throw new BusinessException("Provider login " + providerLogin + " is not active at the provider");
+        }
+        if (links.stream().noneMatch(link -> PROVIDER_ACTIVE.equals(link.linkStatus()) && link.merchantRid() != null)) {
+            throw new BusinessException("Provider login " + providerLogin + " has no active merchants at the provider");
         }
     }
 

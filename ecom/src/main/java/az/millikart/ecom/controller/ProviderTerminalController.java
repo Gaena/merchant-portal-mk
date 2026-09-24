@@ -4,8 +4,10 @@ import az.millikart.common.exception.InvalidStateException;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.ecom.domain.ProviderTerminal;
+import az.millikart.ecom.dto.ProviderSyncResponse;
 import az.millikart.ecom.dto.ProviderTerminalResponse;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
+import az.millikart.ecom.service.ProviderLoginSyncService;
 import az.millikart.ecom.service.ProviderTerminalSyncService;
 import java.util.List;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -23,11 +25,14 @@ public class ProviderTerminalController {
 
     private final ProviderTerminalRepository repository;
     private final ProviderTerminalSyncService syncService;
+    private final ProviderLoginSyncService loginSyncService;
 
     public ProviderTerminalController(ProviderTerminalRepository repository,
-                                      ProviderTerminalSyncService syncService) {
+                                      ProviderTerminalSyncService syncService,
+                                      ProviderLoginSyncService loginSyncService) {
         this.repository = repository;
         this.syncService = syncService;
+        this.loginSyncService = loginSyncService;
     }
 
     // По умолчанию только активные: заводить терминал поверх снятого у провайдера незачем.
@@ -46,10 +51,12 @@ public class ProviderTerminalController {
                 .toList();
     }
 
+    // Одна кнопка обновляет оба слепка — терминалов и логинов мультимерчантов (Р-94): её ждут и форма
+    // терминала, и форма компании, чей логин только что завели у провайдера.
     @PostMapping("/sync")
-    public ProviderTerminalSyncService.SyncOutcome sync(@AuthenticationPrincipal UserPrincipal principal) {
+    public ProviderSyncResponse sync(@AuthenticationPrincipal UserPrincipal principal) {
         requireSystemAdmin(principal);
-        return syncService.sync();
+        return ProviderSyncResponse.of(syncService.sync(), loginSyncService.sync());
     }
 
     // Список терминалов провайдера — это карта его мерчантов целиком, включая чужих. Видеть её

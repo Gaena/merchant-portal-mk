@@ -168,9 +168,9 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 | Пакет | Что внутри |
 |:---|:---|
 | `config` | `TxpgDataSourceConfig` — второй источник данных (база шлюза) рядом с основной PostgreSQL, `TxpgProperties` |
-| `controller` | `EcomTransactionController` (выписка, итоги периода, терминалы для фильтра, карточка заказа), `ProviderTerminalController` (справочник терминалов провайдера и его ручное обновление) |
-| `service` | `EcomTransactionService`, `EcomScopeService` (чьи платежи видит пользователь), `EcomOrderAssembler` (строки шлюза → заказы и их деньги), `EcomOperationKind`, `EcomStatusResolver`, `EcomStatsAccumulator` (итоги периода), `ProviderTerminalSyncService`, `ProviderTerminalSource` |
-| `repository` | SQL к базе шлюза — `TxpgTransactionRepository`, `TxpgProviderTerminalSource`; в PostgreSQL — `ProviderTerminalRepository`, `TerminalRepository` (только чтение) |
+| `controller` | `EcomTransactionController` (выписка, итоги периода, терминалы для фильтра, карточка заказа), `ProviderTerminalController` (справочник терминалов провайдера и ручное обновление обоих слепков) |
+| `service` | `EcomTransactionService`, `EcomScopeService` (чьи платежи видит пользователь), `EcomOrderAssembler` (строки шлюза → заказы и их деньги), `EcomOperationKind`, `EcomStatusResolver`, `EcomStatsAccumulator` (итоги периода), `ProviderTerminalSyncService`, `ProviderTerminalSource`, `ProviderLoginSyncService`, `ProviderLoginSource` |
+| `repository` | SQL к базе шлюза — `TxpgTransactionRepository`, `TxpgProviderTerminalSource`, `TxpgProviderLoginSource`; в PostgreSQL — `ProviderTerminalRepository`, `ProviderLoginRepository`, `TerminalRepository` (только чтение) |
 | `scheduler` | `ProviderTerminalSyncScheduler` |
 
 Контракты — `ecom.md`.
@@ -250,6 +250,16 @@ erDiagram
         integer missing_runs "Сколько обновлений подряд терминал не приходил"
         timestamptz first_seen_at
         timestamptz last_seen_at
+        timestamptz synced_at
+    }
+
+    provider_logins {
+        bigint id PK
+        varchar login "Логин мультимерчанта без префикса MultiMerchantSys/"
+        varchar login_status "Как у провайдера"
+        varchar link_status "Связь с мерчантом, как у провайдера"
+        varchar merchant_rid "Пусто у логина без связей"
+        varchar merchant_title
         timestamptz synced_at
     }
 
@@ -353,6 +363,7 @@ changeset'ы не редактируются.
 | `pbl` | `011-company-provider-credentials.xml` | `companies`, если ещё нет (в виде `auth/002`), колонки кредов, если их нет; удаление `terminals.password` (Р-93) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет |
+| `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам и индекс по логину (Р-94) |
 
 ### 4.4. Начальные данные
 
@@ -397,6 +408,7 @@ changeset'ы не редактируются.
 | `payment_links`, `transactions` | `pbl` | `directory` — статусы ссылок нативным запросом при блокировке и разблокировке терминала, в той же транзакции |
 | `audit_logs` | все сервисы через `common` | `directory` — чтение журнала |
 | `provider_terminals` | `ecom` | `directory` — нативным запросом для сверки статусов терминалов |
+| `provider_logins` | `ecom` | `directory` — нативным запросом для проверки логина компании при её сохранении (Р-94) |
 
 Цепочка статуса терминала: `ecom` обновляет слепок `provider_terminals` → `directory` сверяет с
 ним `terminals` и приостанавливает или возвращает ссылки → `pbl` не выпускает новые платежи по
@@ -515,7 +527,9 @@ sequenceDiagram
   как в запросе выписки от 15.09.2026 (Р-83); кто что видит, какие поля и как считается статус —
   `ecom.md` §2.
 - **Справочник терминалов провайдера** обновляется в `provider_terminals` по расписанию и по кнопке
-  (`ecom.md` §3); по нему `directory` сверяет статусы наших терминалов (§6).
+  (`ecom.md` §3); по нему `directory` сверяет статусы наших терминалов (§6). Тем же расписанием и той
+  же кнопкой обновляется `provider_logins` — логины мультимерчантов (`ecom.md` §3.3): по нему
+  `directory` проверяет логин компании при её сохранении.
 - **Главная.** Сводка главной — тоже `ecom` (`GET /api/v1/ecom/dashboard/summary`, Р-91): оплаты картой по
   всем терминалам компании за период, теми же правилами, что итоги выписки. Статистика оплат по платёжным
   ссылкам — вкладка Pay by Link, сводка `pbl`.
@@ -534,7 +548,7 @@ sequenceDiagram
 | `pbl` | `PaymentLinkScheduler` | `0 */5 * * * *` | активные ссылки с истёкшим сроком → `EXPIRED` | — |
 | `pbl` | `TransactionReconciliationScheduler` | `0 */2 * * * *` | сверка зависших `PENDING` со шлюзом | `pbl.reconciliation.enabled` |
 | `auth` | `RefreshTokenCleanupScheduler` | `0 30 3 * * *` | удаление истёкших refresh-токенов | `auth.refresh.cleanup-enabled` |
-| `ecom` | `ProviderTerminalSyncScheduler` | `0 */15 * * * *` | обновление справочника терминалов провайдера | `ecom.terminal-sync.enabled` |
+| `ecom` | `ProviderTerminalSyncScheduler` | `0 */15 * * * *` | обновление справочника терминалов провайдера и слепка логинов мультимерчантов (Р-94) | `ecom.terminal-sync.enabled` |
 | `directory` | `TerminalStatusReconciliationScheduler` | `0 */15 * * * *` | статусы наших терминалов по справочнику провайдера | `directory.terminal-reconciliation.enabled` |
 
 Правила сверки зависших `PENDING` — `AGENTS.md` §7; переходы статусов терминалов при сверке со

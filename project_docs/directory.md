@@ -55,8 +55,16 @@
     *Запрос*: `{"id": "comp-01", "name": "MilliKart LLC", "providerLogin": "TerminalSys/merchant", "providerPassword": "…"}`  
     Логин и пароль к провайдеру **обязательны** (с 24.09.2026, Р-93). Логин — целиком, с префиксом
     владельца, сохраняется как пришёл; пароль ложится шифротекстом.  
-    *Отказы*: `400` — нет поля, компания с таким `id` уже есть; `409` — `Provider login is already
-    used by another company` (логин уникален, удалённые компании его не освобождают).  
+    **Логин — только активный мультимерчант** (Р-94): `MultiMerchantSys/<login>`, и в слепке логинов
+    `provider_logins` (`ecom.md` §3.3) он `Active` и связан хотя бы с одним мерчантом со связью `Active`.
+    Проверяется только при сохранении — заведении или смене логина; уже сохранённые логины слепок не
+    трогает.  
+    *Отказы*: `400` — нет поля; компания с таким `id` уже есть; `Provider login must be a multimerchant
+    login: MultiMerchantSys/<login>`; `The provider login list has not been synchronised yet; refresh the
+    provider directory and try again` (слепка нет — `ecom` не развёрнут — или он пуст); `Provider login …
+    is not in the synchronised list of multimerchant logins`; `… is not active at the provider`; `… has no
+    active merchants at the provider`. `409` — `Provider login is already used by another company`
+    (логин уникален, удалённые компании его не освобождают).  
     *Ответ*: `CompanyResponse` — `id`, `name`, `status`, `providerLogin`, аудит-поля. **Пароля в
     ответах нет никогда**; `providerLogin` заполнен только для `SYSTEM_ADMIN`, остальным — `null`
     (так во всех ответах о компании).
@@ -78,7 +86,8 @@
 -   `PATCH /api/v1/companies/{id}` — Редактировать компанию.  
     *Доступ*: Только `SYSTEM_ADMIN`.  
     *Запрос* (все поля необязательны, пустое — «не менять»): `{"name", "status", "providerLogin",
-    "providerPassword"}`. Новый пароль ложится шифротекстом; прочитать прежний нельзя. Журнал —
+    "providerPassword"}`. Новый пароль ложится шифротекстом; прочитать прежний нельзя. Новый логин
+    проверяется по слепку так же, как при создании; тот же логин проверку не запускает. Журнал —
     `COMPANY` / `UPDATE` с `Provider login changed from 'X' to 'Y'` и `Provider password changed`, без
     значения пароля. Занятый логин — `409`.
 -   `DELETE /api/v1/companies/{id}` — Удалить/деактивировать компанию.  

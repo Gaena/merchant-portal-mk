@@ -40,6 +40,7 @@ import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -56,6 +57,9 @@ public class AuditLogIntegrationTest {
 
     @Autowired
     private CompanyRepository companyRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private TerminalRepository terminalRepository;
@@ -95,6 +99,7 @@ public class AuditLogIntegrationTest {
         auditLogs.deleteAll();
         terminalRepository.deleteAll();
         companyRepository.deleteAll();
+        DirectoryTestFixtures.providerLogins(jdbcTemplate, "comp-01", "comp-rb", "comp-long");
 
         adminToken = "Bearer " + jwtProvider.generateToken("000", "admin@millikart.az", "SYSTEM_ADMIN", null);
         managerTokenCompany2 = "Bearer " + jwtProvider.generateToken("333", "manager@comp2.com", "COMPANY_MANAGER", "comp-02");

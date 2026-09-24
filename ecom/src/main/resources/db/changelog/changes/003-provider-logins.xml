@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Р-94: слепок логинов мультимерчантов провайдера (ownerkind = MultiMerchantSys) со связями к
+      мерчантам — строка на связь «логин — мерчант», логин без связей — одна строка с пустым мерчантом.
+      Снимаются все логины провайдера, а не только логины наших компаний: по слепку directory проверяет
+      логин компании в момент её сохранения, когда компании в базе ещё нет.
+
+      Пишет только планировщик ecom, каждый раз целиком заменяя содержимое; читает directory нативным
+      запросом, как provider_terminals. Статусы хранятся как пришли — проверка сама отличает «логин
+      выключен» от «логина нет».
+    -->
+    <changeSet id="003-ecom-provider-logins" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="provider_logins"/>
+            </not>
+        </preConditions>
+        <createTable tableName="provider_logins">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- login.login провайдера, без префикса владельца: Basic-логин — MultiMerchantSys/<login>. -->
+            <column name="login" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="login_status" type="varchar(32)"/>
+            <column name="link_status" type="varchar(32)"/>
+            <column name="merchant_rid" type="varchar(64)"/>
+            <column name="merchant_title" type="varchar(256)"/>
+            <column name="synced_at" type="timestamp with time zone">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex tableName="provider_logins" indexName="idx_provider_logins_login">
+            <column name="login"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

@@ -62,13 +62,25 @@ export interface ProviderTerminalDto {
   lastSeenAt?: string | null;
 }
 
-/** Итог ручного обновления справочника (`POST /api/v1/ecom/provider-terminals/sync`). */
+/** Итог обновления слепка логинов мультимерчантов провайдера (Р-94). */
+export interface ProviderLoginSyncOutcome {
+  applied: boolean;
+  logins: number;
+  links: number;
+  skippedBecause: string | null;
+}
+
+/**
+ * Итог ручного обновления справочников (`POST /api/v1/ecom/provider-terminals/sync`): верхние поля —
+ * терминалы, `logins` — логины мультимерчантов; одна кнопка обновляет оба (Р-94).
+ */
 export interface ProviderTerminalSyncOutcome {
   applied: boolean;
   seen: number;
   ambiguous: number;
   disabled: number;
   skippedBecause: string | null;
+  logins?: ProviderLoginSyncOutcome | null;
 }
 
 export interface UserDto {

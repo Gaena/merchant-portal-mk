@@ -107,6 +107,7 @@ public class TerminalBlockingIntegrationTest {
         auditLogRepository.deleteAll();
         terminalRepository.deleteAll();
         companyRepository.deleteAll();
+        DirectoryTestFixtures.providerLogins(jdbcTemplate, "comp-01");
 
         adminToken = "Bearer " + jwtProvider.generateToken("000", "admin@millikart.az", "SYSTEM_ADMIN", null);
         employeeTokenCompany1 = "Bearer " + jwtProvider.generateToken("444", "employee@comp1.com", "COMPANY_EMPLOYEE", "comp-01");

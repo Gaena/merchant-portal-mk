@@ -25,7 +25,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\",\n  \"providerLogin\": \"TerminalSys/merchant\",\n  \"providerPassword\": \"provider-password\"\n}",
+							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\",\n  \"providerLogin\": \"MultiMerchantSys/merchant\",\n  \"providerPassword\": \"provider-password\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -43,7 +43,7 @@
 								"companies"
 							]
 						},
-						"description": "Creates a new company. Access restricted to SYSTEM_ADMIN. providerLogin (the full login with its owner prefix) and providerPassword are required since 24.09.2026 (Р-93): every request to the acquirer goes with them. The password is stored encrypted and never returned; providerLogin is returned to SYSTEM_ADMIN only. A login already used by another company - 409."
+						"description": "Creates a new company. Access restricted to SYSTEM_ADMIN. providerLogin (the full login with its owner prefix) and providerPassword are required since 24.09.2026 (Р-93): every request to the acquirer goes with them. The password is stored encrypted and never returned; providerLogin is returned to SYSTEM_ADMIN only. A login already used by another company - 409. Since Р-94 the login must be MultiMerchantSys/<login>, active in the provider login snapshot (provider_logins, refreshed by ecom) with at least one active merchant; otherwise 400."
 					},
 					"response": []
 				},
@@ -130,7 +130,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\",\n  \"providerLogin\": \"TerminalSys/merchant\",\n  \"providerPassword\": \"new-provider-password\"\n}",
+							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\",\n  \"providerLogin\": \"MultiMerchantSys/merchant\",\n  \"providerPassword\": \"new-provider-password\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
