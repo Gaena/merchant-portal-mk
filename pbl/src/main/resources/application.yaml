@@ -87,6 +87,10 @@ mp:
   # Our nginx sits on the same machine and reaches the service over loopback; a request from
   # anywhere else has its forwarding headers ignored. Empty value = never believe them. See ClientIp.
   trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+  credentials:
+    # Ключ AES-256 для паролей компаний к провайдеру (Р-93): 32 байта в base64, одно значение в directory
+    # и pbl — directory шифрует, pbl расшифровывает. Без значения по умолчанию намеренно (CredentialCipher).
+    encryption-key: ${CREDENTIALS_ENCRYPTION_KEY}
 
 management:
   server:

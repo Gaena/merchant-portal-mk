@@ -11,9 +11,6 @@ import az.millikart.directory.domain.TerminalStatus;
 // тот же, что к постраничному GET /api/v1/terminals, который логин отдаёт и так
 // (TerminalService.isGlobalReader + requireOwnCompany на обоих), — новой видимости это не даёт,
 // избавляет только от листания страниц ради одной подписи.
-//
-// password не будет здесь никогда: он и в полной карточке отдаётся замаскированным
-// (TerminalService.mapToResponse). Поля, которого нет, не сольёт и неосторожный маппер.
 public record TerminalOptionResponse(
         Integer id,
         String name,

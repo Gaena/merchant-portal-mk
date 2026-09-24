@@ -545,6 +545,10 @@ directory:
 
 mp:
   trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+  credentials:
+    # Ключ AES-256 паролей компаний к провайдеру (Р-93): 32 байта в base64, одно значение в directory и
+    # pbl. Без значения по умолчанию: новый ключ делает сохранённые пароли нечитаемыми.
+    encryption-key: ${CREDENTIALS_ENCRYPTION_KEY}
 
 pbl:
   security:
@@ -659,6 +663,10 @@ pbl:
 
 mp:
   trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+  credentials:
+    # Ключ AES-256 паролей компаний к провайдеру (Р-93): 32 байта в base64, одно значение в directory и
+    # pbl. Без значения по умолчанию: новый ключ делает сохранённые пароли нечитаемыми.
+    encryption-key: ${CREDENTIALS_ENCRYPTION_KEY}
 
 management:
   server:
@@ -835,6 +843,7 @@ DB_URL=jdbc:postgresql://localhost:5432/merchant_portal
 DB_USERNAME=postgres
 DB_PASSWORD=ВАШ_ПАРОЛЬ_БАЗЫ_ДАННЫХ
 JWT_SECRET=$(openssl rand -base64 48)
+CREDENTIALS_ENCRYPTION_KEY=$(openssl rand -base64 32)
 PBL_BASE_URL=https://ВАШ_ДОМЕН/
 PBL_PROVIDER_GATEWAY_BASE_URL=АДРЕС_ШЛЮЗА_ОТ_MILLIKART
 PBL_PROVIDER_API_BASE_URL=АДРЕС_API_ОТ_MILLIKART
@@ -877,7 +886,7 @@ EOF
 > их выдаёт MilliKart, и у тестового стенда и прода они разные. Дефолтов у них нет по той же
 > причине: дефолт на тестовый стенд в проде — это платежи, ушедшие тестовому эквайеру, при
 > «оплачено» в портале. Если адрес API у эквайера пока только `http://`, сервис стартует,
-> но пишет WARN: по этому каналу уходит Basic-авторизация с логином и паролем терминала.
+> но пишет WARN: по этому каналу уходит Basic-авторизация с логином и паролем компании.
 > Это разговор с MilliKart о HTTPS, а не правка конфигурации.
 
 > [!NOTE]
@@ -900,12 +909,18 @@ sudo grep JWT_SECRET /opt/merchant-portal/config/mp.env
 ```
 
 > [!WARNING]
+> `CREDENTIALS_ENCRYPTION_KEY` — ключ, которым зашифрованы пароли компаний к провайдеру (Р-93):
+> `directory` шифрует, `pbl` расшифровывает, значение одно. Его **нельзя терять и менять**: с другим
+> ключом сохранённые пароли не расшифровываются, и каждой компании пароль придётся ввести заново.
+
+> [!WARNING]
 > `JWT_SECRET` должен быть **одинаковым** во всех сервисах — поэтому файл один на всех.
 > Разные значения означают, что токен, выданный `auth`, не пройдёт проверку в `directory`, `pbl` и `ecom`,
 > и любой запрос к ним вернёт 401.
 
 > [!CAUTION]
-> `DB_PASSWORD` и `JWT_SECRET` (а для `pbl` — и три адреса из блока выше, для `ecom` — доступ к базе шлюза) **не имеют значений
+> `DB_PASSWORD` и `JWT_SECRET` (а для `pbl` — и три адреса из блока выше, для `directory` и `pbl` —
+> `CREDENTIALS_ENCRYPTION_KEY`, для `ecom` — доступ к базе шлюза) **не имеют значений
 > по умолчанию**. Сервис, запущенный без них, не стартует и печатает, что именно задать. Это не
 > помеха, а защита: значение по умолчанию — ровно то, из-за чего прежний ключ подписи попал
 > в репозиторий и стал публичным, а у адресов дефолт — это прод, молча отправляющий
@@ -1964,8 +1979,8 @@ sudo systemctl restart mp-auth
 Оркестратора и хранилища секретов в проекте нет — сервисы запускаются вручную. Поэтому
 защита встроена в сами приложения: `DB_PASSWORD` и `JWT_SECRET` (а у `pbl` — ещё три адреса,
 `PBL_BASE_URL`, `PBL_PROVIDER_GATEWAY_BASE_URL`, `PBL_PROVIDER_API_BASE_URL`, у `ecom` — `ECOM_TXPG_URL`,
-`ECOM_TXPG_USERNAME`, `ECOM_TXPG_PASSWORD`, п. 8.3) не имеют
-значений по умолчанию, и сервис без них **не стартует**, печатая, что именно задать.
+`ECOM_TXPG_USERNAME`, `ECOM_TXPG_PASSWORD`, у `directory` и `pbl` — `CREDENTIALS_ENCRYPTION_KEY`, п. 8.3)
+не имеют значений по умолчанию, и сервис без них **не стартует**, печатая, что именно задать.
 
 ### 20.1. Первый запуск новой установки
 
@@ -1988,6 +2003,8 @@ openssl rand -base64 48
 ```bash
 export DB_PASSWORD='пароль пользователя PostgreSQL'
 export JWT_SECRET='значение из шага 1'
+# directory и pbl: ключ AES-256 паролей компаний к провайдеру, одно значение на оба (Р-93)
+export CREDENTIALS_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 # Только для pbl (P1-10): публичный адрес и адреса эквайера, без дефолтов
 export PBL_BASE_URL='https://ВАШ_ДОМЕН/'
 export PBL_PROVIDER_GATEWAY_BASE_URL='адрес шлюза от MilliKart'
@@ -2002,6 +2019,7 @@ export ECOM_TXPG_PASSWORD='пароль от MilliKart'
 |---|:---:|:---:|:---:|:---:|---|
 | `DB_PASSWORD` | **обязательна** | **обязательна** | **обязательна** | **обязательна** | нет |
 | `JWT_SECRET` | **обязательна** | **обязательна** | **обязательна** | **обязательна** | нет |
+| `CREDENTIALS_ENCRYPTION_KEY` | не читается | **обязательна** | **обязательна** | не читается | нет — ключ AES-256 паролей компаний к провайдеру, 32 байта в base64, одно значение в `directory` и `pbl` (Р-93) |
 | `DB_URL` | необязательна | необязательна | необязательна | необязательна | `jdbc:postgresql://localhost:5432/postgres` |
 | `DB_USERNAME` | необязательна | необязательна | необязательна | необязательна | `postgres` |
 | `JWT_EXPIRATION_MS` | необязательна | необязательна | необязательна | необязательна | `900000` (15 минут, с P1-13). Токен выдаёт `auth`; `directory` и `pbl` только проверяют его, переменная объявлена у всех сервисов для единообразия. Фронтенд обновляет токен сам через `/refresh`; это же — верхняя граница, сколько после выхода, блокировки или удаления пользователь ещё имеет доступ |
@@ -2157,6 +2175,8 @@ sudo systemctl start mp-ecom           # только если установл�
 |---|---|---|
 | `The environment variable JWT_SECRET is not set` | Переменной нет в окружении процесса | Задать её; для systemd — проверить `EnvironmentFile=` в юните |
 | `The environment variable DB_PASSWORD is not set` | То же для пароля БД | Задать её |
+| `The environment variable CREDENTIALS_ENCRYPTION_KEY is not set` | Нет ключа паролей компаний (`directory`, `pbl`) | Задать: `openssl rand -base64 32`, одно значение на оба сервиса |
+| `Credentials encryption key is N bytes, AES-256 requires exactly 32` | Ключ не той длины | Сгенерировать заново: `openssl rand -base64 32` |
 | `JWT signing secret is too short: N bytes` | Ключ короче 32 байт | Сгенерировать заново: `openssl rand -base64 48` |
 | `JWT signing secret is the key that leaked into this repository's git history` | Подставлен старый публичный ключ | Сгенерировать новый; старый использовать нельзя |
 | `BOOTSTRAP_ADMIN_PASSWORD does not satisfy the password policy` | Пароль администратора слабее политики | 12+ символов, заглавная, строчная, цифра, спецсимвол |

@@ -21,13 +21,18 @@
 -   `id` (VARCHAR) — Primary Key (например, буквенно-цифровой код или UUID).
 -   `name` (VARCHAR) — Название юридического лица / компании.
 -   `status` (VARCHAR) — Статус (`ACTIVE`, `INACTIVE`, `DELETED` — мягкое удаление).
+-   `provider_login` (VARCHAR(255), уникальный, может быть `NULL`) — логин компании к провайдеру,
+    целиком, с префиксом владельца (с 24.09.2026, Р-93): с ним идут все запросы `pbl` к шлюзу.
+-   `provider_password` (VARCHAR(512), может быть `NULL`) — пароль к провайдеру, **только шифротекст**
+    AES-256-GCM (`CredentialCipher`, ключ `CREDENTIALS_ENCRYPTION_KEY`). `NULL` у компаний, заведённых
+    до Р-93: `pbl` отказывает им до обращения к провайдеру.
 -   `created_at` (TIMESTAMP).
 
 ### 2.2. Таблица `terminals`
 -   `id` (INTEGER) — Primary Key (идентификатор терминала в MilliKart).
 -   `name` (VARCHAR) — Пользовательское имя (например, "Касса 1").
--   `login` (VARCHAR) — Логин для API MilliKart. Основной параметр терминала: им терминал подписан на экранах.
--   `password` (VARCHAR) — Пароль для API MilliKart, открытым текстом.
+-   `login` (VARCHAR) — логин терминала у провайдера, из справочника. К шлюзу с ним больше не ходят
+    (Р-93); до новых селектов на нём держатся подпись терминала на экранах, скоуп выписки (Р-83) и сверка.
 -   `company_id` (VARCHAR) — Foreign Key на `companies.id`.
 -   `status` (VARCHAR(16), `NOT NULL DEFAULT 'ACTIVE'`) — `ACTIVE` или `BLOCKED` (P2-8).
     Колонку добавляют **оба** сервиса (`directory/005-terminal-status.xml` и
@@ -47,7 +52,14 @@
 ### 3.1. Управление Компаниями (Companies CRUD)
 -   `POST /api/v1/companies` — Создать компанию.  
     *Доступ*: Только `SYSTEM_ADMIN`.  
-    *Запрос*: `{"id": "comp-01", "name": "MilliKart LLC"}`
+    *Запрос*: `{"id": "comp-01", "name": "MilliKart LLC", "providerLogin": "TerminalSys/merchant", "providerPassword": "…"}`  
+    Логин и пароль к провайдеру **обязательны** (с 24.09.2026, Р-93). Логин — целиком, с префиксом
+    владельца, сохраняется как пришёл; пароль ложится шифротекстом.  
+    *Отказы*: `400` — нет поля, компания с таким `id` уже есть; `409` — `Provider login is already
+    used by another company` (логин уникален, удалённые компании его не освобождают).  
+    *Ответ*: `CompanyResponse` — `id`, `name`, `status`, `providerLogin`, аудит-поля. **Пароля в
+    ответах нет никогда**; `providerLogin` заполнен только для `SYSTEM_ADMIN`, остальным — `null`
+    (так во всех ответах о компании).
 -   `GET /api/v1/companies` — Получить список компаний. **Постранично с 22.08.2026 (P2-1)**.  
     *Доступ*: `SYSTEM_ADMIN` и `AUDITOR`.  
     *Параметры*: `page` (по умолчанию `0`), `size` (по умолчанию `20`) — те же умолчания и тот же
@@ -64,30 +76,33 @@
 -   `GET /api/v1/companies/{id}` — Детали компании.  
     *Доступ*: `SYSTEM_ADMIN` и `AUDITOR` — любой; остальные роли — только своей компании.
 -   `PATCH /api/v1/companies/{id}` — Редактировать компанию.  
-    *Доступ*: Только `SYSTEM_ADMIN`.
+    *Доступ*: Только `SYSTEM_ADMIN`.  
+    *Запрос* (все поля необязательны, пустое — «не менять»): `{"name", "status", "providerLogin",
+    "providerPassword"}`. Новый пароль ложится шифротекстом; прочитать прежний нельзя. Журнал —
+    `COMPANY` / `UPDATE` с `Provider login changed from 'X' to 'Y'` и `Provider password changed`, без
+    значения пароля. Занятый логин — `409`.
 -   `DELETE /api/v1/companies/{id}` — Удалить/деактивировать компанию.  
     *Доступ*: Только `SYSTEM_ADMIN`.
 
 ### 3.2. Управление Терминалами (Terminals CRUD)
 
-Запись (create / update / delete) разрешена только ролям из `TerminalService.TERMINAL_WRITE_ROLES`
-= `SYSTEM_ADMIN`, `COMPANY_HEAD`, `COMPANY_MANAGER`. Роль проверяется **до** `companyId`, поэтому
+Заводит терминал только `SYSTEM_ADMIN` (с 24.09.2026, Р-93). Правка разрешена ролям из
+`TerminalService.TERMINAL_WRITE_ROLES` = `SYSTEM_ADMIN`, `COMPANY_HEAD`, `COMPANY_MANAGER`. Роль проверяется **до** `companyId`, поэтому
 `COMPANY_EMPLOYEE`, `AUDITOR` и любая нераспознанная роль получают `403` даже на терминалы своей
 компании (P1-15, 17.08.2026). Чтение шире: свои терминалы видят все компанейские роли, включая
 `COMPANY_EMPLOYEE`, а `SYSTEM_ADMIN` и `AUDITOR` — все.
 
 -   `POST /api/v1/terminals` — Создать терминал.  
-    *Доступ*: `SYSTEM_ADMIN` (для любой компании), `COMPANY_HEAD`/`COMPANY_MANAGER` (только для своей компании).  
-    *Запрос*: `{"name": "Main Terminal", "login": "term_login", "password": "term_password", "companyId": "comp-01", "merchantRid": null}`  
+    *Доступ*: только `SYSTEM_ADMIN` (с 24.09.2026, Р-93); остальным — `403` с записью в журнал.  
+    *Запрос*: `{"companyId": "comp-01", "merchantRid": "E1120020"}` — оба поля обязательны. Терминал
+    выбирается из справочника провайдера: `name` и `login` берутся оттуда, пароля у терминала нет —
+    к провайдеру ходят с кредами компании. Ручное заведение с названием и логином снято.  
     **Номер терминала выдаёт база** (с 14.09.2026, Р-81): `id` в запросе не нужен, а присланный
     игнорируется; номер приходит в ответе. На живой базе нумерация продолжается после наибольшего
     существующего номера.  
-    `merchantRid` необязателен (с 12.09.2026, Р-67). Если он передан, `name` и `login` из запроса
-    игнорируются и берутся из справочника терминалов провайдера — администратор вводит только
-    пароль. Без `merchantRid` обязательны `name` и `login`.  
-    *Отказы (`400`)*: компании нет; `merchantRid` уже привязан к
-    другому терминалу (`Provider terminal … is already linked to terminal …`); `merchantRid` нет в
-    справочнике (`… is not in the synchronised list`); нет `merchantRid` и пустые `name` или `login`.
+    *Отказы (`400`)*: нет поля; компании нет; `merchantRid` уже привязан к другому терминалу
+    (`Provider terminal … is already linked to terminal …`); `merchantRid` нет в справочнике
+    (`… is not in the synchronised list`).
 -   `GET /api/v1/terminals` — Список терминалов. **Постранично с 22.08.2026 (P2-1)**.  
     *Доступ*: `SYSTEM_ADMIN` и `AUDITOR` (все), `COMPANY_HEAD`/`COMPANY_MANAGER`/`COMPANY_EMPLOYEE`
     (только терминалы своей компании; без `companyId` — `403`).  
@@ -107,8 +122,7 @@
     ```
     **`login` здесь есть с 11.09.2026** (Р-59): мерчант узнаёт терминал по логину, и экраны
     подписывают им терминал. Новой видимости это не даёт — постраничный список отдаёт логин тем же
-    ролям. **Пароля здесь нет вовсе** — не замаскирован, а отсутствует в DTO: полем, которого нет,
-    нельзя случайно поделиться.
+    ролям. Пароля у терминала нет вовсе (Р-93).
 
     **Заблокированные терминалы в ответе есть, и убирать их нельзя.** У эндпоинта два
     потребителя с разными нуждами: форме создания ссылки нужны только `ACTIVE` (на
@@ -117,17 +131,14 @@
     с обслуживания терминалу имя должно остаться. Поэтому фильтрует потребитель, а не сервер.
 -   `GET /api/v1/terminals/{id}` — Детали терминала.  
     *Доступ*: `SYSTEM_ADMIN`, `AUDITOR`, любая роль с `companyId` терминала (в т.ч. `COMPANY_EMPLOYEE`).  
-    *Ответ*: `TerminalResponse` — `password` в нём всегда `"********"`.
--   `GET /api/v1/terminals/{id}/password` — настоящий пароль терминала (с 11.09.2026, Р-64).  
-    *Доступ*: только `SYSTEM_ADMIN`; остальным — `403`, и отказ пишется в журнал аудита.  
-    *Ответ*: `{"id": 998877, "password": "term_password"}`. Каждое чтение пишется в журнал как
-    `TERMINAL` / `READ` — без самого пароля.
--   `PATCH /api/v1/terminals/{id}` — Редактировать учетные данные терминала **и его статус**.  
+    *Ответ*: `TerminalResponse` — `id`, `name`, `login`, `companyId`, `status`, аудит-поля.
+-   **`GET /api/v1/terminals/{id}/password` больше нет** (с 24.09.2026, Р-93) — `404`: пароля у
+    терминала нет.
+-   `PATCH /api/v1/terminals/{id}` — Редактировать терминал **и его статус**.  
     *Доступ*: `SYSTEM_ADMIN`, `COMPANY_HEAD`/`COMPANY_MANAGER` (своей компании).  
-    *Запрос* (все поля необязательны): `{"name": "...", "login": "...", "password": "...", "companyId": "...", "status": "ACTIVE" | "BLOCKED"}`  
-    *Пароль* меняет только `SYSTEM_ADMIN` (с 11.09.2026): остальным на непустое `password` — `403`
-    `Access denied: only a system administrator may change the terminal password`, а не тихое
-    игнорирование.  
+    *Запрос* (все поля необязательны): `{"name": "...", "companyId": "...", "status": "ACTIVE" | "BLOCKED"}`.
+    Логин не правится — его меняет только сверка со справочником; `login` и `password` в теле
+    игнорируются.  
     *Статус*: ручная смена ставит `status_source = MANUAL`. Терминал, выключенный синхронизацией
     (`status_source = PROVIDER`), вручную не включается — `403` `Terminal … is out of service at the
     provider and will be unblocked automatically once the provider brings it back`.

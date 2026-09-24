@@ -39,6 +39,12 @@ pbl:
       # for JwtProvider's own default; it is declared to keep the three configurations identical.
       expiration-ms: ${JWT_EXPIRATION_MS:900000} # 15 minutes
 
+mp:
+  credentials:
+    # Ключ AES-256 для паролей компаний к провайдеру (Р-93): 32 байта в base64, одно значение в directory
+    # и pbl — directory шифрует, pbl расшифровывает. Без значения по умолчанию намеренно (CredentialCipher).
+    encryption-key: ${CREDENTIALS_ENCRYPTION_KEY}
+
 management:
   server:
     # Actuator lives on its own port bound to the loopback interface, so it is physically

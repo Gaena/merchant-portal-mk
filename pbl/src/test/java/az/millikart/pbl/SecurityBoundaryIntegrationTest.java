@@ -1,5 +1,7 @@
 package az.millikart.pbl;
 
+import az.millikart.common.security.CredentialCipher;
+import org.springframework.jdbc.core.JdbcTemplate;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -56,6 +58,12 @@ class SecurityBoundaryIntegrationTest {
     private TerminalRepository terminalRepository;
 
     @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private CredentialCipher credentialCipher;
+
+    @Autowired
     private PaymentLinkRepository paymentLinkRepository;
 
     @Autowired
@@ -71,12 +79,12 @@ class SecurityBoundaryIntegrationTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "boundary-company");
 
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Security Boundary Terminal")
                 .login("TerminalSys/Boundary")
-                .password("1234")
                 .companyId("boundary-company")
                 .build());
 

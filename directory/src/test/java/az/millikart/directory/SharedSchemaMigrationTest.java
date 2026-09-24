@@ -2,6 +2,7 @@ package az.millikart.directory;
 
 import az.millikart.common.testing.PostgresTestContainer;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -230,13 +231,45 @@ public class SharedSchemaMigrationTest {
             assertTrue(rs.next());
             org.junit.jupiter.api.Assertions.assertEquals(42L, rs.getLong(1));
         }
-        // Запись мимо сервиса тоже получает номер из той же последовательности.
-        execute("INSERT INTO terminals (name, login, password) VALUES ('C', 'c', 'p')");
+        // Запись мимо сервиса тоже получает номер из той же последовательности. Пароля у терминала после
+        // миграции 008 нет (Р-93).
+        execute("INSERT INTO terminals (name, login) VALUES ('C', 'c')");
         try (Statement statement = keepAlive.createStatement();
              ResultSet rs = statement.executeQuery("SELECT id FROM terminals WHERE name = 'C'")) {
             assertTrue(rs.next());
             org.junit.jupiter.api.Assertions.assertEquals(43, rs.getInt(1));
         }
+    }
+
+    // --- Р-93: креды компании и пароль терминала ---
+
+    // Колонки кредов добавляет тот, кто стартовал первым; pbl при этом умеет создать companies сам, а
+    // directory потом дополняет её колонками аудита. Уникальность логина — только directory.
+    @Test
+    @DisplayName("pbl first: companies get provider credentials, directory adds the unique login index")
+    void pblFirst_companiesGetProviderCredentials() throws Exception {
+        assertDoesNotThrow(this::runPblChangelog);
+        assertTrue(columnExists("companies", "provider_login"));
+        assertTrue(columnExists("companies", "provider_password"));
+        assertFalse(columnExists("terminals", "password"), "the terminal password is gone");
+
+        assertDoesNotThrow(this::runDirectoryChangelog);
+        assertDoesNotThrow(this::runAuthChangelog);
+
+        assertTrue(columnExists("companies", "created_by"), "directory completes the table pbl created");
+        assertTrue(indexExists("companies", "ux_companies_provider_login"));
+    }
+
+    @Test
+    @DisplayName("directory first: pbl finds the provider credentials in place and skips them")
+    void directoryFirst_thenPbl_skipsTheProviderCredentials() throws Exception {
+        assertDoesNotThrow(this::runDirectoryChangelog);
+        assertTrue(indexExists("companies", "ux_companies_provider_login"));
+        assertFalse(columnExists("terminals", "password"));
+
+        assertDoesNotThrow(this::runPblChangelog);
+        assertDoesNotThrow(this::runDirectoryChangelog);
+        assertTrue(columnExists("companies", "provider_password"));
     }
 
     // --- вспомогательное ---

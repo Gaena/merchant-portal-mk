@@ -62,6 +62,13 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
                     The value comes from MilliKart and differs between the test stand and production.
                     See .env.example and project_docs/deployment_guide.md, section 8.3.""";
 
+    private static final String CREDENTIALS_ENCRYPTION_KEY_ACTION =
+            "Generate an AES-256 key and export it before starting the service:\n"
+                    + "\texport CREDENTIALS_ENCRYPTION_KEY=\"$(openssl rand -base64 32)\"\n"
+                    + "The same value must be set for directory and pbl: directory encrypts company passwords "
+                    + "to the acquirer, pbl decrypts them. A new key makes stored passwords unreadable.\n"
+                    + "See .env.example and project_docs/deployment_guide.md, section 8.3.";
+
     private static final Map<String, String> ACTIONS_BY_VARIABLE = new LinkedHashMap<>();
 
     // Переменные-адреса, а не секреты: механизм тот же (нет дефолта, тот же отказ), причина другая,
@@ -76,6 +83,7 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
         ACTIONS_BY_VARIABLE.put("PBL_BASE_URL", PBL_BASE_URL_ACTION);
         ACTIONS_BY_VARIABLE.put("PBL_PROVIDER_GATEWAY_BASE_URL", PBL_PROVIDER_GATEWAY_BASE_URL_ACTION);
         ACTIONS_BY_VARIABLE.put("PBL_PROVIDER_API_BASE_URL", PBL_PROVIDER_API_BASE_URL_ACTION);
+        ACTIONS_BY_VARIABLE.put("CREDENTIALS_ENCRYPTION_KEY", CREDENTIALS_ENCRYPTION_KEY_ACTION);
     }
 
     private Environment environment;

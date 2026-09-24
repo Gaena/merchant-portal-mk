@@ -25,7 +25,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\"\n}",
+							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\",\n  \"providerLogin\": \"TerminalSys/merchant\",\n  \"providerPassword\": \"provider-password\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -43,7 +43,7 @@
 								"companies"
 							]
 						},
-						"description": "Creates a new company. Access restricted to SYSTEM_ADMIN."
+						"description": "Creates a new company. Access restricted to SYSTEM_ADMIN. providerLogin (the full login with its owner prefix) and providerPassword are required since 24.09.2026 (Р-93): every request to the acquirer goes with them. The password is stored encrypted and never returned; providerLogin is returned to SYSTEM_ADMIN only. A login already used by another company - 409."
 					},
 					"response": []
 				},
@@ -130,7 +130,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\"\n}",
+							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\",\n  \"providerLogin\": \"TerminalSys/merchant\",\n  \"providerPassword\": \"new-provider-password\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -149,7 +149,7 @@
 								"{{companyId}}"
 							]
 						},
-						"description": "Updates company details. Access restricted to SYSTEM_ADMIN."
+						"description": "Updates company details. Access restricted to SYSTEM_ADMIN. Every field is optional; an empty providerPassword keeps the stored one. The audit record names a password change without the password."
 					},
 					"response": []
 				},
@@ -214,7 +214,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"Main Terminal 1\",\n  \"login\": \"term_login_01\",\n  \"password\": \"term_pass_01\",\n  \"companyId\": \"comp-01\"\n}",
+							"raw": "{\n  \"companyId\": \"comp-01\",\n  \"merchantRid\": \"E1120020\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -232,7 +232,7 @@
 								"terminals"
 							]
 						},
-						"description": "Creates a new terminal for a company."
+						"description": "Creates a terminal from the provider directory (GET /api/v1/ecom/provider-terminals). SYSTEM_ADMIN only since 24.09.2026 (Р-93); name and login come from the directory, a terminal has no password - the acquirer is reached with the company credentials."
 					},
 					"response": []
 				},
@@ -345,7 +345,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"Main Terminal 1 (Updated)\",\n  \"login\": \"updated_login\"\n}",
+							"raw": "{\n  \"name\": \"Main Terminal 1 (Updated)\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -364,7 +364,7 @@
 								"{{terminalId}}"
 							]
 						},
-						"description": "Updates terminal credentials or details."
+						"description": "Updates the terminal name, company or status. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93)."
 					},
 					"response": []
 				},

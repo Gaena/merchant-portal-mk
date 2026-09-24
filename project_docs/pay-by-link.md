@@ -4,7 +4,12 @@
 
 -   **Reason:** Microservice for generating and managing payment links. Designed specifically for merchants without their own website or infrastructure.
 -   **Technology stack:** Java Spring Boot
--   **Acquiring integration:** MilliKart - TXPG
+-   **Acquiring integration:** MilliKart - TXPG. Every call to the acquirer (order creation, capture,
+    refund, status, the terminal check) authenticates with the login and password of the terminal's
+    **company**, not of the terminal (since 24.09.2026, decision Р-93). The company credentials live in
+    `companies` (`directory.md` §2.1): the password is stored encrypted and decrypted here only for the
+    Basic header. A company without credentials gets `400` before the acquirer is called. The terminal
+    number `order.terminal.rid` is not sent yet — it arrives with the provider's multimerchant queries.
 -   **Redirection & Receipt:** Since the merchants do not have their own website, the service hosts a built-in checkout status and receipt page (`redirect.html`). Upon completion, the customer receives a digital receipt with options to print or close the browser window.
 
 ---
@@ -23,7 +28,7 @@
 10. **Refund Transaction:** Processes a refund for a successful payment.
 11. **Get Transaction by ID:** Reads one transaction without polling the acquirer (P3-7).
 12. **Dashboard Summary:** Aggregates the caller's payments over a time window; the database does the counting (P3-7).
-13. **Terminal Credentials Check:** Places a test order at the provider with a terminal's login and password and reports whether they work (since 13.09.2026, `SYSTEM_ADMIN` only).
+13. **Terminal Check:** Places a test order at the provider for a saved terminal with its company's credentials and reports whether a payment can be created (since 13.09.2026, `SYSTEM_ADMIN` only; company credentials since 24.09.2026).
 
 ---
 
@@ -81,13 +86,14 @@ Records each individual payment attempt/transaction associated with a link.
 
 ### 3.3. Table `terminals`
 
-Stores acquiring credentials and company mapping.
+Stores the terminal and its company mapping. A terminal has no password (since 24.09.2026, Р-93): the
+acquirer is reached with the company credentials.
 
 -   `id` (Integer) - Primary Key (Terminal ID)
 -   `name` (String) - Terminal name
--   `login` (String) - Acquiring login; the terminal's primary identifier on every screen
--   `password` (String) - Acquiring password, stored in plain text
--   `company_id` (String) - ID of the parent company owning this terminal
+-   `login` (String) - The terminal's login at the provider; the terminal's primary identifier on every
+    screen. Not sent to the acquirer any more.
+-   `company_id` (String) - ID of the parent company owning this terminal; its credentials are used
 -   `status` (String) - `ACTIVE` / `BLOCKED`; a blocked terminal refuses new payments only (P2-8)
 
 The table is owned by `directory` (see `directory.md`): this service only reads it.
@@ -713,22 +719,20 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
     recognises the terminal by; the UI shows it first and the name under it. Both are `null` when the
     terminal is gone — no invented prefix and no placeholder name.
 
-### 5.14. Terminal Credentials Check
+### 5.14. Terminal Check
 
--   **Methods:**
-    -   `POST /api/v1/acquiring/terminal-checks` — check a login and password that are not saved yet
-        (the terminal creation form). Body: `{"login": "term_login", "password": "term_password"}`,
-        both required (`400` when blank).
-    -   `POST /api/v1/acquiring/terminal-checks/{terminalId}` — check a saved terminal with the
-        credentials stored for it; they never travel through the browser. No body. `404` when there is
-        no such terminal.
+-   **Method:** `POST /api/v1/acquiring/terminal-checks/{terminalId}` — check a saved terminal with the
+    credentials of its company; they never travel through the browser. No body. `404` when there is no
+    such terminal, `400` when its company has no acquirer credentials. The check of an unsaved terminal
+    (`POST /api/v1/acquiring/terminal-checks` with a login and password) is gone since 24.09.2026 (Р-93):
+    a terminal has no credentials of its own.
 -   **Headers:**
     -   `Authorization: Bearer <token>`
 -   **Access:** `SYSTEM_ADMIN` only. Any other role gets `403 Forbidden`, the refusal is written to the
     audit journal, and no order reaches the provider.
 -   **Description (since 13.09.2026, decision Р-70):** the only provider request that proves both that
-    the login and password are right and that the terminal may take payments is creating an order, so
-    the check places a real `Order_SMS` for 1.00 AZN with the terminal's credentials. It is never paid:
+    the login and password are right and that a payment can be created is creating an order, so the
+    check places a real `Order_SMS` for 1.00 AZN with the company credentials of the terminal (Р-93). It is never paid:
     the provider expires it after ten minutes, and the statement only takes completed orders (Р-71).
     The provider agreed to this load. Lives in `pbl`, not next to the other terminal endpoints, because
     only `pbl` talks to the provider while `/api/v1/terminals` is routed to `directory`.
@@ -746,14 +750,13 @@ does change on the link card is `refundedPaymentsCount` (Р-50).
 
 | `outcome` | When | Meaning for the administrator |
 |:---|:---|:---|
-| `OK` | the provider created the order (no `errorCode`) | credentials accepted, payments allowed |
-| `INVALID_CREDENTIALS` | `errorCode` = `InvalidLogin`, in a 200 or a 4xx body | wrong login or password |
+| `OK` | the provider created the order (no `errorCode`) | company credentials accepted, a payment can be created |
+| `INVALID_CREDENTIALS` | `errorCode` = `InvalidLogin`, in a 200 or a 4xx body | wrong company login or password |
 | `REJECTED` | any other `errorCode` | credentials accepted, but the provider refused the order; its text is passed on |
 | `UNREACHABLE` | 5xx, timeout, no or empty answer | nothing is known about the terminal |
 
 The outcome is classified by the code in the body, not by the HTTP status. Every check is written to
-the audit journal as `TERMINAL` / `READ` with its outcome (entity id `NEW` for an unsaved terminal);
-the password is never logged or recorded.
+the audit journal as `TERMINAL` / `READ` with its outcome; the password is never logged or recorded.
 
 ---
 
@@ -761,7 +764,11 @@ the password is never logged or recorded.
 
 Standard HTTP status codes are used:
 
--   `400 Bad Request`: Validation error or business logic violation.
+-   `400 Bad Request`: Validation error or business logic violation. Since 24.09.2026 (Р-93) also when
+    the terminal's company has no acquirer credentials (`Company … has no acquirer credentials; a system
+    administrator must set them on the company`) or the terminal has no company — on link creation, link
+    opening, capture, refund, status check and the terminal check. Nothing is sent to the acquirer, so for
+    a capture or a refund this is a plain refusal, not an unknown outcome.
 -   `401 Unauthorized`: Missing or invalid authentication token.
 -   `403 Forbidden`: Access denied or resource in invalid state for action.
 -   `404 Not Found`: The requested resource does not exist.

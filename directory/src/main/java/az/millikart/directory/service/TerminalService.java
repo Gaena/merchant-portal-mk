@@ -8,7 +8,6 @@ import az.millikart.directory.domain.TerminalStatus;
 import az.millikart.directory.domain.TerminalStatusSource;
 import az.millikart.directory.dto.CreateTerminalRequest;
 import az.millikart.directory.dto.TerminalOptionResponse;
-import az.millikart.directory.dto.TerminalPasswordResponse;
 import az.millikart.directory.dto.TerminalResponse;
 import az.millikart.directory.dto.UpdateTerminalRequest;
 import az.millikart.directory.repository.CompanyRepository;
@@ -69,59 +68,50 @@ public class TerminalService {
         this.eventPublisher = eventPublisher;
     }
 
+    // Заводит только SYSTEM_ADMIN и только выбором из справочника провайдера (Р-80, Р-93): справочник —
+    // карта всех мерчантов провайдера, а ручного логина больше нет. Правка — по TERMINAL_WRITE_ROLES.
     @Transactional
     public TerminalResponse createTerminal(CreateTerminalRequest request, UserPrincipal principal) {
         String actorUsername = UserPrincipal.getUsername(principal);
+        String merchantRid = request.merchantRid().trim();
 
-        log.info("Request to create terminal: name={}, merchantRid={}, companyId={} by actor: {}",
-                request.name(), request.merchantRid(), request.companyId(), actorUsername);
+        log.info("Request to create terminal: merchantRid={}, companyId={} by actor: {}",
+                merchantRid, request.companyId(), actorUsername);
 
-        validateWriteAccessToCompany(request.companyId(), principal,
-                NEW_TERMINAL, AuditAction.CREATE,
-                "create a terminal for company " + request.companyId());
+        if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
+            auditLogService.logDenied(AuditEntity.TERMINAL, NEW_TERMINAL, AuditAction.CREATE, actorUsername,
+                    UserPrincipal.getCompanyId(principal), "Denied: role " + UserPrincipal.getRawRole(principal)
+                            + " attempted to create a terminal for company " + request.companyId());
+            if (UserPrincipal.getRole(principal) == Role.AUDITOR) {
+                throw new InvalidStateException("Access denied: AUDITOR is read-only");
+            }
+            throw new InvalidStateException("Access denied");
+        }
 
         if (!companyRepository.existsById(request.companyId())) {
             throw new BusinessException("Company with ID '" + request.companyId() + "' not found");
         }
 
-        // Название и логин берутся у провайдера, когда указан его терминал: он их хозяин, и
-        // введённые руками однажды разойдутся с тем, чем терминал ходит в шлюз.
-        String name = request.name();
-        String login = request.login();
-        String merchantRid = trimToNull(request.merchantRid());
-        if (merchantRid != null && UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
-            // Справочник провайдера — карта всех его мерчантов, привязка по rid только у администратора
-            // (Р-80). Иначе руководитель забрал бы чужой rid, увидел бы чужую выписку, а разные тексты
-            // отказов ниже перечисляли бы мерчантов провайдера.
-            auditLogService.logDenied(AuditEntity.TERMINAL, NEW_TERMINAL, AuditAction.CREATE, actorUsername,
-                    UserPrincipal.getCompanyId(principal), "Denied: role " + UserPrincipal.getRawRole(principal)
-                            + " attempted to link provider terminal " + merchantRid);
-            throw new InvalidStateException("Access denied");
-        }
-        if (merchantRid != null) {
-            // Один терминал провайдера — одна наша компания. Иначе две компании смотрели бы
-            // в одну выписку, и каждая видела бы платежи другой.
-            terminalRepository.findByMerchantRid(merchantRid).ifPresent(existing -> {
-                throw new BusinessException("Provider terminal " + merchantRid
-                        + " is already linked to terminal " + existing.getId());
-            });
-            ProviderTerminalStatusRepository.ProviderTerminalRow row = providerTerminals
-                    .findByRid(merchantRid)
-                    .orElseThrow(() -> new BusinessException(
-                            "Provider terminal " + merchantRid + " is not in the synchronised list"));
-            name = row.title();
-            login = row.gatewayLogin();
-        }
-        if (name == null || name.isBlank() || login == null || login.isBlank()) {
-            throw new BusinessException("Terminal name and login are required unless merchantRid is given");
+        // Один терминал провайдера — одна наша компания. Иначе две компании смотрели бы
+        // в одну выписку, и каждая видела бы платежи другой.
+        terminalRepository.findByMerchantRid(merchantRid).ifPresent(existing -> {
+            throw new BusinessException("Provider terminal " + merchantRid
+                    + " is already linked to terminal " + existing.getId());
+        });
+        // Название и логин — провайдера: он их хозяин, и введённые руками однажды разойдутся с ним.
+        ProviderTerminalStatusRepository.ProviderTerminalRow row = providerTerminals
+                .findByRid(merchantRid)
+                .orElseThrow(() -> new BusinessException(
+                        "Provider terminal " + merchantRid + " is not in the synchronised list"));
+        if (row.title() == null || row.title().isBlank() || row.gatewayLogin() == null) {
+            throw new BusinessException("Provider terminal " + merchantRid + " has no name or login in the synchronised list");
         }
 
         // Номер берётся последним, когда все проверки пройдены: отказ не должен тратить номера.
         Terminal terminal = Terminal.builder()
                 .id(Math.toIntExact(terminalRepository.nextId()))
-                .name(name)
-                .login(login)
-                .password(request.password())
+                .name(row.title())
+                .login(row.gatewayLogin())
                 .companyId(request.companyId())
                 .merchantRid(merchantRid)
                 .createdBy(actorUsername)
@@ -209,51 +199,6 @@ public class TerminalService {
         return actorCompanyId;
     }
 
-    /**
-     * Пароль терминала как есть — для того, чтобы администратор мог его посмотреть, не заводя
-     * терминал заново.
-     *
-     * Три вещи, которые здесь обязательны и вместе делают это допустимым:
-     *
-     *   1. **Только SYSTEM_ADMIN.** Роли записи (COMPANY_HEAD, COMPANY_MANAGER) пароль менять
-     *      больше не могут и увидеть его не могут тоже: это ключ от эквайринга, а не настройка
-     *      терминала. Отказ пишется в журнал — попытка посмотреть чужой платёжный ключ это ровно
-     *      то событие, ради которого журнал и заведён.
-     *   2. **Отдельный запрос.** В `TerminalResponse` пароль остаётся `"********"`, поэтому ни
-     *      список, ни карточка, ни лёгкий фид его не несут, сколько бы экранов их ни читало.
-     *   3. **След у каждого чтения.** Пишется сразу, своей транзакцией: читать тут нечего
-     *      коммитить, а запись «кто и когда посмотрел пароль терминала» нужна именно в момент
-     *      чтения.
-     *
-     * Сам пароль в журнал, разумеется, не идёт (см. AuditLogService.logDenied о секретах
-     * в details).
-     */
-    @Transactional(readOnly = true)
-    public TerminalPasswordResponse revealPassword(Integer id, UserPrincipal principal) {
-        Terminal terminal = terminalRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("Terminal not found"));
-
-        String actorUsername = UserPrincipal.getUsername(principal);
-        if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
-            auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(id), AuditAction.READ,
-                    actorUsername, UserPrincipal.getCompanyId(principal),
-                    "Denied: role " + UserPrincipal.getRawRole(principal)
-                            + " attempted to reveal the acquiring password of terminal " + id);
-            throw new InvalidStateException("Access denied");
-        }
-
-        auditLogService.recordSuccess(AuditEvent.of(
-                AuditEntity.TERMINAL,
-                String.valueOf(id),
-                AuditAction.READ,
-                actorUsername,
-                terminal.getCompanyId(),
-                "Revealed the acquiring password of terminal " + id
-        ));
-
-        return new TerminalPasswordResponse(terminal.getId(), terminal.getPassword());
-    }
-
     @Transactional(readOnly = true)
     public TerminalResponse getTerminal(Integer id, UserPrincipal principal) {
         Terminal terminal = terminalRepository.findById(id)
@@ -278,24 +223,6 @@ public class TerminalService {
         if (request.name() != null && !request.name().isBlank()) {
             changes.append("Name changed from '").append(terminal.getName()).append("' to '").append(request.name()).append("'. ");
             terminal.setName(request.name());
-        }
-        if (request.login() != null && !request.login().isBlank()) {
-            changes.append("Login updated. ");
-            terminal.setLogin(request.login());
-        }
-        if (request.password() != null && !request.password().isBlank()) {
-            // Пароль эквайринга меняет только SYSTEM_ADMIN — те же ворота, что и на его чтение.
-            // Молча проигнорировать нельзя: администратор компании решил бы, что пароль сменён,
-            // и остался бы со старым ключом, считая его новым.
-            if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
-                auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(id), AuditAction.UPDATE,
-                        actorUsername, UserPrincipal.getCompanyId(principal),
-                        "Denied: role " + UserPrincipal.getRawRole(principal)
-                                + " attempted to change the acquiring password of terminal " + id);
-                throw new InvalidStateException("Access denied: only a system administrator may change the terminal password");
-            }
-            changes.append("Password updated. ");
-            terminal.setPassword(request.password());
         }
         if (request.companyId() != null && !request.companyId().isBlank()) {
             validateWriteAccessToCompany(request.companyId(), principal,
@@ -428,20 +355,11 @@ public class TerminalService {
         throw new InvalidStateException("Access denied");
     }
 
-    private static String trimToNull(String value) {
-        if (value == null) {
-            return null;
-        }
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
-    }
-
     private TerminalResponse mapToResponse(Terminal terminal) {
         return new TerminalResponse(
                 terminal.getId(),
                 terminal.getName(),
                 terminal.getLogin(),
-                "********",
                 terminal.getCompanyId(),
                 terminal.getStatus(),
                 terminal.getCreatedBy(),

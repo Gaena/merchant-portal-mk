@@ -37,6 +37,7 @@ import {
   CheckCircle as CheckCircleIcon,
   Block as BlockIcon,
   Search as SearchIcon,
+  VpnKey as KeyIcon,
 } from '@mui/icons-material';
 
 import { useLanguage } from '../context/LanguageContext';
@@ -59,7 +60,7 @@ export const CompaniesPage: React.FC = () => {
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ id: '', name: '' });
+  const [form, setForm] = useState({ id: '', name: '', providerLogin: '', providerPassword: '' });
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState('');
   // Ни удаление, ни смена статуса не выполняются по клику: сначала окно подтверждения.
@@ -67,6 +68,14 @@ export const CompaniesPage: React.FC = () => {
   // «Company not found», воскресить её через API нечем.
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  // Креды компании к провайдеру (Р-93): форма правки, затем подтверждение со списком изменений — с ними
+  // уходят все запросы компании к провайдеру, и неверные останавливают её платежи. Пароль в форме пуст:
+  // прочитать его нельзя, только заменить.
+  const [credsCompany, setCredsCompany] = useState<CompanyDto | null>(null);
+  const [credsForm, setCredsForm] = useState({ providerLogin: '', providerPassword: '' });
+  const [credsError, setCredsError] = useState('');
+  const [credsConfirm, setCredsConfirm] = useState<string[] | null>(null);
+  const [credsBusy, setCredsBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
   // чтобы не слать запрос на каждую букву.
@@ -115,9 +124,11 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
+  // Логин и пароль к провайдеру обязательны (Р-93): логин — целиком, с префиксом владельца, как его
+  // выдал провайдер; сами ничего не подставляем.
   const handleCreate = async () => {
-    if (!form.id.trim() || !form.name.trim()) {
-      setError('Company ID and Name are required');
+    if (!form.id.trim() || !form.name.trim() || !form.providerLogin.trim() || !form.providerPassword.trim()) {
+      setError(tObj.companies.formIncomplete);
       return;
     }
     setError('');
@@ -125,15 +136,74 @@ export const CompaniesPage: React.FC = () => {
       await apiClient.post('/api/v1/companies', {
         id: form.id.trim(),
         name: form.name.trim(),
+        providerLogin: form.providerLogin.trim(),
+        providerPassword: form.providerPassword.trim(),
       });
       // Не дописываем строку в массив: список постраничный и отсортирован сервером по имени —
       // новая компания может принадлежать другой странице.
       fetchCompanies();
       setCreateOpen(false);
-      setForm({ id: '', name: '' });
-      setSnackbar('Company created successfully');
+      setForm({ id: '', name: '', providerLogin: '', providerPassword: '' });
+      setSnackbar(tObj.companies.created);
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to create company');
+      setError(err.response?.data?.message || tObj.companies.createFailed);
+    }
+  };
+
+  const openCredentials = (company: CompanyDto) => {
+    setCredsCompany(company);
+    setCredsForm({ providerLogin: company.providerLogin ?? '', providerPassword: '' });
+    setCredsError('');
+  };
+
+  // Что изменится, если сохранить. Пусто — запрос не уходит: PATCH без изменений всё равно оставил бы
+  // запись в журнале аудита.
+  const credentialChanges = (): string[] => {
+    if (!credsCompany) return [];
+    const changes: string[] = [];
+    const login = credsForm.providerLogin.trim();
+    if (login !== (credsCompany.providerLogin ?? '')) {
+      changes.push(`${tObj.companies.providerLogin}: ${credsCompany.providerLogin || '—'} → ${login}`);
+    }
+    if (credsForm.providerPassword.trim()) {
+      changes.push(tObj.companies.providerPasswordReplaced);
+    }
+    return changes;
+  };
+
+  const askCredentials = () => {
+    if (!credsForm.providerLogin.trim()) {
+      setCredsError(tObj.companies.formIncomplete);
+      return;
+    }
+    setCredsError('');
+    const changes = credentialChanges();
+    if (changes.length === 0) {
+      setCredsCompany(null);
+      setSnackbar(tObj.companies.editNothingChanged);
+      return;
+    }
+    setCredsConfirm(changes);
+  };
+
+  // Только изменившиеся поля: пустой пароль бэкенд читает как «не менять».
+  const saveCredentials = async () => {
+    if (!credsCompany || credsBusy) return;
+    setCredsBusy(true);
+    try {
+      const payload: Record<string, string> = {};
+      const login = credsForm.providerLogin.trim();
+      if (login !== (credsCompany.providerLogin ?? '')) payload.providerLogin = login;
+      if (credsForm.providerPassword.trim()) payload.providerPassword = credsForm.providerPassword.trim();
+      const res = await apiClient.patch<CompanyDto>(`/api/v1/companies/${credsCompany.id}`, payload);
+      setCompanies(prev => prev.map(c => (c.id === credsCompany.id ? res.data : c)));
+      setCredsCompany(null);
+      setSnackbar(tObj.companies.credentialsUpdated);
+    } catch (err: any) {
+      setCredsError(err.response?.data?.message || tObj.companies.credentialsUpdateFailed);
+    } finally {
+      setCredsBusy(false);
+      setCredsConfirm(null);
     }
   };
 
@@ -221,6 +291,7 @@ export const CompaniesPage: React.FC = () => {
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.companyId}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.name}</TableCell>
+                {isAdmin && <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.providerLogin}</TableCell>}
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.status}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.actions}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
@@ -236,6 +307,9 @@ export const CompaniesPage: React.FC = () => {
                       {comp.id}
                     </TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>{comp.name}</TableCell>
+                    {isAdmin && (
+                      <TableCell sx={{ fontFamily: 'monospace' }}>{comp.providerLogin || '—'}</TableCell>
+                    )}
                     <TableCell>
                       <Chip
                         icon={isActive ? <CheckCircleIcon fontSize="small" /> : <BlockIcon fontSize="small" />}
@@ -264,6 +338,13 @@ export const CompaniesPage: React.FC = () => {
                     </TableCell>
                     <TableCell align="center">
                       {isAdmin && (
+                        <Tooltip title={tObj.companies.editCredentials}>
+                          <IconButton color="primary" size="small" onClick={() => openCredentials(comp)}>
+                            <KeyIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {isAdmin && (
                         <Tooltip title={tObj.common.delete}>
                           <IconButton color="error" size="small" onClick={() => setPending({ kind: 'delete', company: comp })}>
                             <DeleteIcon fontSize="small" />
@@ -276,7 +357,7 @@ export const CompaniesPage: React.FC = () => {
               })}
               {companies.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={isAdmin ? 7 : 6} align="center" sx={{ py: 6 }}>
                     <BusinessIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                     <Typography color="text.secondary">No companies found in directory.</Typography>
                   </TableCell>
@@ -316,6 +397,24 @@ export const CompaniesPage: React.FC = () => {
               placeholder="e.g. Acme Supermarket LLC"
               fullWidth
             />
+            <TextField
+              label={`${tObj.companies.providerLogin} *`}
+              value={form.providerLogin}
+              onChange={e => setForm(f => ({ ...f, providerLogin: e.target.value }))}
+              placeholder="TerminalSys/…"
+              helperText={tObj.companies.providerLoginHint}
+              autoComplete="off"
+              fullWidth
+            />
+            <TextField
+              label={`${tObj.companies.providerPassword} *`}
+              type="password"
+              value={form.providerPassword}
+              onChange={e => setForm(f => ({ ...f, providerPassword: e.target.value }))}
+              helperText={tObj.companies.providerPasswordHint}
+              autoComplete="new-password"
+              fullWidth
+            />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
@@ -323,6 +422,63 @@ export const CompaniesPage: React.FC = () => {
           <Button variant="contained" onClick={handleCreate}>{tObj.common.create}</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Acquirer credentials Dialog */}
+      <Dialog open={credsCompany !== null} onClose={() => { if (!credsBusy) setCredsCompany(null); }} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.companies.editCredentials}: {credsCompany?.name}</DialogTitle>
+        <DialogContent>
+          {credsError && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{credsError}</Alert>}
+          <Stack spacing={2.5} sx={{ mt: 1 }}>
+            <TextField
+              label={`${tObj.companies.providerLogin} *`}
+              value={credsForm.providerLogin}
+              onChange={e => setCredsForm(f => ({ ...f, providerLogin: e.target.value }))}
+              helperText={tObj.companies.providerLoginHint}
+              autoComplete="off"
+              fullWidth
+            />
+            <TextField
+              label={tObj.companies.newProviderPassword}
+              type="password"
+              value={credsForm.providerPassword}
+              onChange={e => setCredsForm(f => ({ ...f, providerPassword: e.target.value }))}
+              helperText={tObj.companies.newProviderPasswordHint}
+              autoComplete="new-password"
+              fullWidth
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setCredsCompany(null)} disabled={credsBusy}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={askCredentials} disabled={credsBusy}>{tObj.common.save}</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Confirm credentials: построчно, что изменится, и для какой компании. */}
+      <ConfirmDialog
+        open={credsConfirm !== null}
+        title={tObj.companies.credentialsConfirmTitle}
+        question={tObj.companies.credentialsConfirmQuestion}
+        confirmLabel={tObj.common.confirm}
+        confirmColor="primary"
+        busy={credsBusy}
+        onConfirm={saveCredentials}
+        onCancel={() => setCredsConfirm(null)}
+      >
+        {credsCompany && (
+          <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>{credsCompany.name}</Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.secondary', mb: 1 }}>
+              {credsCompany.id}
+            </Typography>
+            <Stack spacing={1}>
+              {(credsConfirm ?? []).map(change => (
+                <Typography key={change} variant="body2">{change}</Typography>
+              ))}
+            </Stack>
+          </Box>
+        )}
+      </ConfirmDialog>
 
       {/* Confirm Dialog: удаление и смена статуса — одно окно на два действия,
           заголовок, вопрос, цвет и надпись кнопки считаются из `pending.kind`. */}

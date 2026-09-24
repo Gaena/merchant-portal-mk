@@ -462,7 +462,7 @@ export interface TranslationDictionary {
     name: string;
     /**
      * Выбор терминала провайдера при заведении (Р-67, Р-79): название и логин приходят из справочника,
-     * администратор вводит пароль. Справочник видит только SYSTEM_ADMIN (`ecom.md` §3).
+     * пароля у терминала нет (Р-93). Справочник видит и терминалы заводит только SYSTEM_ADMIN (`ecom.md` §3).
      */
     providerTerminal: string;
     providerTerminalHint: string;
@@ -472,24 +472,15 @@ export interface TranslationDictionary {
     syncApplied: string;
     syncSkipped: string;
     login: string;
-    password: string;
     /**
-     * Раскрытие пароля терминала: ключ от эквайринга показывается по нажатию, только системному
-     * администратору и с записью в журнал аудита (`TerminalService.revealPassword`).
-     */
-    revealPassword: string;
-    hidePassword: string;
-    /**
-     * Кнопка «Тест» и её исходы. Проверка — пробный заказ у провайдера; различать нужно все
-     * четыре исхода, потому что следующий шаг у каждого свой (`utils/terminalCheck.ts`).
+     * Кнопка «Тест» и её исходы. Проверка — пробный заказ у провайдера с кредами компании терминала
+     * (Р-93); различать нужно все четыре исхода: следующий шаг у каждого свой (`utils/terminalCheck.ts`).
      */
     testAction: string;
     checkOk: string;
     checkInvalid: string;
     checkRejected: string;
     checkUnreachable: string;
-    newPassword: string;
-    newPasswordHint: string;
     company: string;
     status: string;
     /** Полный словарь статусов терминала: новое значение потребует перевода на все три языка. */
@@ -503,7 +494,6 @@ export interface TranslationDictionary {
     unblockLinksAffected: string;
     editConfirmTitle: string;
     editConfirmQuestion: string;
-    editPasswordReplaced: string;
     editNothingChanged: string;
     searchPlaceholder: string;
     /** Пояснение к выбору компании в формах; виден только тем, кто выбирает (SYSTEM_ADMIN). */
@@ -515,7 +505,6 @@ export interface TranslationDictionary {
     updated: string;
     updateFailed: string;
     checkFailed: string;
-    revealFailed: string;
     blockedNotice: string;
     unblockedNotice: string;
     statusChangeFailed: string;
@@ -537,6 +526,26 @@ export interface TranslationDictionary {
     deactivateQuestion: string;
     activateTitle: string;
     activateQuestion: string;
+    /**
+     * Креды компании к провайдеру (Р-93): все запросы к шлюзу идут от её имени. Задаёт и меняет только
+     * SYSTEM_ADMIN; пароль хранится зашифрованным и не показывается никому — только заменяется.
+     */
+    providerLogin: string;
+    providerLoginHint: string;
+    providerPassword: string;
+    providerPasswordHint: string;
+    newProviderPassword: string;
+    newProviderPasswordHint: string;
+    editCredentials: string;
+    credentialsConfirmTitle: string;
+    credentialsConfirmQuestion: string;
+    providerPasswordReplaced: string;
+    editNothingChanged: string;
+    formIncomplete: string;
+    created: string;
+    createFailed: string;
+    credentialsUpdated: string;
+    credentialsUpdateFailed: string;
   };
   users: {
     title: string;
@@ -1064,23 +1073,18 @@ export const translations: Record<Language, TranslationDictionary> = {
       editDialogTitle: 'Edit Terminal Details',
       name: 'Terminal Name',
       providerTerminal: 'Provider terminal',
-      providerTerminalHint: 'Name and login come from the provider directory; only the password is entered here.',
+      providerTerminalHint: 'Name and login come from the provider directory. A terminal has no password: the acquirer is reached with the company credentials.',
       providerTerminalEmpty: 'The provider directory is empty. Refresh it — the scheduled update may not have run yet.',
       providerTerminalLoadFailed: 'Could not load the provider directory.',
       syncDirectory: 'Refresh directory',
       syncApplied: 'Directory refreshed. Terminals received',
       syncSkipped: 'Directory was not refreshed',
       login: 'Merchant Login ID',
-      password: 'Terminal Password',
-      revealPassword: 'Show password',
-      hidePassword: 'Hide password',
       testAction: 'Test',
-      checkOk: 'Credentials accepted, payments allowed',
-      checkInvalid: 'Invalid login or password',
+      checkOk: 'Company credentials accepted, a payment can be created',
+      checkInvalid: 'Invalid company login or password',
       checkRejected: 'Credentials accepted, but the acquirer refused a payment',
       checkUnreachable: 'The acquirer did not answer — nothing is known about the terminal',
-      newPassword: 'New Terminal Password (Optional)',
-      newPasswordHint: 'Leave blank to keep the current terminal password',
       company: 'Assigned Company',
       status: 'Status',
       statuses: {
@@ -1095,8 +1099,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       unblockExplains: 'Unblocking lets the terminal take payments again: suspended links go back to active, except the ones whose lifetime ran out while it was blocked.',
       unblockLinksAffected: 'Suspended links that will go back to active',
       editConfirmTitle: 'Save changes to terminal',
-      editConfirmQuestion: 'The following will change. The login, the password and the owning company all live in this one form — check the list before confirming.',
-      editPasswordReplaced: 'The terminal password will be replaced',
+      editConfirmQuestion: 'The following will change. The name and the owning company live in this one form — check the list before confirming.',
       editNothingChanged: 'Nothing changed — no request was sent.',
       searchPlaceholder: 'Search terminals by name, ID or login...',
       companyHint: 'The company that owns the terminal',
@@ -1106,7 +1109,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       updated: 'Terminal updated',
       updateFailed: 'Could not update the terminal',
       checkFailed: 'Could not check the terminal',
-      revealFailed: 'Could not show the terminal password',
       blockedNotice: 'Terminal blocked: it takes no new payments and its active links are suspended',
       unblockedNotice: 'Terminal unblocked: suspended links are active again, except those whose lifetime ran out',
       statusChangeFailed: 'Could not change the terminal status',
@@ -1128,6 +1130,22 @@ export const translations: Record<Language, TranslationDictionary> = {
       deactivateQuestion: 'This is a label in the directory and an entry in the audit log. It does not stop sign-ins, link creation or payments — to stop payments, block the terminals.',
       activateTitle: 'Mark company active?',
       activateQuestion: 'The company is marked active again. Nothing else changes.',
+      providerLogin: 'Acquirer login',
+      providerLoginHint: 'The full login with its owner prefix, e.g. TerminalSys/merchant. Every request of the company to the acquirer is sent under it.',
+      providerPassword: 'Acquirer password',
+      providerPasswordHint: 'Stored encrypted. Nobody can view it later — it can only be replaced.',
+      newProviderPassword: 'New acquirer password (optional)',
+      newProviderPasswordHint: 'Leave blank to keep the current password',
+      editCredentials: 'Acquirer credentials',
+      credentialsConfirmTitle: 'Change the acquirer credentials?',
+      credentialsConfirmQuestion: 'Every request of this company to the acquirer — new payments, captures, refunds and status checks — will go with these credentials. Wrong ones stop the company payments.',
+      providerPasswordReplaced: 'The acquirer password will be replaced',
+      editNothingChanged: 'Nothing changed — no request was sent.',
+      formIncomplete: 'Fill in every required field',
+      created: 'Company created',
+      createFailed: 'Could not create the company',
+      credentialsUpdated: 'Acquirer credentials updated',
+      credentialsUpdateFailed: 'Could not update the acquirer credentials',
     },
     users: {
       title: 'Users',
@@ -1622,23 +1640,18 @@ export const translations: Record<Language, TranslationDictionary> = {
       editDialogTitle: 'Terminal Parametrlərini Redaktə Et',
       name: 'Terminalın Adı',
       providerTerminal: 'Provayder terminalı',
-      providerTerminalHint: 'Ad və login provayder kataloqundan gəlir; burada yalnız şifrə daxil edilir.',
+      providerTerminalHint: 'Ad və login provayder kataloqundan gəlir. Terminalın şifrəsi yoxdur: provayderə şirkətin məlumatları ilə müraciət olunur.',
       providerTerminalEmpty: 'Provayder kataloqu boşdur. Onu yeniləyin — planlı yenilənmə hələ işləməmiş ola bilər.',
       providerTerminalLoadFailed: 'Provayder kataloqunu yükləmək mümkün olmadı.',
       syncDirectory: 'Kataloqu yenilə',
       syncApplied: 'Kataloq yeniləndi. Alınan terminallar',
       syncSkipped: 'Kataloq yenilənmədi',
       login: 'Mərfəti Terminal Logini',
-      password: 'Terminal Şifrəsi',
-      revealPassword: 'Şifrəni göstər',
-      hidePassword: 'Şifrəni gizlət',
       testAction: 'Test',
-      checkOk: 'Məlumatlar qəbul edildi, ödənişlər icazəlidir',
-      checkInvalid: 'Login və ya şifrə yanlışdır',
+      checkOk: 'Şirkətin məlumatları qəbul edildi, ödəniş yaratmaq olar',
+      checkInvalid: 'Şirkətin logini və ya şifrəsi yanlışdır',
       checkRejected: 'Məlumatlar qəbul edildi, lakin ekvayer ödənişə icazə vermədi',
       checkUnreachable: 'Ekvayer cavab vermədi — terminal barədə məlumat yoxdur',
-      newPassword: 'Yeni terminal şifrəsi (istəyə görə)',
-      newPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
       company: 'Təyin Olunmuş Şirkət',
       status: 'Status',
       statuses: {
@@ -1653,8 +1666,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       unblockExplains: 'Blokdan çıxarma terminala ödəniş qəbulunu qaytarır: dayandırılmış linklər yenidən aktiv olur, blok müddətində vaxtı bitmiş olanlar istisna.',
       unblockLinksAffected: 'Yenidən aktiv olacaq dayandırılmış linklər',
       editConfirmTitle: 'Terminalın dəyişiklikləri yadda saxlanılsın',
-      editConfirmQuestion: 'Aşağıdakılar dəyişəcək. Bu formada login, şifrə və sahib şirkət yan-yana durur — təsdiqləməzdən əvvəl siyahını yoxlayın.',
-      editPasswordReplaced: 'Terminalın şifrəsi əvəz olunacaq',
+      editConfirmQuestion: 'Aşağıdakılar dəyişəcək. Bu formada ad və sahib şirkət yan-yana durur — təsdiqləməzdən əvvəl siyahını yoxlayın.',
       editNothingChanged: 'Dəyişiklik yoxdur — sorğu göndərilmədi.',
       searchPlaceholder: 'Ad, ID və ya login üzrə axtarış...',
       companyHint: 'Terminalın aid olduğu şirkət',
@@ -1664,7 +1676,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       updated: 'Terminal yeniləndi',
       updateFailed: 'Terminalı yeniləmək mümkün olmadı',
       checkFailed: 'Terminalı yoxlamaq mümkün olmadı',
-      revealFailed: 'Terminal parolunu göstərmək mümkün olmadı',
       blockedNotice: 'Terminal bloklandı: yeni ödənişlər qəbul edilmir, aktiv linklər dayandırıldı',
       unblockedNotice: 'Terminalın bloku açıldı: dayandırılmış linklər yenidən aktivdir (müddəti bitənlər istisna olmaqla)',
       statusChangeFailed: 'Terminalın statusunu dəyişmək mümkün olmadı',
@@ -1686,6 +1697,22 @@ export const translations: Record<Language, TranslationDictionary> = {
       deactivateQuestion: 'Bu, sorğu kitabçasında qeyd və audit jurnalında yazıdır. İşçilərin girişini, link yaradılmasını və ödənişlərin qəbulunu dayandırmır — ödənişləri dayandırmaq üçün terminalları bloklayın.',
       activateTitle: 'Şirkət aktiv işarələnsin?',
       activateQuestion: 'Şirkət yenidən aktiv işarələnəcək. Başqa heç nə dəyişmir.',
+      providerLogin: 'Provayder logini',
+      providerLoginHint: 'Logini tam, sahib prefiksi ilə daxil edin, məsələn TerminalSys/merchant. Şirkətin provayderə bütün sorğuları onunla göndərilir.',
+      providerPassword: 'Provayder şifrəsi',
+      providerPasswordHint: 'Şifrələnmiş saxlanılır. Sonra onu görmək olmaz — yalnız əvəz etmək.',
+      newProviderPassword: 'Yeni provayder şifrəsi (istəyə görə)',
+      newProviderPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
+      editCredentials: 'Provayderə giriş',
+      credentialsConfirmTitle: 'Provayderə giriş dəyişdirilsin?',
+      credentialsConfirmQuestion: 'Şirkətin provayderə bütün sorğuları — yeni ödənişlər, silinmələr, geri qaytarmalar və status yoxlamaları — bu məlumatlarla gedəcək. Yanlış məlumatlar şirkətin ödənişlərini dayandırar.',
+      providerPasswordReplaced: 'Provayder şifrəsi əvəz olunacaq',
+      editNothingChanged: 'Heç nə dəyişməyib — sorğu göndərilmədi.',
+      formIncomplete: 'Bütün məcburi sahələri doldurun',
+      created: 'Şirkət yaradıldı',
+      createFailed: 'Şirkəti yaratmaq alınmadı',
+      credentialsUpdated: 'Provayderə giriş yeniləndi',
+      credentialsUpdateFailed: 'Provayderə girişi yeniləmək alınmadı',
     },
     users: {
       title: 'İstifadəçilər',
@@ -2180,23 +2207,18 @@ export const translations: Record<Language, TranslationDictionary> = {
       editDialogTitle: 'Редактировать параметры терминала',
       name: 'Название терминала',
       providerTerminal: 'Терминал провайдера',
-      providerTerminalHint: 'Название и логин берутся из справочника провайдера; здесь вводится только пароль.',
+      providerTerminalHint: 'Название и логин берутся из справочника провайдера. Пароля у терминала нет: к провайдеру ходят с логином и паролем компании.',
       providerTerminalEmpty: 'Справочник провайдера пуст. Обновите его — плановое обновление могло ещё не пройти.',
       providerTerminalLoadFailed: 'Не удалось загрузить справочник провайдера.',
       syncDirectory: 'Обновить справочник',
       syncApplied: 'Справочник обновлён. Получено терминалов',
       syncSkipped: 'Справочник не обновлён',
       login: 'Логин терминала мерчанта',
-      password: 'Пароль терминала',
-      revealPassword: 'Показать пароль',
-      hidePassword: 'Скрыть пароль',
       testAction: 'Тест',
-      checkOk: 'Данные приняты, оплаты разрешены',
-      checkInvalid: 'Неверный логин или пароль',
+      checkOk: 'Данные компании приняты, платёж создать можно',
+      checkInvalid: 'Неверный логин или пароль компании',
       checkRejected: 'Данные приняты, но эквайер не разрешил оплату',
       checkUnreachable: 'Эквайер не ответил — о терминале ничего не известно',
-      newPassword: 'Новый пароль терминала (необязательно)',
-      newPasswordHint: 'Оставьте пустым, чтобы сохранить текущий пароль терминала',
       company: 'Назначенная компания',
       status: 'Статус',
       statuses: {
@@ -2211,8 +2233,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       unblockExplains: 'Разблокировка возвращает терминалу приём платежей: приостановленные ссылки вернутся в работу, кроме тех, у которых за время блокировки истёк срок.',
       unblockLinksAffected: 'Приостановленных ссылок вернётся в работу',
       editConfirmTitle: 'Сохранить изменения терминала',
-      editConfirmQuestion: 'Изменится следующее. В этой форме рядом лежат логин, пароль и компания-владелец — сверьтесь со списком перед подтверждением.',
-      editPasswordReplaced: 'Пароль терминала будет заменён',
+      editConfirmQuestion: 'Изменится следующее. В этой форме рядом лежат название и компания-владелец — сверьтесь со списком перед подтверждением.',
       editNothingChanged: 'Изменений нет — запрос не отправлялся.',
       searchPlaceholder: 'Поиск по названию, ID или логину...',
       companyHint: 'Компания, которой принадлежит терминал',
@@ -2222,7 +2243,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       updated: 'Терминал обновлён',
       updateFailed: 'Не удалось обновить терминал',
       checkFailed: 'Не удалось проверить терминал',
-      revealFailed: 'Не удалось показать пароль терминала',
       blockedNotice: 'Терминал заблокирован: новые платежи по нему не принимаются, активные ссылки приостановлены',
       unblockedNotice: 'Терминал разблокирован: приостановленные ссылки вернулись в работу, кроме тех, у которых истёк срок',
       statusChangeFailed: 'Не удалось изменить статус терминала',
@@ -2244,6 +2264,22 @@ export const translations: Record<Language, TranslationDictionary> = {
       deactivateQuestion: 'Это пометка в справочнике и запись в журнале аудита. Вход сотрудников, создание ссылок и приём платежей она не останавливает — чтобы остановить платежи, блокируйте терминалы.',
       activateTitle: 'Пометить компанию активной?',
       activateQuestion: 'Компания снова будет помечена активной. Больше ничего не меняется.',
+      providerLogin: 'Логин к провайдеру',
+      providerLoginHint: 'Логин целиком, с префиксом владельца, например TerminalSys/merchant. С ним уходят все запросы компании к провайдеру.',
+      providerPassword: 'Пароль к провайдеру',
+      providerPasswordHint: 'Хранится зашифрованным. Посмотреть его потом нельзя — только заменить.',
+      newProviderPassword: 'Новый пароль к провайдеру (необязательно)',
+      newProviderPasswordHint: 'Оставьте пустым, чтобы не менять пароль',
+      editCredentials: 'Доступ к провайдеру',
+      credentialsConfirmTitle: 'Изменить доступ к провайдеру?',
+      credentialsConfirmQuestion: 'С этими данными пойдут все запросы компании к провайдеру — новые платежи, списания, возвраты и проверки статуса. Неверные остановят платежи компании.',
+      providerPasswordReplaced: 'Пароль к провайдеру будет заменён',
+      editNothingChanged: 'Ничего не изменилось — запрос не отправлен.',
+      formIncomplete: 'Заполните все обязательные поля',
+      created: 'Компания создана',
+      createFailed: 'Не удалось создать компанию',
+      credentialsUpdated: 'Доступ к провайдеру обновлён',
+      credentialsUpdateFailed: 'Не удалось обновить доступ к провайдеру',
     },
     users: {
       title: 'Пользователи',

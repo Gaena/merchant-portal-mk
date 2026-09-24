@@ -28,11 +28,9 @@ public class Terminal {
     @Column(name = "name", nullable = false)
     private String name;
 
+    // К провайдеру с логином терминала больше не ходят — только с кредами его компании (Р-93).
     @Column(name = "login", nullable = false)
     private String login;
-
-    @Column(name = "password", nullable = false)
-    private String password;
 
     @Column(name = "company_id", nullable = true)
     private String companyId;

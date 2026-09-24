@@ -2,6 +2,11 @@ export interface CompanyDto {
   id: string;
   name: string;
   status?: 'ACTIVE' | 'INACTIVE' | 'DISABLED';
+  /**
+   * Логин компании к провайдеру (Р-93) — приходит только SYSTEM_ADMIN, остальным `null`. Пароля в
+   * ответе нет вовсе: его можно только заменить.
+   */
+  providerLogin?: string | null;
   createdAt?: string;
 }
 
@@ -14,7 +19,6 @@ export interface TerminalDto {
   id: number;
   name: string;
   login: string;
-  password?: string;
   companyId: string;
   /** Бэкенд присылает всегда; поле необязательное только ради ответов, снятых до P2-8. */
   status?: TerminalStatus;
@@ -23,8 +27,7 @@ export interface TerminalDto {
 
 /**
  * Ответ `GET /api/v1/terminals/options` — лёгкий фид для селекторов, фильтров и подписей
- * терминала на экранах платежей. Пароля в нём нет и не будет; `login` есть намеренно —
- * см. `TerminalOptionResponse` на бэкенде.
+ * терминала на экранах платежей. `login` есть намеренно — см. `TerminalOptionResponse` на бэкенде.
  */
 export interface TerminalOptionDto {
   id: number;

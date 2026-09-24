@@ -1,5 +1,7 @@
 package az.millikart.pbl;
 
+import az.millikart.common.security.CredentialCipher;
+import org.springframework.jdbc.core.JdbcTemplate;
 import az.millikart.common.testing.PostgresTestContainer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -95,6 +97,12 @@ class TerminalBlockedIntegrationTest {
     private TerminalRepository terminalRepository;
 
     @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private CredentialCipher credentialCipher;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     @MockBean
@@ -107,6 +115,7 @@ class TerminalBlockedIntegrationTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "test-company");
 
         terminalRepository.save(terminal(BLOCKED_TERMINAL, TerminalStatus.BLOCKED));
         terminalRepository.save(terminal(ACTIVE_TERMINAL, TerminalStatus.ACTIVE));
@@ -126,7 +135,7 @@ class TerminalBlockedIntegrationTest {
                 // Плательщику сообщают, что ссылка недоступна, и ничего про терминал.
                 .hasMessageNotContainingAny("terminal", "BLOCKED", String.valueOf(BLOCKED_TERMINAL));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
         assertThat(transactionRepository.count()).isZero();
     }
 
@@ -140,7 +149,7 @@ class TerminalBlockedIntegrationTest {
         assertThatThrownBy(() -> openLinkService.openAndBuildRedirect(linkId, "203.0.113.9", "curl"))
                 .isInstanceOf(InvalidStateException.class);
 
-        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
     }
 
     // 12. Блокировка приходит, пока замок ссылки держит чужая транзакция
@@ -183,7 +192,7 @@ class TerminalBlockedIntegrationTest {
                 .as("the next open must see the block that landed under the lock")
                 .isInstanceOf(InvalidStateException.class);
 
-        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), anyString());
         assertThat(transactionRepository.count())
                 .as("no payment attempt may exist for a terminal blocked before the lock was granted")
                 .isZero();
@@ -285,7 +294,7 @@ class TerminalBlockedIntegrationTest {
     @Test
     void refundOnBlockedTerminal_goesThrough() throws Exception {
         Transaction paid = transaction(BLOCKED_TERMINAL, TransactionStatus.SUCCESS, PaymentType.SMS, null);
-        when(acquiringClient.refund(any(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(any(), anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult("REF-1", "RRN-1", "APPR-1", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
@@ -303,7 +312,7 @@ class TerminalBlockedIntegrationTest {
     @Test
     void captureOnBlockedTerminal_goesThrough() throws Exception {
         Transaction held = transaction(BLOCKED_TERMINAL, TransactionStatus.AUTHORIZED, PaymentType.DMS, null);
-        when(acquiringClient.completeDms(any(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(any(), anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult("CAP-1", "RRN-2", "APPR-2", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + held.getId() + "/complete")
@@ -322,7 +331,7 @@ class TerminalBlockedIntegrationTest {
     @Test
     void statusPollOnBlockedTerminal_reachesAFinalStatus() throws Exception {
         Transaction pending = transaction(BLOCKED_TERMINAL, TransactionStatus.PENDING, PaymentType.SMS, "ORD-POLL");
-        when(acquiringClient.getOrderStatus(anyString(), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
                 .thenReturn(Map.of("status", "FullyPaid"));
 
         mockMvc.perform(get("/api/v1/transactions/" + pending.getId() + "/status")
@@ -341,7 +350,6 @@ class TerminalBlockedIntegrationTest {
                 .id(id)
                 .name("Terminal " + id)
                 .login("TerminalSys/Admin")
-                .password("1234")
                 .companyId("test-company")
                 .status(status)
                 .build();

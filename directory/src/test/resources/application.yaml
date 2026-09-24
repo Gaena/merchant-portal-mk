@@ -22,6 +22,11 @@ pbl:
       # Test-only key, identical in auth/directory/pbl test configs. Never used by a running service.
       secret: test-only-jwt-secret-not-used-anywhere-else-0123456789
 
+mp:
+  credentials:
+    # Test-only key, identical in directory/pbl test configs and CredentialCipherTest.
+    encryption-key: dGVzdC1vbmx5LWNyZWRlbnRpYWxzLWtleS0wMTIzNDU=
+
 # Mirrors production (src/main/resources/application.yaml): actuator on its own port, swagger off.
 # The tests drive the main port through MockMvc, which never boots the management child context —
 # so /actuator/** answers 404 here, exactly as it does on the public port of a running service,

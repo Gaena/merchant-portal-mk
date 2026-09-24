@@ -28,8 +28,9 @@
 Веб-портал мерчантов MilliKart:
 
 - 🔐 вход по email и паролю, пять ролей; пользователь компании видит только данные своей компании;
-- 🏢 компании и эквайринговые терминалы: логин и пароль терминала у провайдера, проверка учётных
-  данных пробным заказом, сверка статусов терминалов с провайдером;
+- 🏢 компании и эквайринговые терминалы: логин и пароль компании к провайдеру (пароль зашифрован),
+  терминалы из справочника провайдера, проверка «можно ли создать платёж» пробным заказом, сверка
+  статусов терминалов с провайдером;
 - 🔗 платёжные ссылки Pay-By-Link: одноразовые и многоразовые, со сроком жизни и страницей возврата
   плательщика;
 - 💳 операции: одностадийные (SMS) и двухстадийные (DMS) платежи, списание холда, возвраты,
@@ -140,8 +141,8 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 
 | Пакет | Что внутри |
 |:---|:---|
-| `controller` | `CompanyController`, `TerminalController` (в том числе лёгкий список `options` и пароль терминала), `AuditLogController` |
-| `service` | `CompanyService`, `TerminalService` (права, блокировка с приостановкой ссылок, пароль терминала), `AuditLogQueryService`, `TerminalStatusReconciliationService` (сверка статусов со слепком провайдера) |
+| `controller` | `CompanyController`, `TerminalController` (в том числе лёгкий список `options`), `AuditLogController` |
+| `service` | `CompanyService` (в том числе креды к провайдеру — шифрование через `CredentialCipher`), `TerminalService` (права, заведение из справочника, блокировка с приостановкой ссылок), `AuditLogQueryService`, `TerminalStatusReconciliationService` (сверка статусов со слепком провайдера) |
 | `repository` | `CompanyRepository`, `TerminalRepository`, `AuditLogQueryRepository`; нативные запросы к чужим таблицам — `PaymentLinkStatusRepository` (статусы ссылок `pbl`) и `ProviderTerminalStatusRepository` (слепок `ecom`) |
 | `scheduler` | `TerminalStatusReconciliationScheduler` |
 | `domain` | `Company`, `Terminal`, `TerminalStatus`, `TerminalStatusSource` |
@@ -155,9 +156,9 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 | `controller` | `PaymentLinkController`, `OpenLinkController` (публичные открытие ссылки и страница возврата), `TransactionController`, `DashboardController`, `TerminalCheckController` |
 | `service` | `PaymentLinkService` (ссылки, операции, статусы, история операции), `OpenLinkService` (открытие ссылки под блокировкой строки), `TransactionReconciliationService`, `DashboardService`, `TerminalCheckService`, `PaymentLinkMapper` |
 | `provider` | `AcquiringClient` и его единственная реализация `TxpgAcquiringClient`; разборщики ответов шлюза `ProviderOrderStatus`, `ProviderOrderDetails`, `ProviderDeclineReason`, `ProviderPayloads`; DTO шлюза |
-| `repository` | `PaymentLinkRepository`, `TransactionRepository`, `TerminalRepository`, `DashboardRepository` |
+| `repository` | `PaymentLinkRepository`, `TransactionRepository`, `TerminalRepository`, `DashboardRepository`; `CompanyCredentialsRepository` — креды компании из чужой таблицы `companies` |
 | `scheduler` | `PaymentLinkScheduler`, `TransactionReconciliationScheduler` |
-| `config` | `UrlConfigurationCheck` — проверка адресов на старте |
+| `config` | `UrlConfigurationCheck` — проверка адресов на старте; `CredentialCipherConfig` — шифр паролей компаний |
 | `resources/templates` | `redirect.html` — страница возврата плательщика (Thymeleaf) |
 
 Контракты — `pay-by-link.md`; контракт шлюза — `TXPG-client-side-integration.md`.
@@ -195,6 +196,8 @@ erDiagram
         varchar id PK "Например: COMP-001"
         varchar name "Название компании"
         varchar status "ACTIVE / INACTIVE / DELETED (мягкое удаление)"
+        varchar provider_login UK "Логин к провайдеру, целиком (Р-93)"
+        varchar provider_password "Пароль к провайдеру, шифротекст AES-256-GCM"
         varchar created_by
         timestamp created_at
         varchar updated_by
@@ -228,8 +231,7 @@ erDiagram
     terminals {
         integer id PK
         varchar name "Название"
-        varchar login "Логин у провайдера — основной параметр терминала"
-        varchar password "Пароль у провайдера, открытым текстом"
+        varchar login "Логин у провайдера — подпись терминала; к шлюзу не уходит"
         varchar company_id FK "→ companies.id"
         varchar status "ACTIVE / BLOCKED"
         varchar status_source "MANUAL / PROVIDER — кто выключил"
@@ -337,6 +339,7 @@ changeset'ы не редактируются.
 | `directory` | `005-terminal-status.xml` | `terminals.status` |
 | `directory` | `006-terminal-status-source.xml` | `terminals.status_source` (по умолчанию `MANUAL`), `terminals.merchant_rid`, уникальный индекс `uk_terminals_merchant_rid` |
 | `directory` | `007-terminal-id-sequence.xml` | последовательность `terminals_id_seq` — номера терминалов выдаёт база, продолжая после наибольшего существующего |
+| `directory` | `008-company-provider-credentials.xml` | `companies.provider_login` и `provider_password`, уникальный индекс `ux_companies_provider_login`; удаление `terminals.password` (Р-93) |
 | `pbl` | `001-initial-schema.xml` | `payment_links`, `transactions`; `terminals`, если ещё нет |
 | `pbl` | `002-add-indexes.xml` | индексы ссылок и транзакций |
 | `pbl` | `003-add-client-ip-and-user-agent.xml` | `transactions.client_ip`, `user_agent` |
@@ -347,6 +350,7 @@ changeset'ы не редактируются.
 | `pbl` | `008-dashboard-indexes.xml` | индекс `transactions(created_at)` для сводки |
 | `pbl` | `009-rid-by-merchant.xml` | переименование `transactions.merchant_rid` → `rid_by_merchant` |
 | `pbl` | `010-transaction-refunds.xml` | `transaction_refunds` с индексами по `refunded_at` и `transaction_id`; на PostgreSQL — перенос подтверждённых возвратов из `provider_response.mpRefunds` (Р-89) |
+| `pbl` | `011-company-provider-credentials.xml` | `companies`, если ещё нет (в виде `auth/002`), колонки кредов, если их нет; удаление `terminals.password` (Р-93) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет |
 
@@ -372,8 +376,9 @@ changeset'ы не редактируются.
   `AGENTS.md` §6.
 - **Пароли пользователей** — BCrypt и политика PCI-DSS v4.0; после 6 неудачных попыток учётная
   запись блокируется на 30 минут; с одного адреса — не больше 10 неудачных входов за 15 минут.
-- **Пароли терминалов** хранятся открытым текстом — они нужны для Basic-авторизации у шлюза.
-  Наружу пароль отдаётся только `SYSTEM_ADMIN`, с записью в журнале.
+- **Креды к провайдеру — у компании** (Р-93): пароль хранится шифротекстом AES-256-GCM, ключ —
+  переменная `CREDENTIALS_ENCRYPTION_KEY` (один в `directory` и `pbl`). Расшифровывает его только `pbl`
+  для Basic-заголовка; наружу пароль не отдаётся никому. У терминала пароля нет.
 - **Инфраструктурные пути.** Actuator слушает отдельные порты на `127.0.0.1`, Swagger включается
   флагом `SWAGGER_ENABLED` на время приёмки.
 - **Журнал аудита** только дописывается: у репозитория один метод `save`, у сущности нет сеттеров.
@@ -387,8 +392,8 @@ changeset'ы не редактируются.
 | Данные | Пишет | Кто ещё читает или пишет, и как |
 |:---|:---|:---|
 | `users`, `refresh_tokens` | `auth` | — |
-| `companies` | `directory` | `auth` — название компании нативным запросом для поиска пользователей |
-| `terminals` | `directory` | `pbl` — логин, пароль и статус для заказов у шлюза; `ecom` — логин для скоупа выписки, `merchant_rid` для её фильтра |
+| `companies` | `directory` | `auth` — название компании нативным запросом для поиска пользователей; `pbl` — логин и пароль компании к провайдеру (Р-93) |
+| `terminals` | `directory` | `pbl` — компания и статус терминала для заказов у шлюза; `ecom` — логин для скоупа выписки, `merchant_rid` для её фильтра |
 | `payment_links`, `transactions` | `pbl` | `directory` — статусы ссылок нативным запросом при блокировке и разблокировке терминала, в той же транзакции |
 | `audit_logs` | все сервисы через `common` | `directory` — чтение журнала |
 | `provider_terminals` | `ecom` | `directory` — нативным запросом для сверки статусов терминалов |
@@ -405,23 +410,24 @@ changeset'ы не редактируются.
 
 ```java
 public interface AcquiringClient {
-    EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID ridByMerchant, String hppRedirectUrl);
-    MoneyOperationResult completeDms(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount);
-    MoneyOperationResult refund(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount);
-    Map<String, Object> getOrderStatus(String providerOrderId, String password, String login, String terminalPassword);
-    TerminalCheckResult checkTerminalCredentials(String login, String password);
+    EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, UUID ridByMerchant, String hppRedirectUrl);
+    MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
+    MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
+    Map<String, Object> getOrderStatus(String providerOrderId, String password, ProviderCredentials credentials);
+    TerminalCheckResult checkOrderCreation(ProviderCredentials credentials);
 }
 ```
 
 Реализация одна — `TxpgAcquiringClient` поверх `RestClient`; тестовый двойник живёт только в
-тестах. Авторизация у шлюза — Basic с логином и паролем терминала.
+тестах. Авторизация у шлюза — Basic с логином и паролем **компании** терминала (Р-93): их читает из
+`companies` и расшифровывает `ProviderCredentialsService`; компании без кредов — 400 до шлюза.
 
 ### 7.2. Устойчивость
 
 - `@CircuitBreaker(name="acquiring")` — на создании заказа, списании, возврате и запросе статуса.
 - `@Retry` — только на создании заказа и запросе статуса: повтор списания или возврата превращается
   в деньги.
-- `checkTerminalCredentials` — без обоих: повтор множит пробные заказы, а общий предохранитель
+- `checkOrderCreation` — без обоих: повтор множит пробные заказы, а общий предохранитель
   закрыл бы платежи из-за проверок администратора.
 - Сбои денежных вызовов делятся на «шлюз отказал» (400) и «исход неизвестен» (502); успех
   подтверждается только `tran.match.ridByPmo`. Таблица классификации и словарь статусов заказа —
@@ -490,10 +496,10 @@ sequenceDiagram
 
 ### 7.5. Проверка терминала
 
-`TerminalCheckService` заводит у шлюза пробный заказ на 1 AZN с логином и паролем терминала — из
-базы для заведённого терминала или из формы для нового. Ответ без `errorCode` — данные приняты;
-`InvalidLogin` — неверный логин или пароль; другой код — провайдер отказал; 5xx или нет ответа —
-провайдер недоступен. Неоплаченный заказ через 10 минут истекает у провайдера.
+`TerminalCheckService` заводит у шлюза пробный заказ на 1 AZN для заведённого терминала с логином и
+паролем его компании (Р-93); проверки до заведения нет — своих кредов у терминала нет. Ответ без
+`errorCode` — платёж создать можно; `InvalidLogin` — неверные креды компании; другой код — провайдер
+отказал; 5xx или нет ответа — провайдер недоступен. Неоплаченный заказ через 10 минут истекает у провайдера.
 
 ---
 
@@ -599,8 +605,8 @@ pbl: открытие ссылки и создание новой по этом�
 Frontend → POST /api/v1/acquiring/terminal-checks/{terminalId} → nginx → pbl:8080
     → TerminalCheckController → TerminalCheckService.checkExisting()
         → только SYSTEM_ADMIN (иначе 403 и запись отказа в журнале)
-        → логин и пароль терминала из базы
-        → TxpgAcquiringClient.checkTerminalCredentials() → пробный CreateOrder на 1 AZN
+        → логин и пароль компании терминала из базы (пароль расшифровывается; нет кредов — 400)
+        → TxpgAcquiringClient.checkOrderCreation() → пробный CreateOrder на 1 AZN
         → журнал аудита TERMINAL / READ с исходом, без пароля
     ← { outcome: OK | INVALID_CREDENTIALS | REJECTED | UNREACHABLE, … }
 ```

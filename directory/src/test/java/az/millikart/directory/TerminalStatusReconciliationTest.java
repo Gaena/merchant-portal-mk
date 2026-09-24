@@ -50,7 +50,6 @@ class TerminalStatusReconciliationTest {
                 .id(500001)
                 .name("Terminal")
                 .login("login")
-                .password("secret")
                 .companyId("comp-01")
                 .status(status)
                 .statusSource(source)

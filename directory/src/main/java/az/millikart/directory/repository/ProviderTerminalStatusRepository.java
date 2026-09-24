@@ -77,9 +77,9 @@ public class ProviderTerminalStatusRepository {
 
         static final String TERMINAL_OWNER_PREFIX = "TerminalSys/";
 
-        // Логин для terminals: Basic-логин шлюза составной — OwnerKind/login («TerminalSys/Admin»,
-        // TXPG-client-side-integration.md), а слепок хранит login.login без префикса (Р-83). pbl
-        // отдаёт terminals.login шлюзу как есть, поэтому голый логин давал бы InvalidLogin.
+        // Логин для terminals — в составной форме OwnerKind/login («TerminalSys/Admin»), как его писали
+        // до Р-93, когда pbl ходил с ним к шлюзу; слепок хранит login.login без префикса (Р-83). К шлюзу
+        // с ним больше не ходят (Р-93): до новых селектов он нужен скоупу выписки и подписи терминала.
         public String gatewayLogin() {
             if (login == null || login.isBlank()) {
                 return null;

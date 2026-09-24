@@ -31,11 +31,10 @@ public class Terminal {
     @Column(name = "name", nullable = false)
     private String name;
 
+    // Логин терминала у провайдера. К провайдеру с ним больше не ходят — только креды компании (Р-93);
+    // до новых селектов он нужен выписке ecom (Р-83), сверке статусов и подписи терминала на экранах.
     @Column(name = "login", nullable = false)
     private String login;
-
-    @Column(name = "password", nullable = false)
-    private String password;
 
     @Column(name = "company_id")
     private String companyId;

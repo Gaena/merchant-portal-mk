@@ -28,6 +28,7 @@ import az.millikart.common.exception.PaymentOutcomeUnknownException;
 import az.millikart.common.exception.ResourceNotFoundException;
 
 import az.millikart.pbl.provider.AcquiringClient;
+import az.millikart.pbl.provider.ProviderCredentials;
 import az.millikart.pbl.provider.ProviderDeclineReason;
 import az.millikart.pbl.provider.ProviderOrderDetails;
 import az.millikart.pbl.provider.ProviderOrderDetails.TransactionFacts;
@@ -80,6 +81,7 @@ public class PaymentLinkService {
     private final TransactionRefundRepository transactionRefundRepository;
     private final TerminalRepository terminalRepository;
     private final AcquiringClient acquiringClient;
+    private final ProviderCredentialsService providerCredentials;
     private final PaymentLinkMapper mapper;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
@@ -93,6 +95,7 @@ public class PaymentLinkService {
                                TransactionRefundRepository transactionRefundRepository,
                                TerminalRepository terminalRepository,
                                AcquiringClient acquiringClient,
+                               ProviderCredentialsService providerCredentials,
                                PaymentLinkMapper mapper,
                                AuditLogService auditLogService,
                                ApplicationEventPublisher eventPublisher,
@@ -105,6 +108,7 @@ public class PaymentLinkService {
         this.transactionRefundRepository = transactionRefundRepository;
         this.terminalRepository = terminalRepository;
         this.acquiringClient = acquiringClient;
+        this.providerCredentials = providerCredentials;
         this.mapper = mapper;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
@@ -133,6 +137,8 @@ public class PaymentLinkService {
             throw new BusinessException("terminal " + request.terminal()
                     + " is blocked and cannot take new payments; unblock it or use another terminal");
         }
+        // Без кредов компании ссылка родилась бы нерабочей: открытие упало бы на обращении к провайдеру (Р-93).
+        providerCredentials.forTerminal(terminal);
 
         CustomerDto customer = request.customer();
         String providerRef = "RID-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase();
@@ -538,6 +544,8 @@ public class PaymentLinkService {
                     return new BusinessException("Terminal configuration not found");
                 });
 
+        // Креды — до отправки и вне try: их отсутствие — отказ (400), а не неизвестный исход (Р-93).
+        ProviderCredentials credentials = providerCredentials.forTerminal(terminal);
         log.info("Sending DMS Clearing capture request to provider for providerOrderId: {}, amount: {}", transaction.getProviderOrderId(), request.amount());
 
         // P1-8b: возвращается только при подтверждённом клиринге (tran.match.ridByPmo);
@@ -547,8 +555,7 @@ public class PaymentLinkService {
             capture = acquiringClient.completeDms(
                     transaction.getProviderOrderId(),
                     transaction.getProviderPassword(),
-                    terminal.getLogin(),
-                    terminal.getPassword(),
+                    credentials,
                     request.amount()
             );
         } catch (PaymentOutcomeUnknownException e) {
@@ -649,13 +656,14 @@ public class PaymentLinkService {
                     return new BusinessException("Terminal configuration not found");
                 });
 
+        ProviderCredentials credentials = providerCredentials.forTerminal(terminal);
         log.info("Sending refund request to provider for providerOrderId: {}, amount: {}", transaction.getProviderOrderId(), request.amount());
 
         // P1-8b: возвращается только при подтверждённом эквайером возврате (tran.match.ridByPmo).
         MoneyOperationResult result;
         try {
             result = acquiringClient.refund(transaction.getProviderOrderId(), transaction.getProviderPassword(),
-                    terminal.getLogin(), terminal.getPassword(), request.amount());
+                    credentials, request.amount());
         } catch (PaymentOutcomeUnknownException e) {
             // То же, что в completeDms, и здесь важнее: деньги могли уйти со счёта мерчанта, а у нас
             // не осталось ничего. Синхронно — транзакция сейчас откатится и унесла бы событие (P2-14).
@@ -968,7 +976,8 @@ public class PaymentLinkService {
                     return new BusinessException("Terminal configuration not found");
                 });
 
-        Map<String, Object> orderDetails = acquiringClient.getOrderStatus(tx.getProviderOrderId(), tx.getProviderPassword(), terminal.getLogin(), terminal.getPassword());
+        Map<String, Object> orderDetails = acquiringClient.getOrderStatus(tx.getProviderOrderId(), tx.getProviderPassword(),
+                providerCredentials.forTerminal(terminal));
         if (orderDetails == null) {
             // Раньше было тихим no-op: отсутствующее тело так же неинформативно, как неизвестное
             // слово, и должно быть так же заметно.

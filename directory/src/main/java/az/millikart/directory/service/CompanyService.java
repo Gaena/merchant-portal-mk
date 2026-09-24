@@ -6,6 +6,7 @@ import az.millikart.directory.dto.CreateCompanyRequest;
 import az.millikart.directory.dto.UpdateCompanyRequest;
 import az.millikart.common.dto.PagedResponse;
 import az.millikart.common.exception.BusinessException;
+import az.millikart.common.exception.ConflictException;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.directory.repository.CompanyRepository;
 
@@ -14,6 +15,7 @@ import az.millikart.common.audit.AuditEntity;
 import az.millikart.common.audit.AuditEvent;
 import az.millikart.common.audit.AuditLogService;
 import az.millikart.common.search.SearchTerms;
+import az.millikart.common.security.CredentialCipher;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
 import java.util.stream.Collectors;
@@ -40,13 +42,16 @@ public class CompanyService {
     private final CompanyRepository companyRepository;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
+    private final CredentialCipher credentialCipher;
 
     public CompanyService(CompanyRepository companyRepository,
                           AuditLogService auditLogService,
-                          ApplicationEventPublisher eventPublisher) {
+                          ApplicationEventPublisher eventPublisher,
+                          CredentialCipher credentialCipher) {
         this.companyRepository = companyRepository;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
+        this.credentialCipher = credentialCipher;
     }
 
     @Transactional
@@ -68,10 +73,13 @@ public class CompanyService {
         if (companyRepository.existsById(request.id())) {
             throw new BusinessException("Company with ID '" + request.id() + "' already exists");
         }
+        requireFreeProviderLogin(request.providerLogin(), null);
 
         Company company = Company.builder()
                 .id(request.id())
                 .name(request.name())
+                .providerLogin(request.providerLogin())
+                .providerPassword(credentialCipher.encrypt(request.providerPassword()))
                 .status(STATUS_ACTIVE)
                 .createdBy(actorUsername)
                 .updatedBy(actorUsername)
@@ -86,10 +94,10 @@ public class CompanyService {
                 AuditAction.CREATE,
                 actorUsername,
                 company.getId(),
-                "Created company: " + company.getName()
+                "Created company: " + company.getName() + ", provider login " + company.getProviderLogin()
         ));
 
-        return mapToResponse(company);
+        return mapToResponse(company, actorRole);
     }
 
     // Страница компаний (P2-1) с поиском по name и id (P3-1). Страницы, фильтр мягкого удаления,
@@ -114,7 +122,7 @@ public class CompanyService {
                 SearchTerms.toLikePattern(search), byName);
 
         return PagedResponse.of(page, page.getContent().stream()
-                .map(this::mapToResponse)
+                .map(company -> mapToResponse(company, actorRole))
                 .collect(Collectors.toList()));
     }
 
@@ -130,7 +138,7 @@ public class CompanyService {
         }
 
         validateAccess(company.getId(), principal, actorRole, actorCompanyId);
-        return mapToResponse(company);
+        return mapToResponse(company, actorRole);
     }
 
     @Transactional
@@ -162,6 +170,17 @@ public class CompanyService {
             changes.append("Status changed from '").append(company.getStatus()).append("' to '").append(request.status()).append("'. ");
             company.setStatus(request.status());
         }
+        String providerLogin = request.providerLogin();
+        if (providerLogin != null && !providerLogin.isBlank() && !providerLogin.equals(company.getProviderLogin())) {
+            requireFreeProviderLogin(providerLogin, company.getId());
+            changes.append("Provider login changed from '").append(company.getProviderLogin()).append("' to '").append(providerLogin).append("'. ");
+            company.setProviderLogin(providerLogin);
+        }
+        // Сам пароль в журнал не пишется — только факт смены (Р-93).
+        if (request.providerPassword() != null && !request.providerPassword().isBlank()) {
+            changes.append("Provider password changed. ");
+            company.setProviderPassword(credentialCipher.encrypt(request.providerPassword()));
+        }
 
         company.setUpdatedBy(actorUsername);
         company = companyRepository.save(company);
@@ -192,7 +211,7 @@ public class CompanyService {
             ));
         }
 
-        return mapToResponse(company);
+        return mapToResponse(company, actorRole);
     }
 
     @Transactional
@@ -240,11 +259,23 @@ public class CompanyService {
         throw new InvalidStateException("Access denied");
     }
 
-    private CompanyResponse mapToResponse(Company company) {
+    // Логин к провайдеру уникален (Р-93): две компании с одним логином ходили бы к провайдеру одним ключом.
+    private void requireFreeProviderLogin(String providerLogin, String companyId) {
+        boolean taken = companyId == null
+                ? companyRepository.existsByProviderLogin(providerLogin)
+                : companyRepository.existsByProviderLoginAndIdNot(providerLogin, companyId);
+        if (taken) {
+            throw new ConflictException("Provider login is already used by another company");
+        }
+    }
+
+    // Логин к провайдеру видит только SYSTEM_ADMIN: он его и задаёт (Р-93).
+    private CompanyResponse mapToResponse(Company company, Role actorRole) {
         return new CompanyResponse(
                 company.getId(),
                 company.getName(),
                 company.getStatus(),
+                actorRole == Role.SYSTEM_ADMIN ? company.getProviderLogin() : null,
                 company.getCreatedBy(),
                 company.getCreatedAt() != null ? company.getCreatedAt() : java.time.Instant.now(),
                 company.getUpdatedBy(),

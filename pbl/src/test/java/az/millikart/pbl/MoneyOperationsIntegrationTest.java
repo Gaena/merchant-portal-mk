@@ -1,10 +1,13 @@
 package az.millikart.pbl;
 
+import az.millikart.common.security.CredentialCipher;
+import org.springframework.jdbc.core.JdbcTemplate;
 import az.millikart.common.testing.PostgresTestContainer;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -25,6 +28,7 @@ import az.millikart.pbl.domain.Transaction;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
 import az.millikart.pbl.provider.AcquiringClient;
+import az.millikart.pbl.provider.ProviderCredentials;
 import az.millikart.pbl.provider.TxpgAcquiringClient;
 import az.millikart.pbl.provider.dto.MoneyOperationResult;
 import az.millikart.pbl.repository.PaymentLinkRepository;
@@ -100,6 +104,12 @@ class MoneyOperationsIntegrationTest {
     private TerminalRepository terminalRepository;
 
     @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private CredentialCipher credentialCipher;
+
+    @Autowired
     private TransactionRefundRepository transactionRefundRepository;
 
     @MockBean
@@ -113,12 +123,12 @@ class MoneyOperationsIntegrationTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "test-company");
 
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Test Terminal")
                 .login("TerminalSys/Admin")
-                .password("1234")
                 .companyId("test-company")
                 .build());
 
@@ -138,8 +148,8 @@ class MoneyOperationsIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Transaction has already been captured")));
 
-        verify(acquiringClient, never()).completeDms(anyString(), anyString(), anyString(), anyString(), any());
-        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
         Assertions.assertEquals(TransactionStatus.SUCCESS, statusOf(captured));
     }
 
@@ -148,15 +158,15 @@ class MoneyOperationsIntegrationTest {
     @Test
     void completeDms_pendingButAuthorizedAtProvider_succeeds() throws Exception {
         Transaction pending = transaction("LATE-HOLD", TransactionStatus.PENDING);
-        when(acquiringClient.getOrderStatus(anyString(), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
                 .thenReturn(Map.of("status", "Authorized"));
-        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("CAP"));
 
         mockMvc.perform(capture(pending, AMOUNT))
                 .andExpect(status().isOk());
 
-        verify(acquiringClient, times(1)).completeDms(anyString(), anyString(), anyString(), anyString(), any());
+        verify(acquiringClient, times(1)).completeDms(anyString(), anyString(), any(), any());
         Assertions.assertEquals(TransactionStatus.SUCCESS, statusOf(pending));
     }
 
@@ -165,14 +175,14 @@ class MoneyOperationsIntegrationTest {
     void completeDms_stillPendingAtProvider_returns400() throws Exception {
         Transaction pending = transaction("NO-HOLD", TransactionStatus.PENDING);
         // "Preparing" — заказ есть, но карту так и не ввели.
-        when(acquiringClient.getOrderStatus(anyString(), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
                 .thenReturn(Map.of("status", "Preparing"));
 
         mockMvc.perform(capture(pending, AMOUNT))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("has not been authorized by the acquirer yet")));
 
-        verify(acquiringClient, never()).completeDms(anyString(), anyString(), anyString(), anyString(), any());
+        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
         Assertions.assertEquals(TransactionStatus.PENDING, statusOf(pending));
     }
 
@@ -180,7 +190,7 @@ class MoneyOperationsIntegrationTest {
     @Test
     void completeDms_providerTimeout_returns502AndKeepsStatus() throws Exception {
         Transaction authorized = transaction("HOLD", TransactionStatus.AUTHORIZED);
-        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException(
                         "No response from the acquirer for the completeDms: Read timed out"));
 
@@ -200,14 +210,14 @@ class MoneyOperationsIntegrationTest {
     @Test
     void completeDms_partialAmount_isSentToAcquirer() throws Exception {
         Transaction authorized = dmsTransaction("PARTIAL", TransactionStatus.AUTHORIZED, AUTHORIZED_AMOUNT, null);
-        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("CAP"));
 
         mockMvc.perform(capture(authorized, CAPTURED_AMOUNT))
                 .andExpect(status().isOk());
 
         ArgumentCaptor<BigDecimal> sent = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(acquiringClient).completeDms(anyString(), anyString(), anyString(), anyString(), sent.capture());
+        verify(acquiringClient).completeDms(anyString(), anyString(), any(), sent.capture());
         Assertions.assertEquals(0, CAPTURED_AMOUNT.compareTo(sent.getValue()),
                 "the acquirer must receive the requested 500, not the authorized 1500, got: " + sent.getValue());
     }
@@ -216,7 +226,7 @@ class MoneyOperationsIntegrationTest {
     @Test
     void completeDms_partialAmount_isStoredAsCapturedAmount() throws Exception {
         Transaction authorized = dmsTransaction("PARTIAL-STORE", TransactionStatus.AUTHORIZED, AUTHORIZED_AMOUNT, null);
-        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("CAP"));
 
         mockMvc.perform(capture(authorized, CAPTURED_AMOUNT))
@@ -240,7 +250,7 @@ class MoneyOperationsIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Capture amount exceeds the authorized amount")));
 
-        verify(acquiringClient, never()).completeDms(anyString(), anyString(), anyString(), anyString(), any());
+        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
         Assertions.assertEquals(TransactionStatus.AUTHORIZED, statusOf(authorized));
         Assertions.assertNull(reload(authorized).getCapturedAmount());
     }
@@ -255,7 +265,7 @@ class MoneyOperationsIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("two decimal places")));
 
-        verify(acquiringClient, never()).completeDms(anyString(), anyString(), anyString(), anyString(), any());
+        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
         Assertions.assertEquals(TransactionStatus.AUTHORIZED, statusOf(authorized));
     }
 
@@ -263,14 +273,14 @@ class MoneyOperationsIntegrationTest {
     @Test
     void completeDms_fullAmount_stillWorks() throws Exception {
         Transaction authorized = dmsTransaction("FULL", TransactionStatus.AUTHORIZED, AUTHORIZED_AMOUNT, null);
-        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("CAP"));
 
         mockMvc.perform(capture(authorized, AUTHORIZED_AMOUNT))
                 .andExpect(status().isOk());
 
         ArgumentCaptor<BigDecimal> sent = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(acquiringClient).completeDms(anyString(), anyString(), anyString(), anyString(), sent.capture());
+        verify(acquiringClient).completeDms(anyString(), anyString(), any(), sent.capture());
         Assertions.assertEquals(0, AUTHORIZED_AMOUNT.compareTo(sent.getValue()));
 
         Transaction captured = reload(authorized);
@@ -286,7 +296,7 @@ class MoneyOperationsIntegrationTest {
     @Test
     void refund_providerTimeout_returns502AndKeepsRefundedAmount() throws Exception {
         Transaction settled = transaction("PAID", TransactionStatus.SUCCESS);
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException(
                         "No response from the acquirer for the refund: Read timed out"));
 
@@ -304,7 +314,7 @@ class MoneyOperationsIntegrationTest {
     @Test
     void refund_providerRejects_returns400() throws Exception {
         Transaction settled = transaction("PAID", TransactionStatus.SUCCESS);
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenThrow(new BusinessException("Acquirer error: Refund amount exceeds cleared amount"));
 
         mockMvc.perform(refund(settled, new BigDecimal("40.00")))
@@ -316,13 +326,48 @@ class MoneyOperationsIntegrationTest {
         Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(untouched.getRefundedAmount()));
     }
 
+    // Р-93: к провайдеру ходят с кредами компании терминала. Их нет — отказ 400 до провайдера, а не 502:
+    // деньги не двигались, и «исход неизвестен» здесь был бы неправдой.
+    @Test
+    void refundAndCapture_companyWithoutCredentials_return400BeforeTheProvider() throws Exception {
+        Transaction settled = transaction("NO-CREDS-PAID", TransactionStatus.SUCCESS);
+        Transaction held = transaction("NO-CREDS-HELD", TransactionStatus.AUTHORIZED);
+        jdbcTemplate.update("UPDATE companies SET provider_login = NULL, provider_password = NULL WHERE id = 'test-company'");
+
+        mockMvc.perform(refund(settled, new BigDecimal("40.00")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("has no acquirer credentials")));
+        mockMvc.perform(capture(held, AMOUNT))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("has no acquirer credentials")));
+
+        verify(acquiringClient, never()).refund(anyString(), anyString(), any(), any());
+        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
+        Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(reload(settled).getRefundedAmount()));
+    }
+
+    // Возврат уходит провайдеру с расшифрованными кредами компании, а не терминала (Р-93).
+    @Test
+    void refund_isSentWithTheCompanyCredentials() throws Exception {
+        Transaction settled = transaction("COMPANY-CREDS", TransactionStatus.SUCCESS);
+        when(acquiringClient.refund(anyString(), anyString(), any(), any())).thenReturn(confirmed("REF"));
+
+        mockMvc.perform(refund(settled, new BigDecimal("40.00")))
+                .andExpect(status().isOk());
+
+        verify(acquiringClient).refund(anyString(), anyString(),
+                eq(new ProviderCredentials(CompanyCredentialsFixture.loginOf("test-company"),
+                        CompanyCredentialsFixture.passwordOf("test-company"))),
+                any());
+    }
+
     // Выдуманный номер возврата, которого нет ни в одной системе, хуже, чем никакого. Эквайер
     // подтвердил (ridByPmo есть), но tranActionId не прислал: refundId остаётся пустым,
     // подтверждение несёт acquirerReference.
     @Test
     void refund_providerReturnsNoTranActionId_responseHasNullRefundId() throws Exception {
         Transaction settled = transaction("PAID", TransactionStatus.SUCCESS);
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult(null, null, "220613334596244733",
                         Map.of("tran", Map.of("match", Map.of("ridByPmo", "220613334596244733")))));
 
@@ -343,7 +388,7 @@ class MoneyOperationsIntegrationTest {
     @Test
     void refund_confirmed_reportsAcquirerReferenceAndRecordsTheRefund() throws Exception {
         Transaction settled = transaction("PAID", TransactionStatus.SUCCESS);
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("REF-A"));
 
         mockMvc.perform(refund(settled, new BigDecimal("40.00")))
@@ -375,7 +420,7 @@ class MoneyOperationsIntegrationTest {
     @Test
     void refund_twoPartialRefunds_recordsBothWithDistinctIdentifiers() throws Exception {
         Transaction settled = transaction("PAID", TransactionStatus.SUCCESS);
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("FIRST"))
                 .thenReturn(confirmed("SECOND"));
 
@@ -409,7 +454,7 @@ class MoneyOperationsIntegrationTest {
     @Test
     void refund_providerAnswersWithoutConfirmation_returns502AndKeepsRefundedAmount() throws Exception {
         Transaction settled = transaction("PAID", TransactionStatus.SUCCESS);
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException(
                         "Acquirer accepted the refund but did not confirm it: the response has no tran.match.ridByPmo"));
 
@@ -429,7 +474,7 @@ class MoneyOperationsIntegrationTest {
     @Test
     void completeDms_providerAnswersWithoutConfirmation_returns502AndKeepsStatus() throws Exception {
         Transaction authorized = transaction("HOLD", TransactionStatus.AUTHORIZED);
-        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException(
                         "Acquirer accepted the completeDms but did not confirm it: the response has no tran.match.ridByPmo"));
 
@@ -450,7 +495,7 @@ class MoneyOperationsIntegrationTest {
     @Test
     void completeDms_confirmed_recordsCaptureEvidence() throws Exception {
         Transaction authorized = dmsTransaction("CAP-EVIDENCE", TransactionStatus.AUTHORIZED, AUTHORIZED_AMOUNT, null);
-        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("CAP"));
 
         mockMvc.perform(capture(authorized, new BigDecimal("500")))
@@ -484,7 +529,7 @@ class MoneyOperationsIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("exceeds the captured amount")));
 
-        verify(acquiringClient, never()).refund(anyString(), anyString(), anyString(), anyString(), any());
+        verify(acquiringClient, never()).refund(anyString(), anyString(), any(), any());
         Transaction untouched = reload(captured);
         Assertions.assertEquals(TransactionStatus.SUCCESS, untouched.getStatus());
         Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(untouched.getRefundedAmount()));
@@ -495,7 +540,7 @@ class MoneyOperationsIntegrationTest {
     void refund_afterPartialCapture_fullCapturedAmount_marksRefunded() throws Exception {
         Transaction captured = dmsTransaction("PARTIAL-FULLBACK", TransactionStatus.SUCCESS,
                 AUTHORIZED_AMOUNT, CAPTURED_AMOUNT);
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("REF-1"));
 
         mockMvc.perform(refund(captured, CAPTURED_AMOUNT))
@@ -512,13 +557,13 @@ class MoneyOperationsIntegrationTest {
     void refund_smsTransactionWithoutCapture_usesAuthorizedAmount() throws Exception {
         Transaction settled = smsTransaction("SMS-PAID", TransactionStatus.SUCCESS, AUTHORIZED_AMOUNT);
         Assertions.assertNull(settled.getCapturedAmount(), "an SMS payment has no capture stage");
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("REF-2"));
 
         // Копейка сверх авторизованной суммы всё так же отвергается — потолок ровно amount.
         mockMvc.perform(refund(settled, new BigDecimal("1500.01")))
                 .andExpect(status().isBadRequest());
-        verify(acquiringClient, never()).refund(anyString(), anyString(), anyString(), anyString(), any());
+        verify(acquiringClient, never()).refund(anyString(), anyString(), any(), any());
 
         mockMvc.perform(refund(settled, AUTHORIZED_AMOUNT))
                 .andExpect(status().isOk())
@@ -534,25 +579,25 @@ class MoneyOperationsIntegrationTest {
     @Test
     void completeDms_providerFails_isNotRetried() throws Exception {
         Transaction authorized = transaction("HOLD", TransactionStatus.AUTHORIZED);
-        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException("Read timed out"));
 
         mockMvc.perform(capture(authorized, AMOUNT))
                 .andExpect(status().isBadGateway());
 
-        verify(acquiringClient, times(1)).completeDms(anyString(), anyString(), anyString(), anyString(), any());
+        verify(acquiringClient, times(1)).completeDms(anyString(), anyString(), any(), any());
     }
 
     @Test
     void refund_providerFails_isNotRetried() throws Exception {
         Transaction settled = transaction("PAID", TransactionStatus.SUCCESS);
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException("Read timed out"));
 
         mockMvc.perform(refund(settled, new BigDecimal("40.00")))
                 .andExpect(status().isBadGateway());
 
-        verify(acquiringClient, times(1)).refund(anyString(), anyString(), anyString(), anyString(), any());
+        verify(acquiringClient, times(1)).refund(anyString(), anyString(), any(), any());
     }
 
     // Тесты выше идут против мока, где аспектов resilience4j нет по построению. Этот сторожит
@@ -581,9 +626,9 @@ class MoneyOperationsIntegrationTest {
     void statusHistory_carriesCreationCaptureAndEveryRefund() throws Exception {
         Transaction authorized = dmsTransaction("HIST", TransactionStatus.AUTHORIZED,
                 AUTHORIZED_AMOUNT, null);
-        when(acquiringClient.completeDms(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("CAP"));
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenReturn(confirmed("REF-1"))
                 .thenReturn(confirmed("REF-2"));
 

@@ -65,7 +65,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
     @Override
     @CircuitBreaker(name = "acquiring")
     @Retry(name = "acquiring")
-    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID ridByMerchant, String hppRedirectUrl) {
+    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, UUID ridByMerchant, String hppRedirectUrl) {
         String url = UriComponentsBuilder.fromUriString(gatewayBaseUrl)
                 .path(createOrderPath)
                 .toUriString();
@@ -88,14 +88,14 @@ public class TxpgAcquiringClient implements AcquiringClient {
         );
 
         log.info("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, RidByMerchant: {}, Type: {}, Amount: {} {}",
-                ProviderPayloads.urlForLog(url), login, ridByMerchant, typeRid, link.getAmount(), link.getCurrency());
+                ProviderPayloads.urlForLog(url), credentials.login(), ridByMerchant, typeRid, link.getAmount(), link.getCurrency());
         log.debug("PROVIDER REQ BODY [createEcomOrder]: {}", request);
 
         try {
             EcomCreateOrderResponse response = restClient.post()
                     .uri(url)
                     .headers(headers -> {
-                        headers.setBasicAuth(login, password);
+                        headers.setBasicAuth(credentials.login(), credentials.password());
                         headers.setContentType(MediaType.APPLICATION_JSON);
                     })
                     .body(request)
@@ -122,7 +122,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
     @Override
     @CircuitBreaker(name = "acquiring")
     @SuppressWarnings("unchecked")
-    public MoneyOperationResult completeDms(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
+    public MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount) {
         // Р-25: пароль заказа уходит в query-строке, поэтому URL нельзя логировать иначе как через
         // ProviderPayloads.urlForLog (P0-9). По контракту пароль в адресе нужен только для
         // GET /order/{id}; для exec-tran его добавили мы, но убирать нельзя без прогона на стенде —
@@ -142,14 +142,14 @@ public class TxpgAcquiringClient implements AcquiringClient {
         body.put("tran", tran);
 
         log.info("PROVIDER REQ [completeDms] -> POST URL: {}, ProviderOrderId: {}, Login: {}, Amount: {}",
-                ProviderPayloads.urlForLog(url), providerOrderId, login, amount);
+                ProviderPayloads.urlForLog(url), providerOrderId, credentials.login(), amount);
         log.debug("PROVIDER REQ BODY [completeDms]: {}", body);
 
         try {
             Map<String, Object> response = restClient.post()
                     .uri(url)
                     .headers(headers -> {
-                        headers.setBasicAuth(login, terminalPassword);
+                        headers.setBasicAuth(credentials.login(), credentials.password());
                         headers.setContentType(MediaType.APPLICATION_JSON);
                     })
                     .body(body)
@@ -170,7 +170,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
     @Override
     @CircuitBreaker(name = "acquiring")
     @SuppressWarnings("unchecked")
-    public MoneyOperationResult refund(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
+    public MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount) {
         String url = UriComponentsBuilder.fromUriString(apiBaseUrl)
                 .path(execTranPath)
                 .queryParam("password", password)
@@ -185,14 +185,14 @@ public class TxpgAcquiringClient implements AcquiringClient {
         body.put("tran", tran);
 
         log.info("PROVIDER REQ [refund] -> POST URL: {}, ProviderOrderId: {}, Login: {}, Refund Amount: {}",
-                ProviderPayloads.urlForLog(url), providerOrderId, login, amount);
+                ProviderPayloads.urlForLog(url), providerOrderId, credentials.login(), amount);
         log.debug("PROVIDER REQ BODY [refund]: {}", body);
 
         try {
             Map<String, Object> response = restClient.post()
                     .uri(url)
                     .headers(headers -> {
-                        headers.setBasicAuth(login, terminalPassword);
+                        headers.setBasicAuth(credentials.login(), credentials.password());
                         headers.setContentType(MediaType.APPLICATION_JSON);
                     })
                     .body(body)
@@ -212,7 +212,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
     @CircuitBreaker(name = "acquiring")
     @Retry(name = "acquiring")
     @SuppressWarnings("unchecked")
-    public Map<String, Object> getOrderStatus(String providerOrderId, String password, String login, String terminalPassword) {
+    public Map<String, Object> getOrderStatus(String providerOrderId, String password, ProviderCredentials credentials) {
         String url = UriComponentsBuilder.fromUriString(apiBaseUrl)
                 .path(getOrderPath)
                 .queryParam("password", password)
@@ -223,12 +223,12 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 .toUriString();
 
         log.info("PROVIDER REQ [getOrderStatus] -> GET URL: {}, ProviderOrderId: {}, Login: {}",
-                ProviderPayloads.urlForLog(url), providerOrderId, login);
+                ProviderPayloads.urlForLog(url), providerOrderId, credentials.login());
 
         try {
             Map<String, Object> body = restClient.get()
                     .uri(url)
-                    .headers(headers -> headers.setBasicAuth(login, terminalPassword))
+                    .headers(headers -> headers.setBasicAuth(credentials.login(), credentials.password()))
                     .retrieve()
                     .body(Map.class);
 
@@ -253,7 +253,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
         }
     }
 
-    // Код ошибки, которым провайдер отвечает на неверный логин или пароль терминала.
+    // Код ошибки, которым провайдер отвечает на неверный логин или пароль — с Р-93 это креды компании.
     private static final String INVALID_LOGIN = "InvalidLogin";
 
     // Сумма пробного заказа. Не списывается никогда: заказ остаётся неоплаченным и уходит в
@@ -261,18 +261,19 @@ public class TxpgAcquiringClient implements AcquiringClient {
     private static final BigDecimal CHECK_AMOUNT = new BigDecimal("1.00");
 
     /**
-     * Проверка учётных данных терминала пробным заказом.
+     * Кнопка «Тест»: можно ли создать платёж — пробный заказ с кредами компании терминала (Р-93).
      *
      * Намеренно **без** `@Retry` и **без** `@CircuitBreaker`, в отличие от боевого заведения
      * заказа. Повтор здесь только множит пробные заказы у провайдера, а общий с платёжным путём
-     * breaker означал бы, что администратор, десять раз проверивший неверный пароль, закрывает
+     * breaker означал бы, что администратор, десять раз проверивший неверные креды, закрывает
      * приём платежей всем мерчантам.
      *
      * Классификация — по коду ошибки, а не по HTTP-статусу: тот же `InvalidLogin` провайдер
      * может прислать и в 200, и в 4xx, и разбирать надо тело в обоих случаях.
      */
     @Override
-    public TerminalCheckResult checkTerminalCredentials(String login, String password) {
+    public TerminalCheckResult checkOrderCreation(ProviderCredentials credentials) {
+        String login = credentials.login();
         String url = UriComponentsBuilder.fromUriString(gatewayBaseUrl)
                 .path(createOrderPath)
                 .toUriString();
@@ -290,14 +291,14 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 )
         );
 
-        log.info("PROVIDER REQ [checkTerminalCredentials] -> POST URL: {}, Login: {}",
+        log.info("PROVIDER REQ [checkOrderCreation] -> POST URL: {}, Login: {}",
                 ProviderPayloads.urlForLog(url), login);
 
         try {
             Map<String, Object> body = restClient.post()
                     .uri(url)
                     .headers(headers -> {
-                        headers.setBasicAuth(login, password);
+                        headers.setBasicAuth(login, credentials.password());
                         headers.setContentType(MediaType.APPLICATION_JSON);
                     })
                     .body(request)
@@ -309,12 +310,12 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 return classifyCheck(login, parseBody(e.getResponseBodyAsString()));
             }
             if (e.getStatusCode().is5xxServerError()) {
-                log.warn("PROVIDER RESP [checkTerminalCredentials] <- HTTP {} for Login: {}", e.getStatusCode(), login);
+                log.warn("PROVIDER RESP [checkOrderCreation] <- HTTP {} for Login: {}", e.getStatusCode(), login);
                 return TerminalCheckResult.unreachable("Acquirer answered HTTP " + e.getStatusCode().value());
             }
             return classifyCheck(login, parseBody(e.getResponseBodyAsString()));
         } catch (Exception e) {
-            log.warn("PROVIDER REQ [checkTerminalCredentials] <- no answer for Login: {}: {}", login, e.getMessage());
+            log.warn("PROVIDER REQ [checkOrderCreation] <- no answer for Login: {}: {}", login, e.getMessage());
             return TerminalCheckResult.unreachable("No answer from the acquirer: " + e.getMessage());
         }
     }
@@ -326,16 +327,16 @@ public class TxpgAcquiringClient implements AcquiringClient {
         Object errorCode = body.get("errorCode");
         if (errorCode == null) {
             // Заказ заведён: и логин с паролем верны, и оплаты терминалу разрешены.
-            log.info("PROVIDER RESP [checkTerminalCredentials] <- OK for Login: {}", login);
+            log.info("PROVIDER RESP [checkOrderCreation] <- OK for Login: {}", login);
             return TerminalCheckResult.ok();
         }
         String code = String.valueOf(errorCode);
         String description = body.get("errorDescription") != null ? String.valueOf(body.get("errorDescription")) : code;
         if (INVALID_LOGIN.equals(code)) {
-            log.info("PROVIDER RESP [checkTerminalCredentials] <- invalid credentials for Login: {}", login);
+            log.info("PROVIDER RESP [checkOrderCreation] <- invalid credentials for Login: {}", login);
             return new TerminalCheckResult(TerminalCheckResult.Outcome.INVALID_CREDENTIALS, code, description);
         }
-        log.info("PROVIDER RESP [checkTerminalCredentials] <- rejected for Login: {} with {}: {}", login, code, description);
+        log.info("PROVIDER RESP [checkOrderCreation] <- rejected for Login: {} with {}: {}", login, code, description);
         return new TerminalCheckResult(TerminalCheckResult.Outcome.REJECTED, code, description);
     }
 

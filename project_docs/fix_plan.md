@@ -4917,6 +4917,55 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
 
 ---
 
+### 24.09.2026 — креды провайдера у компании, пароль терминала снят (Р-93)
+
+- **Зачем.** Требование заказчика: запросы к провайдеру идут не от имени терминала, а от имени компании
+  (у провайдера — мультимерчант); логин и пароль задаёт и меняет только системный администратор, пароль
+  хранится зашифрованным (AES-256), ключ — в файле свойств. Понятие логина и пароля терминала пропадает.
+- **common.** `CredentialCipher` — AES-256-GCM, случайный IV, base64(IV ‖ шифротекст); на пустом ключе,
+  не-base64 и ключе не 32 байт сервис не стартует. Не `@Component`: бин объявляют `directory` и `pbl`
+  (`CredentialCipherConfig`), ключ `mp.credentials.encryption-key: ${CREDENTIALS_ENCRYPTION_KEY}`.
+  `MissingSecretFailureAnalyzer` знает новую переменную.
+- **directory.** Миграция `008`: `companies.provider_login` (уникальный индекс) и `provider_password`,
+  удаление `terminals.password`. Компания: креды обязательны при создании, в правке необязательны (пустой
+  пароль — не менять), занятый логин — 409, логин в ответе только `SYSTEM_ADMIN`, пароль — никогда;
+  журнал — `Provider login changed from … to …` и `Provider password changed` без значения. Терминал:
+  заводит только `SYSTEM_ADMIN` выбором из справочника (`companyId` и `merchantRid` обязательны), ручное
+  заведение снято; пароля нет ни в запросах, ни в ответах; `GET /terminals/{id}/password` и
+  `TerminalPasswordResponse` удалены; логин из `PATCH` убран — его меняет только сверка.
+- **pbl.** Миграция `011`: `companies`, если её ещё нет (в виде `auth/002`), колонки кредов, удаление
+  `terminals.password`. `ProviderCredentialsService.forTerminal` читает креды компании терминала
+  (`CompanyCredentialsRepository`) и расшифровывает пароль; компании без кредов и терминалу без компании —
+  400 до провайдера: при создании и открытии ссылки, списании, возврате, проверке статуса и «Тесте».
+  `AcquiringClient` принимает `ProviderCredentials` вместо логина и пароля терминала;
+  `checkTerminalCredentials` → `checkOrderCreation`. «Тест» остался только у заведённого терминала:
+  `POST /acquiring/terminal-checks` без номера и `TerminalCheckRequest` удалены.
+- **Отложено до селектов мультимерчанта.** `order.terminal.rid` (это `txpg.terminal.rid`, у нас его нет)
+  в запросе создания заказа; подпись терминала на экранах по `terminal.rid` — пока логин; скоуп выписки и
+  сверка по логину терминала — логин остаётся в базе.
+- **Фронтенд.** «Компании»: логин и пароль к провайдеру в форме создания, колонка логина у
+  администратора, окно «Доступ к провайдеру» (логин, новый пароль) с подтверждением списка изменений.
+  «Терминалы»: снята колонка пароля и его показ, поля логина и пароля в формах, ручное заведение и «Тест»
+  до сохранения; кнопка добавления — только `SYSTEM_ADMIN` (`TERMINAL_CREATE_ROLES`). Тексты — на трёх
+  языках, ключи пароля терминала удалены из словаря.
+- **Тесты** (прогоняет пользователь): `CredentialCipherTest` (новый); `directory` —
+  `DirectoryIntegrationTest` (новые: креды обязательны, пароль шифротекстом и не в ответе, логин только
+  администратору, уникальность логина, смена кредов в журнале без пароля, пустой пароль не меняет,
+  пароля терминала нет; заведение терминала только администратором, `createTerminal_asManager_returns201`
+  стал `createTerminal_asManager_returns403`), `TerminalBlockingIntegrationTest` (четыре теста пароля
+  терминала удалены), `SharedSchemaMigrationTest` (два новых — порядок миграций кредов),
+  `AuditLogIntegrationTest`, `DirectoryListPaginationTest`, `TerminalStatusReconciliationTest` — фикстуры;
+  `pbl` — `TerminalCheckIntegrationTest` (переписан: креды компании, отказ без кредов, проверки до
+  заведения нет), `TxpgAcquiringClientTest` (новый: Basic с кредами компании во всех вызовах, пароль не в
+  логах), `MoneyOperationsIntegrationTest` и `PaymentLinkIntegrationTest` (новые: 400 без кредов, креды
+  компании уходят провайдеру), остальные — фикстура `CompanyCredentialsFixture`.
+  `./gradlew compileTestJava` по всем модулям, `npm run typecheck`, `npx oxlint src/app` — без ошибок.
+- Документы: `decisions.md` (Р-93), `AGENTS.md` §4, §5, §6, §7, §9, §10, §11, `directory.md`, `pay-by-link.md`,
+  `application_description.md`, `deployment_guide.md` (§8.1, §8.3, §20), `technical_handover.md` (§4.1,
+  §4.2, §4.4, §4.6), `admin_guide.md`, `README.md`, `.env.example`, Postman-коллекция `directory`.
+
+---
+
 ## Описания закрытых задач
 
 > Перенесено из `AGENTS.md` §10 («Закрытые блокеры» и записи, попавшие в «Тонкости») 13.09.2026

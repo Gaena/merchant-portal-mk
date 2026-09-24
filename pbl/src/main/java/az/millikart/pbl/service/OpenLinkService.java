@@ -61,6 +61,7 @@ public class OpenLinkService {
     private final TransactionRepository transactionRepository;
     private final TerminalRepository terminalRepository;
     private final PaymentLinkService paymentLinkService;
+    private final ProviderCredentialsService providerCredentials;
     private final String baseUrl;
 
     public OpenLinkService(AcquiringClient acquiringClient,
@@ -68,12 +69,14 @@ public class OpenLinkService {
                            TransactionRepository transactionRepository,
                            TerminalRepository terminalRepository,
                            PaymentLinkService paymentLinkService,
+                           ProviderCredentialsService providerCredentials,
                            @Value("${pbl.base-url}") String baseUrl) {
         this.acquiringClient = acquiringClient;
         this.paymentLinkRepository = paymentLinkRepository;
         this.transactionRepository = transactionRepository;
         this.terminalRepository = terminalRepository;
         this.paymentLinkService = paymentLinkService;
+        this.providerCredentials = providerCredentials;
         this.baseUrl = baseUrl;
     }
 
@@ -182,7 +185,8 @@ public class OpenLinkService {
 
         log.debug("Using redirect URL for provider: {}", hppRedirectUrl);
 
-        EcomCreateOrderResponse response = acquiringClient.createEcomOrder(link, terminal.getLogin(), terminal.getPassword(), ridByMerchant, hppRedirectUrl);
+        EcomCreateOrderResponse response = acquiringClient.createEcomOrder(
+                link, providerCredentials.forTerminal(terminal), ridByMerchant, hppRedirectUrl);
         if (response == null || response.order() == null) {
             log.error("Failed to register order at provider for ridByMerchant: {}", ridByMerchant);
             throw new BusinessException("Failed to register order with provider");

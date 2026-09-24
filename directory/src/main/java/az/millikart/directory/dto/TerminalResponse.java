@@ -7,7 +7,6 @@ public record TerminalResponse(
         Integer id,
         String name,
         String login,
-        String password,
         String companyId,
         TerminalStatus status,
         String createdBy,

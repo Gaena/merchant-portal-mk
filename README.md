@@ -20,7 +20,8 @@ PostgreSQL плюс React-фронтенд.
 
 Нужны JDK 21, Node 18+, PostgreSQL 16. Конфигурация — только через переменные окружения:
 как минимум `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` и `JWT_SECRET` (один и тот же секрет
-для всех четырёх сервисов); полный перечень с пояснениями — в [.env.example](.env.example)
+для всех четырёх сервисов), а для `directory` и `pbl` — `CREDENTIALS_ENCRYPTION_KEY` (ключ паролей
+компаний к провайдеру, одно значение на оба); полный перечень с пояснениями — в [.env.example](.env.example)
 и в `project_docs/deployment_guide.md`. Значений в репозитории нет и быть не должно.
 
 ```bash

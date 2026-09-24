@@ -23,7 +23,7 @@ public class StubAcquiringClient implements AcquiringClient {
     private static final Logger log = LoggerFactory.getLogger(StubAcquiringClient.class);
 
     @Override
-    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID ridByMerchant, String hppRedirectUrl) {
+    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, UUID ridByMerchant, String hppRedirectUrl) {
         long orderId = (long) (Math.random() * 1000000000L);
         String hppUrl = "https://gateway.txpg.example.com/pay?rid=" + orderId;
         log.info("[STUB PROVIDER] createEcomOrder for ridByMerchant: {}, amount: {}, generated orderId: {}", ridByMerchant, link.getAmount(), orderId);
@@ -33,19 +33,19 @@ public class StubAcquiringClient implements AcquiringClient {
     }
 
     @Override
-    public MoneyOperationResult completeDms(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
+    public MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount) {
         log.info("[STUB PROVIDER] completeDms for providerOrderId: {}, amount: {}", providerOrderId, amount);
         return confirmedOperation();
     }
 
     @Override
-    public MoneyOperationResult refund(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount) {
+    public MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount) {
         log.info("[STUB PROVIDER] refund for providerOrderId: {}, amount: {}", providerOrderId, amount);
         return confirmedOperation();
     }
 
     @Override
-    public Map<String, Object> getOrderStatus(String providerOrderId, String password, String login, String terminalPassword) {
+    public Map<String, Object> getOrderStatus(String providerOrderId, String password, ProviderCredentials credentials) {
         log.info("[STUB PROVIDER] getOrderStatus for providerOrderId: {}", providerOrderId);
         Map<String, Object> response = new HashMap<>();
         response.put("status", "FullyPaid");
@@ -56,8 +56,8 @@ public class StubAcquiringClient implements AcquiringClient {
     // Заглушка принимает любые учётные данные: тесты, которым нужен другой исход проверки,
     // подменяют клиента моком и диктуют ответ сами.
     @Override
-    public TerminalCheckResult checkTerminalCredentials(String login, String password) {
-        log.info("[STUB PROVIDER] checkTerminalCredentials for login: {}", login);
+    public TerminalCheckResult checkOrderCreation(ProviderCredentials credentials) {
+        log.info("[STUB PROVIDER] checkOrderCreation for login: {}", credentials.login());
         return TerminalCheckResult.ok();
     }
 

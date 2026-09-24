@@ -25,4 +25,10 @@ public interface CompanyRepository extends JpaRepository<Company, String> {
     Page<Company> search(@Param("excluded") String excluded,
                          @Param("search") String search,
                          Pageable pageable);
+
+    // Логин к провайдеру уникален среди компаний (Р-93), удалённые тоже считаются: колонка под уникальным
+    // индексом, и мягкое удаление логин не освобождает.
+    boolean existsByProviderLogin(String providerLogin);
+
+    boolean existsByProviderLoginAndIdNot(String providerLogin, String id);
 }
