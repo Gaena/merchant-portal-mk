@@ -97,15 +97,19 @@ export interface EcomStats {
   totals: EcomCurrencyTotal[];
 }
 
-/** Терминал для фильтра выписки: наш терминал в скоупе и провайдерский за ним. */
+/**
+ * Мерчант скоупа для фильтра выписки (Р-97) — у провайдера терминал и мерчант одно. Номер терминала,
+ * логин и название — из слепка провайдера; у мерчанта без терминала в слепке есть только название.
+ */
 export interface EcomTerminal {
   merchantRid: string;
   title: string | null;
   login: string | null;
+  terminalRid: string | null;
 }
 
 /**
- * Сводка главной (Р-91) — `GET /api/v1/ecom/dashboard/summary`: оплаты картой по всем терминалам скоупа по
+ * Сводка главной (Р-91) — `GET /api/v1/ecom/dashboard/summary`: оплаты картой по всем мерчантам скоупа по
  * выписке провайдера. Заказы периода и деньги — те же, что во вкладке E-commerce; суммы — по валютам.
  */
 export interface EcomDashboardTotals {
@@ -128,6 +132,7 @@ export interface EcomDashboard {
     currency: string | null;
     merchantRid: string | null;
     login: string | null;
+    terminalRid: string | null;
     title: string | null;
     netAmount: number;
     orderCount: number;

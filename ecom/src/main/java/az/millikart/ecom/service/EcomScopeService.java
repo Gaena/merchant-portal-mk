@@ -6,28 +6,30 @@ import az.millikart.common.audit.AuditLogService;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
-import az.millikart.ecom.domain.Terminal;
-import az.millikart.ecom.repository.TerminalRepository;
+import az.millikart.ecom.repository.CompanyLoginRepository;
+import az.millikart.ecom.repository.ProviderLoginRepository;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-// Чьи платежи видит пользователь: компания → её терминалы → их логины у шлюза. Пустой список —
-// пустая выписка; ветки «терминалов нет, значит показать всё» быть не должно: так выглядит показ
-// мерчанту А оборотов мерчанта Б.
+// Чьи платежи видит пользователь: компания → её логин мультимерчанта → его мерчанты в слепке
+// provider_logins (Р-97). Пустой список — пустая выписка; ветки «мерчантов нет, значит показать всё»
+// быть не должно: так выглядит показ мерчанту А оборотов мерчанта Б.
 @Service
 public class EcomScopeService {
 
-    // Basic-логин шлюза пишется как OwnerKind/login («TerminalSys/Admin», TXPG-client-side-integration.md),
-    // а в login.login схемы шлюза — без префикса: выписка ищет ownerkind = 'TerminalSys' и login.
-    static final String TERMINAL_OWNER_PREFIX = "TerminalSys/";
+    // Логин компании хранится с префиксом (Р-93), в слепке — без него, как в login.login шлюза.
+    static final String MULTI_MERCHANT_PREFIX = "MultiMerchantSys/";
 
-    private final TerminalRepository terminals;
+    private final CompanyLoginRepository companies;
+    private final ProviderLoginRepository providerLogins;
     private final AuditLogService auditLogService;
 
-    public EcomScopeService(TerminalRepository terminals, AuditLogService auditLogService) {
-        this.terminals = terminals;
+    public EcomScopeService(CompanyLoginRepository companies, ProviderLoginRepository providerLogins,
+                            AuditLogService auditLogService) {
+        this.companies = companies;
+        this.providerLogins = providerLogins;
         this.auditLogService = auditLogService;
     }
 
@@ -38,10 +40,10 @@ public class EcomScopeService {
             throw new InvalidStateException("Access denied");
         }
 
-        // SYSTEM_ADMIN и AUDITOR читают глобально — но и они видят только то, что заведено
-        // у нас: терминал провайдера, за которым не стоит наш, к порталу отношения не имеет.
+        // SYSTEM_ADMIN и AUDITOR читают глобально — но и они видят только мерчантов наших компаний:
+        // мерчант провайдера, за которым не стоит логин нашей компании, к порталу отношения не имеет.
         if (role == Role.SYSTEM_ADMIN || role == Role.AUDITOR) {
-            return scopeOf(terminals.findAll());
+            return scopeOf(companies.allProviderLogins());
         }
 
         String companyId = UserPrincipal.getCompanyId(principal);
@@ -51,32 +53,24 @@ public class EcomScopeService {
                     "Denied: " + role + " without a company asked for acquiring transactions");
             throw new InvalidStateException("Access denied: User not assigned to a company");
         }
-        return scopeOf(terminals.findByCompanyId(companyId));
+        return scopeOf(companies.providerLoginOf(companyId));
     }
 
-    private static EcomScope scopeOf(List<Terminal> scoped) {
-        List<String> logins = scoped.stream()
-                .map(Terminal::getLogin)
-                .map(EcomScopeService::gatewayLogin)
+    private EcomScope scopeOf(List<String> companyLogins) {
+        List<String> logins = companyLogins.stream()
+                .map(EcomScopeService::snapshotLogin)
                 .filter(Objects::nonNull)
                 .distinct()
                 .toList();
-        List<String> merchantRids = scoped.stream()
-                .map(Terminal::getMerchantRid)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        return new EcomScope(logins, merchantRids);
+        return new EcomScope(logins.isEmpty() ? List.of() : providerLogins.findLinkedMerchantRids(logins));
     }
 
-    static String gatewayLogin(String login) {
-        if (login == null) {
+    // Логин без префикса — не логин мультимерчанта: его мерчантов в слепке нет, и искать их не по чему.
+    static String snapshotLogin(String login) {
+        if (login == null || !login.startsWith(MULTI_MERCHANT_PREFIX)) {
             return null;
         }
-        String value = login.trim();
-        if (value.startsWith(TERMINAL_OWNER_PREFIX)) {
-            value = value.substring(TERMINAL_OWNER_PREFIX.length());
-        }
-        return value.isEmpty() ? null : value;
+        String value = login.substring(MULTI_MERCHANT_PREFIX.length());
+        return value.isBlank() ? null : value;
     }
 }

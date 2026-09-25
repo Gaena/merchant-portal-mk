@@ -284,8 +284,14 @@ public class TerminalService {
             validateWriteAccessToCompany(request.companyId(), principal,
                     String.valueOf(id), AuditAction.UPDATE,
                     "move terminal " + id + " to company " + request.companyId());
-            if (!companyRepository.existsById(request.companyId())) {
-                throw new BusinessException("Company with ID '" + request.companyId() + "' not found");
+            Company target = companyRepository.findById(request.companyId())
+                    .orElseThrow(() -> new BusinessException("Company with ID '" + request.companyId() + "' not found"));
+            // Как при заведении (Р-96): иначе ссылки ушли бы к провайдеру с кредами компании, чей логин
+            // этого мерчанта не знает, а выписка его платежей осталась бы у прежней (Р-97).
+            if (!target.getId().equals(terminal.getCompanyId())
+                    && (terminal.getMerchantRid() == null || !merchantsOfCompanyLogin(target).contains(terminal.getMerchantRid()))) {
+                throw new BusinessException("Terminal " + id + " cannot be moved to company " + target.getId()
+                        + ": its provider merchant is not linked to the multimerchant login of that company");
             }
             changes.append("CompanyId changed from '").append(terminal.getCompanyId()).append("' to '").append(request.companyId()).append("'. ");
             terminal.setCompanyId(request.companyId());

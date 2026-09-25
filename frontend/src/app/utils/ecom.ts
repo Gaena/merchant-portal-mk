@@ -190,6 +190,7 @@ export const fetchEcomDashboard = async (dateFrom: Date, dateTo: Date, signal?: 
           currency: text(t?.currency),
           merchantRid: text(t?.merchantRid),
           login: text(t?.login),
+          terminalRid: text(t?.terminalRid),
           title: text(t?.title),
           netAmount: amount(t?.netAmount) ?? 0,
           orderCount: amount(t?.orderCount) ?? 0,
@@ -203,7 +204,12 @@ export const fetchEcomTerminals = async (signal?: AbortSignal): Promise<EcomTerm
   if (!Array.isArray(res.data)) return [];
   return res.data
     .filter((row: any) => typeof row?.merchantRid === 'string')
-    .map((row: any) => ({ merchantRid: row.merchantRid, title: text(row.title), login: text(row.login) }));
+    .map((row: any) => ({
+      merchantRid: row.merchantRid,
+      title: text(row.title),
+      login: text(row.login),
+      terminalRid: text(row.terminalRid),
+    }));
 };
 
 export const fetchEcomOrder = async (orderId: string, signal?: AbortSignal): Promise<EcomOrder> => {
@@ -219,8 +225,16 @@ export const operationApproved = (operation: Pick<EcomOperation, 'resultCode'>):
   operation.resultCode === null ? null : operation.resultCode === 'Approved';
 
 /**
- * Подпись терминала заказа — тот же порядок, что у операций портала (Р-59): логин, под ним название.
- * Логина в заказе нет, он приходит из списка терминалов скоупа; без него — название мерчанта, затем rid.
+ * Подпись терминала выписки — тот же порядок, что `terminalLabel` (Р-96): номер терминала у провайдера,
+ * затем логин, затем название, затем код мерчанта.
+ */
+export const ecomTerminalName = (
+  terminal: Pick<EcomTerminal, 'terminalRid' | 'login' | 'title'> & { merchantRid: string | null }
+): string => terminal.terminalRid ?? terminal.login ?? terminal.title ?? terminal.merchantRid ?? '—';
+
+/**
+ * Подпись терминала заказа, под ней название. Номера и логина в заказе нет, они приходят из списка
+ * терминалов скоупа; без них — название мерчанта из заказа, затем его код.
  */
 export const ecomTerminalLabel = (
   order: Pick<EcomOrder, 'merchantRid' | 'merchantTitle'>,
@@ -228,6 +242,11 @@ export const ecomTerminalLabel = (
 ): { label: string; subLabel: string } => {
   const terminal = order.merchantRid ? terminals.get(order.merchantRid) : undefined;
   const title = terminal?.title ?? order.merchantTitle;
-  const label = terminal?.login ?? title ?? order.merchantRid ?? '—';
+  const label = ecomTerminalName({
+    terminalRid: terminal?.terminalRid ?? null,
+    login: terminal?.login ?? null,
+    title,
+    merchantRid: order.merchantRid,
+  });
   return { label, subLabel: title && title !== label ? title : '' };
 };

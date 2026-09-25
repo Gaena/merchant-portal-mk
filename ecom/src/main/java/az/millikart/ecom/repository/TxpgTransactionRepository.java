@@ -22,8 +22,8 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-// Выписка из схемы шлюза. Колонки — только из SQL провайдера (14.09.2026), скоуп — по запросу
-// выписки от 15.09.2026: мерчанты логинов TerminalSys, и операция того же мерчанта, что заказ.
+// Выписка из схемы шлюза. Колонки — только из SQL провайдера (14.09.2026), скоуп — мерчанты логинов
+// мультимерчанта компаний (Р-97), и операция того же мерчанта, что заказ.
 // Одна отсутствующая в схеме колонка роняет всю выписку. o.password не выбирается никогда (AGENTS.md §10).
 @Repository
 public class TxpgTransactionRepository {
@@ -107,14 +107,14 @@ public class TxpgTransactionRepository {
 
     // Все операции заказов, без окна сверху: история полная, даже если клиринг прошёл после
     // периода. Скоуп и Р-71 повторены — карточка приходит сюда с номером из адреса.
-    public List<TxpgStatementRow> findRows(List<Long> orderIds, List<String> logins, Instant operationsFrom) {
+    public List<TxpgStatementRow> findRows(List<Long> orderIds, List<String> merchantRids, Instant operationsFrom) {
         if (orderIds.isEmpty()) {
             return List.of();
         }
         String schema = properties.getSchema();
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("order_ids", orderIds)
-                .addValue("logins", logins)
+                .addValue("merchant_rids", merchantRids)
                 .addValue("unfinished_statuses", UNFINISHED_ORDER_STATUSES);
         // Токен — подзапросом: у покупателя, пробовавшего две карты, их два, и join задвоил бы операции.
         StringBuilder sql = new StringBuilder(COLUMNS).append("""
@@ -127,7 +127,7 @@ public class TxpgTransactionRepository {
                               where orderid in (:order_ids)
                               group by orderid) tk on tk.orderid = o.id
                  where o.id in (:order_ids)
-                """.formatted(schema)).append(loginScope()).append(finishedOrdersOnly());
+                """.formatted(schema)).append(merchantScope()).append(finishedOrdersOnly());
         if (operationsFrom != null) {
             sql.append("   and tr.id >= ").append(lowIdForTime("operations_from")).append('\n');
             params.addValue("operations_from", local(operationsFrom));
@@ -150,7 +150,7 @@ public class TxpgTransactionRepository {
                 """.formatted(schema)
                 + periodOrders(filter, params)
                 + "       )\n"
-                + loginScope()
+                + merchantScope()
                 + "   and tr.id >= " + lowIdForTime("date_from") + "\n"
                 + " order by o.id desc, tr.origtime, tr.ridbyacq\n";
         jdbc.query(sql, params, (RowCallbackHandler) rs -> sink.accept(mapRow(rs, 0)));
@@ -174,11 +174,7 @@ public class TxpgTransactionRepository {
             sql.append("   and tr.id < ").append(lowIdForTime("scan_to")).append('\n');
             params.addValue("scan_to", local(scanTo));
         }
-        sql.append(loginScope());
-        if (filter.merchantRids() != null) {
-            sql.append("   and m.rid in (:merchant_rids)\n");
-            params.addValue("merchant_rids", filter.merchantRids());
-        }
+        sql.append(merchantScope());
         if (filter.paymentType() != null) {
             // Р-87: тип оплаты — по операциям заказа, тем же парам, что вид операции в Java. Здесь, в
             // выборе заказов, а не после сборки: фильтр работает и на странице, и в итогах периода.
@@ -191,21 +187,15 @@ public class TxpgTransactionRepository {
                 """).append(finishedOrdersOnly());
         params.addValue("date_from", local(filter.dateFrom()))
                 .addValue("date_to", local(filter.dateTo()))
-                .addValue("logins", filter.logins())
+                .addValue("merchant_rids", filter.merchantRids())
                 .addValue("unfinished_statuses", UNFINISHED_ORDER_STATUSES);
         return sql.toString();
     }
 
-    // Скоуп — как в запросе выписки: мерчанты, за которыми стоят логины наших терминалов. Условие
-    // по tr.merchantid, и в join m.id = tr.merchantid: операция чужого мерчанта не попадёт и в заказ
-    // своего. ownerkind не опускать: в login лежат логины разных владельцев, а наши — терминальные.
-    private String loginScope() {
-        return """
-                   and tr.merchantid in (select l.merchantid
-                                           from %1$s.login l
-                                          where l.ownerkind = 'TerminalSys'
-                                            and l.login in (:logins))
-                """.formatted(properties.getSchema());
+    // Скоуп — мерчанты логинов компаний (Р-97). m стоит в join и на заказе, и на операции
+    // (m.id = o.merchantid and m.id = tr.merchantid): операция чужого мерчанта не попадёт и в заказ своего.
+    private static String merchantScope() {
+        return "   and m.rid in (:merchant_rids)\n";
     }
 
     // getLowIdForTime на будущем времени не работает (провайдер, 14.09.2026), а наши часы и пояс

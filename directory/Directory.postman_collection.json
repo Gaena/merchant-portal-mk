@@ -420,7 +420,7 @@
 								"{{terminalId}}"
 							]
 						},
-						"description": "Updates the terminal name, company or status. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93)."
+						"description": "Updates the terminal name, company or status. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93). A terminal moves only to a company whose multimerchant login has an active link with the terminal's provider merchant, as on creation (Р-96, Р-97); otherwise 400, and a terminal without a provider merchant cannot be moved at all."
 					},
 					"response": []
 				},

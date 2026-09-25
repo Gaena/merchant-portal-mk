@@ -40,6 +40,7 @@ import {
 } from '../types/ecom';
 import {
   ecomTerminalLabel,
+  ecomTerminalName,
   fetchEcomPage,
   fetchEcomStats,
   fetchEcomTerminals,
@@ -354,7 +355,10 @@ export const EcommerceTransactionListPage: React.FC = () => {
               renderValue: selected => {
                 const rids = selected as string[];
                 if (rids.length === 0) return <Typography color="text.secondary">{t.allTerminals}</Typography>;
-                return rids.map(rid => terminalIndex.get(rid)?.login ?? rid).join(', ');
+                return rids.map(rid => {
+                  const terminal = terminalIndex.get(rid);
+                  return terminal ? ecomTerminalName(terminal) : rid;
+                }).join(', ');
               },
               displayEmpty: true,
             }}
@@ -365,8 +369,8 @@ export const EcommerceTransactionListPage: React.FC = () => {
               <MenuItem key={terminal.merchantRid} value={terminal.merchantRid}>
                 <Checkbox checked={merchantRids.includes(terminal.merchantRid)} sx={{ mr: 1 }} />
                 <ListItemText
-                  primary={terminal.login ?? terminal.title ?? terminal.merchantRid}
-                  secondary={terminal.login && terminal.title ? terminal.title : undefined}
+                  primary={ecomTerminalName(terminal)}
+                  secondary={terminal.title && terminal.title !== ecomTerminalName(terminal) ? terminal.title : undefined}
                   primaryTypographyProps={{ fontFamily: 'monospace', fontWeight: 500 }}
                 />
               </MenuItem>

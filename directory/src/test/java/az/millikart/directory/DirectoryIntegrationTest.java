@@ -14,6 +14,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.domain.TerminalStatus;
 import az.millikart.directory.dto.CreateCompanyRequest;
 import az.millikart.directory.dto.CreateTerminalRequest;
@@ -665,6 +666,58 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.message", containsString("does not belong to the multimerchant login of company comp-01")));
 
         assertThat(terminalRepository.findByMerchantRid("RID-FOREIGN")).isEmpty();
+    }
+
+    // Перенос — по тем же правилам, что заведение (Р-96, Р-97): в компанию, с логином которой мерчант терминала
+    // не связан, терминал не переходит — его ссылки ушли бы к провайдеру с чужими кредами.
+    @Test
+    public void moveTerminal_onlyToACompanyWhoseLoginKnowsItsMerchant() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Main Shop", "comp-01", adminToken);
+        String merchantRid = terminalRepository.findById(terminalId).orElseThrow().getMerchantRid();
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Renamed", "comp-02", null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("not linked to the multimerchant login of that company")));
+        assertThat(terminalRepository.findById(terminalId).orElseThrow().getCompanyId()).isEqualTo("comp-01");
+        assertThat(terminalRepository.findById(terminalId).orElseThrow().getName()).isEqualTo("Main Shop");
+
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-02", merchantRid);
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.companyId", is("comp-02")));
+    }
+
+    // Терминал, заведённый руками до справочника, мерчанта не знает — сверить его с логином нечем, и перенос
+    // закрыт. Правка без смены компании проверку не проходит вовсе.
+    @Test
+    public void moveTerminal_withoutAProviderMerchant_isRefused_butOtherEditsAreNot() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Other LLC");
+        terminalRepository.saveAndFlush(Terminal.builder()
+                .id(700401).name("Manual Shop").login("manual_login")
+                .companyId("comp-01").status(TerminalStatus.ACTIVE)
+                .createdBy("seeder").updatedBy("seeder").build());
+
+        mockMvc.perform(patch("/api/v1/terminals/700401")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/api/v1/terminals/700401")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Manual Shop 2", "comp-01", null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name", is("Manual Shop 2")));
+        assertThat(terminalRepository.findById(700401).orElseThrow().getCompanyId()).isEqualTo("comp-01");
     }
 
     // В списке для формы — только активные терминалы мерчантов логина компании, ещё не заведённые у нас.

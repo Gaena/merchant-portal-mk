@@ -5074,6 +5074,42 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
 
 ---
 
+### 25.09.2026 — выписка и главная по мерчантам логина компании (Р-97)
+
+- **Зачем.** Последний шаг Р-96: у мультимерчанта платежи компании — это заказы мерчантов её логина, а не
+  логинов её терминалов. Провайдер прислал запрос «терминалы мерчантов логина» (`login2merchant` →
+  логины `TerminalSys`); подзапрос оттуда и есть новый скоуп. Заодно — правило прода «логин `TerminalSys` =
+  `TERMINALPMO.MID` = `merchant.rid`»: нашего кода оно не меняет, MID и TID шлюз берёт по `terminalRid`.
+- **ecom.** `EcomScopeService`: компания → `companies.provider_login` (`CompanyLoginRepository`, нативный
+  запрос) → активные связи логина в `provider_logins` (`ProviderLoginRepository.findLinkedMerchantRids`);
+  `SYSTEM_ADMIN` и `AUDITOR` — логины всех компаний. `EcomScope` и `EcomTransactionFilter` несут один список
+  мерчантов — скоуп, суженный фильтром; в SQL `m.rid in (:merchant_rids)` вместо подзапроса по `login`
+  с `ownerkind = 'TerminalSys'`. Сущность `Terminal` и `TerminalRepository` удалены: `ecom` больше не
+  читает `terminals`. `terminalRid` — в `/transactions/terminals` и `topTerminals` сводки; мерчант без
+  терминала в справочнике подписан названием из слепка логинов.
+- **directory.** Перенос терминала в другую компанию (`PATCH /terminals/{id}` с `companyId`) — по правилу
+  заведения Р-96: мерчант терминала активно связан с логином новой компании, иначе `400`; терминал без
+  `merchant_rid` не переносится. Раньше перенос не проверялся, и ссылки уходили бы с кредами чужого логина.
+- **Фронтенд.** Подпись терминала в выписке, карточке заказа, фильтре и на главной — номер терминала, затем
+  логин, затем название (`ecomTerminalName` в `utils/ecom.ts`). Отказ переноса показывает окно правки
+  терминала текстом сервера, своих правок не понадобилось.
+- **Локальный стенд.** В `oracle-free` дозаведены терминалы 504/503 (BS00003/BS00004), их логины 532/531
+  и строки `TERMINALPMO`, мерчанты 443/444 переименованы — как на скриншоте провайдера. Запрос страницы
+  выписки с новым скоупом исполнен там вручную.
+- **Тесты** (прогнал пользователь 25.09.2026, зелёные): `ecom` — `EcomScopeServiceTest` (переписан: логин компании,
+  все компании у администратора, пустой скоуп без логина и без префикса, отказы),
+  `EcomTransactionScopeTest` (мерчанты во всех запросах, фильтр сужает и страницу, и итоги, подписи
+  фильтра со слепка логинов, `terminalRid` в сводке; тест «терминал без привязки виден по логину» снят
+  вместе с правилом), `TxpgTransactionRepositoryTest` (скоуп `m.rid`, логинов в запросах нет);
+  `directory` — `DirectoryIntegrationTest.moveTerminal_onlyToACompanyWhoseLoginKnowsItsMerchant`,
+  `moveTerminal_withoutAProviderMerchant_isRefused_butOtherEditsAreNot`.
+  `compileTestJava` по `ecom` и `directory`, `npm run typecheck`, `npm run lint` — без ошибок.
+- Документы: `decisions.md` (Р-97), `AGENTS.md` §5, §6, §9, §10, `ecom.md` §2.1, §2.6, §2.8, §3.3,
+  `directory.md` §2.2 и `PATCH /terminals`, `application_description.md`, `admin_guide.md`,
+  `technical_handover.md` §4.6, Postman-коллекция `directory` (Update Terminal).
+
+---
+
 ## Описания закрытых задач
 
 > Перенесено из `AGENTS.md` §10 («Закрытые блокеры» и записи, попавшие в «Тонкости») 13.09.2026

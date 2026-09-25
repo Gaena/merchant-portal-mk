@@ -15,6 +15,7 @@ import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.ResourceNotFoundException;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.ecom.config.TxpgProperties;
+import az.millikart.ecom.domain.ProviderLogin;
 import az.millikart.ecom.domain.ProviderTerminal;
 import az.millikart.ecom.dto.CursorPage;
 import az.millikart.ecom.dto.EcomDashboardResponse;
@@ -22,6 +23,7 @@ import az.millikart.ecom.dto.EcomStatsResponse;
 import az.millikart.ecom.dto.EcomTerminalResponse;
 import az.millikart.ecom.dto.EcomTransactionFilter;
 import az.millikart.ecom.dto.EcomTransactionResponse;
+import az.millikart.ecom.repository.ProviderLoginRepository;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.repository.TxpgStatementRow;
 import az.millikart.ecom.repository.TxpgTransactionRepository;
@@ -45,15 +47,17 @@ import org.mockito.Mockito;
 
 // Скоуп и предохранители выписки. SQL здесь не проверяется — для него TxpgTransactionRepositoryTest.
 // Проверяется то, что решается на нашей стороне и ценой ошибки имеет чужие обороты на экране:
-// логины скоупа уходят в каждый запрос, фильтр по терминалу его не расширяет, период обязателен и ограничен.
+// мерчанты скоупа уходят в каждый запрос, фильтр по терминалу его не расширяет, период обязателен и ограничен.
 class EcomTransactionScopeTest {
 
     private TxpgTransactionRepository repository;
     private EcomScopeService scope;
     private ProviderTerminalRepository providerTerminals;
+    private ProviderLoginRepository providerLogins;
     private EcomTransactionService service;
 
-    private static final EcomScope SCOPE = new EcomScope(List.of("BS00001"), List.of("E1120020"));
+    private static final EcomScope SCOPE = new EcomScope(List.of("E1120020"));
+    private static final EcomScope NOTHING = new EcomScope(List.of());
 
     private final Instant from = Instant.parse("2026-09-01T00:00:00Z");
     private final Instant to = Instant.parse("2026-09-02T00:00:00Z");
@@ -65,17 +69,18 @@ class EcomTransactionScopeTest {
         repository = Mockito.mock(TxpgTransactionRepository.class);
         scope = Mockito.mock(EcomScopeService.class);
         providerTerminals = Mockito.mock(ProviderTerminalRepository.class);
+        providerLogins = Mockito.mock(ProviderLoginRepository.class);
         TxpgProperties properties = new TxpgProperties();
         properties.setMaxWindow(Duration.ofDays(92));
         properties.setMaxPageSize(200);
-        service = new EcomTransactionService(repository, scope, providerTerminals, properties);
+        service = new EcomTransactionService(repository, scope, providerTerminals, providerLogins, properties);
     }
 
-    // Мерчанту без терминалов — пустая выписка, и в базу шлюза за ней даже не ходим. Обратная
-    // ветка — «нет терминалов, значит фильтра нет» — это ровно то, как выглядит показ чужих оборотов.
+    // Компании без мерчантов — пустая выписка, и в базу шлюза за ней даже не ходим. Обратная
+    // ветка — «нет мерчантов, значит фильтра нет» — это ровно то, как выглядит показ чужих оборотов.
     @Test
     void withoutLinkedTerminals_theStatementIsEmptyAndTheGatewayIsNotQueried() {
-        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
+        when(scope.scopeFor(principal)).thenReturn(NOTHING);
 
         CursorPage<EcomTransactionResponse> page =
                 service.list(from, to, null, null, null, null, null, null, null, null, principal);
@@ -87,7 +92,7 @@ class EcomTransactionScopeTest {
 
     @Test
     void withoutLinkedTerminals_anOrderIsNotFoundRatherThanEmpty() {
-        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
+        when(scope.scopeFor(principal)).thenReturn(NOTHING);
 
         Assertions.assertThrows(ResourceNotFoundException.class, () -> service.order("175515", principal));
         verifyNoInteractions(repository);
@@ -95,7 +100,7 @@ class EcomTransactionScopeTest {
 
     @Test
     void withoutLinkedTerminals_statsAreZeroAndTheGatewayIsNotQueried() {
-        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
+        when(scope.scopeFor(principal)).thenReturn(NOTHING);
 
         EcomStatsResponse stats = service.stats(from, to, null, null, principal);
 
@@ -103,51 +108,39 @@ class EcomTransactionScopeTest {
         verifyNoInteractions(repository);
     }
 
-    // Логины скоупа уходят и в выбор страницы, и в чтение её операций; без фильтра сужения по мерчанту нет.
+    // Мерчанты скоупа уходят и в выбор страницы, и в чтение её операций (Р-97); без фильтра — весь скоуп.
     @Test
-    void theLoginsOfTheScopeAreHandedToEveryQuery() {
-        when(scope.scopeFor(principal)).thenReturn(new EcomScope(
-                List.of("BS00001", "BS00002"), List.of("E1120020", "1234567")));
+    void theMerchantsOfTheScopeAreHandedToEveryQuery() {
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("E1120020", "1234567")));
         when(repository.findOrderIds(any(), any(), anyInt())).thenReturn(List.of(175533L));
 
         service.list(from, to, null, null, null, null, null, null, null, null, principal);
 
         ArgumentCaptor<EcomTransactionFilter> filter = ArgumentCaptor.forClass(EcomTransactionFilter.class);
         verify(repository).findOrderIds(filter.capture(), isNull(), eq(26));
-        Assertions.assertEquals(List.of("BS00001", "BS00002"), filter.getValue().logins());
-        Assertions.assertNull(filter.getValue().merchantRids());
-        verify(repository).findRows(List.of(175533L), List.of("BS00001", "BS00002"), from);
-    }
-
-    // Терминал, заведённый без терминала провайдера, в выписке виден: скоуп идёт по логину.
-    @Test
-    void aTerminalWithoutAProviderLink_stillHasAStatement() {
-        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("BS00001"), List.of()));
-
-        service.list(from, to, null, null, null, null, null, null, null, null, principal);
-        service.stats(from, to, null, null, principal);
-
-        verify(repository).findOrderIds(any(), isNull(), anyInt());
-        verify(repository).streamPeriodRows(any(), any());
+        Assertions.assertEquals(List.of("E1120020", "1234567"), filter.getValue().merchantRids());
+        verify(repository).findRows(List.of(175533L), List.of("E1120020", "1234567"), from);
     }
 
     // Фильтр по терминалу сужает скоуп и никогда его не расширяет: чужой мерчант из запроса выпадает.
     @Test
     void aForeignMerchantInTheFilterIsDropped() {
-        when(scope.scopeFor(principal)).thenReturn(new EcomScope(
-                List.of("BS00001", "BS00002"), List.of("E1120020", "1234567")));
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("E1120020", "1234567")));
 
         service.list(from, to, List.of("1234567", "FOREIGN"), null, null, null, null, null, null, null, principal);
+        service.stats(from, to, List.of("FOREIGN", "1234567"), null, principal);
 
-        ArgumentCaptor<EcomTransactionFilter> filter = ArgumentCaptor.forClass(EcomTransactionFilter.class);
-        verify(repository).findOrderIds(filter.capture(), isNull(), anyInt());
-        Assertions.assertEquals(List.of("1234567"), filter.getValue().merchantRids());
-        Assertions.assertEquals(List.of("BS00001", "BS00002"), filter.getValue().logins());
+        ArgumentCaptor<EcomTransactionFilter> page = ArgumentCaptor.forClass(EcomTransactionFilter.class);
+        verify(repository).findOrderIds(page.capture(), isNull(), anyInt());
+        Assertions.assertEquals(List.of("1234567"), page.getValue().merchantRids());
+        ArgumentCaptor<EcomTransactionFilter> totals = ArgumentCaptor.forClass(EcomTransactionFilter.class);
+        verify(repository).streamPeriodRows(totals.capture(), any());
+        Assertions.assertEquals(List.of("1234567"), totals.getValue().merchantRids());
     }
 
     @Test
     void aFilterOfOnlyForeignMerchants_givesAnEmptyStatementWithoutAQuery() {
-        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("BS00001"), List.of("E1120020")));
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
 
         CursorPage<EcomTransactionResponse> page =
                 service.list(from, to, List.of("FOREIGN"), null, null, null, null, null, null, null, principal);
@@ -259,7 +252,7 @@ class EcomTransactionScopeTest {
         EcomTransactionResponse order = service.order("175533", principal);
 
         Assertions.assertEquals("175533", order.orderId());
-        verify(repository).findRows(List.of(175533L), List.of("BS00001"), null);
+        verify(repository).findRows(List.of(175533L), List.of("E1120020"), null);
     }
 
     // Номер заказа у провайдера — число: всё прочее в адресе не существует, и в шлюз за ним не ходим.
@@ -297,19 +290,22 @@ class EcomTransactionScopeTest {
         Assertions.assertEquals(4L, stats.statusCounts().get("CANCELED"));
     }
 
-    // Фильтр строится из нашей базы, без шлюза. Терминал, которого нет в слепке, остаётся в списке
-    // с пустым названием: иначе по нему нельзя было бы отфильтровать собственные платежи.
+    // Фильтр строится из нашей базы, без шлюза. Мерчант без терминала в слепке остаётся в списке с
+    // названием из слепка логинов: иначе по нему нельзя было бы отфильтровать собственные платежи.
     @Test
     void terminalsForTheFilterComeFromTheScope() {
-        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("BS00002", "shop_login"), List.of("M-2", "M-1")));
-        when(providerTerminals.findAllById(List.of("M-2", "M-1"))).thenReturn(List.of(
-                ProviderTerminal.builder().rid("M-2").title("Bazar").login("BS00002").build()));
+        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of("M-1", "M-2", "M-3")));
+        when(providerTerminals.findAllById(List.of("M-1", "M-2", "M-3"))).thenReturn(List.of(
+                ProviderTerminal.builder().rid("M-2").title("Bazar").login("BS00002").terminalRid("TID-2").build()));
+        when(providerLogins.findByMerchantRidIn(List.of("M-1", "M-3"))).thenReturn(List.of(
+                ProviderLogin.builder().login("bazarstore@company.com").merchantRid("M-1").merchantTitle("Bazar Xirdalan").build()));
 
         List<EcomTerminalResponse> terminals = service.terminals(principal);
 
         Assertions.assertEquals(List.of(
-                new EcomTerminalResponse("M-2", "Bazar", "BS00002"),
-                new EcomTerminalResponse("M-1", null, null)), terminals);
+                new EcomTerminalResponse("M-2", "Bazar", "BS00002", "TID-2"),
+                new EcomTerminalResponse("M-1", "Bazar Xirdalan", null, null),
+                new EcomTerminalResponse("M-3", null, null, null)), terminals);
         verifyNoInteractions(repository);
     }
 
@@ -403,7 +399,7 @@ class EcomTransactionScopeTest {
     // Пользователю без терминалов — пустая сводка, и в базу шлюза за ней не ходим, как и за выпиской.
     @Test
     void dashboardWithoutLinkedTerminals_isEmptyAndTheGatewayIsNotQueried() {
-        when(scope.scopeFor(principal)).thenReturn(new EcomScope(List.of(), List.of()));
+        when(scope.scopeFor(principal)).thenReturn(NOTHING);
 
         EcomDashboardResponse summary = service.dashboard(from, to, principal);
 
@@ -423,15 +419,14 @@ class EcomTransactionScopeTest {
             return null;
         }).when(repository).streamPeriodRows(any(), any());
         when(providerTerminals.findAllById(any())).thenReturn(List.of(
-                ProviderTerminal.builder().rid(TxpgRows.MERCHANT_RID).title("Bazar").login("BS00001").build()));
+                ProviderTerminal.builder().rid(TxpgRows.MERCHANT_RID).title("Bazar").login("BS00001").terminalRid("TID-1").build()));
 
         EcomDashboardResponse summary = service.dashboard(from, to, principal);
         EcomStatsResponse stats = service.stats(from, to, null, null, principal);
 
         ArgumentCaptor<EcomTransactionFilter> filter = ArgumentCaptor.forClass(EcomTransactionFilter.class);
         verify(repository, times(2)).streamPeriodRows(filter.capture(), any());
-        Assertions.assertEquals(List.of("BS00001"), filter.getAllValues().getFirst().logins());
-        Assertions.assertNull(filter.getAllValues().getFirst().merchantRids());
+        Assertions.assertEquals(SCOPE.merchantRids(), filter.getAllValues().getFirst().merchantRids());
         Assertions.assertNull(filter.getAllValues().getFirst().paymentType());
 
         Assertions.assertEquals(stats.statusCounts(), summary.statusCounts());
@@ -444,6 +439,7 @@ class EcomTransactionScopeTest {
             Assertions.assertEquals(0, total.refundedAmount().compareTo(same.refundedAmount()));
         }
         Assertions.assertEquals("BS00001", summary.topTerminals().getFirst().login());
+        Assertions.assertEquals("TID-1", summary.topTerminals().getFirst().terminalRid());
         Assertions.assertEquals("Bazar", summary.topTerminals().getFirst().title());
         Assertions.assertEquals("Asia/Baku", summary.window().zone());
     }
@@ -463,7 +459,7 @@ class EcomTransactionScopeTest {
         properties.setMaxWindow(Duration.ofDays(92));
         properties.setMaxPageSize(maxPageSize);
         properties.setStatusScanLimit(statusScanLimit);
-        return new EcomTransactionService(repository, scope, providerTerminals, properties);
+        return new EcomTransactionService(repository, scope, providerTerminals, providerLogins, properties);
     }
 
     // Шлюз из заказов: номера — от новых к старым ниже курсора и не больше запрошенного, строки — по номерам.

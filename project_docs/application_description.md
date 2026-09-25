@@ -169,8 +169,8 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 |:---|:---|
 | `config` | `TxpgDataSourceConfig` — второй источник данных (база шлюза) рядом с основной PostgreSQL, `TxpgProperties` |
 | `controller` | `EcomTransactionController` (выписка, итоги периода, терминалы для фильтра, карточка заказа), `ProviderTerminalController` (справочник терминалов провайдера и ручное обновление обоих слепков) |
-| `service` | `EcomTransactionService`, `EcomScopeService` (чьи платежи видит пользователь), `EcomOrderAssembler` (строки шлюза → заказы и их деньги), `EcomOperationKind`, `EcomStatusResolver`, `EcomStatsAccumulator` (итоги периода), `ProviderTerminalSyncService`, `ProviderTerminalSource`, `ProviderLoginSyncService`, `ProviderLoginSource` |
-| `repository` | SQL к базе шлюза — `TxpgTransactionRepository`, `TxpgProviderTerminalSource`, `TxpgProviderLoginSource`; в PostgreSQL — `ProviderTerminalRepository`, `ProviderLoginRepository`, `TerminalRepository` (только чтение) |
+| `service` | `EcomTransactionService`, `EcomScopeService` (чьи платежи видит пользователь: мерчанты логина компании, Р-97), `EcomOrderAssembler` (строки шлюза → заказы и их деньги), `EcomOperationKind`, `EcomStatusResolver`, `EcomStatsAccumulator` (итоги периода), `ProviderTerminalSyncService`, `ProviderTerminalSource`, `ProviderLoginSyncService`, `ProviderLoginSource` |
+| `repository` | SQL к базе шлюза — `TxpgTransactionRepository`, `TxpgProviderTerminalSource`, `TxpgProviderLoginSource`; в PostgreSQL — `ProviderTerminalRepository`, `ProviderLoginRepository`, `CompanyLoginRepository` (логины компаний, нативный запрос, только чтение) |
 | `scheduler` | `ProviderTerminalSyncScheduler` |
 
 Контракты — `ecom.md`.
@@ -408,12 +408,12 @@ changeset'ы не редактируются.
 | Данные | Пишет | Кто ещё читает или пишет, и как |
 |:---|:---|:---|
 | `users`, `refresh_tokens` | `auth` | — |
-| `companies` | `directory` | `auth` — название компании нативным запросом для поиска пользователей; `pbl` — логин и пароль компании к провайдеру (Р-93) |
-| `terminals` | `directory` | `pbl` — компания, статус и `terminal_rid` терминала для заказов у шлюза; `ecom` — логин для скоупа выписки, `merchant_rid` для её фильтра |
+| `companies` | `directory` | `auth` — название компании нативным запросом для поиска пользователей; `pbl` — логин и пароль компании к провайдеру (Р-93); `ecom` — логин компании нативным запросом для скоупа выписки (Р-97) |
+| `terminals` | `directory` | `pbl` — компания, статус и `terminal_rid` терминала для заказов у шлюза. `ecom` его не читает (Р-97), только добавляет свои колонки миграцией |
 | `payment_links`, `transactions` | `pbl` | `directory` — статусы ссылок нативным запросом при блокировке и разблокировке терминала, в той же транзакции |
 | `audit_logs` | все сервисы через `common` | `directory` — чтение журнала |
 | `provider_terminals` | `ecom` | `directory` — нативным запросом для сверки статусов терминалов и для заведения терминала (название, логин, `terminal_rid`) |
-| `provider_logins` | `ecom` | `directory` — нативным запросом для проверки логина компании при её сохранении (Р-94) и мерчанта терминала при его заведении (Р-96) |
+| `provider_logins` | `ecom` | `directory` — нативным запросом для проверки логина компании при её сохранении (Р-94) и мерчанта терминала при его заведении (Р-96); сам `ecom` строит по нему скоуп выписки (Р-97) |
 
 Цепочка статуса терминала: `ecom` обновляет слепок `provider_terminals` → `directory` сверяет с
 ним `terminals` и приостанавливает или возвращает ссылки → `pbl` не выпускает новые платежи по
@@ -528,15 +528,15 @@ sequenceDiagram
 - **Выписка** читается из базы шлюза синхронно на каждый запрос, двумя запросами: страница номеров
   заказов (окно по `tran.id`, период по дате создания заказа), затем все операции этих заказов. В
   заказы с историей их склеивает `EcomOrderAssembler` (Р-74, Р-75); итоги периода — тот же разбор
-  по потоку строк. Запросы собраны по SQL провайдера от 14.09.2026, скоуп — по логинам терминалов,
-  как в запросе выписки от 15.09.2026 (Р-83); кто что видит, какие поля и как считается статус —
-  `ecom.md` §2.
+  по потоку строк. Запросы собраны по SQL провайдера от 14.09.2026, скоуп — мерчанты логина
+  мультимерчанта компании: `companies.provider_login` → активные связи в `provider_logins` (Р-97); кто что
+  видит, какие поля и как считается статус — `ecom.md` §2.
 - **Справочник терминалов провайдера** обновляется в `provider_terminals` по расписанию и по кнопке
   (`ecom.md` §3); по нему `directory` сверяет статусы наших терминалов (§6). Тем же расписанием и той
   же кнопкой обновляется `provider_logins` — логины мультимерчантов (`ecom.md` §3.3): по нему
-  `directory` проверяет логин компании при её сохранении.
+  `directory` проверяет логин компании при её сохранении, а выписка строит скоуп.
 - **Главная.** Сводка главной — тоже `ecom` (`GET /api/v1/ecom/dashboard/summary`, Р-91): оплаты картой по
-  всем терминалам компании за период, теми же правилами, что итоги выписки. Статистика оплат по платёжным
+  всем мерчантам логина компании за период, теми же правилами, что итоги выписки. Статистика оплат по платёжным
   ссылкам — вкладка Pay by Link, сводка `pbl`.
 - **Экран.** Вкладка `/transactions/ecommerce` — выписка на API `ecom`: фильтры и итоги считает сервер,
   страница курсорная («показать ещё»), карточка заказа — `/transactions/ecommerce/:orderId`. Форма

@@ -32,8 +32,9 @@ public record EcomDashboardResponse(
     public record DailyTotal(LocalDate date, String currency, BigDecimal netAmount, long orderCount) {
     }
 
-    // login и title — из слепка терминалов провайдера; нет в слепке — название мерчанта из выписки, логина нет.
-    public record TerminalTotal(String currency, String merchantRid, String login, String title,
+    // login, terminalRid и title — из слепка терминалов провайдера; нет в слепке — название мерчанта из
+    // выписки, логина и номера нет.
+    public record TerminalTotal(String currency, String merchantRid, String login, String terminalRid, String title,
                                 BigDecimal netAmount, long orderCount) {
     }
 }

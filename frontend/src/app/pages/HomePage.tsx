@@ -29,7 +29,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ECOM_STATUSES, type EcomDashboard, type EcomOrder, type EcomTerminal } from '../types/ecom';
-import { ecomTerminalLabel, fetchEcomDashboard, fetchEcomPage, fetchEcomTerminals } from '../utils/ecom';
+import { ecomTerminalLabel, ecomTerminalName, fetchEcomDashboard, fetchEcomPage, fetchEcomTerminals } from '../utils/ecom';
 import { formatCurrency, formatDateTime } from '../utils/format';
 import { getStatusColorScheme } from '../utils/statusColors';
 import {
@@ -189,7 +189,7 @@ export const HomePage: React.FC = () => {
             <Stack spacing={2.5}>
               {summary.topTerminals.map(terminal => {
                 const top = summary.topTerminals.find(item => item.currency === terminal.currency)?.netAmount ?? 0;
-                const label = terminal.login ?? terminal.title ?? '—';
+                const label = ecomTerminalName(terminal);
                 return (
                   <Box key={`${terminal.currency}-${terminal.merchantRid}`}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
