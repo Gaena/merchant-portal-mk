@@ -527,10 +527,6 @@ export interface TranslationDictionary {
     deleteTitle: string;
     deleteQuestion: string;
     deleteIrreversible: string;
-    deactivateTitle: string;
-    deactivateQuestion: string;
-    activateTitle: string;
-    activateQuestion: string;
     /**
      * Креды компании к провайдеру (Р-93): все запросы к шлюзу идут от её имени. Задаёт и меняет только
      * SYSTEM_ADMIN; пароль хранится зашифрованным и не показывается никому — только заменяется.
@@ -546,16 +542,22 @@ export interface TranslationDictionary {
     providerPasswordHint: string;
     newProviderPassword: string;
     newProviderPasswordHint: string;
-    editCredentials: string;
-    credentialsConfirmTitle: string;
-    credentialsConfirmQuestion: string;
+    /**
+     * Окно правки компании: название, логин и пароль к провайдеру, статус. Подтверждение перечисляет
+     * изменения; предупреждения — только к тому, что меняется.
+     */
+    editCompany: string;
+    editConfirmTitle: string;
+    editConfirmQuestion: string;
+    credentialsWarning: string;
+    statusWarning: string;
     providerPasswordReplaced: string;
     editNothingChanged: string;
     formIncomplete: string;
     created: string;
     createFailed: string;
-    credentialsUpdated: string;
-    credentialsUpdateFailed: string;
+    updated: string;
+    updateFailed: string;
   };
   users: {
     title: string;
@@ -1139,10 +1141,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       deleteTitle: 'Delete company?',
       deleteQuestion: 'The company disappears from every list in the portal. Its terminals, payment links and transactions stay in the database.',
       deleteIrreversible: 'This cannot be undone from the portal: a deleted company cannot be restored here.',
-      deactivateTitle: 'Mark company inactive?',
-      deactivateQuestion: 'This is a label in the directory and an entry in the audit log. It does not stop sign-ins, link creation or payments — to stop payments, block the terminals.',
-      activateTitle: 'Mark company active?',
-      activateQuestion: 'The company is marked active again. Nothing else changes.',
       providerLogin: 'Acquirer login',
       providerLoginHint: 'A multimerchant login from the provider directory: only active logins with active merchants that no other company uses. Created just now — refresh the directory.',
       providerLoginEmpty: 'No free multimerchant logins in the directory. Refresh it; if the login still does not appear, it is not created at the provider, is inactive, has no active merchants or belongs to another company.',
@@ -1152,16 +1150,18 @@ export const translations: Record<Language, TranslationDictionary> = {
       providerPasswordHint: 'Stored encrypted. Nobody can view it later — it can only be replaced.',
       newProviderPassword: 'New acquirer password (optional)',
       newProviderPasswordHint: 'Leave blank to keep the current password',
-      editCredentials: 'Acquirer credentials',
-      credentialsConfirmTitle: 'Change the acquirer credentials?',
-      credentialsConfirmQuestion: 'Every request of this company to the acquirer — new payments, captures, refunds and status checks — will go with these credentials. Wrong ones stop the company payments.',
       providerPasswordReplaced: 'The acquirer password will be replaced',
       editNothingChanged: 'Nothing changed — no request was sent.',
       formIncomplete: 'Fill in every required field',
       created: 'Company created',
       createFailed: 'Could not create the company',
-      credentialsUpdated: 'Acquirer credentials updated',
-      credentialsUpdateFailed: 'Could not update the acquirer credentials',
+      editCompany: 'Edit company',
+      editConfirmTitle: 'Save changes to the company?',
+      editConfirmQuestion: 'The following will change for this company. Check the list before confirming.',
+      credentialsWarning: 'Every request of this company to the acquirer — new payments, captures, refunds and status checks — will go with the new credentials. Wrong ones stop the company payments.',
+      statusWarning: 'Status is a label in the directory and an entry in the audit log. It does not stop sign-ins, link creation or payments — to stop payments, block the terminals.',
+      updated: 'Company updated',
+      updateFailed: 'Could not update the company',
     },
     users: {
       title: 'Users',
@@ -1712,10 +1712,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       deleteTitle: 'Şirkət silinsin?',
       deleteQuestion: 'Şirkət portalın bütün siyahılarından yox olacaq. Onun terminalları, ödəniş linkləri və əməliyyatları bazada qalır.',
       deleteIrreversible: 'Bunu portaldan geri qaytarmaq mümkün deyil: silinmiş şirkəti burada bərpa etmək olmur.',
-      deactivateTitle: 'Şirkət qeyri-aktiv işarələnsin?',
-      deactivateQuestion: 'Bu, sorğu kitabçasında qeyd və audit jurnalında yazıdır. İşçilərin girişini, link yaradılmasını və ödənişlərin qəbulunu dayandırmır — ödənişləri dayandırmaq üçün terminalları bloklayın.',
-      activateTitle: 'Şirkət aktiv işarələnsin?',
-      activateQuestion: 'Şirkət yenidən aktiv işarələnəcək. Başqa heç nə dəyişmir.',
       providerLogin: 'Provayder logini',
       providerLoginHint: 'Provayder kataloqundan multimerçant logini: yalnız aktiv merçantları olan, başqa şirkətin istifadə etmədiyi aktiv loginlər. İndicə yaradılıbsa — kataloqu yeniləyin.',
       providerLoginEmpty: 'Kataloqda boş multimerçant logini yoxdur. Kataloqu yeniləyin; login yenə görünmürsə, o provayderdə yaradılmayıb, aktiv deyil, aktiv merçantı yoxdur və ya başqa şirkətə aiddir.',
@@ -1725,16 +1721,18 @@ export const translations: Record<Language, TranslationDictionary> = {
       providerPasswordHint: 'Şifrələnmiş saxlanılır. Sonra onu görmək olmaz — yalnız əvəz etmək.',
       newProviderPassword: 'Yeni provayder şifrəsi (istəyə görə)',
       newProviderPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
-      editCredentials: 'Provayderə giriş',
-      credentialsConfirmTitle: 'Provayderə giriş dəyişdirilsin?',
-      credentialsConfirmQuestion: 'Şirkətin provayderə bütün sorğuları — yeni ödənişlər, silinmələr, geri qaytarmalar və status yoxlamaları — bu məlumatlarla gedəcək. Yanlış məlumatlar şirkətin ödənişlərini dayandırar.',
       providerPasswordReplaced: 'Provayder şifrəsi əvəz olunacaq',
       editNothingChanged: 'Heç nə dəyişməyib — sorğu göndərilmədi.',
       formIncomplete: 'Bütün məcburi sahələri doldurun',
       created: 'Şirkət yaradıldı',
       createFailed: 'Şirkəti yaratmaq alınmadı',
-      credentialsUpdated: 'Provayderə giriş yeniləndi',
-      credentialsUpdateFailed: 'Provayderə girişi yeniləmək alınmadı',
+      editCompany: 'Şirkəti redaktə et',
+      editConfirmTitle: 'Şirkətdəki dəyişikliklər saxlanılsın?',
+      editConfirmQuestion: 'Bu şirkətdə aşağıdakılar dəyişəcək. Təsdiqləməzdən əvvəl siyahını yoxlayın.',
+      credentialsWarning: 'Şirkətin provayderə bütün sorğuları — yeni ödənişlər, silinmələr, geri qaytarmalar və status yoxlamaları — yeni məlumatlarla gedəcək. Yanlış məlumatlar şirkətin ödənişlərini dayandırar.',
+      statusWarning: 'Status sorğu kitabçasında qeyd və audit jurnalında yazıdır. İşçilərin girişini, link yaradılmasını və ödənişlərin qəbulunu dayandırmır — ödənişləri dayandırmaq üçün terminalları bloklayın.',
+      updated: 'Şirkət yeniləndi',
+      updateFailed: 'Şirkəti yeniləmək alınmadı',
     },
     users: {
       title: 'İstifadəçilər',
@@ -2285,10 +2283,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       deleteTitle: 'Удалить компанию?',
       deleteQuestion: 'Компания пропадёт из всех списков портала. Её терминалы, платёжные ссылки и операции останутся в базе.',
       deleteIrreversible: 'Отменить это из портала нельзя: восстановить удалённую компанию здесь не получится.',
-      deactivateTitle: 'Пометить компанию неактивной?',
-      deactivateQuestion: 'Это пометка в справочнике и запись в журнале аудита. Вход сотрудников, создание ссылок и приём платежей она не останавливает — чтобы остановить платежи, блокируйте терминалы.',
-      activateTitle: 'Пометить компанию активной?',
-      activateQuestion: 'Компания снова будет помечена активной. Больше ничего не меняется.',
       providerLogin: 'Логин к провайдеру',
       providerLoginHint: 'Логин мультимерчанта из справочника провайдера: в списке только активные логины с активными мерчантами, не занятые другой компанией. Только что заведённый — «Обновить справочник».',
       providerLoginEmpty: 'Свободных логинов мультимерчантов в справочнике нет. Обновите справочник; если логин так и не появился — он не заведён у провайдера, выключен, без активных мерчантов или уже у другой компании.',
@@ -2298,16 +2292,18 @@ export const translations: Record<Language, TranslationDictionary> = {
       providerPasswordHint: 'Хранится зашифрованным. Посмотреть его потом нельзя — только заменить.',
       newProviderPassword: 'Новый пароль к провайдеру (необязательно)',
       newProviderPasswordHint: 'Оставьте пустым, чтобы не менять пароль',
-      editCredentials: 'Доступ к провайдеру',
-      credentialsConfirmTitle: 'Изменить доступ к провайдеру?',
-      credentialsConfirmQuestion: 'С этими данными пойдут все запросы компании к провайдеру — новые платежи, списания, возвраты и проверки статуса. Неверные остановят платежи компании.',
       providerPasswordReplaced: 'Пароль к провайдеру будет заменён',
       editNothingChanged: 'Ничего не изменилось — запрос не отправлен.',
       formIncomplete: 'Заполните все обязательные поля',
       created: 'Компания создана',
       createFailed: 'Не удалось создать компанию',
-      credentialsUpdated: 'Доступ к провайдеру обновлён',
-      credentialsUpdateFailed: 'Не удалось обновить доступ к провайдеру',
+      editCompany: 'Редактировать компанию',
+      editConfirmTitle: 'Сохранить изменения компании?',
+      editConfirmQuestion: 'У этой компании изменится следующее. Проверьте список перед подтверждением.',
+      credentialsWarning: 'С новыми данными пойдут все запросы компании к провайдеру — новые платежи, списания, возвраты и проверки статуса. Неверные остановят платежи компании.',
+      statusWarning: 'Статус — пометка в справочнике и запись в журнале аудита. Вход сотрудников, создание ссылок и приём платежей он не останавливает — чтобы остановить платежи, блокируйте терминалы.',
+      updated: 'Компания обновлена',
+      updateFailed: 'Не удалось обновить компанию',
     },
     users: {
       title: 'Пользователи',

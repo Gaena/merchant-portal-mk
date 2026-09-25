@@ -135,6 +135,38 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.content[1].action", is("CREATE")));
     }
 
+    // Правкой ставятся только ACTIVE и INACTIVE. DELETED через PATCH удалял компанию в обход удаления и его
+    // записи в журнале, а незнакомое значение ни один экран не прочтёт; отказ ничего не меняет.
+    @Test
+    public void companyStatus_isOnlyActiveOrInactive() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+
+        for (String status : List.of("DELETED", "BLOCKED", "active", " INACTIVE")) {
+            mockMvc.perform(patch("/api/v1/companies/comp-01")
+                            .header(HttpHeaders.AUTHORIZATION, adminToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(new UpdateCompanyRequest("Renamed LLC", status, null, null))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", is("Company status must be ACTIVE or INACTIVE")));
+        }
+        assertThat(companyRepository.findById("comp-01").orElseThrow().getStatus()).isEqualTo("ACTIVE");
+        assertThat(companyRepository.findById("comp-01").orElseThrow().getName()).isEqualTo("MilliKart LLC");
+
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateCompanyRequest(null, "INACTIVE", null, null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("INACTIVE")));
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("entityType", "COMPANY")
+                        .param("entityId", "comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content", hasSize(3))) // CREATE + UPDATE + BLOCK, отказы не пишутся
+                .andExpect(jsonPath("$.content[?(@.action == 'BLOCK')]", hasSize(1)));
+    }
+
     // Заводит терминалы только администратор (Р-80, Р-93): руководитель получает 403 до любых поисков по
     // справочнику, и тексты отказов не выдают, есть ли такой rid.
     @Test

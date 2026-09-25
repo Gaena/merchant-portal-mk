@@ -17,7 +17,6 @@ import {
   TableHead,
   TableRow,
   Chip,
-  Switch,
   IconButton,
   Dialog,
   DialogTitle,
@@ -29,6 +28,7 @@ import {
   Tooltip,
   InputAdornment,
   Autocomplete,
+  MenuItem,
 } from '@mui/material';
 import {
   Business as BusinessIcon,
@@ -38,18 +38,18 @@ import {
   CheckCircle as CheckCircleIcon,
   Block as BlockIcon,
   Search as SearchIcon,
-  VpnKey as KeyIcon,
+  Edit as EditIcon,
   Sync as SyncIcon,
 } from '@mui/icons-material';
 
 import { useLanguage } from '../context/LanguageContext';
-import type { TranslationDictionary } from '../i18n/translations';
 import type { CompanyDto, ProviderLoginOption, ProviderTerminalSyncOutcome } from '../types/dto';
 
-/** Действие, ждущее подтверждения. Пока оно не подтверждено, на сервер ничего не уходит. */
-type PendingAction =
-  | { kind: 'delete'; company: CompanyDto }
-  | { kind: 'status'; company: CompanyDto; nextStatus: 'ACTIVE' | 'INACTIVE' };
+type CompanyStatus = 'ACTIVE' | 'INACTIVE';
+
+// Статус без значения список показывает активным — так же его читают и список, и форма правки.
+const statusOf = (company: CompanyDto): CompanyStatus =>
+  (company.status === 'ACTIVE' || !company.status ? 'ACTIVE' : 'INACTIVE');
 
 export const CompaniesPage: React.FC = () => {
   const { user } = useAuth();
@@ -65,19 +65,18 @@ export const CompaniesPage: React.FC = () => {
   const [form, setForm] = useState({ id: '', name: '', providerLogin: '', providerPassword: '' });
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState('');
-  // Ни удаление, ни смена статуса не выполняются по клику: сначала окно подтверждения.
-  // Удаление компании к тому же необратимо из портала — updateCompany на удалённой отвечает
-  // «Company not found», воскресить её через API нечем.
-  const [pending, setPending] = useState<PendingAction | null>(null);
+  // Удаление не выполняется по клику: сначала окно подтверждения. Оно к тому же необратимо из портала —
+  // updateCompany на удалённой отвечает «Company not found», воскресить её через API нечем.
+  const [pendingDelete, setPendingDelete] = useState<CompanyDto | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
-  // Креды компании к провайдеру (Р-93): форма правки, затем подтверждение со списком изменений — с ними
-  // уходят все запросы компании к провайдеру, и неверные останавливают её платежи. Пароль в форме пуст:
-  // прочитать его нельзя, только заменить.
-  const [credsCompany, setCredsCompany] = useState<CompanyDto | null>(null);
-  const [credsForm, setCredsForm] = useState({ providerLogin: '', providerPassword: '' });
-  const [credsError, setCredsError] = useState('');
-  const [credsConfirm, setCredsConfirm] = useState<string[] | null>(null);
-  const [credsBusy, setCredsBusy] = useState(false);
+  // Правка компании — название, креды к провайдеру (Р-93) и статус в одной форме, затем подтверждение со
+  // списком изменений. Пароль в форме пуст: прочитать его нельзя, только заменить.
+  const [editCompany, setEditCompany] = useState<CompanyDto | null>(null);
+  const [editForm, setEditForm] = useState<{ name: string; providerLogin: string; providerPassword: string; status: CompanyStatus }>(
+    { name: '', providerLogin: '', providerPassword: '', status: 'ACTIVE' });
+  const [editError, setEditError] = useState('');
+  const [editConfirm, setEditConfirm] = useState<string[] | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
   // Логин компании бэкенд сверяет со справочником логинов мультимерчантов (Р-94). Логин, только что
   // заведённый у провайдера, попадёт туда с расписанием — или сразу по этой кнопке.
   const [syncing, setSyncing] = useState(false);
@@ -124,17 +123,6 @@ export const CompaniesPage: React.FC = () => {
     return () => controller.abort();
   }, [fetchCompanies]);
 
-  const applyStatus = async (company: CompanyDto, newStatus: 'ACTIVE' | 'INACTIVE') => {
-    try {
-      // Только статус: PATCH с прежним названием бэкенд записывал в аудит как «Name changed from X to X».
-      await apiClient.patch(`/api/v1/companies/${company.id}`, { status: newStatus });
-      setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, status: newStatus } : c));
-      setSnackbar(`Company status updated to ${newStatus}`);
-    } catch (err: any) {
-      setSnackbar(err.response?.data?.message || 'Failed to update company status');
-    }
-  };
-
   // Логин и пароль к провайдеру обязательны (Р-93): логин — целиком, с префиксом владельца, как его
   // выдал провайдер; сами ничего не подставляем.
   const handleCreate = async () => {
@@ -173,10 +161,10 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
-  const openCredentials = (company: CompanyDto) => {
-    setCredsCompany(company);
-    setCredsForm({ providerLogin: company.providerLogin ?? '', providerPassword: '' });
-    setCredsError('');
+  const openEdit = (company: CompanyDto) => {
+    setEditCompany(company);
+    setEditForm({ name: company.name ?? '', providerLogin: company.providerLogin ?? '', providerPassword: '', status: statusOf(company) });
+    setEditError('');
     setSyncResult(null);
     setSyncError('');
     loadLoginOptions();
@@ -206,7 +194,7 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
-  // Выбор логина — в обеих формах: заведение компании и смена доступа. current — логин, уже стоящий у
+  // Выбор логина — в обеих формах: заведение и правка компании. current — логин, уже стоящий у
   // компании: он занят ею самой, поэтому в списке свободных его нет, а остаться на нём должно быть можно.
   const loginPicker = (value: string, onChange: (login: string) => void, current?: string | null) => {
     const options = current && !loginOptions.some(option => option.login === current)
@@ -243,7 +231,7 @@ export const CompaniesPage: React.FC = () => {
     );
   };
 
-  // Кнопка и её итог — в обеих формах, где выбирают логин: заведение компании и смена доступа.
+  // Кнопка и её итог — в обеих формах, где выбирают логин: заведение и правка компании.
   const directorySync = (
     <Box>
       <Button size="small" startIcon={<SyncIcon />} disabled={syncing} onClick={syncProviderDirectory}>
@@ -260,56 +248,72 @@ export const CompaniesPage: React.FC = () => {
     </Box>
   );
 
-  // Что изменится, если сохранить. Пусто — запрос не уходит: PATCH без изменений всё равно оставил бы
-  // запись в журнале аудита.
-  const credentialChanges = (): string[] => {
-    if (!credsCompany) return [];
+  // Что изменится, если сохранить: только изменившиеся поля. Пустой пароль бэкенд читает как «не менять».
+  const editPayload = (): Record<string, string> => {
+    if (!editCompany) return {};
+    const payload: Record<string, string> = {};
+    const name = editForm.name.trim();
+    const login = editForm.providerLogin.trim();
+    if (name !== (editCompany.name ?? '')) payload.name = name;
+    if (login && login !== (editCompany.providerLogin ?? '')) payload.providerLogin = login;
+    if (editForm.providerPassword.trim()) payload.providerPassword = editForm.providerPassword.trim();
+    if (editForm.status !== statusOf(editCompany)) payload.status = editForm.status;
+    return payload;
+  };
+
+  const statusLabel = (status: CompanyStatus) => (status === 'ACTIVE' ? tObj.common.active : tObj.common.inactive);
+
+  // Список для окна подтверждения — по тем же полям, что уйдут в PATCH.
+  const editChanges = (payload: Record<string, string>): string[] => {
+    if (!editCompany) return [];
     const changes: string[] = [];
-    const login = credsForm.providerLogin.trim();
-    if (login !== (credsCompany.providerLogin ?? '')) {
-      changes.push(`${tObj.companies.providerLogin}: ${credsCompany.providerLogin || '—'} → ${login}`);
+    if (payload.name !== undefined) changes.push(`${tObj.companies.name}: ${editCompany.name || '—'} → ${payload.name}`);
+    if (payload.providerLogin !== undefined) {
+      changes.push(`${tObj.companies.providerLogin}: ${editCompany.providerLogin || '—'} → ${payload.providerLogin}`);
     }
-    if (credsForm.providerPassword.trim()) {
-      changes.push(tObj.companies.providerPasswordReplaced);
+    if (payload.providerPassword !== undefined) changes.push(tObj.companies.providerPasswordReplaced);
+    if (payload.status !== undefined) {
+      changes.push(`${tObj.companies.status}: ${statusLabel(statusOf(editCompany))} → ${statusLabel(payload.status as CompanyStatus)}`);
     }
     return changes;
   };
 
-  const askCredentials = () => {
-    if (!credsForm.providerLogin.trim()) {
-      setCredsError(tObj.companies.formIncomplete);
+  // Название обязательно; логин нельзя стереть у компании, у которой он есть. Без изменений запрос не
+  // уходит: PATCH без изменений всё равно оставил бы запись в журнале аудита.
+  const askEdit = () => {
+    if (!editCompany) return;
+    if (!editForm.name.trim() || (!editForm.providerLogin.trim() && editCompany.providerLogin)) {
+      setEditError(tObj.companies.formIncomplete);
       return;
     }
-    setCredsError('');
-    const changes = credentialChanges();
+    setEditError('');
+    const changes = editChanges(editPayload());
     if (changes.length === 0) {
-      setCredsCompany(null);
+      setEditCompany(null);
       setSnackbar(tObj.companies.editNothingChanged);
       return;
     }
-    setCredsConfirm(changes);
+    setEditConfirm(changes);
   };
 
-  // Только изменившиеся поля: пустой пароль бэкенд читает как «не менять».
-  const saveCredentials = async () => {
-    if (!credsCompany || credsBusy) return;
-    setCredsBusy(true);
+  const saveEdit = async () => {
+    if (!editCompany || editBusy) return;
+    setEditBusy(true);
     try {
-      const payload: Record<string, string> = {};
-      const login = credsForm.providerLogin.trim();
-      if (login !== (credsCompany.providerLogin ?? '')) payload.providerLogin = login;
-      if (credsForm.providerPassword.trim()) payload.providerPassword = credsForm.providerPassword.trim();
-      const res = await apiClient.patch<CompanyDto>(`/api/v1/companies/${credsCompany.id}`, payload);
-      setCompanies(prev => prev.map(c => (c.id === credsCompany.id ? res.data : c)));
-      setCredsCompany(null);
-      setSnackbar(tObj.companies.credentialsUpdated);
+      const res = await apiClient.patch<CompanyDto>(`/api/v1/companies/${editCompany.id}`, editPayload());
+      setCompanies(prev => prev.map(c => (c.id === editCompany.id ? res.data : c)));
+      setEditCompany(null);
+      setSnackbar(tObj.companies.updated);
     } catch (err: any) {
-      setCredsError(err.response?.data?.message || tObj.companies.credentialsUpdateFailed);
+      setEditError(err.response?.data?.message || tObj.companies.updateFailed);
     } finally {
-      setCredsBusy(false);
-      setCredsConfirm(null);
+      setEditBusy(false);
+      setEditConfirm(null);
     }
   };
+
+  const editPending = editConfirm !== null ? editPayload() : {};
+  const credentialsChanging = editPending.providerLogin !== undefined || editPending.providerPassword !== undefined;
 
   const applyDelete = async (company: CompanyDto) => {
     try {
@@ -322,20 +326,16 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
-  // Единственное место, откуда действие уходит на сервер. Кнопка заблокирована на время
+  // Единственное место, откуда удаление уходит на сервер. Кнопка заблокирована на время
   // запроса: второй клик по «Удалить» иначе ушёл бы вторым DELETE.
-  const runPending = async () => {
-    if (!pending || confirmBusy) return;
+  const runDelete = async () => {
+    if (!pendingDelete || confirmBusy) return;
     setConfirmBusy(true);
     try {
-      if (pending.kind === 'delete') {
-        await applyDelete(pending.company);
-      } else {
-        await applyStatus(pending.company, pending.nextStatus);
-      }
+      await applyDelete(pendingDelete);
     } finally {
       setConfirmBusy(false);
-      setPending(null);
+      setPendingDelete(null);
     }
   };
 
@@ -397,14 +397,13 @@ export const CompaniesPage: React.FC = () => {
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.name}</TableCell>
                 {isAdmin && <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.providerLogin}</TableCell>}
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.status}</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>{tObj.common.actions}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }} align="center">{tObj.common.actions}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {companies.map((comp) => {
-                const isActive = comp.status === 'ACTIVE' || !comp.status;
+                const isActive = statusOf(comp) === 'ACTIVE';
                 return (
                   <TableRow key={comp.id} hover>
                     <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'primary.main' }}>
@@ -423,34 +422,20 @@ export const CompaniesPage: React.FC = () => {
                         sx={{ fontWeight: 600 }}
                       />
                     </TableCell>
-                    <TableCell>
-                      <Tooltip title={isActive ? tObj.common.inactive : tObj.common.active}>
-                        <Switch
-                          checked={isActive}
-                          onChange={() => setPending({
-                            kind: 'status',
-                            company: comp,
-                            nextStatus: isActive ? 'INACTIVE' : 'ACTIVE',
-                          })}
-                          color="success"
-                          disabled={!isAdmin}
-                        />
-                      </Tooltip>
-                    </TableCell>
                     <TableCell sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
                       {comp.createdAt ? new Date(comp.createdAt).toLocaleString() : 'N/A'}
                     </TableCell>
                     <TableCell align="center">
                       {isAdmin && (
-                        <Tooltip title={tObj.companies.editCredentials}>
-                          <IconButton color="primary" size="small" onClick={() => openCredentials(comp)}>
-                            <KeyIcon fontSize="small" />
+                        <Tooltip title={tObj.companies.editCompany}>
+                          <IconButton color="primary" size="small" onClick={() => openEdit(comp)}>
+                            <EditIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
                       )}
                       {isAdmin && (
                         <Tooltip title={tObj.common.delete}>
-                          <IconButton color="error" size="small" onClick={() => setPending({ kind: 'delete', company: comp })}>
+                          <IconButton color="error" size="small" onClick={() => setPendingDelete(comp)}>
                             <DeleteIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -461,7 +446,7 @@ export const CompaniesPage: React.FC = () => {
               })}
               {companies.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={isAdmin ? 7 : 6} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={isAdmin ? 6 : 5} align="center" sx={{ py: 6 }}>
                     <BusinessIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                     <Typography color="text.secondary">No companies found in directory.</Typography>
                   </TableCell>
@@ -520,99 +505,103 @@ export const CompaniesPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Acquirer credentials Dialog */}
-      <Dialog open={credsCompany !== null} onClose={() => { if (!credsBusy) setCredsCompany(null); }} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.companies.editCredentials}: {credsCompany?.name}</DialogTitle>
+      {/* Edit company Dialog */}
+      <Dialog open={editCompany !== null} onClose={() => { if (!editBusy) setEditCompany(null); }} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.companies.editCompany}: {editCompany?.id}</DialogTitle>
         <DialogContent>
-          {credsError && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{credsError}</Alert>}
+          {editError && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{editError}</Alert>}
           <Stack spacing={2.5} sx={{ mt: 1 }}>
-            {loginPicker(credsForm.providerLogin,
-              login => setCredsForm(f => ({ ...f, providerLogin: login })),
-              credsCompany?.providerLogin)}
+            <TextField
+              label={`${tObj.companies.name} *`}
+              value={editForm.name}
+              onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+              fullWidth
+            />
+            {loginPicker(editForm.providerLogin,
+              login => setEditForm(f => ({ ...f, providerLogin: login })),
+              editCompany?.providerLogin)}
             {directorySync}
             <TextField
               label={tObj.companies.newProviderPassword}
               type="password"
-              value={credsForm.providerPassword}
-              onChange={e => setCredsForm(f => ({ ...f, providerPassword: e.target.value }))}
+              value={editForm.providerPassword}
+              onChange={e => setEditForm(f => ({ ...f, providerPassword: e.target.value }))}
               helperText={tObj.companies.newProviderPasswordHint}
               autoComplete="new-password"
               fullWidth
             />
+            <TextField
+              select
+              label={tObj.companies.status}
+              value={editForm.status}
+              onChange={e => setEditForm(f => ({ ...f, status: e.target.value === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE' }))}
+              helperText={tObj.companies.statusWarning}
+              fullWidth
+            >
+              <MenuItem value="ACTIVE">{tObj.common.active}</MenuItem>
+              <MenuItem value="INACTIVE">{tObj.common.inactive}</MenuItem>
+            </TextField>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
-          <Button onClick={() => setCredsCompany(null)} disabled={credsBusy}>{tObj.common.cancel}</Button>
-          <Button variant="contained" onClick={askCredentials} disabled={credsBusy}>{tObj.common.save}</Button>
+          <Button onClick={() => setEditCompany(null)} disabled={editBusy}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={askEdit} disabled={editBusy}>{tObj.common.save}</Button>
         </DialogActions>
       </Dialog>
 
-      {/* Confirm credentials: построчно, что изменится, и для какой компании. */}
+      {/* Confirm edit: построчно, что изменится, и для какой компании; предупреждения — только к тому,
+          что меняется. */}
       <ConfirmDialog
-        open={credsConfirm !== null}
-        title={tObj.companies.credentialsConfirmTitle}
-        question={tObj.companies.credentialsConfirmQuestion}
+        open={editConfirm !== null}
+        title={tObj.companies.editConfirmTitle}
+        question={tObj.companies.editConfirmQuestion}
         confirmLabel={tObj.common.confirm}
         confirmColor="primary"
-        busy={credsBusy}
-        onConfirm={saveCredentials}
-        onCancel={() => setCredsConfirm(null)}
+        busy={editBusy}
+        onConfirm={saveEdit}
+        onCancel={() => setEditConfirm(null)}
       >
-        {credsCompany && (
+        {editCompany && (
           <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
-            <Typography variant="body2" sx={{ fontWeight: 700 }}>{credsCompany.name}</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>{editCompany.name}</Typography>
             <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.secondary', mb: 1 }}>
-              {credsCompany.id}
+              {editCompany.id}
             </Typography>
             <Stack spacing={1}>
-              {(credsConfirm ?? []).map(change => (
+              {(editConfirm ?? []).map(change => (
                 <Typography key={change} variant="body2">{change}</Typography>
               ))}
             </Stack>
           </Box>
         )}
+        {credentialsChanging && <Alert severity="warning" sx={{ mt: 2 }}>{tObj.companies.credentialsWarning}</Alert>}
+        {editPending.status !== undefined && <Alert severity="info" sx={{ mt: 2 }}>{tObj.companies.statusWarning}</Alert>}
       </ConfirmDialog>
 
-      {/* Confirm Dialog: удаление и смена статуса — одно окно на два действия,
-          заголовок, вопрос, цвет и надпись кнопки считаются из `pending.kind`. */}
+      {/* Confirm delete */}
       <ConfirmDialog
-        open={pending !== null}
-        title={confirmTitle(tObj, pending)}
-        question={confirmQuestion(tObj, pending)}
-        confirmLabel={pending?.kind === 'delete' ? tObj.common.delete : tObj.common.confirm}
-        confirmColor={pending?.kind === 'delete' ? 'error' : 'primary'}
+        open={pendingDelete !== null}
+        title={tObj.companies.deleteTitle}
+        question={tObj.companies.deleteQuestion}
+        confirmLabel={tObj.common.delete}
+        confirmColor="error"
         busy={confirmBusy}
-        onConfirm={runPending}
-        onCancel={() => setPending(null)}
+        onConfirm={runDelete}
+        onCancel={() => setPendingDelete(null)}
       >
-        {/* Что именно сейчас изменится — прямо в окне: подтверждать «компанию» вслепую
+        {/* Что именно сейчас удаляется — прямо в окне: подтверждать «компанию» вслепую
             значит подтверждать не глядя. */}
-        {pending && (
+        {pendingDelete && (
           <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
-            <Typography variant="body2" sx={{ fontWeight: 700 }}>{pending.company.name}</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>{pendingDelete.name}</Typography>
             <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>
-              {pending.company.id}
+              {pendingDelete.id}
             </Typography>
           </Box>
         )}
-        {pending?.kind === 'delete' && (
-          <Alert severity="warning" sx={{ mt: 2 }}>{tObj.companies.deleteIrreversible}</Alert>
-        )}
+        <Alert severity="warning" sx={{ mt: 2 }}>{tObj.companies.deleteIrreversible}</Alert>
       </ConfirmDialog>
     </Box>
   );
 };
 
-// Заголовок и вопрос — три разных случая, и путать их нельзя: снятие пометки «активна» и
-// удаление отличаются последствиями настолько, что общий текст был бы вреднее отсутствия окна.
-function confirmTitle(tObj: TranslationDictionary, pending: PendingAction | null): string {
-  if (!pending) return '';
-  if (pending.kind === 'delete') return tObj.companies.deleteTitle;
-  return pending.nextStatus === 'ACTIVE' ? tObj.companies.activateTitle : tObj.companies.deactivateTitle;
-}
-
-function confirmQuestion(tObj: TranslationDictionary, pending: PendingAction | null): string {
-  if (!pending) return '';
-  if (pending.kind === 'delete') return tObj.companies.deleteQuestion;
-  return pending.nextStatus === 'ACTIVE' ? tObj.companies.activateQuestion : tObj.companies.deactivateQuestion;
-}

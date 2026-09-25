@@ -40,6 +40,7 @@ public class CompanyService {
     private static final Logger log = LoggerFactory.getLogger(CompanyService.class);
 
     private static final String STATUS_ACTIVE = "ACTIVE";
+    private static final String STATUS_INACTIVE = "INACTIVE";
 
     // Маркер мягкого удаления: такая компания невидима на всех путях чтения.
     private static final String STATUS_DELETED = "DELETED";
@@ -189,6 +190,13 @@ public class CompanyService {
 
         if (STATUS_DELETED.equals(company.getStatus())) {
             throw new BusinessException("Company not found");
+        }
+
+        // Правкой ставятся только эти два: DELETED — это удаление со своей записью в журнале, а иное
+        // значение ни один экран не прочтёт.
+        if (request.status() != null && !request.status().isBlank()
+                && !STATUS_ACTIVE.equals(request.status()) && !STATUS_INACTIVE.equals(request.status())) {
+            throw new BusinessException("Company status must be ACTIVE or INACTIVE");
         }
 
         StringBuilder changes = new StringBuilder();

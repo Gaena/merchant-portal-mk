@@ -174,7 +174,7 @@
 								"{{companyId}}"
 							]
 						},
-						"description": "Updates company details. Access restricted to SYSTEM_ADMIN. Every field is optional; an empty providerPassword keeps the stored one. The audit record names a password change without the password."
+						"description": "Updates company details. Access restricted to SYSTEM_ADMIN. Every field is optional; an empty providerPassword keeps the stored one. The audit record names a password change without the password. status is ACTIVE or INACTIVE only, exact match; anything else is 400 (25.09.2026): DELETED is set by DELETE alone."
 					},
 					"response": []
 				},
