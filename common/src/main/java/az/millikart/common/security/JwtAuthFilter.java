@@ -1,6 +1,8 @@
 package az.millikart.common.security;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -8,6 +10,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -20,6 +23,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
     private static final String BEARER_PREFIX = "Bearer ";
+    // Логин вошедшего — в каждой строке лога запроса (logback-spring.xml): сообщения его не повторяют.
+    public static final String MDC_USER_KEY = "user";
 
     private final JwtProvider jwtProvider;
     private final String fallbackApiToken;
@@ -90,8 +95,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 }
                 role = (String) claims.get("role");
                 companyId = (String) claims.get("companyId");
+            } catch (ExpiredJwtException e) {
+                // Штатно раз в 15 минут у каждого вошедшего: фронтенд обновит токен сам.
+                log.debug("Rejected an expired token for {}", path);
+                writeUnauthorized(request, response, "Invalid or expired JWT token");
+                return;
+            } catch (JwtException | IllegalArgumentException e) {
+                log.warn("Rejected an invalid token for {}: {}", path, e.getClass().getSimpleName());
+                writeUnauthorized(request, response, "Invalid or expired JWT token");
+                return;
             } catch (Exception e) {
-                log.error("Failed to parse and validate JWT token for path {}", path, e);
+                log.error("Unexpected failure while reading a token for {}", path, e);
                 writeUnauthorized(request, response, "Invalid or expired JWT token");
                 return;
             }
@@ -118,9 +132,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         request.setAttribute("userRole", finalRole);
         request.setAttribute("companyId", companyId);
 
+        MDC.put(MDC_USER_KEY, finalUsername);
         try {
             filterChain.doFilter(request, response);
         } finally {
+            MDC.remove(MDC_USER_KEY);
             SecurityContextHolder.clearContext();
         }
     }

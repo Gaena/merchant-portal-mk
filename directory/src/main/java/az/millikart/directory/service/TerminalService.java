@@ -85,8 +85,7 @@ public class TerminalService {
         String actorUsername = UserPrincipal.getUsername(principal);
         String merchantRid = request.merchantRid().trim();
 
-        log.info("Request to create terminal: merchantRid={}, companyId={} by actor: {}",
-                merchantRid, request.companyId(), actorUsername);
+        log.info("Request to create terminal: merchantRid={}, companyId={}", merchantRid, request.companyId());
 
         if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
             auditLogService.logDenied(AuditEntity.TERMINAL, NEW_TERMINAL, AuditAction.CREATE, actorUsername,

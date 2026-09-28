@@ -1798,7 +1798,20 @@ sudo tail -f /var/log/nginx/error.log
 
 # Логи Nginx (все запросы)
 sudo tail -f /var/log/nginx/access.log
+
+# Всё по одному запросу или одному прогону планировщика — по traceId (он же в заголовке ответа X-Trace-Id)
+sudo journalctl -u mp-pbl --since today | grep '\[3f9c2a1b\]'
+
+# Сигналы для мониторинга
+sudo journalctl -u mp-pbl --since today | grep 'PAYMENT_OUTCOME_UNKNOWN\|AUDIT_WRITE_FAILED'
 ```
+
+Формат строки: `время [поток] [traceId] [адрес клиента] [пользователь] УРОВЕНЬ логгер - сообщение`. У
+запроса `traceId` — 8 символов, у прогона планировщика — имя и 8 символов (`tx-reconcile-3f9c2a1b`), на
+старте — `system`; вне запроса адрес и пользователь — `-`. ERROR означает, что нужен человек: неизвестный
+исход денежной операции, сбой, потерянная запись журнала. Запросы к провайдеру и его ответы целиком пишутся
+на DEBUG; включить на время разбора — переменной `LOGGING_LEVEL_AZ_MILLIKART_PBL_PROVIDER=DEBUG` в
+`/opt/merchant-portal/config/mp.env` и перезапуском `mp-pbl` (пароль заказа маскируется и там).
 
 ### 17.2. Health-check эндпоинты
 

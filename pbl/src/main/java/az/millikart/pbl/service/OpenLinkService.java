@@ -86,8 +86,6 @@ public class OpenLinkService {
     // (блокировка держится на время похода к эквайеру; заказ у эквайера при сбое коммита) — §10.
     @Transactional
     public String openAndBuildRedirect(UUID id, String clientIp, String userAgent) {
-        log.info("Opening payment link session for ID: {}, clientIp: {}, userAgent: {}", id, clientIp, userAgent);
-
         // Прочитано до запроса блокировки: всё, что создано позже этого момента, появилось, пока
         // запрос стоял в очереди за другим открытием той же ссылки (проверка дубля ниже).
         Instant openedAt = Instant.now();
@@ -176,7 +174,7 @@ public class OpenLinkService {
 
         UUID ridByMerchant = UUID.randomUUID();
 
-        log.info("Registering fresh order at provider for link: {}, terminal: {}, ridByMerchant: {}, clientIp: {}", id, terminal.getId(), ridByMerchant, clientIp);
+        log.debug("Registering an order at the provider for link {}, terminal {}, ridByMerchant {}", id, terminal.getId(), ridByMerchant);
 
         String hppRedirectUrl = UriComponentsBuilder.fromUriString(baseUrl)
                 .path("/api/v1/payment-links/redirect/{tx}")
@@ -191,8 +189,6 @@ public class OpenLinkService {
             log.error("Failed to register order at provider for ridByMerchant: {}", ridByMerchant);
             throw new BusinessException("Failed to register order with provider");
         }
-
-        log.info("Fresh order registered at provider. ProviderOrderId: {}, redirecting user to HPP.", response.order().id());
 
         Transaction transaction = Transaction.builder()
                 .link(link)
@@ -212,7 +208,9 @@ public class OpenLinkService {
                 ))
                 .build();
         transactionRepository.save(transaction);
-        log.debug("Persisted new PENDING transaction: {} for ridByMerchant: {}, clientIp: {}", transaction.getId(), ridByMerchant, clientIp);
+        // Одна строка на открытие: адрес плательщика — в MDC, запрос и ответ провайдера — на DEBUG.
+        log.info("Link {} opened: attempt {}, provider order {}, terminal {}, user agent: {}",
+                id, transaction.getId(), response.order().id(), terminal.getId(), userAgent);
 
         // Пароль остаётся в редиректе плательщика — он и открывает платёжную страницу (§5.3). Отсюда
         // и дальше этот адрес не логировать: контроллер пишет его через ProviderPayloads.urlForLog.

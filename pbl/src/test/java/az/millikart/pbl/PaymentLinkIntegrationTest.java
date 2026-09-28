@@ -651,9 +651,11 @@ class PaymentLinkIntegrationTest {
                     .filter(message -> message.contains(password))
                     .toList();
             Assertions.assertTrue(offending.isEmpty(), "the order password reached the log: " + offending);
+            // Открытие описывает одна строка INFO (Р-98); без неё проверка выше прошла бы на пустом логе.
             Assertions.assertTrue(logEvents.list.stream().map(ILoggingEvent::getFormattedMessage)
-                            .anyMatch(message -> message.startsWith("Redirecting customer to HPP URL: ")),
-                    "the redirect line itself must still be logged (without its query string)");
+                            .anyMatch(message -> message.startsWith("Link " + id + " opened: ")
+                                    && message.contains(pending.getProviderOrderId())),
+                    "the opening itself must still be logged, with the provider order and without the password");
         } finally {
             root.detachAppender(logEvents);
         }

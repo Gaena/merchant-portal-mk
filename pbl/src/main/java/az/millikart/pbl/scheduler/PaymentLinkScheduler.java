@@ -1,5 +1,6 @@
 package az.millikart.pbl.scheduler;
 
+import az.millikart.common.logging.SchedulerRun;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import java.time.Instant;
 import org.slf4j.Logger;
@@ -22,12 +23,11 @@ public class PaymentLinkScheduler {
     @Scheduled(cron = "0 */5 * * * *")
     @Transactional
     public void cleanupExpiredLinksAndSessions() {
-        log.debug("Running background cleanup for expired payment links...");
-
-        int expiredCount = paymentLinkRepository.expireActiveLinksBefore(Instant.now());
-
-        if (expiredCount > 0) {
-            log.info("Background cleanup: Marked {} expired payment links as EXPIRED.", expiredCount);
+        try (var ignored = SchedulerRun.start("link-expiry")) {
+            int expiredCount = paymentLinkRepository.expireActiveLinksBefore(Instant.now());
+            if (expiredCount > 0) {
+                log.info("Marked {} payment links EXPIRED", expiredCount);
+            }
         }
     }
 }

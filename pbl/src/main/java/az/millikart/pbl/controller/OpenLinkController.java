@@ -45,11 +45,10 @@ public class OpenLinkController {
         // плательщик. Заголовки пересылки читает только ClientIp — почему, написано у него.
         String clientIp = ClientIp.resolve(request, trustedProxies.addresses());
         String userAgent = request.getHeader("User-Agent");
-        log.info("REST request to open payment link ID: {}, clientIp: {}, userAgent: {}", id, clientIp, userAgent);
         String redirectUrl = openLinkService.openAndBuildRedirect(id, clientIp, userAgent);
         // P0-9: в query редиректа лежит пароль заказа — он и открывает платёжную страницу, поэтому
-        // логируется только адрес. Идентификатор заказа уже записан логом сервиса.
-        log.info("Redirecting customer to HPP URL: {}", ProviderPayloads.urlForLog(redirectUrl));
+        // логируется только адрес. Открытие целиком описывает одна строка сервиса.
+        log.debug("Redirecting the payer to {}", ProviderPayloads.urlForLog(redirectUrl));
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(redirectUrl))
                 .build();

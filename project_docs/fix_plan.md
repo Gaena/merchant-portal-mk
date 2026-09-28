@@ -5131,6 +5131,36 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
 
 ---
 
+### 25.09.2026 — ревью логов: уровни, объём, MDC (Р-98)
+
+- **Зачем.** Ревью 241 вызова логирования. Секретов в логах нет, но уровни и объём мешали: каждый истёкший
+  access-токен давал ERROR со стектрейсом (раз в 15 минут на пользователя), отказы провайдера шли ERROR со
+  стектрейсом, неизвестный исход — двумя стектрейсами, полный ответ провайдера (~3 КБ) писался на INFO при
+  каждом опросе статуса, а сверка каждые 2 минуты до 7 дней повторяла два длинных WARN по каждой зависшей
+  операции. Открытие ссылки давало 7 строк INFO, чтения в `pbl` — INFO с полями пользователя.
+- **common.** `JwtAuthFilter`: истёкший токен — DEBUG, поддельный — WARN без стектрейса, прочее — ERROR;
+  логин вошедшего — в MDC `user`. `SchedulerRun.start` — свой `traceId` у прогона планировщика (во всех пяти).
+  Шаблон `logback-spring.xml`: `[traceId] [clientIp] [user]`.
+- **pbl.** Запрос и ответ `createEcomOrder` и `getOrderStatus` — DEBUG, тела `completeDms`/`refund` — DEBUG
+  (итог — строка `CONFIRMED`); отказы шлюза — WARN без стектрейса; при неизвестном исходе стектрейс только у
+  `GlobalExceptionHandler`. Опрос статуса: перемена — одна строка INFO, без перемены — DEBUG; незнакомый или
+  внешний статус — WARN один раз на пару «транзакция, статус» и одной фразой. Открытие ссылки — одна строка
+  INFO. Чтения — DEBUG; из сообщений убраны `userId`/`role`/`companyId` и адрес клиента (они в MDC).
+  Текст о провайдере без HTTPS: креды компании, а не терминала (Р-93).
+- **auth, directory.** Адрес клиента и актор убраны из сообщений — они в MDC.
+- **ecom.** Выписка, итоги, главная и карточка заказа — одна строка INFO: период, мерчанты, заказы, время.
+- **Тесты** (прогнал пользователь 29.09.2026, зелёные): `common` — `JwtAuthFilterTest` (новый: истёкший токен без
+  ERROR/WARN, поддельный — один WARN без стектрейса, `user` в MDC только на время запроса); `pbl` —
+  `TransactionReconciliationIntegrationTest.reconcile_unknownWord_isWarnedOncePerTransactionAndWord`.
+  `PaymentLinkIntegrationTest.openPaymentLink_redirectCarriesThePassword_butNoLogLineDoes` ищет теперь строку
+  открытия `Link … opened:` вместо ушедшей на DEBUG строки редиректа. `AuditLogIntegrationTest.
+  companyStatusChange_isItsOwnBlockAndUnblockEvent` блокирует компанию статусом `INACTIVE`: `BLOCKED` с
+  проверки статуса компании (25.09.2026) — 400. `TxpgAcquiringClientTest` и `UrlConfigurationCheckTest` не менялись.
+  `compileJava`/`compileTestJava` по всем модулям — без ошибок.
+- Документы: `decisions.md` (Р-98), `AGENTS.md` §8, `deployment_guide.md` §17.1.
+
+---
+
 ## Описания закрытых задач
 
 > Перенесено из `AGENTS.md` §10 («Закрытые блокеры» и записи, попавшие в «Тонкости») 13.09.2026

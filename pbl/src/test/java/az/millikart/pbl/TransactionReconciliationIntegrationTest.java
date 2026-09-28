@@ -21,14 +21,21 @@ import az.millikart.pbl.provider.AcquiringClient;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
+import az.millikart.pbl.service.PaymentLinkService;
 import az.millikart.pbl.service.TransactionReconciliationService;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -243,6 +250,36 @@ class TransactionReconciliationIntegrationTest {
         Assertions.assertNull(providerResponse.get("reconciliationOutcome"),
                 "an unknown status is not evidence of abandonment — no timeout marker");
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE, linkStatusOf(tx));
+    }
+
+    // Сверка спрашивает каждые 2 минуты до 7 дней: WARN о незнакомом статусе — один раз на пару «транзакция,
+    // статус», а не на каждый проход. Новое слово той же транзакции — снова WARN.
+    @Test
+    void reconcile_unknownWord_isWarnedOncePerTransactionAndWord() {
+        Logger serviceLogger = (Logger) LoggerFactory.getLogger(PaymentLinkService.class);
+        ListAppender<ILoggingEvent> events = new ListAppender<>();
+        events.start();
+        serviceLogger.addAppender(events);
+        try {
+            Transaction tx = agedTransaction("UNKNOWN-ONCE", TransactionStatus.PENDING, MAX_AGE.plusHours(1));
+            providerAnswers("Paid");
+            reconciliationService.reconcilePendingTransactions();
+            reconciliationService.reconcilePendingTransactions();
+            providerAnswers("Settled");
+            reconciliationService.reconcilePendingTransactions();
+
+            List<String> warnings = events.list.stream()
+                    .filter(event -> event.getLevel() == Level.WARN)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.contains(tx.getId().toString()))
+                    .toList();
+            Assertions.assertEquals(2, warnings.size(), warnings.toString());
+            Assertions.assertTrue(warnings.get(0).contains("\"Paid\""), warnings.get(0));
+            Assertions.assertTrue(warnings.get(1).contains("\"Settled\""), warnings.get(1));
+            Assertions.assertEquals(TransactionStatus.PENDING, reload(tx).getStatus());
+        } finally {
+            serviceLogger.detachAppender(events);
+        }
     }
 
     // Refused = возвращён целиком, PartPaid = частично отменён или возвращён (§5.8.8): деньги

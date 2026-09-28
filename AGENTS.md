@@ -414,7 +414,12 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
 - Транзакции: `@Transactional` на методах сервиса; в `pbl` местами `TransactionTemplate`
   там, где нужен контроль границ вокруг HTTP-вызовов.
 - Логирование: `private static final Logger log = LoggerFactory.getLogger(X.class)`, SLF4J-плейсхолдеры.
-  `TraceIdFilter` кладёт `traceId` в MDC — он есть в каждой строке лога.
+  В каждой строке — MDC: `traceId` (запрос — `TraceIdFilter`; прогон планировщика — `SchedulerRun.start`
+  первой строкой `@Scheduled`-метода), `clientIp` (`ClientIpFilter`), `user` (`JwtAuthFilter`); сообщения
+  эти поля не повторяют. Уровни (Р-98): ERROR — только то, что требует человека сейчас (исход неизвестен,
+  сбой, потерянная запись журнала); ожидаемый отказ — истёкший токен, отказ провайдера, 4xx — не ERROR и
+  без стектрейса; чтения и тела ответов провайдера — DEBUG; событие, повторяющееся каждый проход
+  планировщика, — один раз, а не на каждый проход. Стектрейс одного сбоя печатается один раз.
 - Миграции: новый файл в `<module>/src/main/resources/db/changelog/changes/`,
   подключается через `db.changelog-master.xml`. Существующие changeset'ы **не редактировать**.
 - **Комментарии (P3-4, 24.08.2026): только `//`, по-русски, максимум 4 строки на блок.**

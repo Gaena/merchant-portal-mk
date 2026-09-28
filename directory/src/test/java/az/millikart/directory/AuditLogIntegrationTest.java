@@ -157,6 +157,7 @@ public class AuditLogIntegrationTest {
     // P3-2: смена статуса компании — отдельное событие BLOCK/UNBLOCK, как уже было для
     // пользователей и терминалов, а не строка внутри общего UPDATE, которую найдёшь лишь
     // полнотекстовым чтением журнала. Запись UPDATE с описанием полей при этом остаётся.
+    // Статусы компании — только ACTIVE и INACTIVE (25.09.2026); BLOCKED здесь стоял до этой проверки.
     @Test
     public void companyStatusChange_isItsOwnBlockAndUnblockEvent() throws Exception {
         createCompanyViaHttp("comp-01", "MilliKart LLC");
@@ -166,7 +167,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest(null, "BLOCKED", null, null))))
+                                new UpdateCompanyRequest(null, "INACTIVE", null, null))))
                 .andExpect(status().isOk());
 
         List<AuditLog> afterBlock = auditLogs.findAll();
@@ -175,7 +176,7 @@ public class AuditLogIntegrationTest {
         assertThat(block.getEntityType()).isEqualTo("COMPANY");
         assertThat(block.getEntityId()).isEqualTo("comp-01");
         assertThat(block.getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
-        assertThat(block.getDetails()).contains("BLOCKED", "was ACTIVE");
+        assertThat(block.getDetails()).contains("INACTIVE", "was ACTIVE");
 
         auditLogs.deleteAll();
         mockMvc.perform(patch("/api/v1/companies/comp-01")

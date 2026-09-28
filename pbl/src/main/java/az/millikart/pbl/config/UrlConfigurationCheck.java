@@ -136,7 +136,7 @@ public class UrlConfigurationCheck {
                           WARNING: the acquirer address is not HTTPS
                           {} = {}
                           Role: {}.
-                          Every request to this address carries Basic authentication with the terminal login and
+                          Every request to this address carries Basic authentication with the company login and
                           password in the clear, and the order data with it. Anyone on the network path can read
                           and replay them. The service starts anyway: HTTPS is provided by the acquirer's stand,
                           not by this service. Ask MilliKart for an HTTPS endpoint and point {}

@@ -95,7 +95,7 @@ public class AuthService {
 
         String cleanEmail = request.username() != null ? request.username().trim().toLowerCase() : "";
         Instant now = Instant.now();
-        log.info("Login attempt from {} for email: {}", clientIp, cleanEmail);
+        log.info("Login attempt for {}", cleanEmail);
 
         User user = userRepository.findForLoginByUsername(cleanEmail).orElse(null);
         if (user == null) {
@@ -105,7 +105,7 @@ public class AuthService {
             // режет по ширине колонки AuditLogService, и он нигде не интерпретируется.
             auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, null,
                     "Login refused: no such account");
-            log.warn("Login failed from {}: username {} not found", clientIp, cleanEmail);
+            log.warn("Login failed: username {} not found", cleanEmail);
             throw new BusinessException(INVALID_CREDENTIALS);
         }
 
@@ -126,13 +126,13 @@ public class AuthService {
 
         // Пароль верен, поэтому следующие два ответа идут владельцу аккаунта и могут быть точными.
         if (lockedOut) {
-            log.warn("Login blocked from {}: account {} is locked until {}", clientIp, cleanEmail, user.getLockoutUntil());
+            log.warn("Login blocked: account {} is locked until {}", cleanEmail, user.getLockoutUntil());
             auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
                     "Login refused: account locked until " + user.getLockoutUntil());
             throw new BusinessException(ACCOUNT_LOCKED_PREFIX + tryAgainIn(user.getLockoutUntil(), now));
         }
         if (!STATUS_ACTIVE.equals(user.getStatus())) {
-            log.warn("Login blocked from {}: account {} is in status {}", clientIp, cleanEmail, user.getStatus());
+            log.warn("Login blocked: account {} is in status {}", cleanEmail, user.getStatus());
             auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
                     "Login refused: account status " + user.getStatus());
             throw new BusinessException(ACCOUNT_NOT_ACTIVE);
@@ -153,8 +153,8 @@ public class AuthService {
         // обязаны отвечать одному фильтру, а отказ UUID не знает.
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.AUTH, user.getUsername(), AuditAction.LOGIN,
                 user.getUsername(), user.getCompanyId(), "Login successful, role " + user.getRole()));
-        log.info("Login successful from {} for user ID: {}, role: {}, companyId: {}",
-                clientIp, user.getId(), user.getRole(), user.getCompanyId());
+        log.info("Login successful for user ID: {}, role: {}, companyId: {}",
+                user.getId(), user.getRole(), user.getCompanyId());
         return response;
     }
 
@@ -165,8 +165,8 @@ public class AuthService {
         recordAddressFailure(clientIp, cleanEmail);
 
         if (lockedOut) {
-            log.warn("Login failed from {}: incorrect password for username {}, already locked until {}",
-                    clientIp, cleanEmail, user.getLockoutUntil());
+            log.warn("Login failed: incorrect password for username {}, already locked until {}",
+                    cleanEmail, user.getLockoutUntil());
             return;
         }
 
@@ -178,11 +178,9 @@ public class AuthService {
             user.setLockoutUntil(now.plus(30, ChronoUnit.MINUTES));
             auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOCKOUT, cleanEmail, user.getCompanyId(),
                     "Account locked until " + user.getLockoutUntil() + " after " + attempts + " failed attempts");
-            log.warn("Account {} locked for 30 minutes due to 6 failed login attempts (PCI-DSS 8.3.4), last from {}",
-                    cleanEmail, clientIp);
+            log.warn("Account {} locked for 30 minutes due to 6 failed login attempts (PCI-DSS 8.3.4)", cleanEmail);
         } else {
-            log.warn("Login failed from {}: incorrect password for username {}. Failed attempts: {}/6",
-                    clientIp, cleanEmail, attempts);
+            log.warn("Login failed: incorrect password for username {}. Failed attempts: {}/6", cleanEmail, attempts);
         }
 
         userRepository.save(user);

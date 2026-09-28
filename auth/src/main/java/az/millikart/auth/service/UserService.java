@@ -84,8 +84,8 @@ public class UserService {
 
         String cleanEmail = request.username() != null ? request.username().trim().toLowerCase() : "";
 
-        log.info("Request to create user: username={}, role={}, companyId={} by actor: {}",
-                cleanEmail, request.role(), request.companyId(), actorUsername);
+        log.info("Request to create user: username={}, role={}, companyId={}",
+                cleanEmail, request.role(), request.companyId());
 
         requireActiveActor(principal, AuditAction.CREATE, cleanEmail);
         // Enforce RBAC
@@ -291,8 +291,8 @@ public class UserService {
         // массовый UPDATE идемпотентен.
         if (nonActiveStatusSet) {
             int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
-            log.info("User {} changed status to {} by {}: {} refresh token(s) revoked",
-                    user.getId(), user.getStatus(), UserPrincipal.getUsername(principal), revoked);
+            log.info("User {} changed status to {}: {} refresh token(s) revoked",
+                    user.getId(), user.getStatus(), revoked);
         }
         return mapToResponse(user);
     }
@@ -314,8 +314,7 @@ public class UserService {
 
         // Мягкое удаление заканчивает все сессии пользователя — то же правило, что в updateUser.
         int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
-        log.info("User {} deleted by {}: {} refresh token(s) revoked",
-                user.getId(), UserPrincipal.getUsername(principal), revoked);
+        log.info("User {} deleted: {} refresh token(s) revoked", user.getId(), revoked);
     }
 
     private void validateCreatePermission(CreateUserRequest request, UserPrincipal principal) {

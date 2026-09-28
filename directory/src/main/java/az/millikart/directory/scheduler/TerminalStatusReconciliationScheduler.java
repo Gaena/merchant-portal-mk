@@ -1,5 +1,6 @@
 package az.millikart.directory.scheduler;
 
+import az.millikart.common.logging.SchedulerRun;
 import az.millikart.directory.service.TerminalStatusReconciliationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +33,7 @@ public class TerminalStatusReconciliationScheduler {
 
     @Scheduled(cron = "${directory.terminal-reconciliation.cron:0 */15 * * * *}")
     public void run() {
-        try {
+        try (var ignored = SchedulerRun.start("terminal-reconcile")) {
             service.reconcile();
         } catch (RuntimeException e) {
             // Необработанное исключение остановило бы расписание целиком, и следующего прохода

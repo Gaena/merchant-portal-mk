@@ -72,7 +72,7 @@ public class CompanyService {
         String actorUsername = UserPrincipal.getUsername(principal);
         Role actorRole = UserPrincipal.getRole(principal);
 
-        log.info("Request to create company: id={}, name={} by actor: {}", request.id(), request.name(), actorUsername);
+        log.info("Request to create company: id={}, name={}", request.id(), request.name());
 
         if (actorRole != Role.SYSTEM_ADMIN) {
             // Подшивается под компанию актора, не названную в запросе (AuditLogService.logDenied).

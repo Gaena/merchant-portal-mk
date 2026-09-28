@@ -1,5 +1,6 @@
 package az.millikart.ecom.scheduler;
 
+import az.millikart.common.logging.SchedulerRun;
 import az.millikart.ecom.service.ProviderLoginSyncService;
 import az.millikart.ecom.service.ProviderTerminalSyncService;
 import org.slf4j.Logger;
@@ -28,17 +29,19 @@ public class ProviderTerminalSyncScheduler {
 
     @Scheduled(cron = "${ecom.terminal-sync.cron:0 */15 * * * *}")
     public void run() {
-        try {
-            service.sync();
-        } catch (RuntimeException e) {
-            // Планировщик молчащий по умолчанию: необработанное исключение остановило бы
-            // расписание целиком, и следующий проход не случился бы никогда.
-            log.error("Provider terminal sync failed: {}", e.getMessage(), e);
-        }
-        try {
-            loginSyncService.sync();
-        } catch (RuntimeException e) {
-            log.error("Provider login sync failed: {}", e.getMessage(), e);
+        try (var ignored = SchedulerRun.start("provider-sync")) {
+            try {
+                service.sync();
+            } catch (RuntimeException e) {
+                // Планировщик молчащий по умолчанию: необработанное исключение остановило бы
+                // расписание целиком, и следующий проход не случился бы никогда.
+                log.error("Provider terminal sync failed: {}", e.getMessage(), e);
+            }
+            try {
+                loginSyncService.sync();
+            } catch (RuntimeException e) {
+                log.error("Provider login sync failed: {}", e.getMessage(), e);
+            }
         }
     }
 }

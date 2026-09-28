@@ -92,7 +92,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 )
         );
 
-        log.info("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, TerminalRid: {}, RidByMerchant: {}, Type: {}, Amount: {} {}",
+        // Успешное открытие описывает одна строка OpenLinkService; здесь — только на DEBUG.
+        log.debug("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, TerminalRid: {}, RidByMerchant: {}, Type: {}, Amount: {} {}",
                 ProviderPayloads.urlForLog(url), credentials.login(), terminalRid, ridByMerchant, typeRid,
                 link.getAmount(), link.getCurrency());
         log.debug("PROVIDER REQ BODY [createEcomOrder]: {}", request);
@@ -108,13 +109,18 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(EcomCreateOrderResponse.class);
 
-            log.info("PROVIDER RESP [createEcomOrder] <- SUCCESS for RidByMerchant: {}, ProviderOrderId: {}",
+            log.debug("PROVIDER RESP [createEcomOrder] <- SUCCESS for RidByMerchant: {}, ProviderOrderId: {}",
                     ridByMerchant, response != null && response.order() != null ? response.order().id() : "N/A");
             // P0-9: в теле — пароль заказа; его маскирует EcomCreateOrderResponse.Order.toString().
             log.debug("PROVIDER RESP BODY [createEcomOrder]: {}", response);
             return response;
         } catch (HttpStatusCodeException e) {
-            log.error("PROVIDER RESP [createEcomOrder] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+            // 4xx — отказ шлюза, ожидаемый исход: WARN без стектрейса. 5xx — сбой шлюза.
+            if (e.getStatusCode().is4xxClientError()) {
+                log.warn("PROVIDER RESP [createEcomOrder] <- REJECTED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString());
+            } else {
+                log.error("PROVIDER RESP [createEcomOrder] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+            }
             throw acquirerError(e);
         } catch (Exception e) {
             log.error("PROVIDER REQ [createEcomOrder] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
@@ -162,7 +168,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(Map.class);
 
-            log.info("PROVIDER RESP [completeDms] <- SUCCESS for ProviderOrderId: {}, Response: {}",
+            log.debug("PROVIDER RESP BODY [completeDms] for ProviderOrderId: {}: {}",
                     providerOrderId, ProviderPayloads.withoutSecrets(response));
             checkAndThrowIfErrorCode(response, "completeDms");
             return requireConfirmation("completeDms", providerOrderId, response);
@@ -205,7 +211,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .retrieve()
                     .body(Map.class);
 
-            log.info("PROVIDER RESP [refund] <- SUCCESS for ProviderOrderId: {}, Response: {}",
+            log.debug("PROVIDER RESP BODY [refund] for ProviderOrderId: {}: {}",
                     providerOrderId, ProviderPayloads.withoutSecrets(response));
             checkAndThrowIfErrorCode(response, "refund");
             return requireConfirmation("refund", providerOrderId, response);
@@ -228,7 +234,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 .buildAndExpand(providerOrderId)
                 .toUriString();
 
-        log.info("PROVIDER REQ [getOrderStatus] -> GET URL: {}, ProviderOrderId: {}, Login: {}",
+        // Статус опрашивается сверкой каждые 2 минуты: запрос и тело — только на DEBUG.
+        log.debug("PROVIDER REQ [getOrderStatus] -> GET URL: {}, ProviderOrderId: {}, Login: {}",
                 ProviderPayloads.urlForLog(url), providerOrderId, credentials.login());
 
         try {
@@ -245,16 +252,19 @@ public class TxpgAcquiringClient implements AcquiringClient {
             // P0-9: при orderDetailLevel=2 объект order несёт пароль заказа (§5.8.3) — в лог он
             // идёт без этого ключа. Логируется после проверки errorCode, чтобы отказ не
             // объявлялся сначала как SUCCESS.
-            log.info("PROVIDER RESP [getOrderStatus] <- SUCCESS for ProviderOrderId: {}, Response: {}",
+            log.debug("PROVIDER RESP [getOrderStatus] <- SUCCESS for ProviderOrderId: {}, Response: {}",
                     providerOrderId, ProviderPayloads.withoutSecrets(order));
             return order;
         } catch (BusinessException e) {
             throw e;
         } catch (HttpStatusCodeException e) {
-            log.error("PROVIDER RESP [getOrderStatus] <- FAILED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+            // Денег проверка статуса не двигает, а @Retry повторяет её: стектрейс на каждую попытку —
+            // шум. Что делать с отказом, решает вызывающий.
+            log.warn("PROVIDER RESP [getOrderStatus] <- FAILED for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
+                    providerOrderId, e.getStatusCode(), e.getResponseBodyAsString());
             throw acquirerError(e);
         } catch (Exception e) {
-            log.error("PROVIDER REQ [getOrderStatus] <- CONNECTION EXCEPTION: {}", e.getMessage(), e);
+            log.warn("PROVIDER REQ [getOrderStatus] <- no answer for ProviderOrderId: {}: {}", providerOrderId, e.getMessage());
             throw new BusinessException("Order status check failed: " + e.getMessage());
         }
     }
@@ -449,13 +459,14 @@ public class TxpgAcquiringClient implements AcquiringClient {
         if (e instanceof HttpStatusCodeException httpError) {
             String desc = extractErrorDescription(httpError.getResponseBodyAsString());
             if (httpError.getStatusCode().is4xxClientError()) {
-                log.error("PROVIDER RESP [{}] <- REJECTED for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
-                        action, providerOrderId, httpError.getStatusCode(), httpError.getResponseBodyAsString(), httpError);
+                log.warn("PROVIDER RESP [{}] <- REJECTED for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
+                        action, providerOrderId, httpError.getStatusCode(), httpError.getResponseBodyAsString());
                 return new AcquirerDeclinedException("Acquirer error: " + desc);
             }
-            // 5xx: шлюз принял запрос и упал уже где-то за ним.
+            // 5xx: шлюз принял запрос и упал уже где-то за ним. Стектрейс с причиной напечатает
+            // GlobalExceptionHandler под маркером PAYMENT_OUTCOME_UNKNOWN — здесь второй не нужен.
             log.error("PROVIDER RESP [{}] <- OUTCOME UNKNOWN for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
-                    action, providerOrderId, httpError.getStatusCode(), httpError.getResponseBodyAsString(), httpError);
+                    action, providerOrderId, httpError.getStatusCode(), httpError.getResponseBodyAsString());
             return new PaymentOutcomeUnknownException(
                     "Acquirer did not confirm the " + action + " (HTTP " + httpError.getStatusCode() + "): " + desc, httpError);
         }
@@ -463,12 +474,12 @@ public class TxpgAcquiringClient implements AcquiringClient {
             // Таймаут чтения или обрыв: истёкшие 10s ничего не говорят о том, выполнил ли TXPG
             // операцию до того, как мы перестали слушать.
             log.error("PROVIDER REQ [{}] <- OUTCOME UNKNOWN for ProviderOrderId: {}. No response from the acquirer: {}",
-                    action, providerOrderId, e.getMessage(), e);
+                    action, providerOrderId, e.getMessage());
             return new PaymentOutcomeUnknownException(
                     "No response from the acquirer for the " + action + ": " + e.getMessage(), e);
         }
         log.error("PROVIDER REQ [{}] <- OUTCOME UNKNOWN for ProviderOrderId: {}. Unexpected failure: {}",
-                action, providerOrderId, e.getMessage(), e);
+                action, providerOrderId, e.getMessage());
         return new PaymentOutcomeUnknownException(
                 "Acquirer call for the " + action + " failed without a verdict: " + e.getMessage(), e);
     }
@@ -479,7 +490,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
             String errorDesc = response.containsKey("errorDescription") && response.get("errorDescription") != null
                     ? String.valueOf(response.get("errorDescription"))
                     : errorCode;
-            log.error("PROVIDER RESP [{}] <- REJECTED BY MILLIKART. ErrorCode: {}, Description: {}", action, errorCode, errorDesc);
+            log.warn("PROVIDER RESP [{}] <- REJECTED BY MILLIKART. ErrorCode: {}, Description: {}", action, errorCode, errorDesc);
             throw new AcquirerDeclinedException("Acquirer error: " + errorDesc);
         }
     }

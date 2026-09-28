@@ -1,6 +1,7 @@
 package az.millikart.auth.scheduler;
 
 import az.millikart.auth.service.RefreshTokenService;
+import az.millikart.common.logging.SchedulerRun;
 import java.time.Instant;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -21,6 +22,8 @@ public class RefreshTokenCleanupScheduler {
 
     @Scheduled(cron = "${auth.refresh.cleanup-cron}")
     public void run() {
-        refreshTokenService.deleteExpired(Instant.now());
+        try (var ignored = SchedulerRun.start("token-cleanup")) {
+            refreshTokenService.deleteExpired(Instant.now());
+        }
     }
 }

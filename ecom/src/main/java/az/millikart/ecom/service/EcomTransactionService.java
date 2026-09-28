@@ -78,17 +78,24 @@ public class EcomTransactionService {
                 rids, dateFrom, dateTo, minAmount, maxAmount, blankToNull(query), type);
         Long before = decodeCursor(cursor);
 
-        if (wantedStatus != null) {
-            return pageOfStatus(filter, before, pageSize, wantedStatus);
-        }
+        long started = System.nanoTime();
+        CursorPage<EcomTransactionResponse> page = wantedStatus != null
+                ? pageOfStatus(filter, before, pageSize, wantedStatus)
+                : plainPage(filter, before, pageSize);
+        log.info("Statement page: merchants={}, period=[{}, {}), status={}, type={}, orders={}, more={}, took {} ms",
+                rids.size(), dateFrom, dateTo, wantedStatus, type, page.content().size(), page.nextCursor() != null,
+                elapsedMillis(started));
+        return page;
+    }
 
+    private CursorPage<EcomTransactionResponse> plainPage(EcomTransactionFilter filter, Long before, int pageSize) {
         // Лишний номер запрошен ради одного вопроса: есть ли что-то дальше.
         List<Long> orderIds = repository.findOrderIds(filter, before, pageSize + 1);
         boolean hasMore = orderIds.size() > pageSize;
         List<Long> pageIds = hasMore ? orderIds.subList(0, pageSize) : orderIds;
 
         List<EcomTransactionResponse> orders =
-                EcomOrderAssembler.assemble(repository.findRows(pageIds, rids, dateFrom));
+                EcomOrderAssembler.assemble(repository.findRows(pageIds, filter.merchantRids(), filter.dateFrom()));
         // Курсор — последний номер страницы, а не последней собранной строки: заказ, пропавший
         // между двумя запросами, не должен сдвинуть следующую страницу.
         String nextCursor = hasMore ? encodeCursor(pageIds.get(pageIds.size() - 1)) : null;
@@ -154,9 +161,13 @@ public class EcomTransactionService {
             return accumulator.result();
         }
         requireWindow(dateFrom, dateTo);
+        long started = System.nanoTime();
         repository.streamPeriodRows(
                 new EcomTransactionFilter(rids, dateFrom, dateTo, null, null, null, type), accumulator);
-        return accumulator.result();
+        EcomStatsResponse result = accumulator.result();
+        log.info("Statement totals: merchants={}, period=[{}, {}), type={}, orders={}, took {} ms",
+                rids.size(), dateFrom, dateTo, type, result.orderCount(), elapsedMillis(started));
+        return result;
     }
 
     // Р-91: сводка главной — по всем мерчантам скоупа (у SYSTEM_ADMIN и AUDITOR — всех наших компаний), по тем же
@@ -167,9 +178,14 @@ public class EcomTransactionService {
         requireWindow(dateFrom, dateTo);
         EcomDashboardAccumulator accumulator = new EcomDashboardAccumulator(properties.getZone());
         if (!scoped.merchantRids().isEmpty()) {
+            long started = System.nanoTime();
             repository.streamPeriodRows(
                     new EcomTransactionFilter(scoped.merchantRids(), dateFrom, dateTo, null, null, null, null),
                     accumulator);
+            log.info("Dashboard summary: merchants={}, period=[{}, {}), orders={}, took {} ms",
+                    scoped.merchantRids().size(), dateFrom, dateTo,
+                    accumulator.totals().stream().mapToLong(EcomDashboardResponse.CurrencyTotals::orderCount).sum(),
+                    elapsedMillis(started));
         } else {
             log.info("No merchants in scope for the dashboard; returning an empty summary");
         }
@@ -229,14 +245,22 @@ public class EcomTransactionService {
         Long id = parseOrderId(orderId);
         // Чужой, несуществующий и незавершённый заказ неотличимы: подобранный номер не должен
         // подтверждать, что такой заказ у провайдера есть.
-        List<EcomTransactionResponse> orders = rids.isEmpty() || id == null
-                ? List.of()
-                : EcomOrderAssembler.assemble(repository.findRows(List.of(id), rids, null));
+        List<EcomTransactionResponse> orders = List.of();
+        if (!rids.isEmpty() && id != null) {
+            long started = System.nanoTime();
+            orders = EcomOrderAssembler.assemble(repository.findRows(List.of(id), rids, null));
+            log.info("Order card {}: found={}, merchants={}, took {} ms", id, !orders.isEmpty(), rids.size(), elapsedMillis(started));
+        }
         if (orders.isEmpty()) {
             // Номер из адреса отражается в ответ, только когда это число.
             throw new ResourceNotFoundException(id != null ? "Transaction not found: " + id : "Transaction not found");
         }
         return orders.get(0);
+    }
+
+    // Каждый запрос выписки — проход по боевой базе шлюза (Р-91): одна строка INFO с его ценой.
+    private static long elapsedMillis(long startedNanos) {
+        return (System.nanoTime() - startedNanos) / 1_000_000;
     }
 
     // Фильтр сужает скоуп и никогда его не расширяет: мерчант вне скоупа из запроса просто выпадает.

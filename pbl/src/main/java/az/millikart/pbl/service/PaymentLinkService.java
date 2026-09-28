@@ -56,6 +56,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -76,6 +77,11 @@ import az.millikart.common.security.UserPrincipal;
 public class PaymentLinkService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentLinkService.class);
+
+    // Незнакомый или внешний статус заказа — WARN один раз на пару «транзакция, статус»: сверка спрашивает
+    // каждые 2 минуты до 7 дней, и повтор ничего не добавляет. Память процесса: после рестарта — ещё раз.
+    private static final int NOTICED_STATUSES_CEILING = 10_000;
+    private final Map<UUID, String> noticedProviderStatuses = new ConcurrentHashMap<>();
 
     private final PaymentLinkRepository paymentLinkRepository;
     private final TransactionRepository transactionRepository;
@@ -120,12 +126,10 @@ public class PaymentLinkService {
     }
 
     public PaymentLinkResponse create(CreatePaymentLinkRequest request, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to create payment link: merchantOrderId={}, terminal={}, amount={}, currency={}, userId={}, role={}, companyId={}",
-                request.merchantOrderId(), request.terminal(), request.amount(), request.currency(), userId, rawRole, companyId);
+        log.info("Request to create payment link: merchantOrderId={}, terminal={}, amount={}, currency={}",
+                request.merchantOrderId(), request.terminal(), request.amount(), request.currency());
 
         validateAccess(request.terminal(), principal, LINK_WRITE_ROLES);
 
@@ -260,11 +264,9 @@ public class PaymentLinkService {
 
     @Transactional
     public PaymentLinkResponse update(UUID id, UpdatePaymentLinkRequest request, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to update payment link: id={}, userId={}, role={}, companyId={}", id, userId, rawRole, companyId);
+        log.debug("Request to update payment link {}", id);
         PaymentLink link = findLinkOrThrow(id);
 
         validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES);
@@ -351,7 +353,7 @@ public class PaymentLinkService {
                 UserPrincipal.getUsername(principal), companyId,
                 changes.isEmpty() ? "No fields changed" : "Changed " + String.join(", ", changes)));
 
-        log.info("Payment link {} updated by userId={}: {}", id, userId,
+        log.info("Payment link {} updated: {}", id,
                 changes.isEmpty() ? "no fields changed" : String.join(", ", changes));
         return mapper.toResponse(saved, (int) usedCount, refundedCount(id), lastPaidAt(id));
     }
@@ -451,11 +453,8 @@ public class PaymentLinkService {
 
     @Transactional(readOnly = true)
     public PaymentLinkResponse get(UUID id, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
-        String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to fetch payment link details: id={}, userId={}, role={}, companyId={}", id, userId, rawRole, companyId);
+        log.debug("Request to fetch payment link {}", id);
         PaymentLink link = findLinkOrThrow(id);
 
         validateAccess(link.getTerminalId(), principal, READ_ROLES);
@@ -470,7 +469,7 @@ public class PaymentLinkService {
         String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to list payment links: terminal={}, status={}, userId={}, role={}, companyId={}", terminal, status, userId, rawRole, companyId);
+        log.debug("Request to list payment links: terminal={}, status={}", terminal, status);
         // Нераспознанная роль в READ_ROLES не попадает, поэтому отвергается здесь, а не ниже.
         if (userRole == null || !READ_ROLES.contains(userRole)) {
             log.warn("Access denied. Role {} is not authorized to list payment links.", rawRole);
@@ -516,11 +515,9 @@ public class PaymentLinkService {
     // списать его, ни отменить. Блокировка проверяется там, где платёж НАЧИНАЕТСЯ.
     @Transactional
     public PaymentLinkResponse completeDms(UUID transactionId, CompleteDmsRequest request, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to complete DMS: transactionId={}, amount={}, userId={}, role={}, companyId={}", transactionId, request.amount(), userId, rawRole, companyId);
+        log.info("Request to complete DMS: transactionId={}, amount={}", transactionId, request.amount());
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
@@ -654,11 +651,9 @@ public class PaymentLinkService {
     // бы наказать покупателя, и деньги застряли бы до того, как терминал вспомнят разблокировать.
     @Transactional
     public RefundResponse refund(UUID transactionId, RefundRequest request, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to refund transaction: transactionId={}, amount={}, userId={}, role={}, companyId={}", transactionId, request.amount(), userId, rawRole, companyId);
+        log.info("Request to refund transaction: transactionId={}, amount={}", transactionId, request.amount());
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
@@ -822,11 +817,8 @@ public class PaymentLinkService {
     // Проверка статуса для мерчанта: нужна аутентификация и роль на чтение в компании терминала.
     @Transactional
     public TransactionResponse checkAndStatusUpdate(String identifier, UserPrincipal principal) {
-        String rawRole = UserPrincipal.getRawRole(principal);
-        String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to check transaction status: identifier={}, userId={}, role={}, companyId={}",
-                identifier, UserPrincipal.getUserId(principal), rawRole, companyId);
+        log.info("Request to check transaction status: identifier={}", identifier);
 
         Transaction tx = resolveTransaction(identifier);
         validateAccess(tx.getLink().getTerminalId(), principal, READ_ROLES);
@@ -851,7 +843,7 @@ public class PaymentLinkService {
         } catch (RuntimeException e) {
             // Страница плательщика обязана отрисоваться и при недоступном эквайере: показываем
             // последнее известное состояние, а не роняем запрос.
-            log.error("Status refresh failed for transaction {}; rendering last known state", tx.getId(), e);
+            log.warn("Status refresh failed for transaction {}: {}; rendering the last known state", tx.getId(), e.getMessage());
         }
         return Optional.of(toReceiptView(tx));
     }
@@ -918,20 +910,10 @@ public class PaymentLinkService {
 
         // После опроса всё ещё PENDING. По таймауту гасится только статус, понятый как «ещё не
         // оплачено»; всё остальное остаётся человеку, каким бы старым ни было.
+        // О самом статусе один раз предупредил refreshStatus; здесь — только решение не гасить.
         ProviderOrderOutcome outcome = refresh.outcome();
-        if (outcome == ProviderOrderOutcome.UNKNOWN) {
-            log.warn("Reconciliation is leaving transaction {} PENDING: the acquirer's status is not in "
-                            + "ProviderOrderStatus, so there is no evidence the payment did not happen. "
-                            + "It will not be marked FAILED by age; a human must look at it.",
-                    transactionId);
-            return;
-        }
-        if (outcome == ProviderOrderOutcome.SETTLED_OTHER) {
-            log.warn("Reconciliation is leaving transaction {} PENDING: the acquirer reports a final state "
-                            + "reached outside this service (reversal, refund or closed order). That is not "
-                            + "an abandoned payment, so it will not be marked FAILED by age; the money side "
-                            + "must be reviewed by hand (order.trans[] — AGENTS.md §10).",
-                    transactionId);
+        if (outcome == ProviderOrderOutcome.UNKNOWN || outcome == ProviderOrderOutcome.SETTLED_OTHER) {
+            log.debug("Reconciliation leaves transaction {} PENDING: outcome {} is never timed out", transactionId, outcome);
             return;
         }
         if (outcome != ProviderOrderOutcome.NON_FINAL) {
@@ -1000,6 +982,7 @@ public class PaymentLinkService {
         }
 
         UUID transactionId = tx.getId();
+        TransactionStatus before = tx.getStatus();
         PaymentLink link = tx.getLink();
         Terminal terminal = terminalRepository.findById(link.getTerminalId())
                 .orElseThrow(() -> {
@@ -1019,7 +1002,7 @@ public class PaymentLinkService {
         // денежного потока. Всё, что не известная строка, — UNKNOWN.
         Object raw = orderDetails != null ? orderDetails.get("status") : null;
         ProviderOrderOutcome outcome = ProviderOrderStatus.classify(raw);
-        log.info("Provider order status check result: transactionId={}, providerStatus=\"{}\", outcome={}",
+        log.debug("Provider order status check result: transactionId={}, providerStatus=\"{}\", outcome={}",
                 transactionId, raw, outcome);
 
         boolean holdReleased = false;
@@ -1059,19 +1042,23 @@ public class PaymentLinkService {
                     // Реверсал, возврат или закрытие после списания сделаны мимо портала. Статус не
                     // трогаем: сумм мы не знаем, и REFUNDED положил бы в refunded_amount число, которого
                     // никто не видел. Такая строка разбирается руками (AGENTS.md §10).
-                    log.warn("Acquirer reports order status \"{}\" for transaction {} (providerOrderId {}): the "
-                                    + "order was changed outside this service (reversal, refund or closed). Local "
-                                    + "status stays {} and reconciliation will NOT mark it FAILED; the money side "
-                                    + "needs a manual review — see project_docs/TXPG-client-side-integration.md §5.8.8.",
-                            raw, transactionId, tx.getProviderOrderId(), tx.getStatus());
+                    if (firstNotice(transactionId, raw)) {
+                        log.warn("Transaction {} (provider order {}) stays {}: the acquirer reports \"{}\", set outside "
+                                + "this service — never timed out, review the money by hand (AGENTS.md §10)",
+                                transactionId, tx.getProviderOrderId(), tx.getStatus(), raw);
+                    }
                 }
             }
-            case UNKNOWN ->
-                log.warn("Acquirer returned an order status this service does not know: \"{}\" "
-                                + "(transaction {}, providerOrderId {}). The transaction stays {} and will NOT be "
-                                + "marked FAILED by reconciliation. If this status is legitimate, add it to "
-                                + "ProviderOrderStatus — see project_docs/TXPG-client-side-integration.md §5.8.8.",
-                        raw, transactionId, tx.getProviderOrderId(), tx.getStatus());
+            case UNKNOWN -> {
+                if (firstNotice(transactionId, raw)) {
+                    log.warn("Transaction {} (provider order {}) stays {}: unknown acquirer status \"{}\" — never timed "
+                            + "out; if legitimate, add it to ProviderOrderStatus (Р-20)",
+                            transactionId, tx.getProviderOrderId(), tx.getStatus(), raw);
+                }
+            }
+        }
+        if (outcome != ProviderOrderOutcome.UNKNOWN && outcome != ProviderOrderOutcome.SETTLED_OTHER) {
+            noticedProviderStatuses.remove(transactionId);
         }
 
         // Payload эквайера плюс то, что сервис из него понял; payload бывает неизменяемым — отсюда
@@ -1107,9 +1094,23 @@ public class PaymentLinkService {
         }
         tx.setProviderResponse(stored);
         tx = transactionRepository.save(tx);
-        log.info("Transaction {} updated status to: {}", tx.getId(), tx.getStatus());
+        // Опрос без перемены — не событие: сверка делает их сотнями в день.
+        if (tx.getStatus() != before) {
+            log.info("Transaction {} is now {} (was {}), acquirer status \"{}\"", tx.getId(), tx.getStatus(), before, raw);
+        } else {
+            log.debug("Transaction {} stays {}, acquirer status \"{}\"", tx.getId(), tx.getStatus(), raw);
+        }
 
         return new StatusRefresh(tx, outcome);
+    }
+
+    // true — об этом статусе этой транзакции ещё не предупреждали. Потолок — чтобы память не росла
+    // без конца, если такие строки никто не разбирает.
+    private boolean firstNotice(UUID transactionId, Object raw) {
+        if (noticedProviderStatuses.size() >= NOTICED_STATUSES_CEILING) {
+            noticedProviderStatuses.clear();
+        }
+        return !String.valueOf(raw).equals(noticedProviderStatuses.put(transactionId, String.valueOf(raw)));
     }
 
     @Transactional(readOnly = true)
@@ -1119,7 +1120,7 @@ public class PaymentLinkService {
         String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to list transactions: userId={}, role={}, companyId={}", userId, rawRole, companyId);
+        log.debug("Request to list transactions");
         // Нераспознанный claim роли приходит сюда как null и отвергается, а не идёт дальше.
         if (userRole == null || !READ_ROLES.contains(userRole)) {
             log.warn("Access denied. Role {} is not authorized to list transactions.", rawRole);
