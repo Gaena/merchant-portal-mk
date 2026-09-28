@@ -161,6 +161,7 @@ public class MigrationOrderTest {
         assertTrue(foreignKeyExists("refresh_tokens", "fk_refresh_tokens_user"));
         // 005 (Р-100): колонка уже есть — precondition, а не повторный ADD COLUMN.
         assertTrue(columnExists("users", "password_change_required"));
+        assertTrue(columnExists("users", "last_activity_at"));
     }
 
     // Хелперы

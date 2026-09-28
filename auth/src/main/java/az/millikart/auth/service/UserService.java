@@ -265,6 +265,11 @@ public class UserService {
             nonActiveStatusSet = !STATUS_ACTIVE.equals(request.status());
             if (!request.status().equals(user.getStatus())) {
                 changes.add("status " + user.getStatus() + " -> " + request.status());
+                // Разблокировка — новый отсчёт до автоблокировки: иначе ближайший проход снова
+                // заблокировал бы учётку, простоявшую 90 дней (Р-101).
+                if (!nonActiveStatusSet) {
+                    user.setLastActivityAt(Instant.now());
+                }
             }
             user.setStatus(request.status());
         }

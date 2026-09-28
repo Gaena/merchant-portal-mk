@@ -23,6 +23,10 @@
 -   `role` (VARCHAR) — Роль (`SYSTEM_ADMIN`, `COMPANY_HEAD`, `COMPANY_MANAGER`, `COMPANY_EMPLOYEE`, `AUDITOR`).
 -   `company_id` (VARCHAR) — ID компании из таблицы `companies` (nullable).
 -   `status` (VARCHAR) — Статус (`ACTIVE`, `BLOCKED`, `DELETED`).
+-   `password_change_required` (BOOLEAN) — пароль задал не владелец, сменить при входе (Р-100, §4.1.3).
+-   `last_activity_at` (TIMESTAMP) — последняя активность: вход, обновление сессии (не чаще раза в сутки),
+    создание, разблокировка; у учёток, заведённых до 29.09.2026, — момент миграции `006`. От неё считается
+    автоблокировка (§4.1.5). Это не «последний вход» и на экранах так не показывается.
 -   `created_at` (TIMESTAMP).
 -   `updated_at` (TIMESTAMP).
 
@@ -208,6 +212,14 @@ Refresh и отзыв одной цепочки могут идти одновр
 удаляет строки с `expires_at` в прошлом. Это только гигиена: просроченный токен и так отклоняется
 на шаге 2. Выключается `auth.refresh.cleanup-enabled=false` (в тестовом профиле выключен).
 
+### 4.1.5. Блокировка неактивных учёток (с 29.09.2026, PCI DSS 8.2.6, Р-101)
+`InactiveAccountScheduler` (cron `auth.inactivity.cron`, по умолчанию `0 45 3 * * *`) раз в сутки
+блокирует учётки в статусе `ACTIVE`, у которых `last_activity_at` старше `auth.inactivity.max-idle`
+(90 дней): статус `BLOCKED`, все refresh-токены гасятся, в журнале `USER` / `BLOCK` от `system`
+(`Account … blocked: no activity for more than 90 days (PCI DSS 8.2.6), last activity …`). Администраторы
+не исключение. Вернуть учётку — `PATCH /users/{id}` со `status: ACTIVE`: разблокировка сбрасывает отсчёт.
+Выключается `auth.inactivity.enabled=false` (в тестовом профиле выключен).
+
 ### 4.2. Управление Пользователями (CRUD)
 Доступно только авторизованным пользователям с ролями `SYSTEM_ADMIN` и `COMPANY_HEAD`.
 
@@ -292,5 +304,8 @@ Refresh и отзыв одной цепочки могут идти одновр
 | `auth.refresh.rotation-grace` | `AUTH_REFRESH_ROTATION_GRACE` | `PT10S` | окно, в котором повтор заменённого токена считается гонкой вкладок, а не кражей |
 | `auth.refresh.cleanup-enabled` | `AUTH_REFRESH_CLEANUP_ENABLED` | `true` | включает планировщик уборки |
 | `auth.refresh.cleanup-cron` | `AUTH_REFRESH_CLEANUP_CRON` | `0 30 3 * * *` | расписание уборки |
+| `auth.inactivity.enabled` | `AUTH_INACTIVITY_ENABLED` | `true` | блокировка неактивных учёток (§4.1.5, Р-101) |
+| `auth.inactivity.max-idle` | `AUTH_INACTIVITY_MAX_IDLE` | `P90D` | сколько учётка может простаивать; больше 90 дней PCI DSS 8.2.6 не разрешает |
+| `auth.inactivity.cron` | `AUTH_INACTIVITY_CRON` | `0 45 3 * * *` | расписание блокировки |
 | `pbl.security.jwt.expiration-ms` | `JWT_EXPIRATION_MS` | `900000` | срок access-токена (15 минут с P1-13; фронтенд обновляет его через `/refresh`) |
 

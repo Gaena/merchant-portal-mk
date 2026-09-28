@@ -32,6 +32,11 @@ auth:
     # calls RefreshTokenService.deleteExpired() directly instead of waiting for a cron.
     cleanup-enabled: false
     cleanup-cron: "0 30 3 * * *"
+  inactivity:
+    # Off, like the cleanup: InactiveAccountIntegrationTest calls the service with its own clock.
+    enabled: false
+    max-idle: P90D
+    cron: "0 45 3 * * *"
 
 mp:
   # Same as production. MockMvc reports 127.0.0.1 as the peer, so it counts as a trusted proxy here

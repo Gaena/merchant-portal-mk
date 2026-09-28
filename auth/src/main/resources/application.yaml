@@ -48,6 +48,12 @@ auth:
     # housekeeping only; the flag exists so the test profile can switch the scheduler off.
     cleanup-enabled: ${AUTH_REFRESH_CLEANUP_ENABLED:true}
     cleanup-cron: "${AUTH_REFRESH_CLEANUP_CRON:0 30 3 * * *}"
+  inactivity:
+    # PCI DSS 8.2.6 (Р-101): an ACTIVE account with no sign-in (or session refresh) for this long is
+    # BLOCKED once a day. Administrators are not exempt; unblocking restarts the clock.
+    enabled: ${AUTH_INACTIVITY_ENABLED:true}
+    max-idle: ${AUTH_INACTIVITY_MAX_IDLE:P90D}
+    cron: "${AUTH_INACTIVITY_CRON:0 45 3 * * *}"
 
 mp:
   # Whose X-Real-IP / X-Forwarded-For we believe. Our nginx sits on the same machine and reaches

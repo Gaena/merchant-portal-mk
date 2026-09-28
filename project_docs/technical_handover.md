@@ -136,6 +136,8 @@ graph TB
   выход и отзыв сессий при блокировке или удалении учётной записи.
 - Пароль, заданный не владельцем, — при создании пользователя, сбросе администратором или первом
   запуске — пользователь меняет при первом входе, до смены сессии нет (PCI DSS 8.3.5, с 29.09.2026).
+- Учётная запись, в которую не входили 90 дней, блокируется автоматически, администраторы тоже
+  (PCI DSS 8.2.6, с 29.09.2026); вернуть её — обычная разблокировка.
 - Выход по простою (PCI DSS 8.2.8, с 29.09.2026): 15 минут без действий пользователя — портал
   завершает сессию и просит войти снова, в том числе когда его открывают после перерыва. На сервере
   сессия гаснет через 20 минут без обновления.
@@ -281,6 +283,7 @@ graph TB
 | Изменение пользователя | `USER` | `UPDATE` | SUCCESS / DENIED | UUID пользователя | логин актора | успех: компания цели; отказ: компания актора | `auth`, `UserService.updateUser` | перечень полей `Changed role X -> Y, …`; отказ — попытка выдать `SYSTEM_ADMIN` не-админом |
 | Смена пароля пользователя | `USER` | `PASSWORD_CHANGE` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.updateUser`, `AuthService.changePassword` | `Password changed for …` — администратором или руководителем; `Password changed by its owner at sign-in` — самим пользователем (Р-100); без пароля |
 | Блокировка аккаунта администратором | `USER` | `BLOCK` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.updateUser` | `Account set to … for … (was ACTIVE)` |
+| Блокировка аккаунта без активности 90 дней (Р-101) | `USER` | `BLOCK` | SUCCESS | UUID пользователя | `system` | компания цели | `auth`, `InactiveAccountService.blockInactive` | `Account … blocked: no activity for more than 90 days (PCI DSS 8.2.6), last activity …` |
 | Разблокировка аккаунта | `USER` | `UNBLOCK` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.updateUser` | `Account reactivated for … (was …)` |
 | Удаление пользователя (soft) | `USER` | `DELETE` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.deleteUser` | `Soft deleted user … (role …)` |
 | Создание компании | `COMPANY` | `CREATE` | SUCCESS / DENIED | id компании | логин актора | успех: id созданной; отказ: компания актора | `directory`, `CompanyService.createCompany` | `Created company: …, provider login …` (без пароля) / `Denied: role … attempted to create company '…'` |

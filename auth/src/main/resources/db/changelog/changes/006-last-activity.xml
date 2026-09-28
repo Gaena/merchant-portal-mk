@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- PCI DSS 8.2.6 (Р-101): an account unused for 90 days is blocked. The clock is the last
+         activity: sign-in, creation, reactivation. Existing rows get the moment of this migration —
+         their real last sign-in was never recorded, and counting from created_at would block every
+         old account on the first run. -->
+    <changeSet id="6-auth-users-last-activity-at" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="users" columnName="last_activity_at"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="users">
+            <column name="last_activity_at" type="timestamp" defaultValueComputed="CURRENT_TIMESTAMP">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

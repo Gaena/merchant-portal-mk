@@ -129,10 +129,10 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 | Пакет | Что внутри |
 |:---|:---|
 | `controller` | `AuthController` (вход, обновление пары токенов, выход), `UserController` |
-| `service` | `AuthService` (вход, ротация и отзыв refresh-токенов), `RefreshTokenService`, `UserService` (пользователи; отзыв сессий при блокировке и удалении) |
+| `service` | `AuthService` (вход, смена пароля при входе, ротация и отзыв refresh-токенов), `RefreshTokenService`, `UserService` (пользователи; отзыв сессий при блокировке, сбросе пароля и удалении), `InactiveAccountService` (блокировка учёток без активности 90 дней, Р-101) |
 | `security` | `LoginRateLimiter` — лимит неудачных входов с одного адреса, счётчики в памяти |
 | `bootstrap` | `AdminBootstrapRunner` — разовое создание первого `SYSTEM_ADMIN` |
-| `scheduler` | `RefreshTokenCleanupScheduler` |
+| `scheduler` | `RefreshTokenCleanupScheduler`, `InactiveAccountScheduler` (Р-101) |
 | `domain`, `repository` | `User`, `RefreshToken`, `Company` (только для проверок и поиска) |
 
 Контракты — `auth.md`.
@@ -215,6 +215,7 @@ erDiagram
         integer failed_login_attempts
         timestamp lockout_until
         boolean password_change_required "Пароль задал не владелец — сменить при входе (Р-100)"
+        timestamp last_activity_at "Последняя активность; 90 дней без неё — блокировка (Р-101)"
         timestamp created_at
     }
 
@@ -348,6 +349,7 @@ changeset'ы не редактируются.
 | `auth` | `003-refresh-tokens.xml` | `refresh_tokens` и индексы |
 | `auth` | `004-audit-logs.xml` | `audit_logs` в финальном виде, если таблицы ещё нет |
 | `auth` | `005-password-change-required.xml` | `users.password_change_required` (Р-100) |
+| `auth` | `006-last-activity.xml` | `users.last_activity_at`; существующим строкам — момент миграции (Р-101) |
 | `directory` | `003-directory-schema.xml` | `companies` и `terminals`, аудит-колонки |
 | `directory` | `004-audit-log-ip-and-indexes.xml` | `client_ip`, `outcome` и три индекса журнала |
 | `directory` | `005-terminal-status.xml` | `terminals.status` |
@@ -555,6 +557,7 @@ sequenceDiagram
 | `pbl` | `PaymentLinkScheduler` | `0 */5 * * * *` | активные ссылки с истёкшим сроком → `EXPIRED` | — |
 | `pbl` | `TransactionReconciliationScheduler` | `0 */2 * * * *` | сверка зависших `PENDING` со шлюзом | `pbl.reconciliation.enabled` |
 | `auth` | `RefreshTokenCleanupScheduler` | `0 30 3 * * *` | удаление истёкших refresh-токенов | `auth.refresh.cleanup-enabled` |
+| `auth` | `InactiveAccountScheduler` | `0 45 3 * * *` | блокировка учёток без активности дольше 90 дней (PCI DSS 8.2.6, Р-101) | `auth.inactivity.enabled` |
 | `ecom` | `ProviderTerminalSyncScheduler` | `0 */15 * * * *` | обновление справочника терминалов провайдера и слепка логинов мультимерчантов (Р-94) | `ecom.terminal-sync.enabled` |
 | `directory` | `TerminalStatusReconciliationScheduler` | `0 */15 * * * *` | статусы наших терминалов по справочнику провайдера | `directory.terminal-reconciliation.enabled` |
 

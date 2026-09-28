@@ -185,6 +185,9 @@ public class AuthService {
     }
 
     private LoginResponse startSession(User user, Instant now) {
+        // Вход — активность учётки: отсчёт 90 дней до автоблокировки начинается заново (Р-101).
+        user.setLastActivityAt(now);
+        userRepository.save(user);
         // Вход начинает новое семейство ротации; все последующие refresh остаются внутри него.
         LoginResponse response = issuePair(user, UUID.randomUUID(), now);
         // PCI-DSS 10.2 требует успехи не меньше отказов — вторжение выглядит как успешный вход не
@@ -327,6 +330,11 @@ public class AuthService {
             log.warn("Refresh refused: token of user {} was revoked while the refresh was in flight (family {})",
                     stored.getUserId(), stored.getFamilyId());
             throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
+        }
+        // Работа без нового входа — тоже активность (Р-101); писать чаще раза в сутки незачем.
+        if (user.getLastActivityAt() == null || user.getLastActivityAt().isBefore(now.minus(Duration.ofDays(1)))) {
+            user.setLastActivityAt(now);
+            userRepository.save(user);
         }
         LoginResponse response = issuePair(user, stored.getFamilyId(), now);
         log.info("Refresh successful for user ID: {}, family {}", user.getId(), stored.getFamilyId());

@@ -395,7 +395,7 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
 `SETTLED_OTHER` остаются `PENDING` для человека. `AUTHORIZED` сверка не трогает: живой холд —
 легитимное состояние покоя. Параметры — `pbl.reconciliation.*`.
 
-**Планировщики** (их пять: два в `pbl`, по одному в `auth`, `ecom` и `directory`) — таблица с
+**Планировщики** (их шесть: по два в `pbl` и `auth`, по одному в `ecom` и `directory`) — таблица с
 расписаниями и выключателями в `project_docs/application_description.md` §9. В тестовых профилях
 `pbl` и `auth` сверка и уборка выключены — тесты вызывают сервисы напрямую.
 

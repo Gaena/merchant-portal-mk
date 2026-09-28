@@ -2,6 +2,8 @@ package az.millikart.auth.repository;
 
 import az.millikart.auth.domain.User;
 import jakarta.persistence.LockModeType;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -15,6 +17,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByUsername(String username);
+
+    List<User> findByStatusAndLastActivityAtBefore(String status, Instant threshold);
 
     // Вход читает строку под SELECT ... FOR UPDATE: счётчик неудач — прочитал-прибавил-записал, и
     // параллельные попытки теряли приращения (блокировка Р-28 наступала после десятков попыток, а не
