@@ -459,7 +459,7 @@ auth:
       window: ${LOGIN_RATE_LIMIT_WINDOW:PT15M}
   refresh:
     # Refresh-токены (P1-12): срок, окно снисхождения ротации, уборка просроченных.
-    ttl: ${AUTH_REFRESH_TTL:P30D}
+    ttl: ${AUTH_REFRESH_TTL:PT20M}
     rotation-grace: ${AUTH_REFRESH_ROTATION_GRACE:PT10S}
     cleanup-enabled: ${AUTH_REFRESH_CLEANUP_ENABLED:true}
     cleanup-cron: "${AUTH_REFRESH_CLEANUP_CRON:0 30 3 * * *}"
@@ -2039,7 +2039,7 @@ export ECOM_TXPG_PASSWORD='пароль от MilliKart'
 | `DB_URL` | необязательна | необязательна | необязательна | необязательна | `jdbc:postgresql://localhost:5432/postgres` |
 | `DB_USERNAME` | необязательна | необязательна | необязательна | необязательна | `postgres` |
 | `JWT_EXPIRATION_MS` | необязательна | необязательна | необязательна | необязательна | `900000` (15 минут, с P1-13). Токен выдаёт `auth`; `directory` и `pbl` только проверяют его, переменная объявлена у всех сервисов для единообразия. Фронтенд обновляет токен сам через `/refresh`; это же — верхняя граница, сколько после выхода, блокировки или удаления пользователь ещё имеет доступ |
-| `AUTH_REFRESH_TTL` | необязательна | не читается | не читается | не читается | `P30D` (срок refresh-токена) |
+| `AUTH_REFRESH_TTL` | необязательна | не читается | не читается | не читается | `PT20M` (срок refresh-токена, скользящий; граница простоя на сервере — PCI DSS 8.2.8, Р-99) |
 | `AUTH_REFRESH_ROTATION_GRACE` | необязательна | не читается | не читается | не читается | `PT10S` (окно, в котором повтор заменённого refresh-токена — гонка вкладок, а не кража) |
 | `AUTH_REFRESH_CLEANUP_ENABLED` | необязательна | не читается | не читается | не читается | `true` |
 | `AUTH_REFRESH_CLEANUP_CRON` | необязательна | не читается | не читается | не читается | `0 30 3 * * *` |

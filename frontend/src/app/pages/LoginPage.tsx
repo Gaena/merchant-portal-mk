@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { AuthError } from '../auth/session';
+import { AuthError, clearIdleNotice, hasIdleNotice } from '../auth/session';
 import { returnPathFrom } from '../auth/guards';
 import {
   Box,
@@ -40,6 +40,11 @@ export const LoginPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // Выход по простою (PCI DSS 8.2.8, Р-99) — сказать один раз, почему снова форма входа.
+  const [idleNotice, setIdleNotice] = useState(hasIdleNotice);
+  useEffect(() => {
+    clearIdleNotice();
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,6 +133,12 @@ export const LoginPage: React.FC = () => {
             {tObj.auth.subtitle}
           </Typography>
         </Box>
+
+        {idleNotice && !error && (
+          <Alert severity="info" sx={{ mb: 3 }} onClose={() => setIdleNotice(false)}>
+            {tObj.auth.idleSignedOut}
+          </Alert>
+        )}
 
         {error && (
           <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError('')}>

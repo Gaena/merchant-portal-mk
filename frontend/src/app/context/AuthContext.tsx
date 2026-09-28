@@ -7,10 +7,14 @@ import {
   getAccessToken,
   getRefreshToken,
   getUser,
+  isIdleExpired,
+  markActivity,
+  markEndedByIdle,
   subscribe,
   type LoginResponse,
   type UserProfile,
 } from '../auth/session';
+import { useIdleLogout } from '../auth/idle';
 
 export type { UserProfile } from '../auth/session';
 
@@ -50,6 +54,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     let active = true;
+    // Вкладку открыли после простоя (PCI DSS 8.2.8, Р-99): сессию не восстанавливаем, а гасим и на
+    // сервере. Отметки нет вовсе — тоже простой: когда было последнее действие, неизвестно.
+    if (isIdleExpired(Date.now())) {
+      const staleToken = getRefreshToken();
+      markEndedByIdle();
+      clearSession();
+      void revokeRefreshToken(staleToken);
+      setRestoring(false);
+      return;
+    }
     refreshSession()
       .catch((error: unknown) => {
         // Отказ (401, плохая роль) уже сбросил сессию; сетевая ошибка оставила refresh-токен —
@@ -83,6 +97,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (previous !== null && previous !== response.data.refreshToken) {
       void revokeRefreshToken(previous);
     }
+    // Вход — действие пользователя: отсчёт простоя начинается отсюда.
+    markActivity(Date.now());
   }, []);
 
   const logout = useCallback(async () => {
@@ -94,13 +110,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  const isAuthenticated = user !== null && getAccessToken() !== null;
+  const logoutAfterIdle = useCallback(() => {
+    markEndedByIdle();
+    void logout();
+  }, [logout]);
+  useIdleLogout(isAuthenticated, logoutAfterIdle);
+
   const value = useMemo<AuthContextType>(() => ({
     user,
     // Токен и профиль ставятся и сбрасываются вместе (session.ts), но источник истины — токен.
-    isAuthenticated: user !== null && getAccessToken() !== null,
+    isAuthenticated,
     login,
     logout,
-  }), [user, login, logout]);
+  }), [user, isAuthenticated, login, logout]);
 
   if (restoring) {
     return <RestoringSession />;

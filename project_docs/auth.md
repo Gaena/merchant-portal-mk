@@ -108,7 +108,7 @@ Claims токена:
       "expiresIn": 900,
       "role": "COMPANY_HEAD",
       "refreshToken": "Q2FuJ3QgZ3Vlc3MgbWUsIEknbSByYW5kb20hISEh",
-      "refreshExpiresIn": 2592000
+      "refreshExpiresIn": 1200
     }
     ```
     -   `expiresIn` — срок access-токена в секундах, считается из `pbl.security.jwt.expiration-ms`
@@ -116,7 +116,10 @@ Claims токена:
         с настройкой (P1-12).
     -   `refreshToken` — непрозрачная случайная строка (32 байта `SecureRandom`, base64url),
         не JWT. Одноразовая: каждый `refresh` выдаёт новую и гасит предъявленную.
-    -   `refreshExpiresIn` — срок refresh-токена в секундах (`auth.refresh.ttl`, по умолчанию 30 дней).
+    -   `refreshExpiresIn` — срок refresh-токена в секундах (`auth.refresh.ttl`, по умолчанию 20 минут с
+        29.09.2026, Р-99). Срок скользящий: каждый `refresh` выдаёт токен на новые 20 минут, так что это
+        граница простоя на сервере (PCI DSS 8.2.8). Фронтенд выходит сам после 15 минут без действий и,
+        пока пользователь работает, обновляет пару не реже раза в 5 минут.
 
     Каждый логин начинает новую **цепочку** (`family_id`) — на ноутбуке и на телефоне у одного
     пользователя две независимые сессии; выход из одной не трогает другую.
@@ -262,7 +265,7 @@ Refresh и отзыв одной цепочки могут идти одновр
 
 | Ключ | Переменная | По умолчанию | Смысл |
 |:---|:---|:---|:---|
-| `auth.refresh.ttl` | `AUTH_REFRESH_TTL` | `P30D` | срок жизни refresh-токена |
+| `auth.refresh.ttl` | `AUTH_REFRESH_TTL` | `PT20M` | срок жизни refresh-токена — граница простоя на сервере (Р-99); меньше 20 минут не ставить: фронтенд обновляет пару раз в 5 минут и выходит после 15 минут простоя |
 | `auth.refresh.rotation-grace` | `AUTH_REFRESH_ROTATION_GRACE` | `PT10S` | окно, в котором повтор заменённого токена считается гонкой вкладок, а не кражей |
 | `auth.refresh.cleanup-enabled` | `AUTH_REFRESH_CLEANUP_ENABLED` | `true` | включает планировщик уборки |
 | `auth.refresh.cleanup-cron` | `AUTH_REFRESH_CLEANUP_CRON` | `0 30 3 * * *` | расписание уборки |

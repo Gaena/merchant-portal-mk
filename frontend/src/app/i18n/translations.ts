@@ -646,6 +646,8 @@ export interface TranslationDictionary {
     authFailed: string;
     /** 200 без токенов (например, прокси отдал HTML): вход отклонён на клиенте. */
     malformedResponse: string;
+    /** Выход после 15 минут без действий (PCI DSS 8.2.8, Р-99). */
+    idleSignedOut: string;
   };
   errors: {
     forbiddenTitle: string;
@@ -1240,6 +1242,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       networkError: 'The server is unreachable. Check the connection and try again.',
       authFailed: 'Sign-in failed',
       malformedResponse: 'The server answered without a session. Sign-in was refused — try again or contact your administrator.',
+      idleSignedOut: 'You were signed out after 15 minutes of inactivity. Sign in again.',
     },
     errors: {
       forbiddenTitle: 'Access denied',
@@ -1811,6 +1814,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       networkError: 'Server əlçatan deyil. Bağlantını yoxlayın və yenidən cəhd edin.',
       authFailed: 'Giriş alınmadı',
       malformedResponse: 'Server sessiyasız cavab verdi. Giriş rədd edildi — yenidən cəhd edin və ya administratorla əlaqə saxlayın.',
+      idleSignedOut: '15 dəqiqə fəaliyyət olmadığı üçün sistemdən çıxdınız. Yenidən daxil olun.',
     },
     errors: {
       forbiddenTitle: 'Giriş qadağandır',
@@ -2382,6 +2386,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       networkError: 'Сервер недоступен. Проверьте соединение и попробуйте ещё раз.',
       authFailed: 'Вход не выполнен',
       malformedResponse: 'Сервер ответил без сессии. Вход отклонён — попробуйте ещё раз или обратитесь к администратору.',
+      idleSignedOut: 'Сессия завершена: 15 минут без действий. Войдите снова.',
     },
     errors: {
       forbiddenTitle: 'Нет доступа',

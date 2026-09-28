@@ -481,9 +481,10 @@ axios-клиент, shadcn/Radix, Tailwind, страницы на моках, с
 
 | Файл | Что делает |
 |:---|:---|
-| `src/app/auth/session.ts` | хранилище: access-токен — модульная переменная (**только память**), refresh — `localStorage['mp_refresh_token']`, профиль `{ email, role, companyId? }` (email и companyId — из claims JWT, роль — из поля `role` ответа через `parseRole`); `applyLoginResponse` fail-closed, `clearSession`, подписка для `useSyncExternalStore`; событие `storage` гасит сессию в других вкладках при выходе |
+| `src/app/auth/session.ts` | хранилище: access-токен — модульная переменная (**только память**), refresh — `localStorage['mp_refresh_token']`, момент последнего действия пользователя — `localStorage['mp_last_activity']` (общий для вкладок), профиль `{ email, role, companyId? }` (email и companyId — из claims JWT, роль — из поля `role` ответа через `parseRole`); `applyLoginResponse` fail-closed, `clearSession`, подписка для `useSyncExternalStore`; событие `storage` гасит сессию в других вкладках при выходе |
+| `src/app/auth/idle.ts` | выход по простою (PCI DSS 8.2.8, Р-99): 15 минут без ввода — `logout` и сообщение на форме входа. Действием считается только ввод пользователя, не запросы к API. Пока пользователь работает, пара обновляется, если старше 5 минут: сервер гасит refresh-токен через 20 минут без обновления (`AUTH_REFRESH_TTL`) |
 | `src/app/api/client.ts` | request-интерсептор берёт токен из памяти (к `/api/v1/auth/*` не прикладывает); response-интерсептор на 401: `/login`, `/refresh`, `/logout` — не трогать; уже повторяли — `clearSession`; иначе `refreshSession()` (**single-flight**, один промис на все параллельные 401) и повтор запроса. 401 от `/refresh` и нераспознанная роль сбрасывают сессию, сетевая ошибка — нет |
-| `src/app/context/AuthContext.tsx` | `AuthProvider`: при загрузке с refresh-токеном показывает загрузку и зовёт `/refresh` (сессия восстанавливается без формы логина); `login` → `applyLoginResponse`; `logout` — сброс состояния сразу, `POST /logout` вдогонку (ошибка логируется). `isAuthenticated` — по access-токену в памяти |
+| `src/app/context/AuthContext.tsx` | `AuthProvider`: при загрузке с refresh-токеном показывает загрузку и зовёт `/refresh` (сессия восстанавливается без формы логина) — только если последнее действие было меньше 15 минут назад, иначе гасит токен (`POST /logout`) и показывает форму входа; `login` → `applyLoginResponse`; `logout` — сброс состояния сразу, `POST /logout` вдогонку (ошибка логируется). `isAuthenticated` — по access-токену в памяти |
 | `src/app/auth/routeAccess.ts` | **единственная** раскладка «маршрут → роли» (`/users`: `SYSTEM_ADMIN`, `COMPANY_HEAD`; `/companies`: `SYSTEM_ADMIN`, `AUDITOR`; `/audit-logs`: `SYSTEM_ADMIN`, `AUDITOR`, `COMPANY_HEAD`, `COMPANY_MANAGER`; остальное — всем вошедшим). Читают `RoleRoute` и `Sidebar` |
 | `src/app/auth/actionAccess.ts` | роли **действий**, зеркало констант сервисов: `TERMINAL_CREATE_ROLES` и `TERMINAL_WRITE_ROLES` (`TerminalService`), `LINK_WRITE_ROLES` и `REFUND_ROLES` (`PaymentLinkService`). Кнопка видна ровно тогда, когда бэкенд её примет (Р-62); меняешь набор на бэкенде — меняй и здесь |
 | `src/app/auth/guards.tsx` | `ProtectedRoute` (→ `/login`, адрес кладётся в `state.from`), `PublicOnlyRoute` (→ `state.from` или `/`; `returnPathFrom` принимает только свой относительный путь), `RoleRoute` (роль не подходит → `ForbiddenPage`, не редирект и не белый экран) |
@@ -976,7 +977,7 @@ fallback-токен выключен. Ключ подписи — `test-only-jwt
    строка в `auth/routeAccess.ts`. Проверка:
    ```bash
    grep -rn "|| 'SYSTEM_ADMIN'" frontend/src          # ничего
-   grep -rn "localStorage" frontend/src               # только session.ts (refresh) и LanguageContext
+   grep -rn "localStorage" frontend/src               # только session.ts (refresh, простой) и LanguageContext
    ```
 6. **Не редактировать применённые Liquibase changeset'ы** — только новые файлы. Исключения делались
    дважды (P0-6, P1-2) и оба раза согласовывались явно: боевых установок не было, база

@@ -36,8 +36,10 @@ auth:
   refresh:
     # Lifetime of a refresh token (ISO-8601 duration). Each refresh rotates the token: the client
     # gets a new one, the old one is retired, and the family lives on until logout, revocation,
-    # or until nobody refreshes for this long.
-    ttl: ${AUTH_REFRESH_TTL:P30D}
+    # or until nobody refreshes for this long. This is the server-side idle bound of PCI DSS 8.2.8
+    # (Р-99): the frontend signs out after 15 minutes without user input and, while the user works,
+    # refreshes at most every 5 minutes, so 20 minutes never cuts off a live session.
+    ttl: ${AUTH_REFRESH_TTL:PT20M}
     # Одно обновление из двух вкладок приходит дважды с одним токеном. В пределах окна
     # это не кража, а гонка — второй запрос обслуживается, цепочка не гасится.
     # Reuse of a retired token OUTSIDE this window is treated as theft and revokes the whole family.

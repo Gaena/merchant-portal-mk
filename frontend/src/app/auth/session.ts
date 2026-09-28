@@ -48,6 +48,17 @@ export class AuthError extends Error {
 export const REFRESH_TOKEN_KEY = 'mp_refresh_token';
 
 /**
+ * PCI DSS 8.2.8 (Р-99): 15 минут без действий пользователя — выход. Момент последнего действия общий
+ * для вкладок (`localStorage`), поэтому работа в одной вкладке не выкидывает из другой, а открытая
+ * после простоя вкладка не восстанавливает сессию. Сервер держит свою границу: refresh-токен живёт
+ * 20 минут (`auth.refresh.ttl`), и пока пользователь работает, `auth/idle.ts` обновляет его не реже
+ * раза в `KEEP_ALIVE_AFTER_MS`.
+ */
+export const LAST_ACTIVITY_KEY = 'mp_last_activity';
+export const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+export const KEEP_ALIVE_AFTER_MS = 5 * 60 * 1000;
+
+/**
  * Ключи, под которыми прежняя версия фронтенда держала access-токен и профиль в `localStorage`.
  * Новый код их не читает, но у уже работавших пользователей они остались бы лежать до очистки
  * браузера — вместе с живым (до 24 ч) access-токеном. Сносим при первой загрузке.
@@ -56,6 +67,12 @@ const LEGACY_KEYS = ['token', 'user'] as const;
 
 let accessToken: string | null = null;
 let currentUser: UserProfile | null = null;
+/** Когда эта вкладка последний раз получила пару токенов. */
+let lastTokenAt = 0;
+/** Последнее действие — и в памяти: без доступного хранилища вкладка всё равно считает простой сама. */
+let lastActivityInMemory = 0;
+/** Сессию закрыл простой — форма входа скажет об этом один раз. */
+let endedByIdle = false;
 /**
  * Поколение сессии: растёт при каждом сбросе (`clearSession`, выход в другой вкладке).
  * Нужно, чтобы ответ `/refresh`, ушедшего до выхода, не воскресил сессию после него —
@@ -102,6 +119,48 @@ const writeRefreshToken = (value: string | null) => {
     // Без записи сессия проживёт до перезагрузки вкладки — хуже, но не сломано.
     console.warn('[auth] localStorage is not writable; session will not survive a reload', error);
   }
+};
+
+// ─── простой (PCI DSS 8.2.8) ─────────────────────────────────────────────────
+
+/** Момент последнего действия пользователя в любой вкладке, мс; 0 — не было ни одного. */
+export const getLastActivity = (): number => {
+  let stored = 0;
+  try {
+    const value = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+    stored = Number.isFinite(value) ? value : 0;
+  } catch {
+    // Недоступное хранилище — считаем по памяти этой вкладки.
+  }
+  return Math.max(stored, lastActivityInMemory);
+};
+
+export const markActivity = (now: number): void => {
+  lastActivityInMemory = now;
+  try {
+    localStorage.setItem(LAST_ACTIVITY_KEY, String(now));
+  } catch {
+    // Без записи другие вкладки не узнают о действии — каждая считает свой простой.
+  }
+};
+
+/** Простой истёк. Нет отметки вовсе — тоже истёк: время последнего действия неизвестно. */
+export const isIdleExpired = (now: number): boolean => now - getLastActivity() > IDLE_TIMEOUT_MS;
+
+export const getLastTokenAt = (): number => lastTokenAt;
+
+export const markEndedByIdle = (): void => {
+  endedByIdle = true;
+};
+
+/**
+ * Прочитать и сбросить — раздельно: StrictMode вызывает инициализатор `useState` дважды, и чтение со
+ * сбросом в одном вызове теряло бы сообщение.
+ */
+export const hasIdleNotice = (): boolean => endedByIdle;
+
+export const clearIdleNotice = (): void => {
+  endedByIdle = false;
 };
 
 // ─── профиль и подписка (для React) ──────────────────────────────────────────
@@ -177,6 +236,7 @@ export const applyLoginResponse = (data: LoginResponse, emailHint?: string): Use
 
   accessToken = data.token;
   writeRefreshToken(data.refreshToken);
+  lastTokenAt = Date.now();
   currentUser = { email, role, companyId };
   notify();
   return currentUser;
@@ -224,6 +284,10 @@ if (typeof window !== 'undefined') {
       ? getRefreshToken() === null
       : (event.key === REFRESH_TOKEN_KEY && event.newValue === null);
     if (refreshGone) {
+      // Другая вкладка вышла по простою — форма входа здесь скажет о том же.
+      if (isIdleExpired(Date.now())) {
+        endedByIdle = true;
+      }
       dropInMemorySession();
     }
   });
