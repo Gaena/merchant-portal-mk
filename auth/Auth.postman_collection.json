@@ -55,7 +55,57 @@
 								"login"
 							]
 						},
-						"description": "Authenticates a user and returns a signed JWT access token plus an opaque refresh token. The `test` script saves them to the `authToken` and `refreshToken` collection variables for use in subsequent requests. `expiresIn` (seconds) mirrors JWT_EXPIRATION_MS; `refreshExpiresIn` mirrors AUTH_REFRESH_TTL."
+						"description": "Authenticates a user and returns a signed JWT access token plus an opaque refresh token. The `test` script saves them to the `authToken` and `refreshToken` collection variables for use in subsequent requests. `expiresIn` (seconds) mirrors JWT_EXPIRATION_MS; `refreshExpiresIn` mirrors AUTH_REFRESH_TTL. If the password was set by someone else (user creation, a reset by an administrator, the bootstrap) the answer is 200 with passwordChangeRequired=true and no tokens (PCI DSS 8.3.5, Р-100): call Change Password to get a session."
+					},
+					"response": []
+				},
+				{
+					"name": "Change Password",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = JSON.parse(responseBody);",
+									"pm.collectionVariables.set(\"authToken\", jsonData.token);",
+									"pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
+									"console.log(\"Set authToken to: \" + jsonData.token);",
+									"console.log(\"Set refreshToken to: \" + jsonData.refreshToken);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"admin@millikart.az\",\n  \"currentPassword\": \"<CURRENT_PASSWORD>\",\n  \"newPassword\": \"<NEW_PASSWORD>\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/change-password",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"change-password"
+							]
+						},
+						"description": "Changes the password by the current one and signs in with the new one (PCI DSS 8.3.5, Р-100). Public, like Login: the same address limit, account lockout and status checks apply; a wrong current password is 400 and counts as a failed attempt. The new password follows the same policy as on user creation and must differ from the current one. Returns the same body as Login, with passwordChangeRequired=false; the other sessions of the user are revoked."
 					},
 					"response": []
 				},

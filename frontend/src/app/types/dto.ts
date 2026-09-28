@@ -104,6 +104,8 @@ export interface UserDto {
   companyId?: string;
   status?: string;
   createdAt?: string;
+  /** Пароль задал не владелец, и он ещё не сменил его при входе (Р-100). */
+  passwordChangeRequired?: boolean;
 }
 
 export interface AuditLogDto {

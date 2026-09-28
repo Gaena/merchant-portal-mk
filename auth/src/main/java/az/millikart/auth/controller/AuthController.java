@@ -1,5 +1,6 @@
 package az.millikart.auth.controller;
 
+import az.millikart.auth.dto.ChangePasswordRequest;
 import az.millikart.auth.dto.LoginRequest;
 import az.millikart.auth.dto.LoginResponse;
 import az.millikart.auth.dto.LogoutRequest;
@@ -37,6 +38,13 @@ public class AuthController {
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
         return authService.login(request, ClientIp.resolve(httpRequest, trustedProxies.addresses()));
+    }
+
+    // Публичный, как /login (PublicEndpoints: /api/v1/auth/**): им кончается обязательная смена пароля,
+    // когда сессии ещё нет (Р-100). Лимит попыток и локаут — те же, что у входа.
+    @PostMapping("/change-password")
+    public LoginResponse changePassword(@Valid @RequestBody ChangePasswordRequest request, HttpServletRequest httpRequest) {
+        return authService.changePassword(request, ClientIp.resolve(httpRequest, trustedProxies.addresses()));
     }
 
     @PostMapping("/refresh")

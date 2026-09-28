@@ -112,6 +112,8 @@ public class UserService {
                 .role(request.role())
                 .companyId(request.companyId())
                 .status(STATUS_ACTIVE)
+                // Пароль задал не владелец — сменит при первом входе (PCI DSS 8.3.5, Р-100).
+                .passwordChangeRequired(true)
                 .build();
 
         user = userRepository.save(user);
@@ -203,9 +205,13 @@ public class UserService {
             changes.add("fullName");
             user.setFullName(request.fullName());
         }
+        boolean passwordResetByOther = false;
         if (request.password() != null && !request.password().isBlank()) {
             user.setPasswordHash(passwordEncoder.encode(request.password()));
-            changes.add("password");
+            // Сброс чужого пароля — смена при следующем входе (Р-100); свой пароль владелец задал сам.
+            passwordResetByOther = !user.getId().toString().equals(UserPrincipal.getUserId(principal));
+            user.setPasswordChangeRequired(passwordResetByOther);
+            changes.add(passwordResetByOther ? "password (to be changed at next sign-in)" : "password");
             passwordChanged = true;
         }
         if (request.role() != null) {
@@ -293,6 +299,10 @@ public class UserService {
             int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
             log.info("User {} changed status to {}: {} refresh token(s) revoked",
                     user.getId(), user.getStatus(), revoked);
+        } else if (passwordResetByOther) {
+            // Сессии, начатые со старым паролем, заканчиваются: сброс чаще всего и делают из-за утечки.
+            int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
+            log.info("User {} password reset: {} refresh token(s) revoked", user.getId(), revoked);
         }
         return mapToResponse(user);
     }
@@ -400,7 +410,8 @@ public class UserService {
                 user.getRole(),
                 user.getCompanyId(),
                 user.getStatus(),
-                user.getCreatedAt()
+                user.getCreatedAt(),
+                user.isPasswordChangeRequired()
         );
     }
 }

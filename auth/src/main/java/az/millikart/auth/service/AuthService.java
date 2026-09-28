@@ -2,6 +2,7 @@ package az.millikart.auth.service;
 
 import az.millikart.auth.domain.RefreshToken;
 import az.millikart.auth.domain.User;
+import az.millikart.auth.dto.ChangePasswordRequest;
 import az.millikart.auth.dto.LoginRequest;
 import az.millikart.auth.dto.LoginResponse;
 import az.millikart.auth.dto.LogoutRequest;
@@ -53,6 +54,8 @@ public class AuthService {
     // они администратору, а не вызывающему.
     private static final String ACCOUNT_NOT_ACTIVE = "Account is not active. Please contact your administrator.";
 
+    static final String SAME_PASSWORD = "The new password must differ from the current one";
+
     // Настоящий BCrypt-хэш случайной строки, которой никто не знает, — на случай несуществующего
     // логина. Его работа — сжечь те же ~80 мс, что matches тратит на настоящем аккаунте: без него
     // неизвестный логин отвечает на порядок быстрее известного, и одинаковый текст ошибки не значит
@@ -84,22 +87,55 @@ public class AuthService {
         this.eventPublisher = eventPublisher;
     }
 
+    @Transactional(noRollbackFor = BusinessException.class)
+    public LoginResponse login(LoginRequest request, String clientIp) {
+        Instant now = Instant.now();
+        User user = authenticate(request.username(), request.password(), clientIp, now);
+
+        // Пароль верен, но задан не владельцем (PCI DSS 8.3.5, Р-100): сессии нет, пока он его не сменит.
+        if (user.isPasswordChangeRequired()) {
+            auditLogService.logDenied(AuditEntity.AUTH, user.getUsername(), AuditAction.LOGIN, user.getUsername(),
+                    user.getCompanyId(), "Login held: the password must be changed first");
+            log.info("Login held for user ID {}: the password must be changed first", user.getId());
+            return LoginResponse.passwordChangeRequired(user.getRole());
+        }
+        return startSession(user, now);
+    }
+
+    // Смена пароля владельцем без сессии: тот же вход по текущему паролю — с лимитом, локаутом и
+    // проверкой статуса, — затем новый пароль и сессия. Ею кончается обязательная смена (Р-100).
+    @Transactional(noRollbackFor = BusinessException.class)
+    public LoginResponse changePassword(ChangePasswordRequest request, String clientIp) {
+        Instant now = Instant.now();
+        User user = authenticate(request.username(), request.currentPassword(), clientIp, now);
+        if (passwordEncoder.matches(request.newPassword(), user.getPasswordHash())) {
+            throw new BusinessException(SAME_PASSWORD);
+        }
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        user.setPasswordChangeRequired(false);
+        userRepository.save(user);
+        // Прочие сессии этого пользователя жили со старым паролем — им конец.
+        int revoked = refreshTokenService.revokeAllForUser(user.getId(), now);
+        eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(), AuditAction.PASSWORD_CHANGE,
+                user.getUsername(), user.getCompanyId(), "Password changed by its owner at sign-in"));
+        log.info("User ID {} changed the password at sign-in: {} refresh token(s) revoked", user.getId(), revoked);
+        return startSession(user, now);
+    }
+
     // Порядок проверок и есть свойство безопасности: лимит по адресу до базы и до BCrypt, затем
     // поиск пользователя (неизвестный — сравнение с хэшем-заглушкой), затем пароль. Неизвестный
     // логин и неверный пароль отвечают ОДИНАКОВО — это и мешает эндпоинту перечислить мерчантов.
     // Остаточная утечка (верный пароль к заблокированному аккаунту отличим) принята — AGENTS.md §10.
-    @Transactional(noRollbackFor = BusinessException.class)
-    public LoginResponse login(LoginRequest request, String clientIp) {
+    private User authenticate(String username, String password, String clientIp, Instant now) {
         // Ничего из этого не трогает базу и хэшер — в том и смысл.
         rateLimiter.checkAllowed(clientIp);
 
-        String cleanEmail = request.username() != null ? request.username().trim().toLowerCase() : "";
-        Instant now = Instant.now();
+        String cleanEmail = username != null ? username.trim().toLowerCase() : "";
         log.info("Login attempt for {}", cleanEmail);
 
         User user = userRepository.findForLoginByUsername(cleanEmail).orElse(null);
         if (user == null) {
-            passwordEncoder.matches(request.password(), ABSENT_USER_PASSWORD_HASH);
+            passwordEncoder.matches(password, ABSENT_USER_PASSWORD_HASH);
             recordAddressFailure(clientIp, cleanEmail);
             // Категория отказа, но никогда не введённый пароль. cleanEmail — недоверенный ввод: его
             // режет по ширине колонки AuditLogService, и он нигде не интерпретируется.
@@ -117,7 +153,7 @@ public class AuthService {
             user.setFailedLoginAttempts(0);
         }
 
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
             registerFailedAttempt(user, cleanEmail, clientIp, lockedOut, now);
             auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
                     "Login refused: wrong password");
@@ -145,7 +181,10 @@ public class AuthService {
             userRepository.save(user);
         }
         rateLimiter.reset(clientIp);
+        return user;
+    }
 
+    private LoginResponse startSession(User user, Instant now) {
         // Вход начинает новое семейство ротации; все последующие refresh остаются внутри него.
         LoginResponse response = issuePair(user, UUID.randomUUID(), now);
         // PCI-DSS 10.2 требует успехи не меньше отказов — вторжение выглядит как успешный вход не
@@ -271,6 +310,14 @@ public class AuthService {
                     stored.getUserId(), user == null ? "missing" : user.getStatus(), stored.getFamilyId());
             throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
         }
+        // Пароль сбросил администратор: сессия, начатая со старым, не продлевается (Р-100). Сброс гасит
+        // токены и сам — это подстраховка.
+        if (user.isPasswordChangeRequired()) {
+            refreshTokenService.revokeFamily(stored.getFamilyId(), now);
+            log.warn("Refresh refused: user {} must change the password; family {} revoked",
+                    stored.getUserId(), stored.getFamilyId());
+            throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
+        }
 
         // Отставка — условный UPDATE (markRotatedIfLive), а не save прочитанной сущности: он берёт
         // блокировку строки и не меняет ничего, если семейство успели отозвать, — иначе мы записали
@@ -333,7 +380,8 @@ public class AuthService {
                 jwtProvider.getExpirationMs() / 1000,
                 user.getRole(),
                 refresh.token(),
-                refreshTokenService.getTtl().toSeconds()
+                refreshTokenService.getTtl().toSeconds(),
+                false
         );
     }
 }

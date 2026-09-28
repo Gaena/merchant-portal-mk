@@ -36,6 +36,7 @@ export const apiClient = axios.create({
 const LOGIN_PATH = '/api/v1/auth/login';
 const REFRESH_PATH = '/api/v1/auth/refresh';
 const LOGOUT_PATH = '/api/v1/auth/logout';
+const CHANGE_PASSWORD_PATH = '/api/v1/auth/change-password';
 
 /**
  * Эндпоинты, к которым access-токен не прикладывается и по которым 401 не запускает
@@ -44,7 +45,7 @@ const LOGOUT_PATH = '/api/v1/auth/logout';
  * а не признак протухшего access-токена. Без этого исключения `/refresh`, вернувший 401,
  * запускал бы ещё один `/refresh` — и так по кругу.
  */
-const AUTH_PATHS: ReadonlySet<string> = new Set([LOGIN_PATH, REFRESH_PATH, LOGOUT_PATH]);
+const AUTH_PATHS: ReadonlySet<string> = new Set([LOGIN_PATH, REFRESH_PATH, LOGOUT_PATH, CHANGE_PASSWORD_PATH]);
 
 const isAuthEndpoint = (url: string | undefined): boolean => {
   if (!url) {
@@ -156,7 +157,7 @@ apiClient.interceptors.response.use(
     }
     const config = error.config as RetriableRequestConfig;
 
-    // 1. 401 от самих /login, /refresh, /logout — ответ по существу, не повод обновляться.
+    // 1. 401 от самих /login, /refresh, /logout, /change-password — ответ по существу, не повод обновляться.
     if (isAuthEndpoint(config.url)) {
       throw error;
     }

@@ -595,6 +595,9 @@ export interface TranslationDictionary {
     noCompany: string;
     newPassword: string;
     newPasswordHint: string;
+    /** Пароль, заданный администратором, пользователь сменит при первом входе (Р-100). */
+    issuedPasswordHint: string;
+    passwordChangePending: string;
     passwordWillChange: string;
     /** Свою роль и статус в этом окне не поменять: так себя легко лишить доступа. */
     selfHint: string;
@@ -648,6 +651,14 @@ export interface TranslationDictionary {
     malformedResponse: string;
     /** Выход после 15 минут без действий (PCI DSS 8.2.8, Р-99). */
     idleSignedOut: string;
+    /** Смена пароля, заданного не владельцем, при входе (PCI DSS 8.3.5, Р-100). */
+    passwordChangeRequired: string;
+    newPasswordLabel: string;
+    confirmPasswordLabel: string;
+    passwordRules: string;
+    passwordsDoNotMatch: string;
+    samePassword: string;
+    changePasswordAndSignIn: string;
   };
   errors: {
     forbiddenTitle: string;
@@ -1199,6 +1210,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       noCompany: 'No company',
       newPassword: 'New password (optional)',
       newPasswordHint: 'Leave empty to keep the current password. At least 12 characters with upper and lower case, a digit and a symbol.',
+      issuedPasswordHint: 'The user will be asked to change this password at the first sign-in.',
+      passwordChangePending: 'Password change pending',
       passwordWillChange: 'The password will be replaced',
       selfHint: 'You cannot change your own role or status here.',
       updated: 'User updated',
@@ -1243,6 +1256,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       authFailed: 'Sign-in failed',
       malformedResponse: 'The server answered without a session. Sign-in was refused — try again or contact your administrator.',
       idleSignedOut: 'You were signed out after 15 minutes of inactivity. Sign in again.',
+      passwordChangeRequired: 'Your password was set by an administrator. Choose your own password to sign in.',
+      newPasswordLabel: 'New password',
+      confirmPasswordLabel: 'Repeat the new password',
+      passwordRules: 'At least 12 characters: upper- and lower-case letters, a digit and a special character.',
+      passwordsDoNotMatch: 'The passwords do not match.',
+      samePassword: 'The new password must differ from the current one.',
+      changePasswordAndSignIn: 'Change password and sign in',
     },
     errors: {
       forbiddenTitle: 'Access denied',
@@ -1771,6 +1791,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       noCompany: 'Şirkətsiz',
       newPassword: 'Yeni parol (istəyə bağlı)',
       newPasswordHint: 'Cari parolu saxlamaq üçün boş buraxın. Ən azı 12 simvol: böyük və kiçik hərf, rəqəm və xüsusi simvol.',
+      issuedPasswordHint: 'İstifadəçi ilk girişdə bu parolu dəyişməli olacaq.',
+      passwordChangePending: 'Parol dəyişikliyi gözlənilir',
       passwordWillChange: 'Parol dəyişdiriləcək',
       selfHint: 'Öz rolunuzu və statusunuzu burada dəyişə bilməzsiniz.',
       updated: 'İstifadəçi yeniləndi',
@@ -1815,6 +1837,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       authFailed: 'Giriş alınmadı',
       malformedResponse: 'Server sessiyasız cavab verdi. Giriş rədd edildi — yenidən cəhd edin və ya administratorla əlaqə saxlayın.',
       idleSignedOut: '15 dəqiqə fəaliyyət olmadığı üçün sistemdən çıxdınız. Yenidən daxil olun.',
+      passwordChangeRequired: 'Parolunuzu administrator təyin edib. Daxil olmaq üçün öz parolunuzu seçin.',
+      newPasswordLabel: 'Yeni parol',
+      confirmPasswordLabel: 'Yeni parolu təkrarlayın',
+      passwordRules: 'Ən azı 12 simvol: böyük və kiçik hərflər, rəqəm və xüsusi simvol.',
+      passwordsDoNotMatch: 'Parollar üst-üstə düşmür.',
+      samePassword: 'Yeni parol cari paroldan fərqli olmalıdır.',
+      changePasswordAndSignIn: 'Parolu dəyişin və daxil olun',
     },
     errors: {
       forbiddenTitle: 'Giriş qadağandır',
@@ -2343,6 +2372,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       noCompany: 'Без компании',
       newPassword: 'Новый пароль (необязательно)',
       newPasswordHint: 'Оставьте пустым, чтобы не менять. Не меньше 12 символов: заглавные и строчные буквы, цифра и спецсимвол.',
+      issuedPasswordHint: 'Пользователь сменит этот пароль при первом входе.',
+      passwordChangePending: 'Ждёт смены пароля',
       passwordWillChange: 'Пароль будет заменён',
       selfHint: 'Свою роль и статус здесь поменять нельзя.',
       updated: 'Пользователь обновлён',
@@ -2387,6 +2418,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       authFailed: 'Вход не выполнен',
       malformedResponse: 'Сервер ответил без сессии. Вход отклонён — попробуйте ещё раз или обратитесь к администратору.',
       idleSignedOut: 'Сессия завершена: 15 минут без действий. Войдите снова.',
+      passwordChangeRequired: 'Пароль вам задал администратор. Чтобы войти, придумайте свой.',
+      newPasswordLabel: 'Новый пароль',
+      confirmPasswordLabel: 'Повторите новый пароль',
+      passwordRules: 'Не меньше 12 символов: заглавные и строчные буквы, цифра и спецсимвол.',
+      passwordsDoNotMatch: 'Пароли не совпадают.',
+      samePassword: 'Новый пароль должен отличаться от текущего.',
+      changePasswordAndSignIn: 'Сменить пароль и войти',
     },
     errors: {
       forbiddenTitle: 'Нет доступа',

@@ -5183,6 +5183,34 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
 
 ---
 
+### 29.09.2026 — смена выданного пароля при первом входе, PCI DSS 8.3.5 (Р-100)
+
+- **Зачем.** Пароль пользователю задаёт администратор или руководитель, и он же его знает; пароль
+  первого администратора лежит в файле окружения. PCI DSS 4.0.1 п. 8.3.5: такой пароль меняется при
+  первом же использовании.
+- **auth.** Миграция `005`: `users.password_change_required` (по умолчанию `false` — существующие учётки не
+  затронуты). Флаг ставят `POST /users`, сброс чужого пароля через `PATCH /users/{id}` (с гашением его
+  сессий) и bootstrap. Вход с флагом — `200` с `passwordChangeRequired: true` без токенов и запись
+  `LOGIN`/`DENIED` `Login held…`. Новый публичный `POST /api/v1/auth/change-password`: проверки входа
+  (`AuthService.authenticate`, общий с `login`), новый пароль по политике и не равен текущему, флаг
+  снимается, прочие сессии гасятся, сессия выдаётся. `/refresh` с флагом — `401` и гашение цепочки.
+  `passwordChangeRequired` — в `UserResponse`. У `LoginResponse` маскирующий `toString`.
+- **Фронтенд.** Вход с флагом открывает на той же странице форму смены (новый пароль, повтор, правила —
+  зеркало `PasswordConstraintValidator` в `utils/password.ts`), затем сессия. `AuthContext.changePassword`.
+  На экране пользователей — подсказка при создании и сбросе и метка «Ждёт смены пароля». Тексты на трёх языках.
+- **Тесты** (прогнал пользователь 29.09.2026, зелёные): `auth` — `PasswordChangeIntegrationTest` (новый: создание →
+  вход без сессии → отказы смены → смена и вход; сброс администратором гасит сессии и снова требует смену;
+  свой пароль через `PATCH` смены не требует; смена по своей воле гасит прочие сессии),
+  `AdminBootstrapIntegrationTest.bootstrappedAdmin_canLogIn` (через смену пароля), `MigrationOrderTest` (колонка 005 на восстановленной базе),
+  `AuthIntegrationTest` (жизненный цикл — через смену; фикстура `createUser` — пользователь, уже сменивший
+  пароль). `compileTestJava` по `auth`, `npm run typecheck`, `npm run lint` — без ошибок. В браузере не
+  проверялось: нужен перезапуск `auth` с новой миграцией.
+- Документы: `decisions.md` (Р-100), `AGENTS.md` §6 и §9, `auth.md` §4.1, §4.1.1, §4.1.3, §4.2,
+  `application_description.md`, `deployment_guide.md` §20.1, `admin_guide.md` §6, `technical_handover.md`
+  §4.1 и §4.4, Postman-коллекция `auth`.
+
+---
+
 ## Описания закрытых задач
 
 > Перенесено из `AGENTS.md` §10 («Закрытые блокеры» и записи, попавшие в «Тонкости») 13.09.2026

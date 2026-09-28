@@ -30,9 +30,19 @@ export interface LoginResponse {
   role: string;
   refreshToken: string;
   refreshExpiresIn: number;
+  /**
+   * Пароль верен, но задан не владельцем (PCI DSS 8.3.5, Р-100): токенов в ответе нет, сессию даёт
+   * только `POST /api/v1/auth/change-password`.
+   */
+  passwordChangeRequired?: boolean;
 }
 
-export type AuthErrorCode = 'UNKNOWN_ROLE' | 'MALFORMED_RESPONSE' | 'NO_REFRESH_TOKEN' | 'SESSION_CLEARED';
+export type AuthErrorCode =
+  | 'UNKNOWN_ROLE'
+  | 'MALFORMED_RESPONSE'
+  | 'NO_REFRESH_TOKEN'
+  | 'SESSION_CLEARED'
+  | 'PASSWORD_CHANGE_REQUIRED';
 
 /** Ошибка сессии, различимая по `code` (для перевода текста в UI). Не axios-ошибка. */
 export class AuthError extends Error {

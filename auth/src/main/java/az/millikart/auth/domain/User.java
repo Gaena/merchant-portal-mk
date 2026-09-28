@@ -58,6 +58,11 @@ public class User {
     @Column(name = "lockout_until")
     private Instant lockoutUntil;
 
+    // Пароль задал не владелец — при создании, сбросе или bootstrap: до смены сессии нет (PCI DSS 8.3.5, Р-100).
+    @Column(name = "password_change_required", nullable = false)
+    @Builder.Default
+    private boolean passwordChangeRequired = false;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

@@ -214,6 +214,7 @@ erDiagram
         varchar status "Статус учётной записи, DELETED — мягкое удаление"
         integer failed_login_attempts
         timestamp lockout_until
+        boolean password_change_required "Пароль задал не владелец — сменить при входе (Р-100)"
         timestamp created_at
     }
 
@@ -346,6 +347,7 @@ changeset'ы не редактируются.
 | `auth` | `002-user-directory-schema.xml` | `companies`, `users`, поля блокировки входа, внешние ключи `users → companies` и `terminals → companies`; администратора не заводит |
 | `auth` | `003-refresh-tokens.xml` | `refresh_tokens` и индексы |
 | `auth` | `004-audit-logs.xml` | `audit_logs` в финальном виде, если таблицы ещё нет |
+| `auth` | `005-password-change-required.xml` | `users.password_change_required` (Р-100) |
 | `directory` | `003-directory-schema.xml` | `companies` и `terminals`, аудит-колонки |
 | `directory` | `004-audit-log-ip-and-indexes.xml` | `client_ip`, `outcome` и три индекса журнала |
 | `directory` | `005-terminal-status.xml` | `terminals.status` |

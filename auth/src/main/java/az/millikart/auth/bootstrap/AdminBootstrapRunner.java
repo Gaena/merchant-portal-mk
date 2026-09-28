@@ -76,6 +76,8 @@ public class AdminBootstrapRunner implements ApplicationRunner {
                 .role(Role.SYSTEM_ADMIN.name())
                 .companyId(null)
                 .status("ACTIVE")
+                // Пароль из переменной окружения знает тот, кто ставил систему: сменить при первом входе (Р-100).
+                .passwordChangeRequired(true)
                 .build();
         admin = userRepository.save(admin);
 

@@ -2,6 +2,7 @@ package az.millikart.auth;
 
 import az.millikart.auth.domain.Company;
 import az.millikart.auth.domain.User;
+import az.millikart.auth.dto.ChangePasswordRequest;
 import az.millikart.auth.dto.CreateUserRequest;
 import az.millikart.auth.dto.LoginRequest;
 import az.millikart.auth.dto.UpdateUserRequest;
@@ -150,11 +151,20 @@ public class AuthIntegrationTest {
         String headIdStr = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asText();
         UUID headId = UUID.fromString(headIdStr);
 
+        // Пароль задал администратор: вход без сессии, сессия — после смены (Р-100).
         LoginRequest headLogin = new LoginRequest("head@comp01.com", "HeadPassword123!");
-        MvcResult loginResult = mockMvc.perform(post("/api/v1/auth/login")
+        mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(headLogin)))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.passwordChangeRequired", is(true)))
+                .andExpect(jsonPath("$.token").value(org.hamcrest.Matchers.nullValue()));
+        MvcResult loginResult = mockMvc.perform(post("/api/v1/auth/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new ChangePasswordRequest("head@comp01.com", "HeadPassword123!", "HeadPassword456!"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.passwordChangeRequired", is(false)))
                 .andReturn();
 
         String headToken = "Bearer " + objectMapper.readTree(loginResult.getResponse().getContentAsString()).get("token").asText();
@@ -362,6 +372,7 @@ public class AuthIntegrationTest {
         companyRepository.save(Company.builder().id(id).name("Company " + id).status("ACTIVE").build());
     }
 
+    // Пользователь, уже сменивший выданный пароль (Р-100): тесты здесь о правах, а не о первом входе.
     private UUID createUser(String username, String role, String companyId) throws Exception {
         String body = mockMvc.perform(post("/api/v1/users")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
@@ -370,7 +381,11 @@ public class AuthIntegrationTest {
                                 username, USER_PASSWORD, "Test User", role, companyId))))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(objectMapper.readTree(body).get("id").asText());
+        UUID id = UUID.fromString(objectMapper.readTree(body).get("id").asText());
+        User user = userRepository.findById(id).orElseThrow();
+        user.setPasswordChangeRequired(false);
+        userRepository.save(user);
+        return id;
     }
 
     private String login(String username) throws Exception {

@@ -431,6 +431,9 @@ export const UsersPage: React.FC = () => {
                       color={u.status === 'ACTIVE' ? 'success' : u.status === 'BLOCKED' ? 'warning' : 'default'}
                       size="small"
                     />
+                    {u.passwordChangeRequired === true && (
+                      <Chip label={tObj.users.passwordChangePending} size="small" variant="outlined" sx={{ ml: 1 }} />
+                    )}
                   </TableCell>
                   <TableCell align="center">
                     {/* Кнопки — только там, где бэкенд примет действие (Р-62, Р-85). Удалить себя
@@ -487,6 +490,7 @@ export const UsersPage: React.FC = () => {
               value={userForm.password}
               onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))}
               placeholder="••••••••"
+              helperText={tObj.users.issuedPasswordHint}
               fullWidth
               required
             />
@@ -616,7 +620,9 @@ export const UsersPage: React.FC = () => {
                 autoComplete="new-password"
                 value={editForm.password}
                 onChange={e => setEditForm(f => ({ ...f, password: e.target.value }))}
-                helperText={tObj.users.newPasswordHint}
+                helperText={isSelf(editing)
+                  ? tObj.users.newPasswordHint
+                  : `${tObj.users.newPasswordHint} ${tObj.users.issuedPasswordHint}`}
                 fullWidth
               />
             </Stack>

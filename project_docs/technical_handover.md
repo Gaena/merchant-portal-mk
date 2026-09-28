@@ -134,6 +134,8 @@ graph TB
 ### 4.1. Авторизация и защита данных
 - Вход по логину и паролю; access-токен JWT живёт 15 минут, refresh-токен обновляется с ротацией;
   выход и отзыв сессий при блокировке или удалении учётной записи.
+- Пароль, заданный не владельцем, — при создании пользователя, сбросе администратором или первом
+  запуске — пользователь меняет при первом входе, до смены сессии нет (PCI DSS 8.3.5, с 29.09.2026).
 - Выход по простою (PCI DSS 8.2.8, с 29.09.2026): 15 минут без действий пользователя — портал
   завершает сессию и просит войти снова, в том числе когда его открывают после перерыва. На сервере
   сессия гаснет через 20 минут без обновления.
@@ -270,14 +272,14 @@ graph TB
 
 | Событие | entityType | action | outcome | entityId | performedBy | companyId | Кто пишет | details |
 |---|---|---|---|---|---|---|---|---|
-| Вход в систему | `AUTH` | `LOGIN` | SUCCESS / DENIED | логин, как его ввели | логин | компания аккаунта; пусто, если аккаунт не найден | `auth`, `AuthService.login` | успех: `Login successful, role …`; отказ: категория (`no such account`, `wrong password`, `account locked until …`, `account status …`) — пароля нет ни в каком виде |
+| Вход в систему | `AUTH` | `LOGIN` | SUCCESS / DENIED | логин, как его ввели | логин | компания аккаунта; пусто, если аккаунт не найден | `auth`, `AuthService.login`, `AuthService.changePassword` | успех: `Login successful, role …`; отказ: категория (`no such account`, `wrong password`, `account locked until …`, `account status …`), верный пароль, заданный не владельцем, — `Login held: the password must be changed first` (Р-100) — пароля нет ни в каком виде |
 | Выход из системы | `AUTH` | `LOGOUT` | SUCCESS | логин | логин | компания пользователя | `auth`, `AuthService.logout` | `Logout: revoked N token(s) of family …`; пишется **только** если токен нашёлся и был отозван — 204 на незнакомый токен записи не оставляет |
 | Блокировка аккаунта после 6 неудач | `AUTH` | `LOCKOUT` | DENIED | логин | логин | компания аккаунта | `auth`, `AuthService.registerFailedAttempt` | `Account locked until … after N failed attempts` (PCI-DSS 8.3.4) |
 | IP исчерпал лимит попыток входа | `AUTH` | `RATE_LIMIT` | DENIED | логин последней попытки | логин последней попытки | пусто | `auth`, `AuthService.recordAddressFailure` | одна запись на окно, не на попытку; сам адрес — в `client_ip` |
 | Повторное использование refresh-токена | `AUTH` | `TOKEN_REUSE` | DENIED | логин владельца токена | логин владельца | пусто | `auth`, `AuthService.refresh` | `Rotated refresh token reused … revoked N token(s) of family …`; самого токена в записи нет |
 | Создание пользователя | `USER` | `CREATE` | SUCCESS | UUID пользователя | логин актора; `system` у bootstrap | компания созданного | `auth`, `UserService.createUser`; `AdminBootstrapRunner.run` | `Created user … with role …` |
 | Изменение пользователя | `USER` | `UPDATE` | SUCCESS / DENIED | UUID пользователя | логин актора | успех: компания цели; отказ: компания актора | `auth`, `UserService.updateUser` | перечень полей `Changed role X -> Y, …`; отказ — попытка выдать `SYSTEM_ADMIN` не-админом |
-| Смена пароля пользователя | `USER` | `PASSWORD_CHANGE` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.updateUser` | `Password changed for …` — без пароля |
+| Смена пароля пользователя | `USER` | `PASSWORD_CHANGE` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.updateUser`, `AuthService.changePassword` | `Password changed for …` — администратором или руководителем; `Password changed by its owner at sign-in` — самим пользователем (Р-100); без пароля |
 | Блокировка аккаунта администратором | `USER` | `BLOCK` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.updateUser` | `Account set to … for … (was ACTIVE)` |
 | Разблокировка аккаунта | `USER` | `UNBLOCK` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.updateUser` | `Account reactivated for … (was …)` |
 | Удаление пользователя (soft) | `USER` | `DELETE` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.deleteUser` | `Soft deleted user … (role …)` |

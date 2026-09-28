@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { Box, CircularProgress } from '@mui/material';
 import { apiClient, describeError, refreshSession, revokeRefreshToken } from '../api/client';
 import {
+  AuthError,
   applyLoginResponse,
   clearSession,
   getAccessToken,
@@ -23,8 +24,13 @@ interface AuthContextType {
   /** Есть access-токен в памяти (и профиль). Срок токена здесь не считается: протухший
    *  токен ловит интерсептор по 401 и молча обновляет — см. `api/client.ts`. */
   isAuthenticated: boolean;
-  /** Бросает `AuthError('UNKNOWN_ROLE')`, если сервер вернул нераспознанную роль — вход не состоялся. */
+  /**
+   * Бросает `AuthError('UNKNOWN_ROLE')`, если сервер вернул нераспознанную роль, и
+   * `AuthError('PASSWORD_CHANGE_REQUIRED')`, если пароль задан не владельцем (Р-100) — вход не состоялся.
+   */
   login: (email: string, password: string) => Promise<void>;
+  /** Смена пароля по текущему и вход с новым — `POST /api/v1/auth/change-password` (Р-100). */
+  changePassword: (email: string, currentPassword: string, newPassword: string) => Promise<void>;
   /** Гасит refresh-токен на сервере (ошибку запроса игнорирует, но логирует) и чистит состояние. */
   logout: () => Promise<void>;
 }
@@ -80,8 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [restoring]);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const response = await apiClient.post<LoginResponse>('/api/v1/auth/login', { username: email, password });
+  const startSession = useCallback((response: { data: LoginResponse }, email: string) => {
     // Если в хранилище остался прежний refresh-токен (восстановление не удалось из-за сети,
     // и пользователь вошёл заново) — новый вход его перезапишет; гасим на сервере вдогонку,
     // чтобы не оставлять живую цепочку без хозяина.
@@ -100,6 +105,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Вход — действие пользователя: отсчёт простоя начинается отсюда.
     markActivity(Date.now());
   }, []);
+
+  const login = useCallback(async (email: string, password: string) => {
+    const response = await apiClient.post<LoginResponse>('/api/v1/auth/login', { username: email, password });
+    // Пароль задал не владелец: токенов в ответе нет, сессии не будет до смены (PCI DSS 8.3.5, Р-100).
+    if (response.data?.passwordChangeRequired === true) {
+      throw new AuthError('PASSWORD_CHANGE_REQUIRED', 'The password must be changed before a session starts');
+    }
+    startSession(response, email);
+  }, [startSession]);
+
+  const changePassword = useCallback(async (email: string, currentPassword: string, newPassword: string) => {
+    const response = await apiClient.post<LoginResponse>('/api/v1/auth/change-password',
+      { username: email, currentPassword, newPassword });
+    startSession(response, email);
+  }, [startSession]);
 
   const logout = useCallback(async () => {
     const refreshToken = getRefreshToken();
@@ -122,8 +142,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Токен и профиль ставятся и сбрасываются вместе (session.ts), но источник истины — токен.
     isAuthenticated,
     login,
+    changePassword,
     logout,
-  }), [user, isAuthenticated, login, logout]);
+  }), [user, isAuthenticated, login, changePassword, logout]);
 
   if (restoring) {
     return <RestoringSession />;
