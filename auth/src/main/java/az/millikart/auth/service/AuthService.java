@@ -54,8 +54,6 @@ public class AuthService {
     // они администратору, а не вызывающему.
     private static final String ACCOUNT_NOT_ACTIVE = "Account is not active. Please contact your administrator.";
 
-    static final String SAME_PASSWORD = "The new password must differ from the current one";
-
     // Настоящий BCrypt-хэш случайной строки, которой никто не знает, — на случай несуществующего
     // логина. Его работа — сжечь те же ~80 мс, что matches тратит на настоящем аккаунте: без него
     // неизвестный логин отвечает на порядок быстрее известного, и одинаковый текст ошибки не значит
@@ -70,6 +68,7 @@ public class AuthService {
     private final LoginRateLimiter rateLimiter;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
+    private final PasswordHistoryService passwordHistory;
 
     public AuthService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
@@ -77,7 +76,8 @@ public class AuthService {
                        RefreshTokenService refreshTokenService,
                        LoginRateLimiter rateLimiter,
                        AuditLogService auditLogService,
-                       ApplicationEventPublisher eventPublisher) {
+                       ApplicationEventPublisher eventPublisher,
+                       PasswordHistoryService passwordHistory) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtProvider = jwtProvider;
@@ -85,6 +85,7 @@ public class AuthService {
         this.rateLimiter = rateLimiter;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
+        this.passwordHistory = passwordHistory;
     }
 
     @Transactional(noRollbackFor = BusinessException.class)
@@ -108,9 +109,9 @@ public class AuthService {
     public LoginResponse changePassword(ChangePasswordRequest request, String clientIp) {
         Instant now = Instant.now();
         User user = authenticate(request.username(), request.currentPassword(), clientIp, now);
-        if (passwordEncoder.matches(request.newPassword(), user.getPasswordHash())) {
-            throw new BusinessException(SAME_PASSWORD);
-        }
+        // Не повторяет ни один из четырёх последних (PCI DSS 8.3.7, Р-102); текущий уходит в историю.
+        passwordHistory.requireNotRecent(user, request.newPassword());
+        passwordHistory.rememberCurrent(user, now);
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         user.setPasswordChangeRequired(false);
         userRepository.save(user);

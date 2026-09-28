@@ -129,7 +129,7 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 | Пакет | Что внутри |
 |:---|:---|
 | `controller` | `AuthController` (вход, обновление пары токенов, выход), `UserController` |
-| `service` | `AuthService` (вход, смена пароля при входе, ротация и отзыв refresh-токенов), `RefreshTokenService`, `UserService` (пользователи; отзыв сессий при блокировке, сбросе пароля и удалении), `InactiveAccountService` (блокировка учёток без активности 90 дней, Р-101) |
+| `service` | `AuthService` (вход, смена пароля при входе, ротация и отзыв refresh-токенов), `RefreshTokenService`, `UserService` (пользователи; отзыв сессий при блокировке, сбросе пароля и удалении), `InactiveAccountService` (блокировка учёток без активности 90 дней, Р-101), `PasswordHistoryService` (запрет четырёх последних паролей, Р-102) |
 | `security` | `LoginRateLimiter` — лимит неудачных входов с одного адреса, счётчики в памяти |
 | `bootstrap` | `AdminBootstrapRunner` — разовое создание первого `SYSTEM_ADMIN` |
 | `scheduler` | `RefreshTokenCleanupScheduler`, `InactiveAccountScheduler` (Р-101) |
@@ -185,6 +185,7 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 erDiagram
     companies ||--o{ users : "company_id"
     users ||--o{ refresh_tokens : "user_id"
+    users ||--o{ password_history : "user_id"
     companies ||--o{ terminals : "company_id"
     companies ||--o{ audit_logs : "company_id"
     terminals ||--o{ payment_links : "terminal_id"
@@ -217,6 +218,13 @@ erDiagram
         boolean password_change_required "Пароль задал не владелец — сменить при входе (Р-100)"
         timestamp last_activity_at "Последняя активность; 90 дней без неё — блокировка (Р-101)"
         timestamp created_at
+    }
+
+    password_history {
+        uuid id PK
+        uuid user_id FK "→ users.id, ON DELETE CASCADE"
+        varchar password_hash "BCrypt прежнего пароля; три последних (Р-102)"
+        timestamp replaced_at
     }
 
     refresh_tokens {
@@ -350,6 +358,7 @@ changeset'ы не редактируются.
 | `auth` | `004-audit-logs.xml` | `audit_logs` в финальном виде, если таблицы ещё нет |
 | `auth` | `005-password-change-required.xml` | `users.password_change_required` (Р-100) |
 | `auth` | `006-last-activity.xml` | `users.last_activity_at`; существующим строкам — момент миграции (Р-101) |
+| `auth` | `007-password-history.xml` | `password_history`, индекс и FK на `users` (Р-102) |
 | `directory` | `003-directory-schema.xml` | `companies` и `terminals`, аудит-колонки |
 | `directory` | `004-audit-log-ip-and-indexes.xml` | `client_ip`, `outcome` и три индекса журнала |
 | `directory` | `005-terminal-status.xml` | `terminals.status` |
@@ -411,7 +420,7 @@ changeset'ы не редактируются.
 
 | Данные | Пишет | Кто ещё читает или пишет, и как |
 |:---|:---|:---|
-| `users`, `refresh_tokens` | `auth` | — |
+| `users`, `refresh_tokens`, `password_history` | `auth` | — |
 | `companies` | `directory` | `auth` — название компании нативным запросом для поиска пользователей; `pbl` — логин и пароль компании к провайдеру (Р-93); `ecom` — логин компании нативным запросом для скоупа выписки (Р-97) |
 | `terminals` | `directory` | `pbl` — компания, статус и `terminal_rid` терминала для заказов у шлюза. `ecom` его не читает (Р-97), только добавляет свои колонки миграцией |
 | `payment_links`, `transactions` | `pbl` | `directory` — статусы ссылок нативным запросом при блокировке и разблокировке терминала, в той же транзакции |

@@ -61,19 +61,22 @@ public class UserService {
     private final RefreshTokenService refreshTokenService;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
+    private final PasswordHistoryService passwordHistory;
 
     public UserService(UserRepository userRepository,
                        CompanyRepository companyRepository,
                        PasswordEncoder passwordEncoder,
                        RefreshTokenService refreshTokenService,
                        AuditLogService auditLogService,
-                       ApplicationEventPublisher eventPublisher) {
+                       ApplicationEventPublisher eventPublisher,
+                       PasswordHistoryService passwordHistory) {
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenService = refreshTokenService;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
+        this.passwordHistory = passwordHistory;
     }
 
     @Transactional
@@ -207,9 +210,15 @@ public class UserService {
         }
         boolean passwordResetByOther = false;
         if (request.password() != null && !request.password().isBlank()) {
+            passwordResetByOther = !user.getId().toString().equals(UserPrincipal.getUserId(principal));
+            // Свой пароль не повторяет четырёх последних (Р-102). На чужом проверки нет: отказ сказал бы
+            // администратору, какие пароли пользователь недавно использовал.
+            if (!passwordResetByOther) {
+                passwordHistory.requireNotRecent(user, request.password());
+            }
+            passwordHistory.rememberCurrent(user, Instant.now());
             user.setPasswordHash(passwordEncoder.encode(request.password()));
             // Сброс чужого пароля — смена при следующем входе (Р-100); свой пароль владелец задал сам.
-            passwordResetByOther = !user.getId().toString().equals(UserPrincipal.getUserId(principal));
             user.setPasswordChangeRequired(passwordResetByOther);
             changes.add(passwordResetByOther ? "password (to be changed at next sign-in)" : "password");
             passwordChanged = true;

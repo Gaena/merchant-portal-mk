@@ -105,7 +105,7 @@
 								"change-password"
 							]
 						},
-						"description": "Changes the password by the current one and signs in with the new one (PCI DSS 8.3.5, Р-100). Public, like Login: the same address limit, account lockout and status checks apply; a wrong current password is 400 and counts as a failed attempt. The new password follows the same policy as on user creation and must differ from the current one. Returns the same body as Login, with passwordChangeRequired=false; the other sessions of the user are revoked."
+						"description": "Changes the password by the current one and signs in with the new one (PCI DSS 8.3.5, Р-100). Public, like Login: the same address limit, account lockout and status checks apply; a wrong current password is 400 and counts as a failed attempt. The new password follows the same policy as on user creation and must not repeat any of the last 4 passwords (PCI DSS 8.3.7, Р-102). Returns the same body as Login, with passwordChangeRequired=false; the other sessions of the user are revoked."
 					},
 					"response": []
 				},

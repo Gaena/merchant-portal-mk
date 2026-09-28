@@ -165,7 +165,7 @@ export JWT_SECRET="$(openssl rand -base64 48)"   # одно значение н�
 
    | Таблица | Схему пишет | Кто ещё читает или пишет |
    |:---|:---|:---|
-   | `users`, `refresh_tokens` | `auth` | — |
+   | `users`, `refresh_tokens`, `password_history` | `auth` | — |
    | `companies` | `auth` (создаёт) + `directory` (дополняет), `pbl` (создаёт, если ещё нет, и добавляет колонки кредов) | `auth` читает название нативным запросом для поиска пользователей; `pbl` — креды компании к провайдеру (Р-93); `ecom` — логин компании для скоупа выписки (Р-97) |
    | `terminals` | `directory` (создаёт и дополняет), `pbl` (создаёт, если ещё нет; `terminal_rid`, если ещё нет), `ecom` (`status_source`, `merchant_rid`, если ещё нет) | `pbl` читает напрямую, минуя REST |
    | `payment_links`, `transactions` | `pbl` | `directory` меняет статусы ссылок нативным запросом при блокировке терминала (Р-39) |

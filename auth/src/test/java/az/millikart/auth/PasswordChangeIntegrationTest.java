@@ -96,7 +96,7 @@ class PasswordChangeIntegrationTest {
                 .andExpect(jsonPath("$.message", is("Invalid username or password")));
         assertEquals(1, clerk().getFailedLoginAttempts());
         changePassword(CLERK, ISSUED_PASSWORD, ISSUED_PASSWORD).andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message", is("The new password must differ from the current one")));
+                .andExpect(jsonPath("$.message", is("The new password must differ from the last 4 passwords")));
         changePassword(CLERK, ISSUED_PASSWORD, "short").andExpect(status().isBadRequest());
         assertTrue(clerk().isPasswordChangeRequired(), "a refused change leaves the requirement in place");
 
