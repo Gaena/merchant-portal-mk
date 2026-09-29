@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import az.millikart.common.security.JwtProvider;
+import az.millikart.common.security.UserPrincipal;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentLinkStatus;
 import az.millikart.pbl.domain.PaymentType;
@@ -15,10 +16,13 @@ import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
 import az.millikart.pbl.provider.AcquiringClient;
 import az.millikart.pbl.provider.StubAcquirerConfig;
+import az.millikart.pbl.dto.DashboardSummaryResponse;
+import az.millikart.pbl.repository.DashboardRepository;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRefundRepository;
 import az.millikart.pbl.repository.TransactionRepository;
+import az.millikart.pbl.service.DashboardService;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,25 +37,19 @@ import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
-// Сводка главной страницы (P3-7). До неё главная считала аналитику в браузере по двадцати строкам
-// и называла результат «All system transactions»; здесь проверяется, что теперь считает база и
-// что она считает именно то, что написано на экране.
-//
-// На настоящей PostgreSQL, а не на H2, и здесь это самое существенное из всех: сводка считается
-// группировками с границами суток в часовом поясе Баку. Функции работы с датами и раскладка по
-// окнам у двух СУБД разные, и на эмуляции тест подтверждал бы чужую арифметику.
+// Статистика оплат по ссылкам (P3-7, Р-91): считает база, и считает то, что написано на экране.
+// На настоящей PostgreSQL: сводка режет сутки в поясе отчёта, а функции дат и раскладка по окнам у
+// H2 другие — на эмуляции тест подтверждал бы чужую арифметику.
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import({StubAcquirerConfig.class, PostgresTestContainer.class})
@@ -70,6 +68,7 @@ public class DashboardSummaryTest {
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private TransactionRefundRepository transactionRefundRepository;
     @Autowired private AcquiringClient acquiringClient;
+    @Autowired private DashboardRepository dashboardRepository;
 
     private ZoneId reportZone;
     private String adminToken;
@@ -286,11 +285,41 @@ public class DashboardSummaryTest {
                 after.atTime(LocalTime.of(0, 30)).atZone(reportZone).toInstant());
 
         JsonNode daily = summary(headAToken, "").get("dailyTotals");
+        // Пустой ответ прошёл бы цикл ниже вхолостую — дни обязаны быть.
+        Assertions.assertEquals(7, daily.size(), "seven days by default: " + daily);
         for (JsonNode day : daily) {
             LocalDate date = LocalDate.parse(day.get("date").asText());
             long expected = date.equals(before) || date.equals(after) ? 1 : 0;
             Assertions.assertEquals(expected, day.get("transactionCount").asLong(),
                     "23:30 and 00:30 in the report zone are two different days, " + date);
+        }
+    }
+
+    // Пояс отчёта, заведомо не совпадающий с поясом машины разработчика: на бакинской JVM подмена
+    // пояса отчёта системным (ZoneId.systemDefault() в foldBuckets) неотличима, и сторож выше её не
+    // ловит. Токио (+09:00, без летнего времени) отличается от любого европейского пояса. Сервис
+    // собран из бинов этого же контекста — те же PostgreSQL и данные, другой только пояс.
+    @Test
+    public void bucketsFollowTheConfiguredZone_notTheMachineZone() {
+        ZoneId tokyo = ZoneId.of("Asia/Tokyo");
+        DashboardService tokyoService = new DashboardService(dashboardRepository, terminalRepository, tokyo.getId());
+        LocalDate before = LocalDate.now(tokyo).minusDays(2);
+        LocalDate after = LocalDate.now(tokyo).minusDays(1);
+        PaymentLink link = link(TERMINAL_A, "AZN");
+        seed(link, TransactionStatus.SUCCESS, "100.00", null, "0.00",
+                before.atTime(LocalTime.of(23, 30)).atZone(tokyo).toInstant());
+        seed(link, TransactionStatus.SUCCESS, "100.00", null, "0.00",
+                after.atTime(LocalTime.of(0, 30)).atZone(tokyo).toInstant());
+
+        DashboardSummaryResponse summary = tokyoService.summary(null, null,
+                new UserPrincipal("head-a", "head-a@test.com", "COMPANY_HEAD", COMPANY_A));
+
+        Assertions.assertEquals("Asia/Tokyo", summary.window().zone(), "the answer names the zone it counted in");
+        Assertions.assertEquals(7, summary.dailyTotals().size(), "seven days by default: " + summary.dailyTotals());
+        for (DashboardSummaryResponse.DailyTotal day : summary.dailyTotals()) {
+            long expected = day.date().equals(before) || day.date().equals(after) ? 1 : 0;
+            Assertions.assertEquals(expected, day.transactionCount(),
+                    "days are cut in the configured zone, not the machine's, " + day.date());
         }
     }
 
@@ -470,49 +499,5 @@ public class DashboardSummaryTest {
 
     private static BigDecimal amount(JsonNode row, String field) {
         return new BigDecimal(row.get(field).asText());
-    }
-
-    // Пояс отчёта, заведомо не совпадающий с поясом машины разработчика: на бакинской JVM
-    // подмена пояса отчёта системным была бы неотличима, и сторож выше её бы не поймал.
-    // Токио (+09:00, без перехода на летнее время) отличается от любого европейского пояса.
-    //
-    // Это отдельный Spring-контекст, поэтому запрос идёт через **его** MockMvc: через внешний
-    // ответил бы контекст с Asia/Baku, и тест проверял бы не то, что нужно. Окружающая фикстура
-    // (setup, seed, токены) переиспользуется как есть — оба контекста делят одну H2.
-    @Nested
-    @SpringBootTest(properties = "pbl.dashboard.zone=Asia/Tokyo")
-    @AutoConfigureMockMvc
-    @Import(StubAcquirerConfig.class)
-    class WithForeignReportZone {
-
-        private static final ZoneId TOKYO = ZoneId.of("Asia/Tokyo");
-
-        @Autowired
-        private MockMvc tokyoMvc;
-
-        @Test
-        public void bucketsFollowTheConfiguredZone_notTheMachineZone() throws Exception {
-            LocalDate before = LocalDate.now(TOKYO).minusDays(2);
-            LocalDate after = LocalDate.now(TOKYO).minusDays(1);
-            PaymentLink link = link(TERMINAL_A, "AZN");
-            seed(link, TransactionStatus.SUCCESS, "100.00", null, "0.00",
-                    before.atTime(LocalTime.of(23, 30)).atZone(TOKYO).toInstant());
-            seed(link, TransactionStatus.SUCCESS, "100.00", null, "0.00",
-                    after.atTime(LocalTime.of(0, 30)).atZone(TOKYO).toInstant());
-
-            JsonNode body = exact(tokyoMvc.perform(get("/api/v1/dashboard/summary")
-                            .header(HttpHeaders.AUTHORIZATION, headAToken))
-                    .andExpect(status().isOk())
-                    .andReturn().getResponse().getContentAsString());
-
-            Assertions.assertEquals("Asia/Tokyo", body.get("window").get("zone").asText(),
-                    "the answer names the zone it counted in");
-            for (JsonNode day : body.get("dailyTotals")) {
-                LocalDate date = LocalDate.parse(day.get("date").asText());
-                long expected = date.equals(before) || date.equals(after) ? 1 : 0;
-                Assertions.assertEquals(expected, day.get("transactionCount").asLong(),
-                        "days are cut in the configured zone, not the machine's, " + date);
-            }
-        }
     }
 }
