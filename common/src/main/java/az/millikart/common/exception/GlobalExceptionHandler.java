@@ -102,6 +102,22 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, message, request);
     }
 
+    // Нет обязательного параметра или он не того типа (?dateFrom=вчера, /transactions/abc, ?page=x) — ошибка
+    // клиента, а не сбой (AGENTS.md §10). Имя параметра — в ответ, присланное значение — нет: его не отражаем.
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingParameter(
+            org.springframework.web.bind.MissingServletRequestParameterException ex, HttpServletRequest request) {
+        log.debug("Missing parameter {} in {} {}", ex.getParameterName(), request.getMethod(), request.getRequestURI());
+        return build(HttpStatus.BAD_REQUEST, "Required parameter '" + ex.getParameterName() + "' is missing", request);
+    }
+
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
+        log.debug("Parameter {} of the wrong type in {} {}", ex.getName(), request.getMethod(), request.getRequestURI());
+        return build(HttpStatus.BAD_REQUEST, "Parameter '" + ex.getName() + "' has an invalid value", request);
+    }
+
     @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(
             org.springframework.http.converter.HttpMessageNotReadableException ex,

@@ -123,6 +123,26 @@ class PblAuditIntegrationTest {
                 .contains("40.00", "AZN", "RID-42", "TRAN-77", "PARTIALLY_REFUNDED");
     }
 
+    // Р-104: запись о деньгах — компании терминала, а не того, кто действовал. У администратора компании
+    // нет, и раньше его возврат по ссылке компании в её журнале не был виден.
+    @Test
+    void anAdminRefund_isRecordedForTheCompanyOfTheTerminal() throws Exception {
+        Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
+        when(acquiringClient.refund(any(), anyString(), any(), any()))
+                .thenReturn(new MoneyOperationResult("TRAN-78", "RID-44", "APPR-7", Map.of("status", "ok")));
+        String adminToken = "Bearer " + jwtProvider.generateToken("admin-user", "admin@millikart.az", "SYSTEM_ADMIN", null);
+
+        mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":10.00}"))
+                .andExpect(status().isOk());
+
+        AuditLog record = single("REFUND");
+        assertThat(record.getPerformedBy()).isEqualTo("admin@millikart.az");
+        assertThat(record.getCompanyId()).isEqualTo("test-company");
+    }
+
     @Test
     void capture_isRecordedWithAmountAndAcquirerIdentifiers() throws Exception {
         Transaction held = transaction(TransactionStatus.AUTHORIZED, PaymentType.DMS);

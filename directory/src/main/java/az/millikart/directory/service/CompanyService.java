@@ -43,7 +43,7 @@ public class CompanyService {
     private static final String STATUS_INACTIVE = "INACTIVE";
 
     // Маркер мягкого удаления: такая компания невидима на всех путях чтения.
-    private static final String STATUS_DELETED = "DELETED";
+    static final String STATUS_DELETED = "DELETED";
 
     // Логин компании к провайдеру — только мультимерчант (Р-94): Basic-логин MultiMerchantSys/<login>.
     static final String MULTI_MERCHANT_PREFIX = "MultiMerchantSys/";
@@ -99,7 +99,8 @@ public class CompanyService {
                 .updatedBy(actorUsername)
                 .build();
 
-        company = companyRepository.save(company);
+        // Даты ставит Hibernate при flush; без него ответ ушёл бы с пустыми датами (Р-103).
+        company = companyRepository.saveAndFlush(company);
 
         // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
@@ -223,7 +224,7 @@ public class CompanyService {
         }
 
         company.setUpdatedBy(actorUsername);
-        company = companyRepository.save(company);
+        company = companyRepository.saveAndFlush(company);
 
         // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
@@ -341,9 +342,9 @@ public class CompanyService {
                 company.getStatus(),
                 actorRole == Role.SYSTEM_ADMIN ? company.getProviderLogin() : null,
                 company.getCreatedBy(),
-                company.getCreatedAt() != null ? company.getCreatedAt() : java.time.Instant.now(),
+                company.getCreatedAt(),
                 company.getUpdatedBy(),
-                company.getUpdatedAt() != null ? company.getUpdatedAt() : java.time.Instant.now()
+                company.getUpdatedAt()
         );
     }
 }

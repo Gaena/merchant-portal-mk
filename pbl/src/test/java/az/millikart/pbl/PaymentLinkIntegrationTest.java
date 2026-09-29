@@ -586,6 +586,34 @@ class PaymentLinkIntegrationTest {
                 .andExpect(header().string("Location", containsString("rid=")));
     }
 
+    // Р-103: circuit breaker к эквайеру открыт — вызов не ушёл, это 503 «попробуйте позже», а не 500
+    // «сбой у нас» со стектрейсом.
+    @Test
+    void openPaymentLink_withTheCircuitOpen_isServiceUnavailable() throws Exception {
+        UUID id = createLinkAndGetId(headToken);
+        Mockito.doThrow(io.github.resilience4j.circuitbreaker.CallNotPermittedException.createCallNotPermittedException(
+                        io.github.resilience4j.circuitbreaker.CircuitBreaker.ofDefaults("acquiring")))
+                .when(acquiringClient).createEcomOrder(any(), any(), any(), any(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", id))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status", is(503)))
+                .andExpect(jsonPath("$.message", containsString("nothing was sent")));
+    }
+
+    // Р-103: кривой параметр — ошибка клиента, 400 с именем параметра, а не 500.
+    @Test
+    void aParameterOfTheWrongType_isABadRequest() throws Exception {
+        mockMvc.perform(get("/api/v1/transactions/not-a-uuid")
+                        .header(HttpHeaders.AUTHORIZATION, headToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Parameter 'id' has an invalid value")));
+        mockMvc.perform(get("/api/v1/payment-links").param("status", "FOO")
+                        .header(HttpHeaders.AUTHORIZATION, headToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Parameter 'status' has an invalid value")));
+    }
+
     // Р-93: заказ у провайдера заводится от имени компании терминала — её расшифрованными кредами.
     @Test
     void openPaymentLink_sendsTheCompanyCredentialsToTheProvider() throws Exception {

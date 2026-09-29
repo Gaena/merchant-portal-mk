@@ -86,6 +86,8 @@ export const UsersPage: React.FC = () => {
   // Роль по умолчанию — первая из тех, что этот пользователь может выдать: у руководителя
   // «Руководитель компании» больше не выдаётся (Р-85), и форма не должна с неё начинаться.
   const defaultRole = isAdmin ? 'COMPANY_HEAD' : 'COMPANY_MANAGER';
+  // Роли, которым компания обязательна (Р-90, Р-103); администратору и аудитору её не подставляем.
+  const isCompanyRole = (role: string) => role === 'COMPANY_HEAD' || role === 'COMPANY_MANAGER' || role === 'COMPANY_EMPLOYEE';
   const [userForm, setUserForm] = useState({
     username: '',
     password: '',
@@ -179,6 +181,10 @@ export const UsersPage: React.FC = () => {
     setUserError('');
     if (!userForm.username || !userForm.password || !userForm.fullName) {
       setUserError(tObj.users.formIncomplete);
+      return;
+    }
+    if (isAdmin && isCompanyRole(userForm.role) && !userForm.companyId) {
+      setUserError(tObj.users.companyRequired);
       return;
     }
     setCreating(true);
@@ -506,7 +512,11 @@ export const UsersPage: React.FC = () => {
               select
               label={tObj.users.role}
               value={userForm.role}
-              onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))}
+              onChange={e => {
+                const role = e.target.value;
+                // Администратор и аудитор — без компании; вернуть её можно выбором ниже.
+                setUserForm(f => ({ ...f, role, companyId: isCompanyRole(role) ? f.companyId : '' }));
+              }}
               fullWidth
             >
               {/* Только роли, которые бэкенд даст выдать: руководитель — менеджера и сотрудника (Р-85). */}
@@ -522,6 +532,7 @@ export const UsersPage: React.FC = () => {
                 onChange={e => setUserForm(f => ({ ...f, companyId: e.target.value }))}
                 fullWidth
               >
+                <MenuItem value="">{tObj.users.noCompany}</MenuItem>
                 {companiesList.map((c) => (
                   <MenuItem key={c.id} value={c.id}>
                     {c.name} ({c.id})

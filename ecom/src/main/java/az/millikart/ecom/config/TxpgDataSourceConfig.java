@@ -45,12 +45,31 @@ public class TxpgDataSourceConfig {
     @Bean("txpgDataSource")
     @ConfigurationProperties("ecom.txpg.datasource.hikari")
     public DataSource txpgDataSource(@Qualifier("txpgDataSourceProperties") DataSourceProperties properties) {
+        requireGatewaySettings(properties);
         HikariDataSource dataSource = properties.initializeDataSourceBuilder()
                 .type(HikariDataSource.class)
                 .build();
         dataSource.setReadOnly(true);
         dataSource.setPoolName("txpg-read");
         return dataSource;
+    }
+
+    // Пул к шлюзу ленивый, и без адреса или учётки сервис поднимался, а сбой всплывал только ERROR'ом
+    // синхронизации раз в 15 минут (Р-103). @ConfigurationProperties нерезолвнутый ${…} ошибкой не считает
+    // и передаёт текстом — поэтому и проверка на «${».
+    static void requireGatewaySettings(DataSourceProperties properties) {
+        requireSet(properties.getUrl(), "ECOM_TXPG_URL", "address");
+        requireSet(properties.getUsername(), "ECOM_TXPG_USERNAME", "user name");
+        requireSet(properties.getPassword(), "ECOM_TXPG_PASSWORD", "password");
+    }
+
+    private static void requireSet(String value, String variable, String what) {
+        if (value == null || value.isBlank() || value.startsWith("${")) {
+            throw new IllegalStateException("The environment variable " + variable + " is not set: ecom has no "
+                    + what + " for the provider gateway database.\n"
+                    + "How to fix: set " + variable + " in the environment of the ecom service "
+                    + "(deployment_guide.md, section 8.3). There is no default on purpose: the gateway is someone else's database.");
+        }
     }
 
     @Bean(TXPG_JDBC)

@@ -97,7 +97,9 @@ public class TerminalService {
             throw new InvalidStateException("Access denied");
         }
 
+        // Удалённая компания — как несуществующая: список компаний её уже не показывает (Р-103).
         Company company = companyRepository.findById(request.companyId())
+                .filter(found -> !CompanyService.STATUS_DELETED.equals(found.getStatus()))
                 .orElseThrow(() -> new BusinessException("Company with ID '" + request.companyId() + "' not found"));
 
         // Один терминал провайдера — одна наша компания. Иначе две компании смотрели бы
@@ -116,6 +118,10 @@ public class TerminalService {
             throw new BusinessException("Provider terminal " + merchantRid
                     + " has no name, login or terminal number in the synchronised list");
         }
+        // Выключенный у провайдера платежей не примет; форма его и не предлагает — это для прямого API (Р-103).
+        if (!row.active()) {
+            throw new BusinessException("Provider terminal " + merchantRid + " is not active at the provider");
+        }
         if (!merchantsOfCompanyLogin(company).contains(merchantRid)) {
             throw new BusinessException("Provider terminal " + merchantRid
                     + " does not belong to the multimerchant login of company " + company.getId());
@@ -133,7 +139,7 @@ public class TerminalService {
                 .updatedBy(actorUsername)
                 .build();
 
-        terminal = terminalRepository.save(terminal);
+        terminal = terminalRepository.saveAndFlush(terminal);
 
         // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
@@ -322,7 +328,7 @@ public class TerminalService {
         }
 
         terminal.setUpdatedBy(actorUsername);
-        terminal = terminalRepository.save(terminal);
+        terminal = terminalRepository.saveAndFlush(terminal);
 
         // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
@@ -425,9 +431,9 @@ public class TerminalService {
                 terminal.getCompanyId(),
                 terminal.getStatus(),
                 terminal.getCreatedBy(),
-                terminal.getCreatedAt() != null ? terminal.getCreatedAt() : java.time.Instant.now(),
+                terminal.getCreatedAt(),
                 terminal.getUpdatedBy(),
-                terminal.getUpdatedAt() != null ? terminal.getUpdatedAt() : java.time.Instant.now()
+                terminal.getUpdatedAt()
         );
     }
 }

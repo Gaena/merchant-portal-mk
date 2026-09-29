@@ -126,12 +126,10 @@ public class PaymentLinkService {
     }
 
     public PaymentLinkResponse create(CreatePaymentLinkRequest request, UserPrincipal principal) {
-        String companyId = UserPrincipal.getCompanyId(principal);
-
         log.info("Request to create payment link: merchantOrderId={}, terminal={}, amount={}, currency={}",
                 request.merchantOrderId(), request.terminal(), request.amount(), request.currency());
 
-        validateAccess(request.terminal(), principal, LINK_WRITE_ROLES);
+        String terminalCompanyId = validateAccess(request.terminal(), principal, LINK_WRITE_ROLES).getCompanyId();
 
         // На заблокированном терминале новых платежей нет (Р-38), а ссылка на нём родилась бы
         // нерабочей: путь открытия её всё равно отвергнет.
@@ -186,7 +184,7 @@ public class PaymentLinkService {
 
         // txTemplate закоммитил запись выше, поэтому fallbackExecution пишет событие сразу (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.PAYMENT_LINK, saved.getId().toString(), AuditAction.CREATE,
-                UserPrincipal.getUsername(principal), companyId,
+                UserPrincipal.getUsername(principal), terminalCompanyId,
                 "Created " + saved.getUsageType() + " " + saved.getPaymentType() + " link for "
                         + saved.getAmount() + " " + saved.getCurrency() + " on terminal "
                         + saved.getTerminalId() + ", expires " + saved.getExpiresAt()));
@@ -264,12 +262,10 @@ public class PaymentLinkService {
 
     @Transactional
     public PaymentLinkResponse update(UUID id, UpdatePaymentLinkRequest request, UserPrincipal principal) {
-        String companyId = UserPrincipal.getCompanyId(principal);
-
         log.debug("Request to update payment link {}", id);
         PaymentLink link = findLinkOrThrow(id);
 
-        validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES);
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES).getCompanyId();
 
         long usedCount = usedCount(id);
 
@@ -350,7 +346,7 @@ public class PaymentLinkService {
 
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.PAYMENT_LINK, saved.getId().toString(),
                 saved.getStatus() == PaymentLinkStatus.CANCELED ? AuditAction.CANCEL : AuditAction.UPDATE,
-                UserPrincipal.getUsername(principal), companyId,
+                UserPrincipal.getUsername(principal), terminalCompanyId,
                 changes.isEmpty() ? "No fields changed" : "Changed " + String.join(", ", changes)));
 
         log.info("Payment link {} updated: {}", id,
@@ -515,13 +511,11 @@ public class PaymentLinkService {
     // списать его, ни отменить. Блокировка проверяется там, где платёж НАЧИНАЕТСЯ.
     @Transactional
     public PaymentLinkResponse completeDms(UUID transactionId, CompleteDmsRequest request, UserPrincipal principal) {
-        String companyId = UserPrincipal.getCompanyId(principal);
-
         log.info("Request to complete DMS: transactionId={}, amount={}", transactionId, request.amount());
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
-        validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES);
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES).getCompanyId();
 
         // P0-8: раньше SUCCESS принимался и здесь — одну авторизацию можно было склирить дважды,
         // то есть дважды снять деньги с держателя карты.
@@ -592,7 +586,7 @@ public class PaymentLinkService {
             // не сработает — потому запись здесь и сейчас (P2-14), и она единственное свидетельство,
             // что операцию вообще пытались провести.
             auditLogService.logUnresolved(AuditEntity.TRANSACTION, transactionId.toString(), AuditAction.CAPTURE,
-                    UserPrincipal.getUsername(principal), companyId,
+                    UserPrincipal.getUsername(principal), terminalCompanyId,
                     "Capture of " + request.amount() + " " + link.getCurrency()
                             + " left unconfirmed by the acquirer (providerOrderId "
                             + transaction.getProviderOrderId() + "): " + e.getMessage()
@@ -636,7 +630,7 @@ public class PaymentLinkService {
         PaymentLink savedLink = paymentLinkRepository.save(link);
 
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, transactionId.toString(),
-                AuditAction.CAPTURE, UserPrincipal.getUsername(principal), companyId,
+                AuditAction.CAPTURE, UserPrincipal.getUsername(principal), terminalCompanyId,
                 "Captured " + request.amount() + " " + link.getCurrency() + " of the authorized "
                         + transaction.getAmount() + " (ridByPmo " + capture.ridByPmo()
                         + ", tranActionId " + capture.tranActionId()
@@ -651,13 +645,11 @@ public class PaymentLinkService {
     // бы наказать покупателя, и деньги застряли бы до того, как терминал вспомнят разблокировать.
     @Transactional
     public RefundResponse refund(UUID transactionId, RefundRequest request, UserPrincipal principal) {
-        String companyId = UserPrincipal.getCompanyId(principal);
-
         log.info("Request to refund transaction: transactionId={}, amount={}", transactionId, request.amount());
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
-        validateAccess(link.getTerminalId(), principal, REFUND_ROLES);
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, REFUND_ROLES).getCompanyId();
 
         if (transaction.getStatus() != TransactionStatus.SUCCESS && transaction.getStatus() != TransactionStatus.PARTIALLY_REFUNDED) {
             log.warn("Cannot refund transaction. Current status: {}", transaction.getStatus());
@@ -694,7 +686,7 @@ public class PaymentLinkService {
             // То же, что в completeDms, и здесь важнее: деньги могли уйти со счёта мерчанта, а у нас
             // не осталось ничего. Синхронно — транзакция сейчас откатится и унесла бы событие (P2-14).
             auditLogService.logUnresolved(AuditEntity.TRANSACTION, transactionId.toString(), AuditAction.REFUND,
-                    UserPrincipal.getUsername(principal), companyId,
+                    UserPrincipal.getUsername(principal), terminalCompanyId,
                     "Refund of " + request.amount() + " " + link.getCurrency()
                             + " left unconfirmed by the acquirer (providerOrderId "
                             + transaction.getProviderOrderId() + "): " + e.getMessage()
@@ -749,7 +741,7 @@ public class PaymentLinkService {
                 .build());
 
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, transactionId.toString(),
-                AuditAction.REFUND, UserPrincipal.getUsername(principal), companyId,
+                AuditAction.REFUND, UserPrincipal.getUsername(principal), terminalCompanyId,
                 "Refunded " + request.amount() + " " + link.getCurrency() + " of " + refundableBase
                         + "; refunded so far " + newRefundedAmount + ", transaction now "
                         + transaction.getStatus() + " (ridByPmo " + result.ridByPmo()
@@ -1374,7 +1366,8 @@ public class PaymentLinkService {
 
     // Единственные ворота доступа по терминалу. Принимает principal, а не строки роли и компании,
     // чтобы null-principal и нераспознанная роль кончались отказом, а не NullPointerException.
-    private void validateAccess(Integer terminalId, UserPrincipal principal, Set<Role> allowedRoles) {
+    // Возвращает терминал: его компания — компания записей журнала о ссылках и деньгах (Р-104).
+    private Terminal validateAccess(Integer terminalId, UserPrincipal principal, Set<Role> allowedRoles) {
         Role userRole = UserPrincipal.getRole(principal);
         String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
@@ -1397,7 +1390,7 @@ public class PaymentLinkService {
                 });
         if (isGlobalReader(userRole)) {
             log.debug("Access granted. User is a global reader ({}).", userRole);
-            return;
+            return terminal;
         }
         if (companyId == null || !companyId.equals(terminal.getCompanyId())) {
             log.warn("Access denied. User companyId {} does not match terminal companyId {}", companyId, terminal.getCompanyId());
@@ -1408,6 +1401,7 @@ public class PaymentLinkService {
             throw new InvalidStateException("Access denied to terminal: " + terminalId);
         }
         log.debug("Access granted for company: {}", companyId);
+        return terminal;
     }
 
     private PaymentLink findLinkOrThrow(UUID id) {

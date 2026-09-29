@@ -40,6 +40,9 @@ pbl:
       expiration-ms: ${JWT_EXPIRATION_MS:900000} # 15 minutes
 
 mp:
+  # Whose X-Real-IP / X-Forwarded-For we believe — the same line as in auth, pbl and ecom (Р-103): without it
+  # directory silently ignored TRUSTED_PROXIES and kept the built-in default. See ClientIp.
+  trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
   credentials:
     # Ключ AES-256 для паролей компаний к провайдеру (Р-93): 32 байта в base64, одно значение в directory
     # и pbl — directory шифрует, pbl расшифровывает. Без значения по умолчанию намеренно (CredentialCipher).

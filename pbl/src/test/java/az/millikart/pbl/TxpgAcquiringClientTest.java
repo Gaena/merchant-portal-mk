@@ -3,6 +3,7 @@ package az.millikart.pbl;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import az.millikart.common.exception.BusinessException;
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.client.match.MockRestRequestMatchers;
@@ -737,6 +739,47 @@ class TxpgAcquiringClientTest {
 
         Assertions.assertEquals(TerminalCheckResult.Outcome.UNREACHABLE,
                 client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID).outcome());
+    }
+
+    // Р-103: ответ с телом без кода ошибки — это не успех. Раньше 500 с {"message":…} давал OK, и
+    // администратор видел исправный терминал, по которому оплаты не пройдут.
+    @Test
+    void terminalCheck_errorWithABodyButNoErrorCode_isOrderNotCreated() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
+                .andRespond(withServerError().contentType(MediaType.APPLICATION_JSON).body("{\"message\":\"Internal error\"}"));
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED).contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"status\":401,\"error\":\"Unauthorized\"}"));
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
+                .andRespond(withStatus(HttpStatus.BAD_GATEWAY).contentType(MediaType.TEXT_HTML).body("<html>Bad gateway</html>"));
+
+        TerminalCheckResult internal = client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID);
+        TerminalCheckResult unauthorized = client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID);
+        TerminalCheckResult badGateway = client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID);
+
+        Assertions.assertEquals(TerminalCheckResult.Outcome.REJECTED, internal.outcome());
+        Assertions.assertEquals("HTTP 500", internal.providerErrorCode());
+        Assertions.assertEquals("Internal error", internal.providerMessage());
+        Assertions.assertEquals(TerminalCheckResult.Outcome.REJECTED, unauthorized.outcome());
+        Assertions.assertEquals("HTTP 401", unauthorized.providerErrorCode());
+        Assertions.assertEquals(TerminalCheckResult.Outcome.REJECTED, badGateway.outcome());
+        Assertions.assertEquals("Acquirer answered HTTP 502", badGateway.providerMessage());
+    }
+
+    // Успех — только заведённый заказ: 200 без него и без кода ошибки тоже «заказ не создан».
+    @Test
+    void terminalCheck_successWithoutAnOrder_isOrderNotCreated() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
+                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        Assertions.assertEquals(TerminalCheckResult.Outcome.REJECTED,
+                client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID).outcome());
+        TerminalCheckResult emptyNotFound = client.checkOrderCreation(new ProviderCredentials("TerminalSys/Admin", "right"), TERMINAL_RID);
+        Assertions.assertEquals(TerminalCheckResult.Outcome.REJECTED, emptyNotFound.outcome(),
+                "a 4xx with an empty body is an answer, not an unreachable acquirer");
+        Assertions.assertEquals("HTTP 404", emptyNotFound.providerErrorCode());
     }
 
     // Проверка идёт без повторов: каждый повтор — ещё один пробный заказ у провайдера.

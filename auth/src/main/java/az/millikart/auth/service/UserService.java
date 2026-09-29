@@ -44,6 +44,7 @@ public class UserService {
 
     private static final String STATUS_ACTIVE = "ACTIVE";
     private static final String STATUS_DELETED = "DELETED";
+    private static final String STATUS_BLOCKED = "BLOCKED";
 
     // Руководитель выдаёт и правит только роли ниже своей (auth.md §4.2). AUDITOR и SYSTEM_ADMIN
     // глобальны: выдать такую роль или сменить пароль такой учётке с его companyId значило бы
@@ -98,6 +99,12 @@ public class UserService {
         if (userRepository.findByUsername(cleanEmail).isPresent()) {
             log.warn("User creation failed: username {} already exists", cleanEmail);
             throw new BusinessException("Username already exists");
+        }
+
+        // Роль компании без компании запрещена и здесь, как в правке (Р-90, Р-103).
+        if (COMPANY_ROLES.contains(Role.fromValue(request.role()).orElse(null))
+                && (request.companyId() == null || request.companyId().isBlank())) {
+            throw new BusinessException("Role " + request.role() + " requires a company");
         }
 
         // Validate Company exists if assigned
@@ -195,6 +202,11 @@ public class UserService {
 
         requireActiveActor(principal, AuditAction.UPDATE, id.toString());
         validateWriteAccess(user, principal, AuditAction.UPDATE);
+        // Правкой ставятся только ACTIVE и BLOCKED (Р-103): DELETED — это удаление со своей записью в журнале,
+        // а иное значение ни один экран не прочтёт.
+        if (request.status() != null && !STATUS_ACTIVE.equals(request.status()) && !STATUS_BLOCKED.equals(request.status())) {
+            throw new BusinessException("User status must be ACTIVE or BLOCKED");
+        }
 
         // Поля перечисляются поимённо: «пользователь обновлён» бесполезно, а смена роли или
         // компании — смена прав, и запись обязана сказать, с чего на что (P2-14). Пароль

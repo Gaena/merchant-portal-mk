@@ -189,11 +189,13 @@ export JWT_SECRET="$(openssl rand -base64 48)"   # одно значение н�
    | Исключение | HTTP |
    |:---|:---|
    | `BusinessException` | 400 |
+   | нет обязательного параметра, параметр не того типа (`?page=x`, не-UUID в пути) | 400, с именем параметра, без значения (Р-103) |
    | `UnauthorizedException` | 401 |
    | `InvalidStateException` | **403** (используется как «доступ запрещён») |
    | `ResourceNotFoundException` | 404 |
    | `ConflictException`, `OptimisticLockingFailureException` | 409 |
    | `PaymentOutcomeUnknownException` | **502** |
+   | `CallNotPermittedException` — открыт circuit breaker к эквайеру, только `pbl` (`AcquirerUnavailableHandler`) | **503**: вызов не ушёл, денег не двигал (Р-103) |
 
    `PaymentOutcomeUnknownException` — единственное исключение со смыслом «не знаем, выполнилась
    операция или нет» (таймаут, обрыв, 5xx, неподтверждённый ответ на денежном вызове). Не

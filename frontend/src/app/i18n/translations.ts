@@ -593,6 +593,8 @@ export interface TranslationDictionary {
     /** Роль и компания вступают в силу при следующем обновлении сессии пользователя. */
     editSessionsHint: string;
     noCompany: string;
+    /** Роль компании без компании бэкенд отклоняет (Р-103). */
+    companyRequired: string;
     newPassword: string;
     newPasswordHint: string;
     /** Пароль, заданный администратором, пользователь сменит при первом входе (Р-100). */
@@ -1208,6 +1210,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editNothingChanged: 'Nothing changed — no request was sent.',
       editSessionsHint: 'A new role or company takes effect when the user\'s session next refreshes, within 15 minutes. Blocking ends the sessions at once.',
       noCompany: 'No company',
+      companyRequired: 'A company role needs a company: choose one.',
       newPassword: 'New password (optional)',
       newPasswordHint: 'Leave empty to keep the current password. At least 12 characters with upper and lower case, a digit and a symbol.',
       issuedPasswordHint: 'The user will be asked to change this password at the first sign-in.',
@@ -1789,6 +1792,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editNothingChanged: 'Heç nə dəyişməyib — sorğu göndərilmədi.',
       editSessionsHint: 'Yeni rol və ya şirkət istifadəçinin sessiyası növbəti dəfə yeniləndikdə, 15 dəqiqə ərzində qüvvəyə minir. Bloklama sessiyaları dərhal bitirir.',
       noCompany: 'Şirkətsiz',
+      companyRequired: 'Şirkət rolu üçün şirkət seçin.',
       newPassword: 'Yeni parol (istəyə bağlı)',
       newPasswordHint: 'Cari parolu saxlamaq üçün boş buraxın. Ən azı 12 simvol: böyük və kiçik hərf, rəqəm və xüsusi simvol.',
       issuedPasswordHint: 'İstifadəçi ilk girişdə bu parolu dəyişməli olacaq.',
@@ -2370,6 +2374,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editNothingChanged: 'Ничего не изменилось — запрос не отправлен.',
       editSessionsHint: 'Новая роль или компания вступит в силу при следующем обновлении сессии пользователя, в течение 15 минут. Блокировка завершает сессии сразу.',
       noCompany: 'Без компании',
+      companyRequired: 'Для роли компании выберите компанию.',
       newPassword: 'Новый пароль (необязательно)',
       newPasswordHint: 'Оставьте пустым, чтобы не менять. Не меньше 12 символов: заглавные и строчные буквы, цифра и спецсимвол.',
       issuedPasswordHint: 'Пользователь сменит этот пароль при первом входе.',

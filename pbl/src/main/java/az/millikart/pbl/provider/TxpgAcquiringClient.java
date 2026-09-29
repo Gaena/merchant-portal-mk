@@ -15,7 +15,6 @@ import io.github.resilience4j.retry.annotation.Retry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
@@ -297,17 +296,10 @@ public class TxpgAcquiringClient implements AcquiringClient {
     // Expired. Одна манатка, а не копейка — чтобы проверка не упёрлась в минимальную сумму.
     private static final BigDecimal CHECK_AMOUNT = new BigDecimal("1.00");
 
-    /**
-     * Кнопка «Тест»: можно ли создать платёж — пробный заказ с кредами компании терминала (Р-93).
-     *
-     * Намеренно **без** `@Retry` и **без** `@CircuitBreaker`, в отличие от боевого заведения
-     * заказа. Повтор здесь только множит пробные заказы у провайдера, а общий с платёжным путём
-     * breaker означал бы, что администратор, десять раз проверивший неверные креды, закрывает
-     * приём платежей всем мерчантам.
-     *
-     * Классификация — по коду ошибки, а не по HTTP-статусу: тот же `InvalidLogin` провайдер
-     * может прислать и в 200, и в 4xx, и разбирать надо тело в обоих случаях.
-     */
+    // Кнопка «Тест»: пробный заказ с кредами компании терминала (Р-93). Без @Retry и @CircuitBreaker:
+    // повтор множит пробные заказы, а общий с платёжным путём breaker закрыл бы приём платежей всем.
+    // Исход (Р-103): OK — только заведённый заказ; 5xx с пустым телом и нет ответа — недоступен; любой
+    // другой ответ — заказ не создан, InvalidLogin в теле — неверные креды, в 2xx и в 4xx/5xx одинаково.
     @Override
     public TerminalCheckResult checkOrderCreation(ProviderCredentials credentials, String terminalRid) {
         String login = credentials.login();
@@ -343,43 +335,58 @@ public class TxpgAcquiringClient implements AcquiringClient {
                     .body(request)
                     .retrieve()
                     .body(Map.class);
-            return classifyCheck(login, body);
+            return classifyCheck(login, body, null);
         } catch (HttpStatusCodeException e) {
-            if (e.getStatusCode() == HttpStatus.INTERNAL_SERVER_ERROR) {
-                return classifyCheck(login, parseBody(e.getResponseBodyAsString()));
+            String raw = e.getResponseBodyAsString();
+            if (raw == null || raw.isBlank()) {
+                if (e.getStatusCode().is5xxServerError()) {
+                    log.warn("PROVIDER RESP [checkOrderCreation] <- HTTP {} with an empty body for Login: {}", e.getStatusCode(), login);
+                    return TerminalCheckResult.unreachable("Acquirer answered HTTP " + e.getStatusCode().value() + " with an empty body");
+                }
+                return notCreated(login, e.getStatusCode().value(), null);
             }
-            if (e.getStatusCode().is5xxServerError()) {
-                log.warn("PROVIDER RESP [checkOrderCreation] <- HTTP {} for Login: {}", e.getStatusCode(), login);
-                return TerminalCheckResult.unreachable("Acquirer answered HTTP " + e.getStatusCode().value());
-            }
-            return classifyCheck(login, parseBody(e.getResponseBodyAsString()));
+            return classifyCheck(login, parseBody(raw), e.getStatusCode().value());
         } catch (Exception e) {
             log.warn("PROVIDER REQ [checkOrderCreation] <- no answer for Login: {}: {}", login, e.getMessage());
             return TerminalCheckResult.unreachable("No answer from the acquirer: " + e.getMessage());
         }
     }
 
-    private TerminalCheckResult classifyCheck(String login, Map<String, Object> body) {
-        if (body == null) {
-            return TerminalCheckResult.unreachable("Empty answer from the acquirer");
+    // httpStatus — код ответа об ошибке, null у 2xx. Тело не JSON приходит сюда как null: сервер ответил,
+    // значит, доступен, а заказа нет.
+    private TerminalCheckResult classifyCheck(String login, Map<String, Object> body, Integer httpStatus) {
+        Object errorCode = body == null ? null : body.get("errorCode");
+        if (errorCode != null) {
+            String code = String.valueOf(errorCode);
+            String description = body.get("errorDescription") != null ? String.valueOf(body.get("errorDescription")) : code;
+            if (INVALID_LOGIN.equals(code)) {
+                log.info("PROVIDER RESP [checkOrderCreation] <- invalid credentials for Login: {}", login);
+                return new TerminalCheckResult(TerminalCheckResult.Outcome.INVALID_CREDENTIALS, code, description);
+            }
+            log.info("PROVIDER RESP [checkOrderCreation] <- rejected for Login: {} with {}: {}", login, code, description);
+            return new TerminalCheckResult(TerminalCheckResult.Outcome.REJECTED, code, description);
         }
-        Object errorCode = body.get("errorCode");
-        if (errorCode == null) {
-            // Заказ заведён: и логин с паролем верны, и оплаты терминалу разрешены.
+        if (httpStatus == null && createdOrderId(body) != null) {
             log.info("PROVIDER RESP [checkOrderCreation] <- OK for Login: {}", login);
             return TerminalCheckResult.ok();
         }
-        String code = String.valueOf(errorCode);
-        String description = body.get("errorDescription") != null ? String.valueOf(body.get("errorDescription")) : code;
-        if (INVALID_LOGIN.equals(code)) {
-            log.info("PROVIDER RESP [checkOrderCreation] <- invalid credentials for Login: {}", login);
-            return new TerminalCheckResult(TerminalCheckResult.Outcome.INVALID_CREDENTIALS, code, description);
-        }
-        log.info("PROVIDER RESP [checkOrderCreation] <- rejected for Login: {} with {}: {}", login, code, description);
+        return notCreated(login, httpStatus, body);
+    }
+
+    // Ответ без кода ошибки и без заведённого заказа: провайдер доступен, но заказа нет.
+    private TerminalCheckResult notCreated(String login, Integer httpStatus, Map<String, Object> body) {
+        Object message = body == null ? null : body.get("message");
+        String description = message != null ? String.valueOf(message)
+                : httpStatus != null ? "Acquirer answered HTTP " + httpStatus : "Acquirer answered without an order";
+        String code = httpStatus != null ? "HTTP " + httpStatus : null;
+        log.warn("PROVIDER RESP [checkOrderCreation] <- no order for Login: {}: {}", login, description);
         return new TerminalCheckResult(TerminalCheckResult.Outcome.REJECTED, code, description);
     }
 
-    @SuppressWarnings("unchecked")
+    private static Object createdOrderId(Map<String, Object> body) {
+        return body != null && body.get("order") instanceof Map<?, ?> order ? order.get("id") : null;
+    }
+
     private static Map<String, Object> parseBody(String body) {
         if (body == null || body.isBlank()) {
             return null;

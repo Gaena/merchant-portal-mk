@@ -685,6 +685,35 @@ public class DirectoryIntegrationTest {
 
     // Терминал компании — только мерчант её логина мультимерчанта (Р-96)
 
+    // Р-103: прямой запрос к API не заводит того, чего форма не предлагает, — терминал, выключенный у
+    // провайдера, и терминал удалённой компании.
+    @Test
+    public void createTerminal_inactiveAtTheProviderOrForADeletedCompany_isRefused() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        DirectoryTestFixtures.providerTerminal(jdbcTemplate, "RID-OFF", "Off Shop", "OF00001", false);
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-01", "RID-OFF");
+
+        mockMvc.perform(post("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-OFF"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Provider terminal RID-OFF is not active at the provider")));
+
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", "RID-ON", "On Shop", "ON00001");
+        mockMvc.perform(delete("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(post("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-ON"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Company with ID 'comp-01' not found")));
+        assertThat(terminalRepository.findByMerchantRid("RID-OFF")).isEmpty();
+        assertThat(terminalRepository.findByMerchantRid("RID-ON")).isEmpty();
+    }
+
     @Test
     public void createTerminal_ofAMerchantOutsideTheCompanyLogin_isRefused() throws Exception {
         createCompany("comp-01", "MilliKart LLC");

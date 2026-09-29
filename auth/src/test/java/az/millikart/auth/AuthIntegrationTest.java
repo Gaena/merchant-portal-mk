@@ -372,6 +372,53 @@ public class AuthIntegrationTest {
         companyRepository.save(Company.builder().id(id).name("Company " + id).status("ACTIVE").build());
     }
 
+    // Р-103: роль компании без компании — отказ и при создании, как в правке (Р-90). Администратор и
+    // аудитор без компании — нормальный случай.
+    @Test
+    public void createUser_withACompanyRoleButNoCompany_isRefused() throws Exception {
+        for (String companyId : new String[] {null, ""}) {
+            mockMvc.perform(post("/api/v1/users")
+                            .header(HttpHeaders.AUTHORIZATION, adminToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(new CreateUserRequest(
+                                    "nocompany@comp01.com", USER_PASSWORD, "No Company", "COMPANY_EMPLOYEE", companyId))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", is("Role COMPANY_EMPLOYEE requires a company")));
+        }
+        Assertions.assertTrue(userRepository.findByUsername("nocompany@comp01.com").isEmpty());
+
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateUserRequest(
+                                "auditor@millikart.az", USER_PASSWORD, "Auditor", "AUDITOR", null))))
+                .andExpect(status().isCreated());
+    }
+
+    // Р-103: правкой ставятся только ACTIVE и BLOCKED. DELETED через PATCH удалял бы в обход DELETE и
+    // его записи в журнале, а незнакомое значение ни один экран не прочтёт.
+    @Test
+    public void updateUser_statusIsOnlyActiveOrBlocked() throws Exception {
+        UUID userId = createUser("status@comp01.com", "COMPANY_EMPLOYEE", "comp-01");
+
+        for (String status : new String[] {"DELETED", "INACTIVE", "active", " BLOCKED"}) {
+            mockMvc.perform(patch("/api/v1/users/" + userId)
+                            .header(HttpHeaders.AUTHORIZATION, adminToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, status, null))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", is("User status must be ACTIVE or BLOCKED")));
+        }
+        Assertions.assertEquals("ACTIVE", userRepository.findById(userId).orElseThrow().getStatus());
+
+        mockMvc.perform(patch("/api/v1/users/" + userId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("BLOCKED")));
+    }
+
     // Пользователь, уже сменивший выданный пароль (Р-100): тесты здесь о правах, а не о первом входе.
     private UUID createUser(String username, String role, String companyId) throws Exception {
         String body = mockMvc.perform(post("/api/v1/users")
