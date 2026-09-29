@@ -14,8 +14,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
-// Итоги периода из потока строк. Строки одного заказа обязаны идти подряд — поток сортируется по
-// o.id: иначе заказ посчитается дважды. Деньги — EcomOrderAssembler.money, как у страницы.
+// Строки одного заказа обязаны идти подряд (поток сортируется по o.id), иначе заказ посчитается
+// дважды. Деньги — EcomOrderAssembler.money, как у страницы.
 final class EcomStatsAccumulator implements Consumer<TxpgStatementRow> {
 
     private final List<TxpgStatementRow> currentOrder = new ArrayList<>();

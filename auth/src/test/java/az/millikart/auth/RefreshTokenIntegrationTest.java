@@ -54,7 +54,7 @@ import org.springframework.test.web.servlet.ResultActions;
 
 // P1-12: refresh-токены с ротацией, logout, отзыв при блокировке и удалении. Тестовый профиль
 // даёт access-токену 1 час вместо продовых 24 — именно это позволяет login_returnsRefreshToken
-// поймать зашитый expiresIn = 86400. TTL refresh и окно грации продовые (30 дней / 10 секунд);
+// поймать зашитый expiresIn = 86400. TTL refresh и окно грации продовые (20 минут / 10 секунд);
 // единственный сценарий с другой грацией живёт в WithZeroGrace.
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -67,8 +67,8 @@ public class RefreshTokenIntegrationTest {
 
     // Тестовый профиль: pbl.security.jwt.expiration-ms = 3600000.
     private static final long TEST_ACCESS_TTL_SECONDS = 3600;
-    // auth.refresh.ttl = P30D в тестовом профиле, как в production.
-    private static final long REFRESH_TTL_SECONDS = Duration.ofDays(30).toSeconds();
+    // auth.refresh.ttl = PT20M в тестовом профиле, как в production (Р-99).
+    private static final long REFRESH_TTL_SECONDS = Duration.ofMinutes(20).toSeconds();
 
     @Autowired
     private MockMvc mockMvc;

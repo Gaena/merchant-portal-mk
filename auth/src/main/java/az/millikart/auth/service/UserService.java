@@ -44,14 +44,13 @@ public class UserService {
 
     private static final String STATUS_ACTIVE = "ACTIVE";
     private static final String STATUS_DELETED = "DELETED";
+    private static final String STATUS_BLOCKED = "BLOCKED";
 
-    // Руководитель выдаёт и правит только роли ниже своей (auth.md §4.2). AUDITOR и SYSTEM_ADMIN
-    // глобальны: выдать такую роль или сменить пароль такой учётке с его companyId значило бы
-    // получить данные всех компаний или права администратора.
+    // Роли, которые выдаёт и правит руководитель (project_docs/modules/auth.md §4.2). AUDITOR и
+    // SYSTEM_ADMIN глобальны: их выдача или смена пароля такой учётке открыла бы ему все компании.
     private static final Set<Role> HEAD_MANAGED_ROLES = EnumSet.of(Role.COMPANY_MANAGER, Role.COMPANY_EMPLOYEE);
 
-    // Роли, которые работают только внутри компании: без companyId у них нет ни одного своего терминала,
-    // и экран показывал бы им пустоту (Р-90).
+    // Роли только внутри компании: без companyId у них нет ни одного терминала (Р-90).
     private static final Set<Role> COMPANY_ROLES =
             EnumSet.of(Role.COMPANY_HEAD, Role.COMPANY_MANAGER, Role.COMPANY_EMPLOYEE);
 
@@ -61,19 +60,22 @@ public class UserService {
     private final RefreshTokenService refreshTokenService;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
+    private final PasswordHistoryService passwordHistory;
 
     public UserService(UserRepository userRepository,
                        CompanyRepository companyRepository,
                        PasswordEncoder passwordEncoder,
                        RefreshTokenService refreshTokenService,
                        AuditLogService auditLogService,
-                       ApplicationEventPublisher eventPublisher) {
+                       ApplicationEventPublisher eventPublisher,
+                       PasswordHistoryService passwordHistory) {
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenService = refreshTokenService;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
+        this.passwordHistory = passwordHistory;
     }
 
     @Transactional
@@ -84,22 +86,25 @@ public class UserService {
 
         String cleanEmail = request.username() != null ? request.username().trim().toLowerCase() : "";
 
-        log.info("Request to create user: username={}, role={}, companyId={} by actor: {}",
-                cleanEmail, request.role(), request.companyId(), actorUsername);
+        log.info("Request to create user: username={}, role={}, companyId={}",
+                cleanEmail, request.role(), request.companyId());
 
         requireActiveActor(principal, AuditAction.CREATE, cleanEmail);
-        // Enforce RBAC
         validateCreatePermission(request, principal);
 
-        // Check uniqueness
         if (userRepository.findByUsername(cleanEmail).isPresent()) {
             log.warn("User creation failed: username {} already exists", cleanEmail);
             throw new BusinessException("Username already exists");
         }
 
-        // Validate Company exists if assigned
+        // Роль компании без компании запрещена и здесь, как в правке (Р-90, Р-103).
+        if (COMPANY_ROLES.contains(Role.fromValue(request.role()).orElse(null))
+                && (request.companyId() == null || request.companyId().isBlank())) {
+            throw new BusinessException("Role " + request.role() + " requires a company");
+        }
+
         if (request.companyId() != null && !request.companyId().isBlank()) {
-            if (!companyRepository.existsById(request.companyId())) {
+            if (!liveCompanyExists(request.companyId())) {
                 log.warn("User creation failed: companyId {} not found", request.companyId());
                 throw new BusinessException("Company not found");
             }
@@ -112,11 +117,12 @@ public class UserService {
                 .role(request.role())
                 .companyId(request.companyId())
                 .status(STATUS_ACTIVE)
+                // Пароль задал не владелец — сменит при первом входе (PCI DSS 8.3.5, Р-100).
+                .passwordChangeRequired(true)
                 .build();
 
         user = userRepository.save(user);
 
-        // Роль — главное в этой записи: здесь человек впервые получает права.
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(), AuditAction.CREATE,
                 actorUsername, user.getCompanyId(),
                 "Created user " + user.getUsername() + " with role " + user.getRole()
@@ -126,9 +132,7 @@ public class UserService {
         return mapToResponse(user);
     }
 
-    // Страница, поиск, фильтр по роли, отсев удалённых и порядок — всё в запросе (P2-1, P3-1):
-    // поиск, видящий только текущую страницу, не находит никого. Скоуп компании — параметр
-    // запроса, а не пост-фильтр: поиском его не обойти.
+    // Поиск, фильтры, отсев удалённых, порядок и скоуп компании — в запросе, не пост-фильтром (P2-1, P3-1).
     @Transactional(readOnly = true)
     public PagedResponse<UserResponse> listUsers(Pageable pageable, UserPrincipal principal,
                                                  String search, String role) {
@@ -140,10 +144,7 @@ public class UserService {
             companyScope = null;
         } else if (actorRole == Role.COMPANY_HEAD) {
             if (actorCompanyId == null) {
-                // Руководитель без компании и раньше видел пустой список (company_id = NULL не
-                // совпадает ни с чем) и должен видеть его дальше: в запросе null-скоуп означает
-                // «все», а прав на всех у него нет. Сторож — тест
-                // companyHeadWithoutCompany_seesNobody_notEveryone (P3-1a).
+                // null-скоуп в запросе значит «все»: руководитель без компании видит пустой список (P3-1a).
                 return PagedResponse.of(Page.empty(pageable), List.of());
             }
             companyScope = actorCompanyId;
@@ -190,10 +191,12 @@ public class UserService {
 
         requireActiveActor(principal, AuditAction.UPDATE, id.toString());
         validateWriteAccess(user, principal, AuditAction.UPDATE);
+        // Правкой ставятся только ACTIVE и BLOCKED (Р-103): DELETED — удаление со своей записью в журнале.
+        if (request.status() != null && !STATUS_ACTIVE.equals(request.status()) && !STATUS_BLOCKED.equals(request.status())) {
+            throw new BusinessException("User status must be ACTIVE or BLOCKED");
+        }
 
-        // Поля перечисляются поимённо: «пользователь обновлён» бесполезно, а смена роли или
-        // компании — смена прав, и запись обязана сказать, с чего на что (P2-14). Пароль
-        // отмечается фактом, никогда значением.
+        // Журнал называет поля, роль и компанию — «с чего на что» (P2-14); пароль — только фактом.
         List<String> changes = new ArrayList<>();
         boolean passwordChanged = false;
         boolean roleOrCompanyChanged = false;
@@ -203,9 +206,19 @@ public class UserService {
             changes.add("fullName");
             user.setFullName(request.fullName());
         }
+        boolean passwordResetByOther = false;
         if (request.password() != null && !request.password().isBlank()) {
+            passwordResetByOther = !user.getId().toString().equals(UserPrincipal.getUserId(principal));
+            // Свой пароль не повторяет четырёх последних (Р-102). На чужом проверки нет: отказ сказал бы
+            // администратору, какие пароли пользователь недавно использовал.
+            if (!passwordResetByOther) {
+                passwordHistory.requireNotRecent(user, request.password());
+            }
+            passwordHistory.rememberCurrent(user, Instant.now());
             user.setPasswordHash(passwordEncoder.encode(request.password()));
-            changes.add("password");
+            // Сброс чужого пароля — смена при следующем входе (Р-100); свой пароль владелец задал сам.
+            user.setPasswordChangeRequired(passwordResetByOther);
+            changes.add(passwordResetByOther ? "password (to be changed at next sign-in)" : "password");
             passwordChanged = true;
         }
         if (request.role() != null) {
@@ -225,9 +238,7 @@ public class UserService {
                 roleOrCompanyChanged = true;
             }
         }
-        // Р-90: компания. Раньше её в запросе не было вовсе, и пользователя, заведённого не в ту компанию,
-        // оставалось только удалить и завести заново. Переводит между компаниями только SYSTEM_ADMIN:
-        // руководитель своей компанией и ограничен (validateWriteAccess), чужую он не видит.
+        // Переводит между компаниями только SYSTEM_ADMIN: руководитель ограничен своей (Р-90).
         if (request.companyId() != null) {
             String requestedCompanyId = request.companyId().isBlank() ? null : request.companyId().trim();
             if (!Objects.equals(requestedCompanyId, user.getCompanyId())) {
@@ -237,7 +248,7 @@ public class UserService {
                                     + " attempted to move user " + id + " to company " + requestedCompanyId);
                     throw new InvalidStateException("Cannot move a user to another company");
                 }
-                if (requestedCompanyId != null && !companyRepository.existsById(requestedCompanyId)) {
+                if (requestedCompanyId != null && !liveCompanyExists(requestedCompanyId)) {
                     throw new BusinessException("Company not found");
                 }
                 changes.add("companyId " + user.getCompanyId() + " -> " + requestedCompanyId);
@@ -245,10 +256,9 @@ public class UserService {
                 roleOrCompanyChanged = true;
             }
         }
-        // Проверяется итог, а не запрос: и смена роли на роль компании, и снятие компании у руководителя
-        // дают одно и то же — пользователя компании без компании. Только когда запрос роль или компанию
-        // меняет: старую запись без компании нужно по-прежнему можно заблокировать или переименовать.
-        // Транзакция откатит всё, что уже присвоено выше.
+        // Проверяется итог, а не запрос: к роли компании без компании ведут и смена роли, и снятие компании.
+        // Только при их смене — старую запись без компании можно блокировать и переименовывать.
+        // Присвоенное выше откатит транзакция.
         if (roleOrCompanyChanged
                 && COMPANY_ROLES.contains(Role.fromValue(user.getRole()).orElse(null)) && user.getCompanyId() == null) {
             throw new BusinessException("Role " + user.getRole() + " requires a company");
@@ -259,6 +269,11 @@ public class UserService {
             nonActiveStatusSet = !STATUS_ACTIVE.equals(request.status());
             if (!request.status().equals(user.getStatus())) {
                 changes.add("status " + user.getStatus() + " -> " + request.status());
+                // Разблокировка — новый отсчёт до автоблокировки: иначе ближайший проход снова
+                // заблокировал бы учётку, простоявшую 90 дней (Р-101).
+                if (!nonActiveStatusSet) {
+                    user.setLastActivityAt(Instant.now());
+                }
             }
             user.setStatus(request.status());
         }
@@ -270,8 +285,7 @@ public class UserService {
                 actorUsername2, user.getCompanyId(),
                 changes.isEmpty() ? "No fields changed" : "Changed " + String.join(", ", changes)));
 
-        // Смена пароля и смена состояния аккаунта — свои события: их ищут по действию, иначе
-        // пришлось бы вычитывать details каждого UPDATE.
+        // Пароль и статус — отдельные события: их ищут по действию, а не в details каждого UPDATE.
         if (passwordChanged) {
             eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(),
                     AuditAction.PASSWORD_CHANGE, actorUsername2, user.getCompanyId(),
@@ -285,14 +299,16 @@ public class UserService {
                             + " for " + user.getUsername() + " (was " + previousStatus + ")"));
         }
 
-        // Не-ACTIVE пользователь не должен продлевать сессию через refresh. Refresh проверяет
-        // статус и сам, но только когда токен предъявят, — сессии заканчивает вот это. Уже выданные
-        // access-токены живут до своего срока. Гасим при любом не-ACTIVE, а не только на переходе:
-        // массовый UPDATE идемпотентен.
+        // Сессии не-ACTIVE пользователя гасятся здесь, access-токены живут до срока. При любом
+        // не-ACTIVE, а не только на переходе: массовый UPDATE идемпотентен.
         if (nonActiveStatusSet) {
             int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
-            log.info("User {} changed status to {} by {}: {} refresh token(s) revoked",
-                    user.getId(), user.getStatus(), UserPrincipal.getUsername(principal), revoked);
+            log.info("User {} changed status to {}: {} refresh token(s) revoked",
+                    user.getId(), user.getStatus(), revoked);
+        } else if (passwordResetByOther) {
+            // Сессии со старым паролем гасятся: сброс чаще всего делают из-за утечки.
+            int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
+            log.info("User {} password reset: {} refresh token(s) revoked", user.getId(), revoked);
         }
         return mapToResponse(user);
     }
@@ -312,10 +328,13 @@ public class UserService {
                 UserPrincipal.getUsername(principal), user.getCompanyId(),
                 "Soft deleted user " + user.getUsername() + " (role " + user.getRole() + ")"));
 
-        // Мягкое удаление заканчивает все сессии пользователя — то же правило, что в updateUser.
         int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
-        log.info("User {} deleted by {}: {} refresh token(s) revoked",
-                user.getId(), UserPrincipal.getUsername(principal), revoked);
+        log.info("User {} deleted: {} refresh token(s) revoked", user.getId(), revoked);
+    }
+
+    // Удалённая компания — как несуществующая: в неё не заводят и не переводят (Р-107).
+    private boolean liveCompanyExists(String companyId) {
+        return companyRepository.existsByIdAndStatusNot(companyId, STATUS_DELETED);
     }
 
     private void validateCreatePermission(CreateUserRequest request, UserPrincipal principal) {
@@ -355,9 +374,9 @@ public class UserService {
         }
     }
 
-    // Access-токен живёт до 15 минут после блокировки или удаления (auth.md §4.1.2): без сверки с
-    // базой заблокированный руководитель или админ за это время снял бы блокировку с себя или завёл
-    // бы себе новую учётку. Строки нет только у статического токена интеграции и в синтетических тестах.
+    // Access-токен живёт до 15 минут после блокировки (project_docs/modules/auth.md §4.1.2): без сверки
+    // с базой заблокированный актор успел бы разблокировать себя или завести учётку. Строки нет только
+    // у статического токена интеграции и в синтетических тестах.
     private void requireActiveActor(UserPrincipal principal, String action, String entityId) {
         User actor = parseUuid(UserPrincipal.getUserId(principal))
                 .flatMap(userRepository::findById)
@@ -401,7 +420,8 @@ public class UserService {
                 user.getRole(),
                 user.getCompanyId(),
                 user.getStatus(),
-                user.getCreatedAt()
+                user.getCreatedAt(),
+                user.isPasswordChangeRequired()
         );
     }
 }

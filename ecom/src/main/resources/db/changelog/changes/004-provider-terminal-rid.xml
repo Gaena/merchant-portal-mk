@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Р-96: номер терминала у провайдера (terminal.rid) — его pbl передаёт при создании заказа
+      (POST /order?terminalRid=…). Ключ слепка остаётся merchant.rid (Р-79): у провайдера один
+      терминал — один мерчант.
+    -->
+    <changeSet id="004-ecom-provider-terminal-rid" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="provider_terminals"/>
+            <not>
+                <columnExists tableName="provider_terminals" columnName="terminal_rid"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="provider_terminals">
+            <column name="terminal_rid" type="varchar(64)"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

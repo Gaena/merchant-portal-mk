@@ -43,14 +43,12 @@ public class UserController {
         return userService.createUser(request, principal);
     }
 
-    // Потолок страницы списка аккаунтов — тот же, что у журнала аудита, чтобы все постраничные
-    // списки проекта вели себя одинаково.
+    // Общий потолок страницы всех списков проекта.
     private static final int MAX_PAGE_SIZE = 200;
 
-    // page/size приводятся к границам, а не идут как есть: PageRequest.of бросает при page < 0
-    // или size < 1, и IllegalArgumentException из опечатки в query-параметре вернётся как 500.
-    // search и role (P3-1) правятся так же: пустой search — «без поиска», неизвестная роль — «без
-    // фильтра»: разошедшийся с бэкендом фильтр обязан деградировать к полному списку, а не к 400.
+    // page/size приводятся, а не отвергаются: PageRequest.of на page < 0 или size < 1 дал бы 500.
+    // Пустой search — без поиска, незнакомая роль — без фильтра (P3-1): разошедшийся с бэкендом
+    // фильтр деградирует к полному списку, а не к 400.
     @GetMapping
     public PagedResponse<UserResponse> list(
             @RequestParam(defaultValue = "0") int page,
@@ -65,7 +63,6 @@ public class UserController {
                 SearchTerms.normalize(search), normalizeRole(role));
     }
 
-    // Trim и upper-case; значение, которого Role не знает, схлопывается в «без фильтра».
     private static String normalizeRole(String role) {
         if (role == null) {
             return null;

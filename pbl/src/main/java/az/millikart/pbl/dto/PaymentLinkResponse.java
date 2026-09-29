@@ -22,26 +22,17 @@ public record PaymentLinkResponse(
         PaymentType paymentType,
         UsageType usageType,
         Integer maxPayments,
-        // Сколько раз ссылкой воспользовались (P2-16, Р-49): состоявшиеся платежи — SUCCESS,
-        // REFUNDED и PARTIALLY_REFUNDED вместе (TransactionStatus.PAID_STATUSES). Возврат это число
-        // не снижает и слот не освобождает. Имя старше правила и остаётся: оно уже в API.
+        // Платежи из PAID_STATUSES (P2-16, Р-49): возврат число не снижает. Имя — часть API, не менять.
         Integer currentPaymentsCount,
-        // Сколько платежей ссылки вернули, полностью или частично (P2-16, Р-50): REFUNDED +
-        // PARTIALLY_REFUNDED, никогда не больше currentPaymentsCount. Только в одиночном ответе;
-        // в PaymentLinkSummaryResponse не добавлять — список строится без похода в транзакции, и
-        // счётчик на строку вернёт N+1, снятый в P2-15.
+        // REFUNDED + PARTIALLY_REFUNDED (Р-50), не больше currentPaymentsCount. В PaymentLinkSummaryResponse
+        // не добавлять — счётчик на строку списка это N+1 (P2-15).
         Integer refundedPaymentsCount,
         PaymentLinkStatus status,
         String link,
         Map<String, Object> metadata,
-        // Момент, когда ссылка перестаёт быть оплачиваемой. Есть у всех ссылок с 18.08.2026 (P1-9);
-        // null только на старых строках, которые не истекают никогда. Раньше поля здесь не было при
-        // наличии его в PaymentLinkSummaryResponse — портал рисовал отсчёт «сейчас + 24 ч» над
-        // ссылкой, которая на деле не кончалась.
+        // null только у строк до P1-9 — такие ссылки не истекают никогда.
         Instant expiresAt,
-        // Время последней оплаты (P2-15) или null, если её не было. Именно lastPaidAt, а не paidAt:
-        // у многоразовой ссылки платежей много, и это самый свежий из них (Р-46). Возвращённый
-        // платёж считается тоже — дата оплаты с возвратом не исчезает.
+        // Самая свежая оплата из PAID_STATUSES (P2-15, Р-46), с возвратом не исчезает; null — оплат не было.
         Instant lastPaidAt,
         Instant createdAt
 ) {

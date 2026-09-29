@@ -1,5 +1,7 @@
 package az.millikart.pbl;
 
+import az.millikart.common.security.CredentialCipher;
+import org.springframework.jdbc.core.JdbcTemplate;
 import az.millikart.common.testing.PostgresTestContainer;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
@@ -82,6 +84,12 @@ class PaymentLinkRefundUsageTest {
     @Autowired
     private TerminalRepository terminalRepository;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private CredentialCipher credentialCipher;
+
     // Провайдер мокается, а не берётся из stub-конфига: возвраты требуют своего ответа эквайера
     // в каждом тесте.
     @MockBean
@@ -97,19 +105,19 @@ class PaymentLinkRefundUsageTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "test-company");
 
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Test Terminal")
-                .login("TerminalSys/Admin")
-                .password("1234")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId("test-company")
                 .build());
 
         headToken = "Bearer " + jwtProvider.generateToken(
                 "head-user", "head-user@test.com", "COMPANY_HEAD", "test-company");
 
-        when(acquiringClient.createEcomOrder(any(), anyString(), anyString(), any(), anyString()))
+        when(acquiringClient.createEcomOrder(any(), any(), any(), any(), anyString()))
                 .thenAnswer(invocation -> {
                     long orderId = providerOrderIds.incrementAndGet();
                     return new EcomCreateOrderResponse(new EcomCreateOrderResponse.Order(
@@ -175,7 +183,7 @@ class PaymentLinkRefundUsageTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", containsString("usage limit")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // 3. Частичный возврат — тоже использование
@@ -263,7 +271,7 @@ class PaymentLinkRefundUsageTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Payment link has an authorized payment awaiting capture")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // 8. Понижение maxPayments учитывает возвращённые платежи
@@ -373,7 +381,7 @@ class PaymentLinkRefundUsageTest {
         openLink(linkId).andExpect(status().isFound());
 
         Transaction attempt = transactionRepository.findByLinkIdOrderByCreatedAtDesc(linkId).getFirst();
-        when(acquiringClient.getOrderStatus(anyString(), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
                 .thenReturn(Map.of("status", "FullyPaid"));
         mockMvc.perform(get("/api/v1/transactions/{identifier}/status", attempt.getProviderOrderId())
                         .header(HttpHeaders.AUTHORIZATION, headToken))
@@ -384,7 +392,7 @@ class PaymentLinkRefundUsageTest {
     // Возврат через настоящий endpoint, эквайер подтверждает (форма контракта §5.7).
     private void refundThroughApi(Transaction tx, BigDecimal amount) throws Exception {
         String tag = tx.getId().toString().substring(0, 8);
-        when(acquiringClient.refund(anyString(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult("AC-" + tag, "TA-" + tag, "RID-" + tag,
                         Map.of("tran", Map.of("approvalCode", "AC-" + tag,
                                 "match", Map.of("tranActionId", "TA-" + tag, "ridByPmo", "RID-" + tag)))));

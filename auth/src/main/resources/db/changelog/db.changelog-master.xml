@@ -8,5 +8,8 @@
     <include file="changes/002-user-directory-schema.xml" relativeToChangelogFile="true"/>
     <include file="changes/003-refresh-tokens.xml" relativeToChangelogFile="true"/>
     <include file="changes/004-audit-logs.xml" relativeToChangelogFile="true"/>
+    <include file="changes/005-password-change-required.xml" relativeToChangelogFile="true"/>
+    <include file="changes/006-last-activity.xml" relativeToChangelogFile="true"/>
+    <include file="changes/007-password-history.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

@@ -1,5 +1,6 @@
 package az.millikart.auth.controller;
 
+import az.millikart.auth.dto.ChangePasswordRequest;
 import az.millikart.auth.dto.LoginRequest;
 import az.millikart.auth.dto.LoginResponse;
 import az.millikart.auth.dto.LogoutRequest;
@@ -16,9 +17,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-// Login / refresh / logout. Все три публичны через PublicEndpoints.PUBLIC_API (весь /api/v1/auth):
-// до входа предъявлять нечего, а refresh и logout клиент зовёт ровно тогда, когда его access-токен
-// потерян или истёк.
+// Весь /api/v1/auth публичен (PublicEndpoints.PUBLIC_API): до входа предъявлять нечего, а refresh
+// и logout зовут, когда access-токен потерян или истёк.
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
@@ -31,12 +31,17 @@ public class AuthController {
         this.trustedProxies = trustedProxies;
     }
 
-    // Адрес клиента резолвится здесь, один раз, через ClientIp — сервис получает строку и заголовка
-    // не видит. По этому адресу считается лимит попыток, поэтому разбор X-Forwarded-For руками где
-    // угодно отдал бы ключ лимитера самому вызывающему.
+    // Адрес — только через ClientIp: по нему считается лимит попыток, и ручной разбор X-Forwarded-For
+    // отдал бы ключ лимитера вызывающему.
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
         return authService.login(request, ClientIp.resolve(httpRequest, trustedProxies.addresses()));
+    }
+
+    // Обязательная смена пароля, пока сессии нет (Р-100); лимит и локаут — как у входа.
+    @PostMapping("/change-password")
+    public LoginResponse changePassword(@Valid @RequestBody ChangePasswordRequest request, HttpServletRequest httpRequest) {
+        return authService.changePassword(request, ClientIp.resolve(httpRequest, trustedProxies.addresses()));
     }
 
     @PostMapping("/refresh")
@@ -44,7 +49,7 @@ public class AuthController {
         return authService.refresh(request);
     }
 
-    // Всегда 204 — см. AuthService.logout. Отсутствующее тело равнозначно неизвестному токену.
+    // Всегда 204 (AuthService.logout); нет тела — как неизвестный токен.
     @PostMapping("/logout")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void logout(@RequestBody(required = false) LogoutRequest request) {

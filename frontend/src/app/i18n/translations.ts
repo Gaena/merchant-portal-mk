@@ -38,7 +38,6 @@ export interface TranslationDictionary {
     overview: string;
     create: string;
     update: string;
-    /** Общий отказ загрузки экрана или его части. */
     loadFailed: string;
     /** Периоды панелей: главной и статистики по ссылкам (Р-89, Р-91). */
     periods: { today: string; days7: string; days30: string; days90: string };
@@ -62,16 +61,15 @@ export interface TranslationDictionary {
     noNotifications: string;
     profile: string;
     logout: string;
-    /** Вопрос окна выхода: подтверждение — общее `ConfirmDialog`. */
     logoutQuestion: string;
     language: string;
     adminBadge: string;
   };
   home: {
     title: string;
-    /** Р-91: главная — оплаты картой по всем терминалам компании по выписке провайдера. */
+    /** Главная — оплаты картой по мерчантам логина компании из выписки провайдера (Р-91, Р-97). */
     subtitle: string;
-    /** То же для SYSTEM_ADMIN и AUDITOR: по всем терминалам портала. */
+    /** То же для SYSTEM_ADMIN и AUDITOR — по мерчантам всех компаний (Р-97). */
     subtitleAll: string;
     openStatement: string;
     period: string;
@@ -145,7 +143,6 @@ export interface TranslationDictionary {
   payByLink: {
     title: string;
     subtitle: string;
-    /** Вкладки страницы: список ссылок и статистика оплат по ним. */
     tabs: {
       links: string;
       stats: string;
@@ -162,6 +159,9 @@ export interface TranslationDictionary {
     customerNameLabel: string;
     customerEmailLabel: string;
     customerPhoneLabel: string;
+    /** Телефон клиента — только азербайджанский номер (Р-96): провайдер ждёт код страны и номер раздельно. */
+    customerPhoneHint: string;
+    customerPhoneInvalid: string;
     usageTypeLabel: string;
     singleUse: string;
     multipleUse: string;
@@ -178,7 +178,6 @@ export interface TranslationDictionary {
     keepLink: string;
     linkCancelledSuccess: string;
     linkCancelFailed: string;
-    /** Форма и окно создания: раньше тексты были зашиты по-английски и по-русски вперемешку. */
     noActiveTerminals: string;
     customerNotSpecified: string;
     empty: string;
@@ -207,11 +206,7 @@ export interface TranslationDictionary {
     expiry: { h1: string; h24: string; h72: string; d7: string; d30: string };
     /** Подпись в списке вместо срока — только у завершённой ссылки (P2-15, Р-47). */
     paid: string;
-    /**
-     * Подписи четырёх статусов из `utils/payByLinkData.ts`. `Record<LinkStatus, string>`
-     * держит их в связке со словарём бэкенда: новый статус — и `tsc` потребует подпись
-     * во всех трёх языках, лишний ключ он не пропустит (P2-13, зеркало `transactions.statuses`).
-     */
+    /** `Record<LinkStatus, string>`: новый статус — и `tsc` потребует подпись на трёх языках (P2-13). */
     statuses: Record<LinkStatus, string>;
     table: {
       linkId: string;
@@ -253,9 +248,8 @@ export interface TranslationDictionary {
       sentVia: string;
       terminal: string;
       /**
-       * Подпись к `refundedPaymentsCount` рядом с «использовано N из M» (P2-16, Р-50):
-       * «…, из них возвращено: 1». Показывается только когда возвраты были — возврат
-       * не отменяет использование (Р-49), поэтому это отдельная цифра, а не минус из счётчика.
+       * `refundedPaymentsCount` рядом с «использовано N из M» (Р-50), только когда возвраты были:
+       * возврат использование не отменяет (Р-49) — отдельная цифра, а не минус из счётчика.
        */
       refundedOfUsed: string;
     };
@@ -276,18 +270,10 @@ export interface TranslationDictionary {
       terminal: string;
       clearFilters: string;
     };
-    /**
-     * Подписи шести статусов из `types/transaction.ts`. `Record<TransactionStatus, string>`
-     * держит их в связке со словарём бэкенда: новый статус — и `tsc` потребует подпись
-     * во всех трёх языках, лишний ключ он не пропустит.
-     */
+    /** `Record<TransactionStatus, string>`: новый статус — и `tsc` потребует подпись на трёх языках. */
     statuses: Record<TransactionStatus, string>;
     columns: {
-      /**
-       * Идентификаторы, которые мерчант знает по своей стороне: номер заказа у провайдера
-       * и RID платежа. Идут первыми во всех таблицах операций — внутренний `id` для мерчанта
-       * ничего не значит и стоит последним, служебной колонкой.
-       */
+      /** Номер заказа у провайдера и RID платежа идут первыми, внутренний `id` — последним (Р-58). */
       providerOrderId: string;
       ridByMerchant: string;
       id: string;
@@ -298,10 +284,7 @@ export interface TranslationDictionary {
       rrn: string;
       method: string;
       terminal: string;
-      /**
-       * Подпись колонки терминала. Основной его параметр — логин: имя мерчант придумывает сам,
-       * а числовой id внутренний. Короткая форма `terminals.login`, годная для шапки таблицы.
-       */
+      /** Подпись поля терминала на карточке операции; сама подпись — `utils/terminals.ts`. */
       terminalLogin: string;
       actions: string;
     };
@@ -312,20 +295,13 @@ export interface TranslationDictionary {
       refundTitle: string;
       refundAmount: string;
       confirmRefund: string;
-      /**
-       * Списание холда (P3-5a). Общие с окном «Finalize» на карточке ссылки: там тот же
-       * `POST /transactions/{id}/complete`, поэтому текст один, а не две копии в словаре.
-       */
+      /** Списание холда (P3-5a); общие с окном «Finalize» карточки ссылки — там тот же `/complete`. */
       completeAction: string;
       completeTitle: string;
       captureExplains: string;
       captureAmount: string;
       confirmCapture: string;
-      /**
-       * Возврат (P3-5a). Кнопка, диалог и журнал аудита теперь говорят «возврат»: бэкенд
-       * зовёт `POST /transactions/{id}/refund` и пишет `REFUND`, а окно раньше спрашивало
-       * про отмену транзакции и возврат не упоминало.
-       */
+      /** Возврат (P3-5a): окно говорит «возврат», как бэкенд (`/refund`, `REFUND` в журнале). */
       refundQuestion: string;
       keepTransaction: string;
       customerInfo: string;
@@ -333,34 +309,27 @@ export interface TranslationDictionary {
       technicalInfo: string;
       approvalCode: string;
       /**
-       * Тексты неподтверждённого исхода денежной операции (502 от бэкенда). Отдельные от
-       * обычного отказа намеренно: при отказе деньги не двигались и повтор безопасен, здесь
-       * операция могла уже пройти — см. `utils/moneyOperationError.ts`.
+       * Неподтверждённый исход (502) — отдельно от отказа: после отказа повтор безопасен, здесь
+       * операция могла уже пройти (`utils/moneyOperationError.ts`).
        */
       unresolvedTitle: string;
       unresolvedHint: string;
-      /** Кнопка, спрашивающая эквайера о судьбе операции. Единственный верный следующий шаг. */
+      /** Спросить эквайера о судьбе операции — единственный верный следующий шаг. */
       checkStatusAction: string;
       statusChecked: string;
-      /**
-       * Перечитали, а операция не изменилась: исход по-прежнему не подтверждён, повтор закрыт.
-       * Снять запрет может только перечитывание, которое показало движение денег.
-       */
+      /** Перечитанная операция не изменилась: повтор закрыт, снимает запрет только движение денег. */
       statusStillUnresolved: string;
-      /** Сама проверка статуса не удалась. Это не исход денежной операции — запрет не трогает. */
+      /** Сбой самой проверки — не исход денежной операции, запрет не трогает. */
       checkStatusFailed: string;
-      /** Остаток к возврату у частично возвращённой операции: вернуть можно только его. */
+      /** Вернуть можно только остаток. */
       refundableLeft: string;
-      /**
-       * Подписи событий на шкале истории. Денежные события называют действие, а не состояние
-       * после него: «возврат» понятнее, чем «частично возвращена», когда рядом стоит сумма.
-       */
+      /** Денежные события называют действие, а не состояние: рядом с суммой «возврат» понятнее. */
       eventCreated: string;
       eventCaptured: string;
       eventRefunded: string;
-      /** Ответ не принёс ни одного события. Пустая шкала без слов читается как поломка. */
+      /** Пустая шкала без слов читается как поломка. */
       historyEmpty: string;
-      /** Заголовок блока с ProviderOrderId и MerchantRid — он открывает карточку операции. */
+      /** Блок `providerOrderId` и `ridByMerchant` — первый на карточке операции (Р-58). */
       identifiers: string;
       providerOrderId: string;
       ridByMerchant: string;
@@ -368,9 +337,8 @@ export interface TranslationDictionary {
     };
   };
   /**
-   * Вкладка E-commerce — выписка провайдера из сервиса `ecom` (`project_docs/ecom.md` §2). Свой
-   * словарь, а не `transactions`: статусов восемь (Р-75, Р-78), период обязателен и ограничен,
-   * страница курсорная, а операции заказа приходят вместе с ним.
+   * Выписка сервиса `ecom` (`project_docs/modules/ecom.md` §2). Свой словарь, а не `transactions`:
+   * статусов восемь (Р-75, Р-78), период обязателен, страница курсорная, операции — внутри заказа.
    */
   ecommerce: {
     title: string;
@@ -461,8 +429,8 @@ export interface TranslationDictionary {
     editDialogTitle: string;
     name: string;
     /**
-     * Выбор терминала провайдера при заведении (Р-67, Р-79): название и логин приходят из справочника,
-     * администратор вводит пароль. Справочник видит только SYSTEM_ADMIN (`ecom.md` §3).
+     * Выбор терминала провайдера при заведении (Р-67, Р-79): название и логин — из справочника, пароля
+     * у терминала нет (Р-93). Видит и заводит только SYSTEM_ADMIN (`project_docs/modules/ecom.md` §3).
      */
     providerTerminal: string;
     providerTerminalHint: string;
@@ -472,24 +440,17 @@ export interface TranslationDictionary {
     syncApplied: string;
     syncSkipped: string;
     login: string;
-    password: string;
+    /** Колонка и подпись терминала — номер терминала у провайдера (Р-96), у старых — логин. */
+    terminal: string;
     /**
-     * Раскрытие пароля терминала: ключ от эквайринга показывается по нажатию, только системному
-     * администратору и с записью в журнал аудита (`TerminalService.revealPassword`).
-     */
-    revealPassword: string;
-    hidePassword: string;
-    /**
-     * Кнопка «Тест» и её исходы. Проверка — пробный заказ у провайдера; различать нужно все
-     * четыре исхода, потому что следующий шаг у каждого свой (`utils/terminalCheck.ts`).
+     * Кнопка «Тест» и её исходы. Проверка — пробный заказ у провайдера с кредами компании терминала
+     * (Р-93); различать нужно все четыре исхода: следующий шаг у каждого свой (`utils/terminalCheck.ts`).
      */
     testAction: string;
     checkOk: string;
     checkInvalid: string;
     checkRejected: string;
     checkUnreachable: string;
-    newPassword: string;
-    newPasswordHint: string;
     company: string;
     status: string;
     /** Полный словарь статусов терминала: новое значение потребует перевода на все три языка. */
@@ -503,19 +464,16 @@ export interface TranslationDictionary {
     unblockLinksAffected: string;
     editConfirmTitle: string;
     editConfirmQuestion: string;
-    editPasswordReplaced: string;
     editNothingChanged: string;
     searchPlaceholder: string;
     /** Пояснение к выбору компании в формах; виден только тем, кто выбирает (SYSTEM_ADMIN). */
     companyHint: string;
-    /** Итоги и отказы действий на странице — раньше были зашиты по-английски и по-русски вперемешку. */
     formIncomplete: string;
     created: string;
     createFailed: string;
     updated: string;
     updateFailed: string;
     checkFailed: string;
-    revealFailed: string;
     blockedNotice: string;
     unblockedNotice: string;
     statusChangeFailed: string;
@@ -533,10 +491,37 @@ export interface TranslationDictionary {
     deleteTitle: string;
     deleteQuestion: string;
     deleteIrreversible: string;
-    deactivateTitle: string;
-    deactivateQuestion: string;
-    activateTitle: string;
-    activateQuestion: string;
+    /**
+     * Креды компании к провайдеру (Р-93): все запросы к шлюзу идут от её имени. Задаёт и меняет только
+     * SYSTEM_ADMIN; пароль хранится зашифрованным и не показывается никому — только заменяется.
+     */
+    providerLogin: string;
+    providerLoginHint: string;
+    /** Свободных логинов мультимерчантов в справочнике нет (Р-95). */
+    providerLoginEmpty: string;
+    /** Итог обновления справочника логинов мультимерчантов (Р-94) — по кнопке в форме компании. */
+    loginsSyncApplied: string;
+    loginsSyncSkipped: string;
+    providerPassword: string;
+    providerPasswordHint: string;
+    newProviderPassword: string;
+    newProviderPasswordHint: string;
+    /**
+     * Окно правки компании: название, логин и пароль к провайдеру, статус. Подтверждение перечисляет
+     * изменения; предупреждения — только к тому, что меняется.
+     */
+    editCompany: string;
+    editConfirmTitle: string;
+    editConfirmQuestion: string;
+    credentialsWarning: string;
+    statusWarning: string;
+    providerPasswordReplaced: string;
+    editNothingChanged: string;
+    formIncomplete: string;
+    created: string;
+    createFailed: string;
+    updated: string;
+    updateFailed: string;
   };
   users: {
     title: string;
@@ -572,8 +557,13 @@ export interface TranslationDictionary {
     /** Роль и компания вступают в силу при следующем обновлении сессии пользователя. */
     editSessionsHint: string;
     noCompany: string;
+    /** Роль компании без компании бэкенд отклоняет (Р-103). */
+    companyRequired: string;
     newPassword: string;
     newPasswordHint: string;
+    /** Пароль, заданный администратором, пользователь сменит при первом входе (Р-100). */
+    issuedPasswordHint: string;
+    passwordChangePending: string;
     passwordWillChange: string;
     /** Свою роль и статус в этом окне не поменять: так себя легко лишить доступа. */
     selfHint: string;
@@ -613,7 +603,6 @@ export interface TranslationDictionary {
   };
   auth: {
     unknownRole: string;
-    /** Форма входа. Раньше была зашита по-английски целиком, а под ней стояла ложная надпись о 2FA. */
     subtitle: string;
     emailLabel: string;
     passwordLabel: string;
@@ -625,6 +614,16 @@ export interface TranslationDictionary {
     authFailed: string;
     /** 200 без токенов (например, прокси отдал HTML): вход отклонён на клиенте. */
     malformedResponse: string;
+    /** Выход после 15 минут без действий (PCI DSS 8.2.8, Р-99). */
+    idleSignedOut: string;
+    /** Смена пароля, заданного не владельцем, при входе (PCI DSS 8.3.5, Р-100). */
+    passwordChangeRequired: string;
+    newPasswordLabel: string;
+    confirmPasswordLabel: string;
+    passwordRules: string;
+    passwordsDoNotMatch: string;
+    samePassword: string;
+    changePasswordAndSignIn: string;
   };
   errors: {
     forbiddenTitle: string;
@@ -637,21 +636,14 @@ export interface TranslationDictionary {
   };
 }
 
-/**
- * Подпись статуса для интерфейса. Неизвестный статус (`parseTransactionStatus` вернул `null`)
- * показывается как есть — исходным значением из ответа, без подстановки чего-либо знакомого.
- */
+/** Статус вне словаря — исходным значением из ответа, ничего знакомого не подставлять. */
 export const statusLabel = (
   dict: TranslationDictionary,
   status: TransactionStatus | null | undefined,
   raw?: string
 ): string => (status ? dict.transactions.statuses[status] : raw || '—');
 
-/**
- * Подпись статуса платёжной ссылки. Правило то же, что у `statusLabel`: статус вне словаря
- * бэкенда (`parseLinkStatus` вернул `null`) показывается исходным значением из ответа,
- * без подстановки чего-либо знакомого.
- */
+/** Правило то же, что у `statusLabel`. */
 export const linkStatusLabel = (
   dict: TranslationDictionary,
   status: LinkStatus | null | undefined,
@@ -721,7 +713,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     home: {
       title: 'Merchant Dashboard',
       subtitle: 'Card payments across all of the company\'s terminals, from the provider\'s statement, for orders created in the period.',
-      subtitleAll: 'Card payments across all terminals of the portal, from the provider\'s statement, for orders created in the period.',
+      subtitleAll: 'Card payments of all companies of the portal, from the provider\'s statement, for orders created in the period.',
       openStatement: 'Open E-commerce statement',
       period: 'Period',
       loadFailed: 'Could not load the dashboard summary.',
@@ -807,6 +799,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       customerNameLabel: 'Customer Name',
       customerEmailLabel: 'Customer Email',
       customerPhoneLabel: 'Customer Phone',
+      customerPhoneHint: 'Azerbaijani number: +994 and 9 digits',
+      customerPhoneInvalid: 'The customer phone must be an Azerbaijani number: +994 and 9 digits, e.g. +994 70 330 10 25',
       usageTypeLabel: 'Usage Type',
       singleUse: 'Single Use (One Payment)',
       multipleUse: 'Multiple Uses (Reusable Link)',
@@ -1064,23 +1058,19 @@ export const translations: Record<Language, TranslationDictionary> = {
       editDialogTitle: 'Edit Terminal Details',
       name: 'Terminal Name',
       providerTerminal: 'Provider terminal',
-      providerTerminalHint: 'Name and login come from the provider directory; only the password is entered here.',
-      providerTerminalEmpty: 'The provider directory is empty. Refresh it — the scheduled update may not have run yet.',
+      providerTerminalHint: 'Only terminals of merchants linked to the company login that are not added yet. Name, login and terminal number come from the provider directory; a terminal has no password.',
+      providerTerminalEmpty: 'No free terminals of this company’s merchants in the provider directory. Refresh it; if the terminal still does not appear, it is inactive at the provider, already added, or its merchant is not linked to the company login.',
       providerTerminalLoadFailed: 'Could not load the provider directory.',
       syncDirectory: 'Refresh directory',
       syncApplied: 'Directory refreshed. Terminals received',
       syncSkipped: 'Directory was not refreshed',
       login: 'Merchant Login ID',
-      password: 'Terminal Password',
-      revealPassword: 'Show password',
-      hidePassword: 'Hide password',
+      terminal: 'Terminal',
       testAction: 'Test',
-      checkOk: 'Credentials accepted, payments allowed',
-      checkInvalid: 'Invalid login or password',
+      checkOk: 'Company credentials accepted, a payment can be created',
+      checkInvalid: 'Invalid company login or password',
       checkRejected: 'Credentials accepted, but the acquirer refused a payment',
       checkUnreachable: 'The acquirer did not answer — nothing is known about the terminal',
-      newPassword: 'New Terminal Password (Optional)',
-      newPasswordHint: 'Leave blank to keep the current terminal password',
       company: 'Assigned Company',
       status: 'Status',
       statuses: {
@@ -1095,8 +1085,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       unblockExplains: 'Unblocking lets the terminal take payments again: suspended links go back to active, except the ones whose lifetime ran out while it was blocked.',
       unblockLinksAffected: 'Suspended links that will go back to active',
       editConfirmTitle: 'Save changes to terminal',
-      editConfirmQuestion: 'The following will change. The login, the password and the owning company all live in this one form — check the list before confirming.',
-      editPasswordReplaced: 'The terminal password will be replaced',
+      editConfirmQuestion: 'The following will change. The name and the owning company live in this one form — check the list before confirming.',
       editNothingChanged: 'Nothing changed — no request was sent.',
       searchPlaceholder: 'Search terminals by name, ID or login...',
       companyHint: 'The company that owns the terminal',
@@ -1106,7 +1095,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       updated: 'Terminal updated',
       updateFailed: 'Could not update the terminal',
       checkFailed: 'Could not check the terminal',
-      revealFailed: 'Could not show the terminal password',
       blockedNotice: 'Terminal blocked: it takes no new payments and its active links are suspended',
       unblockedNotice: 'Terminal unblocked: suspended links are active again, except those whose lifetime ran out',
       statusChangeFailed: 'Could not change the terminal status',
@@ -1124,10 +1112,27 @@ export const translations: Record<Language, TranslationDictionary> = {
       deleteTitle: 'Delete company?',
       deleteQuestion: 'The company disappears from every list in the portal. Its terminals, payment links and transactions stay in the database.',
       deleteIrreversible: 'This cannot be undone from the portal: a deleted company cannot be restored here.',
-      deactivateTitle: 'Mark company inactive?',
-      deactivateQuestion: 'This is a label in the directory and an entry in the audit log. It does not stop sign-ins, link creation or payments — to stop payments, block the terminals.',
-      activateTitle: 'Mark company active?',
-      activateQuestion: 'The company is marked active again. Nothing else changes.',
+      providerLogin: 'Acquirer login',
+      providerLoginHint: 'A multimerchant login from the provider directory: only active logins with active merchants that no other company uses. Created just now — refresh the directory.',
+      providerLoginEmpty: 'No free multimerchant logins in the directory. Refresh it; if the login still does not appear, it is not created at the provider, is inactive, has no active merchants or belongs to another company.',
+      loginsSyncApplied: 'Directory refreshed. Multimerchant logins received',
+      loginsSyncSkipped: 'Login directory was not refreshed',
+      providerPassword: 'Acquirer password',
+      providerPasswordHint: 'Stored encrypted. Nobody can view it later — it can only be replaced.',
+      newProviderPassword: 'New acquirer password (optional)',
+      newProviderPasswordHint: 'Leave blank to keep the current password',
+      providerPasswordReplaced: 'The acquirer password will be replaced',
+      editNothingChanged: 'Nothing changed — no request was sent.',
+      formIncomplete: 'Fill in every required field',
+      created: 'Company created',
+      createFailed: 'Could not create the company',
+      editCompany: 'Edit company',
+      editConfirmTitle: 'Save changes to the company?',
+      editConfirmQuestion: 'The following will change for this company. Check the list before confirming.',
+      credentialsWarning: 'Every request of this company to the acquirer — new payments, captures, refunds and status checks — will go with the new credentials. Wrong ones stop the company payments.',
+      statusWarning: 'Status is a label in the directory and an entry in the audit log. It does not stop sign-ins, link creation or payments — to stop payments, block the terminals.',
+      updated: 'Company updated',
+      updateFailed: 'Could not update the company',
     },
     users: {
       title: 'Users',
@@ -1142,7 +1147,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       status: 'Status',
       searchPlaceholder: 'Search users by name, login or email...',
       deleteTitle: 'Delete user?',
-      deleteQuestion: 'The account stops working immediately: every session of this user is ended and sign-in is refused. The record stays in the database, hidden from the lists.',
+      deleteQuestion: 'The account stops working: sign-in is refused at once, and the user\'s open sessions end within 15 minutes. The record stays in the database, hidden from the lists.',
       deleteIrreversible: 'This cannot be undone from the portal: a deleted user cannot be restored or edited here.',
       roles: {
         systemAdmin: 'System Administrator',
@@ -1159,10 +1164,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       editConfirmTitle: 'Save changes to user',
       editConfirmQuestion: 'The following will change. Role, company and status decide what this person can see and do — check the list before confirming.',
       editNothingChanged: 'Nothing changed — no request was sent.',
-      editSessionsHint: 'A new role or company takes effect when the user\'s session next refreshes, within 15 minutes. Blocking ends the sessions at once.',
+      editSessionsHint: 'A new role or company takes effect when the user\'s session next refreshes, within 15 minutes. Blocking refuses sign-in at once; open sessions end within 15 minutes.',
       noCompany: 'No company',
+      companyRequired: 'A company role needs a company: choose one.',
       newPassword: 'New password (optional)',
       newPasswordHint: 'Leave empty to keep the current password. At least 12 characters with upper and lower case, a digit and a symbol.',
+      issuedPasswordHint: 'The user will be asked to change this password at the first sign-in.',
+      passwordChangePending: 'Password change pending',
       passwordWillChange: 'The password will be replaced',
       selfHint: 'You cannot change your own role or status here.',
       updated: 'User updated',
@@ -1206,6 +1214,14 @@ export const translations: Record<Language, TranslationDictionary> = {
       networkError: 'The server is unreachable. Check the connection and try again.',
       authFailed: 'Sign-in failed',
       malformedResponse: 'The server answered without a session. Sign-in was refused — try again or contact your administrator.',
+      idleSignedOut: 'You were signed out after 15 minutes of inactivity. Sign in again.',
+      passwordChangeRequired: 'Your password was set by an administrator. Choose your own password to sign in.',
+      newPasswordLabel: 'New password',
+      confirmPasswordLabel: 'Repeat the new password',
+      passwordRules: 'At least 12 characters: upper- and lower-case letters, a digit and a special character. Not one of your last 4 passwords.',
+      passwordsDoNotMatch: 'The passwords do not match.',
+      samePassword: 'The new password must differ from the current one.',
+      changePasswordAndSignIn: 'Change password and sign in',
     },
     errors: {
       forbiddenTitle: 'Access denied',
@@ -1279,7 +1295,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     home: {
       title: 'Merchant Paneli',
       subtitle: 'Şirkətin bütün terminalları üzrə kartla ödənişlər — provayderin çıxarışına görə, dövrdə yaradılmış sifarişlər üzrə.',
-      subtitleAll: 'Portalın bütün terminalları üzrə kartla ödənişlər — provayderin çıxarışına görə, dövrdə yaradılmış sifarişlər üzrə.',
+      subtitleAll: 'Portalın bütün şirkətləri üzrə kartla ödənişlər — provayderin çıxarışına görə, dövrdə yaradılmış sifarişlər üzrə.',
       openStatement: 'E-commerce çıxarışını aç',
       period: 'Dövr',
       loadFailed: 'İcmalı yükləmək mümkün olmadı.',
@@ -1365,6 +1381,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       customerNameLabel: 'Müştərinin Adı',
       customerEmailLabel: 'Müştərinin E-poçtu',
       customerPhoneLabel: 'Müştərinin Telefonu',
+      customerPhoneHint: 'Azərbaycan nömrəsi: +994 və 9 rəqəm',
+      customerPhoneInvalid: 'Müştərinin telefonu Azərbaycan nömrəsi olmalıdır: +994 və 9 rəqəm, məsələn +994 70 330 10 25',
       usageTypeLabel: 'İstifadə Növü',
       singleUse: 'Bir dəfəlik (Tək ödəniş)',
       multipleUse: 'Çox dəfəlik (Təkrar istifadə)',
@@ -1622,23 +1640,19 @@ export const translations: Record<Language, TranslationDictionary> = {
       editDialogTitle: 'Terminal Parametrlərini Redaktə Et',
       name: 'Terminalın Adı',
       providerTerminal: 'Provayder terminalı',
-      providerTerminalHint: 'Ad və login provayder kataloqundan gəlir; burada yalnız şifrə daxil edilir.',
-      providerTerminalEmpty: 'Provayder kataloqu boşdur. Onu yeniləyin — planlı yenilənmə hələ işləməmiş ola bilər.',
+      providerTerminalHint: 'Yalnız şirkət logininə bağlı merçantların hələ əlavə edilməmiş terminalları. Ad, login və terminal nömrəsi provayder kataloqundan gəlir; terminalın şifrəsi yoxdur.',
+      providerTerminalEmpty: 'Kataloqda bu şirkətin merçantlarının boş terminalı yoxdur. Kataloqu yeniləyin; terminal yenə görünmürsə, o provayderdə aktiv deyil, artıq əlavə edilib və ya merçantı şirkət logininə bağlı deyil.',
       providerTerminalLoadFailed: 'Provayder kataloqunu yükləmək mümkün olmadı.',
       syncDirectory: 'Kataloqu yenilə',
       syncApplied: 'Kataloq yeniləndi. Alınan terminallar',
       syncSkipped: 'Kataloq yenilənmədi',
       login: 'Mərfəti Terminal Logini',
-      password: 'Terminal Şifrəsi',
-      revealPassword: 'Şifrəni göstər',
-      hidePassword: 'Şifrəni gizlət',
+      terminal: 'Terminal',
       testAction: 'Test',
-      checkOk: 'Məlumatlar qəbul edildi, ödənişlər icazəlidir',
-      checkInvalid: 'Login və ya şifrə yanlışdır',
+      checkOk: 'Şirkətin məlumatları qəbul edildi, ödəniş yaratmaq olar',
+      checkInvalid: 'Şirkətin logini və ya şifrəsi yanlışdır',
       checkRejected: 'Məlumatlar qəbul edildi, lakin ekvayer ödənişə icazə vermədi',
       checkUnreachable: 'Ekvayer cavab vermədi — terminal barədə məlumat yoxdur',
-      newPassword: 'Yeni terminal şifrəsi (istəyə görə)',
-      newPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
       company: 'Təyin Olunmuş Şirkət',
       status: 'Status',
       statuses: {
@@ -1653,8 +1667,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       unblockExplains: 'Blokdan çıxarma terminala ödəniş qəbulunu qaytarır: dayandırılmış linklər yenidən aktiv olur, blok müddətində vaxtı bitmiş olanlar istisna.',
       unblockLinksAffected: 'Yenidən aktiv olacaq dayandırılmış linklər',
       editConfirmTitle: 'Terminalın dəyişiklikləri yadda saxlanılsın',
-      editConfirmQuestion: 'Aşağıdakılar dəyişəcək. Bu formada login, şifrə və sahib şirkət yan-yana durur — təsdiqləməzdən əvvəl siyahını yoxlayın.',
-      editPasswordReplaced: 'Terminalın şifrəsi əvəz olunacaq',
+      editConfirmQuestion: 'Aşağıdakılar dəyişəcək. Bu formada ad və sahib şirkət yan-yana durur — təsdiqləməzdən əvvəl siyahını yoxlayın.',
       editNothingChanged: 'Dəyişiklik yoxdur — sorğu göndərilmədi.',
       searchPlaceholder: 'Ad, ID və ya login üzrə axtarış...',
       companyHint: 'Terminalın aid olduğu şirkət',
@@ -1664,7 +1677,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       updated: 'Terminal yeniləndi',
       updateFailed: 'Terminalı yeniləmək mümkün olmadı',
       checkFailed: 'Terminalı yoxlamaq mümkün olmadı',
-      revealFailed: 'Terminal parolunu göstərmək mümkün olmadı',
       blockedNotice: 'Terminal bloklandı: yeni ödənişlər qəbul edilmir, aktiv linklər dayandırıldı',
       unblockedNotice: 'Terminalın bloku açıldı: dayandırılmış linklər yenidən aktivdir (müddəti bitənlər istisna olmaqla)',
       statusChangeFailed: 'Terminalın statusunu dəyişmək mümkün olmadı',
@@ -1682,10 +1694,27 @@ export const translations: Record<Language, TranslationDictionary> = {
       deleteTitle: 'Şirkət silinsin?',
       deleteQuestion: 'Şirkət portalın bütün siyahılarından yox olacaq. Onun terminalları, ödəniş linkləri və əməliyyatları bazada qalır.',
       deleteIrreversible: 'Bunu portaldan geri qaytarmaq mümkün deyil: silinmiş şirkəti burada bərpa etmək olmur.',
-      deactivateTitle: 'Şirkət qeyri-aktiv işarələnsin?',
-      deactivateQuestion: 'Bu, sorğu kitabçasında qeyd və audit jurnalında yazıdır. İşçilərin girişini, link yaradılmasını və ödənişlərin qəbulunu dayandırmır — ödənişləri dayandırmaq üçün terminalları bloklayın.',
-      activateTitle: 'Şirkət aktiv işarələnsin?',
-      activateQuestion: 'Şirkət yenidən aktiv işarələnəcək. Başqa heç nə dəyişmir.',
+      providerLogin: 'Provayder logini',
+      providerLoginHint: 'Provayder kataloqundan multimerçant logini: yalnız aktiv merçantları olan, başqa şirkətin istifadə etmədiyi aktiv loginlər. İndicə yaradılıbsa — kataloqu yeniləyin.',
+      providerLoginEmpty: 'Kataloqda boş multimerçant logini yoxdur. Kataloqu yeniləyin; login yenə görünmürsə, o provayderdə yaradılmayıb, aktiv deyil, aktiv merçantı yoxdur və ya başqa şirkətə aiddir.',
+      loginsSyncApplied: 'Kataloq yeniləndi. Alınan multimerçant loginləri',
+      loginsSyncSkipped: 'Login kataloqu yenilənmədi',
+      providerPassword: 'Provayder şifrəsi',
+      providerPasswordHint: 'Şifrələnmiş saxlanılır. Sonra onu görmək olmaz — yalnız əvəz etmək.',
+      newProviderPassword: 'Yeni provayder şifrəsi (istəyə görə)',
+      newProviderPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
+      providerPasswordReplaced: 'Provayder şifrəsi əvəz olunacaq',
+      editNothingChanged: 'Heç nə dəyişməyib — sorğu göndərilmədi.',
+      formIncomplete: 'Bütün məcburi sahələri doldurun',
+      created: 'Şirkət yaradıldı',
+      createFailed: 'Şirkəti yaratmaq alınmadı',
+      editCompany: 'Şirkəti redaktə et',
+      editConfirmTitle: 'Şirkətdəki dəyişikliklər saxlanılsın?',
+      editConfirmQuestion: 'Bu şirkətdə aşağıdakılar dəyişəcək. Təsdiqləməzdən əvvəl siyahını yoxlayın.',
+      credentialsWarning: 'Şirkətin provayderə bütün sorğuları — yeni ödənişlər, silinmələr, geri qaytarmalar və status yoxlamaları — yeni məlumatlarla gedəcək. Yanlış məlumatlar şirkətin ödənişlərini dayandırar.',
+      statusWarning: 'Status sorğu kitabçasında qeyd və audit jurnalında yazıdır. İşçilərin girişini, link yaradılmasını və ödənişlərin qəbulunu dayandırmır — ödənişləri dayandırmaq üçün terminalları bloklayın.',
+      updated: 'Şirkət yeniləndi',
+      updateFailed: 'Şirkəti yeniləmək alınmadı',
     },
     users: {
       title: 'İstifadəçilər',
@@ -1700,7 +1729,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       status: 'Status',
       searchPlaceholder: 'Ad, login və ya e-poçt üzrə axtarış...',
       deleteTitle: 'İstifadəçi silinsin?',
-      deleteQuestion: 'Hesab dərhal işləməyi dayandırır: istifadəçinin bütün sessiyaları bağlanır, girişə icazə verilmir. Qeyd bazada qalır, siyahılardan gizlədilir.',
+      deleteQuestion: 'Hesab işləməyi dayandırır: giriş dərhal rədd edilir, istifadəçinin açıq sessiyaları 15 dəqiqə ərzində bağlanır. Qeyd bazada qalır, siyahılardan gizlədilir.',
       deleteIrreversible: 'Bunu portaldan geri qaytarmaq mümkün deyil: silinmiş istifadəçini burada nə bərpa etmək, nə də redaktə etmək olar.',
       roles: {
         systemAdmin: 'Sistem Administratoru',
@@ -1717,10 +1746,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       editConfirmTitle: 'İstifadəçidəki dəyişiklikləri saxla',
       editConfirmQuestion: 'Aşağıdakılar dəyişəcək. Rol, şirkət və status bu şəxsin nəyi görə və edə biləcəyini müəyyən edir — təsdiqləməzdən əvvəl siyahını yoxlayın.',
       editNothingChanged: 'Heç nə dəyişməyib — sorğu göndərilmədi.',
-      editSessionsHint: 'Yeni rol və ya şirkət istifadəçinin sessiyası növbəti dəfə yeniləndikdə, 15 dəqiqə ərzində qüvvəyə minir. Bloklama sessiyaları dərhal bitirir.',
+      editSessionsHint: 'Yeni rol və ya şirkət istifadəçinin sessiyası növbəti dəfə yeniləndikdə, 15 dəqiqə ərzində qüvvəyə minir. Bloklama girişi dərhal dayandırır, açıq sessiyalar 15 dəqiqə ərzində bağlanır.',
       noCompany: 'Şirkətsiz',
+      companyRequired: 'Şirkət rolu üçün şirkət seçin.',
       newPassword: 'Yeni parol (istəyə bağlı)',
       newPasswordHint: 'Cari parolu saxlamaq üçün boş buraxın. Ən azı 12 simvol: böyük və kiçik hərf, rəqəm və xüsusi simvol.',
+      issuedPasswordHint: 'İstifadəçi ilk girişdə bu parolu dəyişməli olacaq.',
+      passwordChangePending: 'Parol dəyişikliyi gözlənilir',
       passwordWillChange: 'Parol dəyişdiriləcək',
       selfHint: 'Öz rolunuzu və statusunuzu burada dəyişə bilməzsiniz.',
       updated: 'İstifadəçi yeniləndi',
@@ -1764,6 +1796,14 @@ export const translations: Record<Language, TranslationDictionary> = {
       networkError: 'Server əlçatan deyil. Bağlantını yoxlayın və yenidən cəhd edin.',
       authFailed: 'Giriş alınmadı',
       malformedResponse: 'Server sessiyasız cavab verdi. Giriş rədd edildi — yenidən cəhd edin və ya administratorla əlaqə saxlayın.',
+      idleSignedOut: '15 dəqiqə fəaliyyət olmadığı üçün sistemdən çıxdınız. Yenidən daxil olun.',
+      passwordChangeRequired: 'Parolunuzu administrator təyin edib. Daxil olmaq üçün öz parolunuzu seçin.',
+      newPasswordLabel: 'Yeni parol',
+      confirmPasswordLabel: 'Yeni parolu təkrarlayın',
+      passwordRules: 'Ən azı 12 simvol: böyük və kiçik hərflər, rəqəm və xüsusi simvol. Son 4 parolunuzdan biri olmamalıdır.',
+      passwordsDoNotMatch: 'Parollar üst-üstə düşmür.',
+      samePassword: 'Yeni parol cari paroldan fərqli olmalıdır.',
+      changePasswordAndSignIn: 'Parolu dəyişin və daxil olun',
     },
     errors: {
       forbiddenTitle: 'Giriş qadağandır',
@@ -1837,7 +1877,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     home: {
       title: 'Панель мерчанта',
       subtitle: 'Оплаты картой по всем терминалам компании — по выписке провайдера, по заказам, созданным за период.',
-      subtitleAll: 'Оплаты картой по всем терминалам портала — по выписке провайдера, по заказам, созданным за период.',
+      subtitleAll: 'Оплаты картой всех компаний портала — по выписке провайдера, по заказам, созданным за период.',
       openStatement: 'Открыть выписку E-commerce',
       period: 'Период',
       loadFailed: 'Не удалось загрузить сводку.',
@@ -1923,6 +1963,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       customerNameLabel: 'Имя клиента',
       customerEmailLabel: 'Email клиента',
       customerPhoneLabel: 'Телефон клиента',
+      customerPhoneHint: 'Азербайджанский номер: +994 и 9 цифр',
+      customerPhoneInvalid: 'Телефон клиента — только азербайджанский номер: +994 и 9 цифр, например +994 70 330 10 25',
       usageTypeLabel: 'Тип использования',
       singleUse: 'Одноразовая (Один платеж)',
       multipleUse: 'Многоразовая (Многократная оплата)',
@@ -2180,23 +2222,19 @@ export const translations: Record<Language, TranslationDictionary> = {
       editDialogTitle: 'Редактировать параметры терминала',
       name: 'Название терминала',
       providerTerminal: 'Терминал провайдера',
-      providerTerminalHint: 'Название и логин берутся из справочника провайдера; здесь вводится только пароль.',
-      providerTerminalEmpty: 'Справочник провайдера пуст. Обновите его — плановое обновление могло ещё не пройти.',
+      providerTerminalHint: 'Только терминалы мерчантов, привязанных к логину компании, и ещё не заведённые. Название, логин и номер терминала — из справочника провайдера; пароля у терминала нет.',
+      providerTerminalEmpty: 'Свободных терминалов мерчантов этой компании в справочнике нет. Обновите справочник; если терминал так и не появился — он выключен у провайдера, уже заведён или его мерчант не привязан к логину компании.',
       providerTerminalLoadFailed: 'Не удалось загрузить справочник провайдера.',
       syncDirectory: 'Обновить справочник',
       syncApplied: 'Справочник обновлён. Получено терминалов',
       syncSkipped: 'Справочник не обновлён',
       login: 'Логин терминала мерчанта',
-      password: 'Пароль терминала',
-      revealPassword: 'Показать пароль',
-      hidePassword: 'Скрыть пароль',
+      terminal: 'Терминал',
       testAction: 'Тест',
-      checkOk: 'Данные приняты, оплаты разрешены',
-      checkInvalid: 'Неверный логин или пароль',
+      checkOk: 'Данные компании приняты, платёж создать можно',
+      checkInvalid: 'Неверный логин или пароль компании',
       checkRejected: 'Данные приняты, но эквайер не разрешил оплату',
       checkUnreachable: 'Эквайер не ответил — о терминале ничего не известно',
-      newPassword: 'Новый пароль терминала (необязательно)',
-      newPasswordHint: 'Оставьте пустым, чтобы сохранить текущий пароль терминала',
       company: 'Назначенная компания',
       status: 'Статус',
       statuses: {
@@ -2211,8 +2249,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       unblockExplains: 'Разблокировка возвращает терминалу приём платежей: приостановленные ссылки вернутся в работу, кроме тех, у которых за время блокировки истёк срок.',
       unblockLinksAffected: 'Приостановленных ссылок вернётся в работу',
       editConfirmTitle: 'Сохранить изменения терминала',
-      editConfirmQuestion: 'Изменится следующее. В этой форме рядом лежат логин, пароль и компания-владелец — сверьтесь со списком перед подтверждением.',
-      editPasswordReplaced: 'Пароль терминала будет заменён',
+      editConfirmQuestion: 'Изменится следующее. В этой форме рядом лежат название и компания-владелец — сверьтесь со списком перед подтверждением.',
       editNothingChanged: 'Изменений нет — запрос не отправлялся.',
       searchPlaceholder: 'Поиск по названию, ID или логину...',
       companyHint: 'Компания, которой принадлежит терминал',
@@ -2222,7 +2259,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       updated: 'Терминал обновлён',
       updateFailed: 'Не удалось обновить терминал',
       checkFailed: 'Не удалось проверить терминал',
-      revealFailed: 'Не удалось показать пароль терминала',
       blockedNotice: 'Терминал заблокирован: новые платежи по нему не принимаются, активные ссылки приостановлены',
       unblockedNotice: 'Терминал разблокирован: приостановленные ссылки вернулись в работу, кроме тех, у которых истёк срок',
       statusChangeFailed: 'Не удалось изменить статус терминала',
@@ -2240,10 +2276,27 @@ export const translations: Record<Language, TranslationDictionary> = {
       deleteTitle: 'Удалить компанию?',
       deleteQuestion: 'Компания пропадёт из всех списков портала. Её терминалы, платёжные ссылки и операции останутся в базе.',
       deleteIrreversible: 'Отменить это из портала нельзя: восстановить удалённую компанию здесь не получится.',
-      deactivateTitle: 'Пометить компанию неактивной?',
-      deactivateQuestion: 'Это пометка в справочнике и запись в журнале аудита. Вход сотрудников, создание ссылок и приём платежей она не останавливает — чтобы остановить платежи, блокируйте терминалы.',
-      activateTitle: 'Пометить компанию активной?',
-      activateQuestion: 'Компания снова будет помечена активной. Больше ничего не меняется.',
+      providerLogin: 'Логин к провайдеру',
+      providerLoginHint: 'Логин мультимерчанта из справочника провайдера: в списке только активные логины с активными мерчантами, не занятые другой компанией. Только что заведённый — «Обновить справочник».',
+      providerLoginEmpty: 'Свободных логинов мультимерчантов в справочнике нет. Обновите справочник; если логин так и не появился — он не заведён у провайдера, выключен, без активных мерчантов или уже у другой компании.',
+      loginsSyncApplied: 'Справочник обновлён. Получено логинов мультимерчантов',
+      loginsSyncSkipped: 'Справочник логинов не обновлён',
+      providerPassword: 'Пароль к провайдеру',
+      providerPasswordHint: 'Хранится зашифрованным. Посмотреть его потом нельзя — только заменить.',
+      newProviderPassword: 'Новый пароль к провайдеру (необязательно)',
+      newProviderPasswordHint: 'Оставьте пустым, чтобы не менять пароль',
+      providerPasswordReplaced: 'Пароль к провайдеру будет заменён',
+      editNothingChanged: 'Ничего не изменилось — запрос не отправлен.',
+      formIncomplete: 'Заполните все обязательные поля',
+      created: 'Компания создана',
+      createFailed: 'Не удалось создать компанию',
+      editCompany: 'Редактировать компанию',
+      editConfirmTitle: 'Сохранить изменения компании?',
+      editConfirmQuestion: 'У этой компании изменится следующее. Проверьте список перед подтверждением.',
+      credentialsWarning: 'С новыми данными пойдут все запросы компании к провайдеру — новые платежи, списания, возвраты и проверки статуса. Неверные остановят платежи компании.',
+      statusWarning: 'Статус — пометка в справочнике и запись в журнале аудита. Вход сотрудников, создание ссылок и приём платежей он не останавливает — чтобы остановить платежи, блокируйте терминалы.',
+      updated: 'Компания обновлена',
+      updateFailed: 'Не удалось обновить компанию',
     },
     users: {
       title: 'Пользователи',
@@ -2258,7 +2311,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       status: 'Статус',
       searchPlaceholder: 'Поиск по имени, логину или email...',
       deleteTitle: 'Удалить пользователя?',
-      deleteQuestion: 'Учётная запись перестанет работать сразу: все сессии пользователя завершатся, вход будет отклонён. Запись останется в базе, скрытая из списков.',
+      deleteQuestion: 'Учётная запись перестанет работать: вход будет отклонён сразу, открытые сессии пользователя завершатся в течение 15 минут. Запись останется в базе, скрытая из списков.',
       deleteIrreversible: 'Отменить это из портала нельзя: удалённого пользователя здесь не восстановить и не отредактировать.',
       roles: {
         systemAdmin: 'Системный администратор',
@@ -2275,10 +2328,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       editConfirmTitle: 'Сохранить изменения пользователя',
       editConfirmQuestion: 'Изменится следующее. Роль, компания и статус решают, что этот человек видит и может делать, — проверьте список перед подтверждением.',
       editNothingChanged: 'Ничего не изменилось — запрос не отправлен.',
-      editSessionsHint: 'Новая роль или компания вступит в силу при следующем обновлении сессии пользователя, в течение 15 минут. Блокировка завершает сессии сразу.',
+      editSessionsHint: 'Новая роль или компания вступит в силу при следующем обновлении сессии пользователя, в течение 15 минут. Блокировка сразу закрывает вход, открытые сессии завершатся в течение 15 минут.',
       noCompany: 'Без компании',
+      companyRequired: 'Для роли компании выберите компанию.',
       newPassword: 'Новый пароль (необязательно)',
       newPasswordHint: 'Оставьте пустым, чтобы не менять. Не меньше 12 символов: заглавные и строчные буквы, цифра и спецсимвол.',
+      issuedPasswordHint: 'Пользователь сменит этот пароль при первом входе.',
+      passwordChangePending: 'Ждёт смены пароля',
       passwordWillChange: 'Пароль будет заменён',
       selfHint: 'Свою роль и статус здесь поменять нельзя.',
       updated: 'Пользователь обновлён',
@@ -2322,6 +2378,14 @@ export const translations: Record<Language, TranslationDictionary> = {
       networkError: 'Сервер недоступен. Проверьте соединение и попробуйте ещё раз.',
       authFailed: 'Вход не выполнен',
       malformedResponse: 'Сервер ответил без сессии. Вход отклонён — попробуйте ещё раз или обратитесь к администратору.',
+      idleSignedOut: 'Сессия завершена: 15 минут без действий. Войдите снова.',
+      passwordChangeRequired: 'Пароль вам задал администратор. Чтобы войти, придумайте свой.',
+      newPasswordLabel: 'Новый пароль',
+      confirmPasswordLabel: 'Повторите новый пароль',
+      passwordRules: 'Не меньше 12 символов: заглавные и строчные буквы, цифра и спецсимвол. Не один из 4 последних паролей.',
+      passwordsDoNotMatch: 'Пароли не совпадают.',
+      samePassword: 'Новый пароль должен отличаться от текущего.',
+      changePasswordAndSignIn: 'Сменить пароль и войти',
     },
     errors: {
       forbiddenTitle: 'Нет доступа',

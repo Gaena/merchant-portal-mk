@@ -18,18 +18,16 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-// Создаёт первого SYSTEM_ADMIN новой установки из переменных окружения — вместо админа, которого
-// сеял Liquibase-changeset с паролем рядом с хэшем (P0-6): миграция одинакова на всех установках
-// и видна всем с доступом к репозиторию. Только при явном auth.bootstrap.enabled=true И на пустой
-// таблице users: удалённого админа не воскресит, существующего не перезапишет.
+// Первый SYSTEM_ADMIN установки — из переменных окружения, не из миграции: миграция одна на все
+// установки и видна всем с доступом к репозиторию (P0-6). Только при auth.bootstrap.enabled=true и
+// пустой таблице users: удалённого админа не воскресит, существующего не перезапишет.
 @Component
 @ConditionalOnProperty(name = "auth.bootstrap.enabled", havingValue = "true")
 public class AdminBootstrapRunner implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(AdminBootstrapRunner.class);
 
-    // Логин проверяет username как email (LoginRequest), поэтому админ, созданный с чем-то другим,
-    // не смог бы войти никогда. Намеренно слабо — проверка на очевидную опечатку, не на RFC 5322.
+    // Вход требует email (LoginRequest), иначе админ не войдёт. Намеренно слабо: ловит опечатку, не RFC 5322.
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
     private static final String HOW_TO_FIX = """
@@ -76,27 +74,25 @@ public class AdminBootstrapRunner implements ApplicationRunner {
                 .role(Role.SYSTEM_ADMIN.name())
                 .companyId(null)
                 .status("ACTIVE")
+                // Пароль знает тот, кто ставил систему: сменить при первом входе (Р-100).
+                .passwordChangeRequired(true)
                 .build();
         admin = userRepository.save(admin);
 
-        // Первый полнопривилегированный аккаунт установки попадает в журнал наравне с прочими
-        // (P2-14). Залогинен никто не был, поэтому актор — сам сервис. Идёт вне транзакции, и
-        // AuditLogWriter это учитывает: fallbackExecution=true пишет запись сразу, не дожидаясь
-        // коммита, которого не будет.
+        // Актор — system (P2-14). Вне транзакции: AuditLogWriter с fallbackExecution=true пишет запись
+        // сразу, не дожидаясь коммита.
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, admin.getId().toString(), AuditAction.CREATE,
                 "system", null,
                 "Admin bootstrap created the first SYSTEM_ADMIN " + admin.getUsername()));
 
-        // WARN, чтобы создание полнопривилегированного аккаунта было видно в консоли ручного пуска.
-        // Пароль не логируется никогда.
+        // WARN — чтобы создание админа было видно в консоли. Пароль не логируется.
         log.warn("Admin bootstrap created SYSTEM_ADMIN '{}' (id={}). "
                         + "Set AUTH_BOOTSTRAP_ENABLED=false and unset BOOTSTRAP_ADMIN_PASSWORD before the next start.",
                 admin.getUsername(), admin.getId());
     }
 
-    // Лучше не стартовать, чем создать слабого или неработоспособного администратора. Правила
-    // пароля здесь не переписаны: единственное определение политики — PasswordConstraintValidator,
-    // тот же, что CreateUserRequest применяет ко всем прочим аккаунтам.
+    // Лучше не стартовать, чем создать слабого или неработоспособного админа. Политика пароля —
+    // только PasswordConstraintValidator, здесь её не переписывать.
     private void validate(String cleanUsername) {
         if (cleanUsername.isEmpty() || password == null || password.isBlank()) {
             throw new IllegalStateException(

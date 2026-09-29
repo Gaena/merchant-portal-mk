@@ -1,0 +1,364 @@
+{
+	"info": {
+		"_postman_id": "38b6537b-be23-4e6e-919e-99725fd2da76",
+		"name": "Ecom Service",
+		"description": "The ecom service (port 8083): the provider statement read from the TXPG gateway database (read-only), the home page summary and the provider terminal directory. Contract - project_docs/modules/ecom.md.\n\nEvery request needs a JWT: run Login in auth/Auth.postman_collection.json and put its `authToken` into this collection's `authToken` variable (or keep `authToken` in a Postman environment - an environment value overrides the collection one). The access token lives 15 minutes.\n\nStatement and summary requests take the period from `dateFrom` / `dateTo`; left empty, the collection pre-request script uses the last 7 days. Every statement request is a query against the live gateway database - keep periods short.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Statement",
+			"item": [
+				{
+					"name": "List Statement",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Keeps the next page cursor and the first order of the page for the requests below.",
+									"if (pm.response.code === 200) {",
+									"    const page = pm.response.json();",
+									"    pm.collectionVariables.set('cursor', page.nextCursor || '');",
+									"    if (page.content.length > 0) {",
+									"        pm.collectionVariables.set('orderId', page.content[0].orderId);",
+									"        console.log('Set orderId to: ' + page.content[0].orderId);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/transactions?dateFrom={{dateFrom}}&dateTo={{dateTo}}&size=25",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "dateFrom",
+									"value": "{{dateFrom}}",
+									"description": "Required. ISO-8601 instant, inclusive; orders are taken by their creation time. Empty variable - 7 days ago (collection pre-request script)."
+								},
+								{
+									"key": "dateTo",
+									"value": "{{dateTo}}",
+									"description": "Required. ISO-8601 instant, exclusive, after dateFrom; the period may not exceed ecom.txpg.max-window (92 days). Empty variable - now."
+								},
+								{
+									"key": "merchantRids",
+									"value": "",
+									"disabled": true,
+									"description": "Optional. Provider merchant rids (merchantRid from List Statement Merchants); repeat the parameter or separate by commas. Only narrows the caller's scope."
+								},
+								{
+									"key": "minAmount",
+									"value": "",
+									"disabled": true,
+									"description": "Optional. Lower bound of the order amount, inclusive."
+								},
+								{
+									"key": "maxAmount",
+									"value": "",
+									"disabled": true,
+									"description": "Optional. Upper bound of the order amount, inclusive."
+								},
+								{
+									"key": "query",
+									"value": "",
+									"disabled": true,
+									"description": "Optional. Exact match: order number, ridByMerchant or RRN."
+								},
+								{
+									"key": "status",
+									"value": "SUCCESS",
+									"disabled": true,
+									"description": "Optional. PENDING, AUTHORIZED, SUCCESS, PARTIALLY_PAID, FAILED, PARTIALLY_REFUNDED, REFUNDED or CANCELED, exactly. Filtered after the orders are assembled: a page may come shorter than size, even empty, with a cursor."
+								},
+								{
+									"key": "paymentType",
+									"value": "SMS",
+									"disabled": true,
+									"description": "Optional. SMS or DMS, exactly; anything else - 400."
+								},
+								{
+									"key": "cursor",
+									"value": "{{cursor}}",
+									"disabled": true,
+									"description": "Optional. nextCursor of the previous page (saved to the cursor variable by the test script). Enable to get the next page."
+								},
+								{
+									"key": "size",
+									"value": "25",
+									"description": "Optional. Page size, default 25, clamped to 1..ecom.txpg.max-page-size (200)."
+								}
+							]
+						},
+						"description": "The provider statement (ecom.md §2.4): one row per order with its whole operation history, newest order first, cursor pagination (`nextCursor`, null on the last page). Scope - the merchants of the caller's company multimerchant login; SYSTEM_ADMIN and AUDITOR - of all companies. A role without a company - 403. The `test` script saves `nextCursor` to `cursor` and the first order to `orderId`.\n\n400: a missing or malformed dateFrom/dateTo, dateTo not after dateFrom, a period longer than 92 days, an unknown status or paymentType, an unreadable cursor. With nothing in scope the answer is an empty page."
+					},
+					"response": []
+				},
+				{
+					"name": "Statement Totals",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/transactions/stats?dateFrom={{dateFrom}}&dateTo={{dateTo}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"transactions",
+								"stats"
+							],
+							"query": [
+								{
+									"key": "dateFrom",
+									"value": "{{dateFrom}}",
+									"description": "Required. ISO-8601 instant, inclusive; orders are taken by their creation time. Empty variable - 7 days ago (collection pre-request script)."
+								},
+								{
+									"key": "dateTo",
+									"value": "{{dateTo}}",
+									"description": "Required. ISO-8601 instant, exclusive, after dateFrom; the period may not exceed ecom.txpg.max-window (92 days). Empty variable - now."
+								},
+								{
+									"key": "merchantRids",
+									"value": "",
+									"disabled": true,
+									"description": "Optional. Provider merchant rids (merchantRid from List Statement Merchants); repeat the parameter or separate by commas. Only narrows the caller's scope."
+								},
+								{
+									"key": "paymentType",
+									"value": "SMS",
+									"disabled": true,
+									"description": "Optional. SMS or DMS, exactly; anything else - 400."
+								}
+							]
+						},
+						"description": "Totals over every order of the period, not over a loaded page (ecom.md §2.5): order count, counts per status (all eight, zeros included) and captured and refunded amounts per currency. Same period, merchant and payment type rules as List Statement; no amount, search, status or cursor filters."
+					},
+					"response": []
+				},
+				{
+					"name": "List Statement Merchants",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/transactions/terminals",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"transactions",
+								"terminals"
+							]
+						},
+						"description": "The merchants of the caller's scope - the source of the merchantRids filter (ecom.md §2.6). Read from the portal database, the gateway is not queried. Each row: merchantRid, title, login and terminalRid from the provider terminal directory; a merchant missing there has only a title."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Order Card",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/transactions/{{orderId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"transactions",
+								"{{orderId}}"
+							]
+						},
+						"description": "One order with its whole history - the same object as a statement row (ecom.md §2.7); no period needed. `{{orderId}}` is set by List Statement. 404 when the order does not exist, belongs to another company, is not finished or the number is not numeric - the four cases are indistinguishable on purpose."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Dashboard",
+			"item": [
+				{
+					"name": "Dashboard Summary",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/dashboard/summary?dateFrom={{dateFrom}}&dateTo={{dateTo}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"dashboard",
+								"summary"
+							],
+							"query": [
+								{
+									"key": "dateFrom",
+									"value": "{{dateFrom}}",
+									"description": "Required. ISO-8601 instant, inclusive; orders are taken by their creation time. Empty variable - 7 days ago (collection pre-request script)."
+								},
+								{
+									"key": "dateTo",
+									"value": "{{dateTo}}",
+									"description": "Required. ISO-8601 instant, exclusive, after dateFrom; the period may not exceed ecom.txpg.max-window (92 days). Empty variable - now."
+								}
+							]
+						},
+						"description": "The portal home page summary (ecom.md §2.8): card payments of every merchant in the caller's scope over the period - totals per currency, counts per status, daily totals in ECOM_TXPG_ZONE and the top five terminals per currency. Same orders and money rules as the statement. dateFrom and dateTo are required, up to 92 days; with nothing in scope the answer is zeros and the gateway is not queried."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Provider Directory",
+			"item": [
+				{
+					"name": "List Provider Terminals",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/provider-terminals?includeInactive=false",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"provider-terminals"
+							],
+							"query": [
+								{
+									"key": "includeInactive",
+									"value": "false",
+									"description": "Optional, default false. true also returns terminals switched off at the provider (in no particular order)."
+								}
+							]
+						},
+						"description": "SYSTEM_ADMIN only (ecom.md §3.1): the snapshot of provider terminals from the portal database, one row per merchant - rid (merchant.rid), title, login, terminalRid, active, lastSeenAt. Active rows are ordered by title. Other roles - 403."
+					},
+					"response": []
+				},
+				{
+					"name": "Sync Provider Directories",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/provider-terminals/sync",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"provider-terminals",
+								"sync"
+							]
+						},
+						"description": "SYSTEM_ADMIN only (ecom.md §3.2). Refreshes both snapshots - provider terminals and multimerchant logins - now, without waiting for the schedule (every 15 minutes). No body. The top-level fields describe the terminal snapshot, `logins` - the login snapshot; `applied: false` with `skippedBecause` means the snapshot was left untouched (gateway unavailable, query failed or an empty response). Other roles - 403."
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{authToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"exec": [
+					"// Empty dateFrom / dateTo: the last 7 days up to now, for this request only; values set by hand win.",
+					"const now = new Date();",
+					"if (!pm.variables.get('dateTo')) {",
+					"    pm.variables.set('dateTo', now.toISOString());",
+					"}",
+					"if (!pm.variables.get('dateFrom')) {",
+					"    pm.variables.set('dateFrom', new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString());",
+					"}"
+				],
+				"type": "text/javascript"
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:8083",
+			"type": "string",
+			"description": "The base URL for the ecom service."
+		},
+		{
+			"key": "authToken",
+			"value": "",
+			"type": "string",
+			"description": "JWT access token from POST /api/v1/auth/login (Login in the Auth collection, its authToken variable). Lives 15 minutes."
+		},
+		{
+			"key": "dateFrom",
+			"value": "",
+			"type": "string",
+			"description": "Start of the period, ISO-8601 instant (e.g. 2026-09-01T00:00:00Z). Empty - 7 days ago."
+		},
+		{
+			"key": "dateTo",
+			"value": "",
+			"type": "string",
+			"description": "End of the period, exclusive, ISO-8601 instant. Empty - now."
+		},
+		{
+			"key": "cursor",
+			"value": "",
+			"type": "string",
+			"description": "nextCursor of the last statement page, set by 'List Statement'."
+		},
+		{
+			"key": "orderId",
+			"value": "",
+			"type": "string",
+			"description": "The provider order number, set by 'List Statement' (the first order of the page)."
+		}
+	]
+}

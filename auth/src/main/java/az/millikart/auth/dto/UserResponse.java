@@ -10,6 +10,8 @@ public record UserResponse(
         String role,
         String companyId,
         String status,
-        Instant createdAt
+        Instant createdAt,
+        // Пароль задал не владелец и ещё не сменил его при входе (Р-100).
+        boolean passwordChangeRequired
 ) {
 }

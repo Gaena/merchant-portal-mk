@@ -4,9 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-// Записи журнала, отложенные до конца HTTP-запроса. Запись в своей транзакции просит второе
-// соединение, пока транзакция запроса держит первое: десять одновременных отказов забирали пул по
-// умолчанию целиком и ждали друг друга 30 с, теряя записи. После запроса соединение нужно одно.
+// Записи журнала, отложенные до конца HTTP-запроса (Р-85): своя транзакция посреди запроса берёт
+// второе соединение из пула, и одновременные отказы выбирают пул и ждут друг друга, теряя записи.
 final class AuditOutbox {
 
     private static final ThreadLocal<List<Runnable>> PENDING = new ThreadLocal<>();

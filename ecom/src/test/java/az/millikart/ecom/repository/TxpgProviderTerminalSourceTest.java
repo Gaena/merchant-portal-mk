@@ -38,12 +38,16 @@ class TxpgProviderTerminalSourceTest {
         verify(jdbc).query(sql.capture(), any(SqlParameterSource.class), mapper.capture());
 
         String text = sql.getValue().replaceAll("\\s+", " ");
-        Assertions.assertTrue(text.contains("select m.rid rid, m.title title, l.login login"), text);
+        Assertions.assertTrue(text.contains("select m.rid rid, m.title title, l.login login, t.rid terminal_rid"), text);
+        // Р-96: только логины TerminalSys. Логин TerminalUser того же терминала давал второй логин у мерчанта,
+        // и справочник считал его неоднозначным и не обновлял.
+        Assertions.assertTrue(text.contains("where l.ownerkind = 'TerminalSys'"), text);
         ResultSet rs = mock(ResultSet.class);
         when(rs.getString("rid")).thenReturn("223456789054322");
         when(rs.getString("title")).thenReturn("BazarStore eCommerce");
         when(rs.getString("login")).thenReturn("BS00002");
-        Assertions.assertEquals(new ProviderTerminalRow("223456789054322", "BazarStore eCommerce", "BS00002"),
+        when(rs.getString("terminal_rid")).thenReturn("BS00002");
+        Assertions.assertEquals(new ProviderTerminalRow("223456789054322", "BazarStore eCommerce", "BS00002", "BS00002"),
                 mapper.getValue().mapRow(rs, 0));
     }
 }

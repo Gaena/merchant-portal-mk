@@ -22,15 +22,14 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-// Выписка из схемы шлюза. Колонки — только из SQL провайдера (14.09.2026), скоуп — по запросу
-// выписки от 15.09.2026: мерчанты логинов TerminalSys, и операция того же мерчанта, что заказ.
-// Одна отсутствующая в схеме колонка роняет всю выписку. o.password не выбирается никогда (AGENTS.md §10).
+// Колонки — только из SQL провайдера: одна отсутствующая в схеме роняет всю выписку. o.password не
+// выбирается никогда (AGENTS.md §10).
 @Repository
 public class TxpgTransactionRepository {
 
-    // Р-71: только завершённые заказы. Перечислено незавершённое, а не завершённое: заказ с
-    // незнакомым статусом виден с кодом провайдера — пропавший из выписки платёж хуже лишней строки.
-    // Исключение для Authorized со списанием — finishedOrdersOnly (Р-76).
+    // Перечислено незавершённое, а не завершённое: заказ с незнакомым статусом виден с кодом
+    // провайдера — пропавший из выписки платёж хуже лишней строки (Р-71). Authorized со списанием —
+    // исключение, см. finishedOrdersOnly (Р-76).
     public static final List<String> UNFINISHED_ORDER_STATUSES = List.of("Preparing", "Authorized", "Expired");
 
     // Первая операция проходит, пока заказ жив (неоплаченный провайдер закрывает через 10 минут),
@@ -78,8 +77,8 @@ public class TxpgTransactionRepository {
         this.clock = clock;
     }
 
-    // Страница — только номера заказов, от новых к старым; операции забирает findRows. Одним
-    // запросом на странице было бы N операций, а не N заказов (Р-74).
+    // Только номера заказов: одним запросом с операциями на странице было бы N операций, а не
+    // N заказов (Р-74).
     public List<Long> findOrderIds(EcomTransactionFilter filter, Long beforeOrderId, int limit) {
         MapSqlParameterSource params = new MapSqlParameterSource();
         StringBuilder sql = new StringBuilder(periodOrders(filter, params));
@@ -107,14 +106,14 @@ public class TxpgTransactionRepository {
 
     // Все операции заказов, без окна сверху: история полная, даже если клиринг прошёл после
     // периода. Скоуп и Р-71 повторены — карточка приходит сюда с номером из адреса.
-    public List<TxpgStatementRow> findRows(List<Long> orderIds, List<String> logins, Instant operationsFrom) {
+    public List<TxpgStatementRow> findRows(List<Long> orderIds, List<String> merchantRids, Instant operationsFrom) {
         if (orderIds.isEmpty()) {
             return List.of();
         }
         String schema = properties.getSchema();
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("order_ids", orderIds)
-                .addValue("logins", logins)
+                .addValue("merchant_rids", merchantRids)
                 .addValue("unfinished_statuses", UNFINISHED_ORDER_STATUSES);
         // Токен — подзапросом: у покупателя, пробовавшего две карты, их два, и join задвоил бы операции.
         StringBuilder sql = new StringBuilder(COLUMNS).append("""
@@ -127,7 +126,7 @@ public class TxpgTransactionRepository {
                               where orderid in (:order_ids)
                               group by orderid) tk on tk.orderid = o.id
                  where o.id in (:order_ids)
-                """.formatted(schema)).append(loginScope()).append(finishedOrdersOnly());
+                """.formatted(schema)).append(merchantScope()).append(finishedOrdersOnly());
         if (operationsFrom != null) {
             sql.append("   and tr.id >= ").append(lowIdForTime("operations_from")).append('\n');
             params.addValue("operations_from", local(operationsFrom));
@@ -136,8 +135,8 @@ public class TxpgTransactionRepository {
         return jdbc.query(sql.toString(), params, rowMapper);
     }
 
-    // Итоги периода — по всем его заказам, а не по странице. Строки идут потоком и складываются
-    // теми же правилами, что и страница: второго набора правил в SQL нет и заводить его нельзя.
+    // Итоги — по всем заказам периода, потоком и теми же правилами, что страница: второго набора
+    // правил в SQL не заводить (Р-75).
     public void streamPeriodRows(EcomTransactionFilter filter, Consumer<TxpgStatementRow> sink) {
         String schema = properties.getSchema();
         MapSqlParameterSource params = new MapSqlParameterSource();
@@ -150,14 +149,14 @@ public class TxpgTransactionRepository {
                 """.formatted(schema)
                 + periodOrders(filter, params)
                 + "       )\n"
-                + loginScope()
+                + merchantScope()
                 + "   and tr.id >= " + lowIdForTime("date_from") + "\n"
                 + " order by o.id desc, tr.origtime, tr.ridbyacq\n";
         jdbc.query(sql, params, (RowCallbackHandler) rs -> sink.accept(mapRow(rs, 0)));
     }
 
-    // Заказы периода: созданы в нём (Р-74), у мерчантов скоупа, завершены (Р-71), и операции по
-    // ним были. Окно по tran.id — приём провайдера: id растёт со временем и сужает скан.
+    // Период — по дате создания заказа (Р-74). Окно по tran.id — приём провайдера: id растёт со
+    // временем и сужает скан.
     private String periodOrders(EcomTransactionFilter filter, MapSqlParameterSource params) {
         String schema = properties.getSchema();
         StringBuilder sql = new StringBuilder("""
@@ -174,14 +173,9 @@ public class TxpgTransactionRepository {
             sql.append("   and tr.id < ").append(lowIdForTime("scan_to")).append('\n');
             params.addValue("scan_to", local(scanTo));
         }
-        sql.append(loginScope());
-        if (filter.merchantRids() != null) {
-            sql.append("   and m.rid in (:merchant_rids)\n");
-            params.addValue("merchant_rids", filter.merchantRids());
-        }
+        sql.append(merchantScope());
         if (filter.paymentType() != null) {
-            // Р-87: тип оплаты — по операциям заказа, тем же парам, что вид операции в Java. Здесь, в
-            // выборе заказов, а не после сборки: фильтр работает и на странице, и в итогах периода.
+            // В выборе заказов, а не после сборки: так фильтр работает и на странице, и в итогах (Р-87).
             sql.append("   and exists (select 1 from %1$s.tran pt where pt.orderid = o.id and (%2$s))\n"
                     .formatted(schema, anyOf("pt", filter.paymentType().signs())));
         }
@@ -191,34 +185,26 @@ public class TxpgTransactionRepository {
                 """).append(finishedOrdersOnly());
         params.addValue("date_from", local(filter.dateFrom()))
                 .addValue("date_to", local(filter.dateTo()))
-                .addValue("logins", filter.logins())
+                .addValue("merchant_rids", filter.merchantRids())
                 .addValue("unfinished_statuses", UNFINISHED_ORDER_STATUSES);
         return sql.toString();
     }
 
-    // Скоуп — как в запросе выписки: мерчанты, за которыми стоят логины наших терминалов. Условие
-    // по tr.merchantid, и в join m.id = tr.merchantid: операция чужого мерчанта не попадёт и в заказ
-    // своего. ownerkind не опускать: в login лежат логины разных владельцев, а наши — терминальные.
-    private String loginScope() {
-        return """
-                   and tr.merchantid in (select l.merchantid
-                                           from %1$s.login l
-                                          where l.ownerkind = 'TerminalSys'
-                                            and l.login in (:logins))
-                """.formatted(properties.getSchema());
+    // m в join и на заказе, и на операции (m.id = o.merchantid and m.id = tr.merchantid): иначе операция
+    // чужого мерчанта попадёт в заказ своего (Р-97).
+    private static String merchantScope() {
+        return "   and m.rid in (:merchant_rids)\n";
     }
 
-    // getLowIdForTime на будущем времени не работает (провайдер, 14.09.2026), а наши часы и пояс
-    // (ecom.txpg.zone) с часами базы могут разойтись. Аргумент прижимается к sysdate самой базы с
-    // запасом: окно снизу от этого только шире, а будущего времени функции не достаётся никогда.
+    // getLowIdForTime на будущем времени не работает (провайдер), а наши часы и пояс могут разойтись
+    // с базой. Поэтому аргумент прижат к sysdate базы с запасом: окно снизу от этого только шире.
     private String lowIdForTime(String parameter) {
         return "(select %s.RDX_Action.getLowIdForTime(least(cast(:%s as date), sysdate - interval '5' minute)) from dual)"
                 .formatted(properties.getSchema(), parameter);
     }
 
-    // Р-76: при мультиклиринге заказ остаётся Authorized и после списания (175195: 30 из 50), и без
-    // исключения списанные деньги ждали бы финального статуса до N дней. Признак списания строится из
-    // EcomOperationKind.CAPTURE_SIGNS — того же списка, по которому списание считается в деньгах (Р-86).
+    // При мультиклиринге заказ остаётся Authorized и после списания (Р-76). Признак списания —
+    // EcomOperationKind.CAPTURE_SIGNS, тот же список, что считает списание в деньгах (Р-86).
     private String finishedOrdersOnly() {
         String captured = anyOf("c", EcomOperationKind.CAPTURE_SIGNS);
         return """
@@ -233,8 +219,8 @@ public class TxpgTransactionRepository {
                 """.formatted(properties.getSchema(), captured);
     }
 
-    // Условие «операция — одна из пар trantype/phase» для алиаса операции. Литералы — константы кода
-    // (EcomOperationKind), не ввод пользователя, поэтому подставляются в текст запроса.
+    // Литералы — константы EcomOperationKind, не ввод пользователя: только поэтому они подставляются
+    // в текст запроса.
     static String anyOf(String alias, List<EcomOperationKind.TypePhase> signs) {
         return signs.stream()
                 .map(sign -> "(%1$s.trantype = '%2$s' and %1$s.phase = '%3$s')".formatted(alias, sign.type(), sign.phase()))

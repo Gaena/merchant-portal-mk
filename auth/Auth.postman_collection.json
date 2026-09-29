@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "b2c3d4e5-f6a1-b2c3-d4e5-f6a1b2c3d4e5",
 		"name": "Auth Service",
-		"description": "A collection for the Auth Service microservice, providing user authentication and role-based user management.",
+		"description": "Auth Service (port 8081): sign-in, token refresh and logout, user management. Contract: project_docs/modules/auth.md. Login, Change Password and Refresh save the access token to `authToken` and the refresh token to `refreshToken`; the same access token is used by the Directory collection.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -17,10 +17,14 @@
 							"script": {
 								"exec": [
 									"var jsonData = JSON.parse(responseBody);",
-									"pm.collectionVariables.set(\"authToken\", jsonData.token);",
-									"pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
-									"console.log(\"Set authToken to: \" + jsonData.token);",
-									"console.log(\"Set refreshToken to: \" + jsonData.refreshToken);"
+									"// Токены сохраняются только из ответа, где они есть: отказ и ответ без сессии их не затирают.",
+									"if (jsonData.token) {",
+									"  pm.collectionVariables.set(\"authToken\", jsonData.token);",
+									"  pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
+									"  console.log(\"authToken and refreshToken saved\");",
+									"} else if (jsonData.passwordChangeRequired) {",
+									"  console.log(\"Password change required: call Change Password\");",
+									"}"
 								],
 								"type": "text/javascript"
 							}
@@ -55,7 +59,61 @@
 								"login"
 							]
 						},
-						"description": "Authenticates a user and returns a signed JWT access token plus an opaque refresh token. The `test` script saves them to the `authToken` and `refreshToken` collection variables for use in subsequent requests. `expiresIn` (seconds) mirrors JWT_EXPIRATION_MS; `refreshExpiresIn` mirrors AUTH_REFRESH_TTL."
+						"description": "Authenticates a user and returns a signed JWT access token plus an opaque refresh token; the `test` script saves them to `authToken` and `refreshToken`. `expiresIn` (seconds) mirrors JWT_EXPIRATION_MS (15 minutes by default); `refreshExpiresIn` mirrors AUTH_REFRESH_TTL (20 minutes, sliding). If the password was set by someone else (user creation, a reset by another user, the bootstrap) the answer is 200 with passwordChangeRequired=true and no tokens (PCI DSS 8.3.5, Р-100): call Change Password to get a session. Refusals: 400 \"Invalid username or password\" (unknown login and wrong password answer the same); with the right password, 400 \"Account is locked due to multiple failed login attempts. Please try again in N minutes.\" (6 wrong passwords in a row lock the account for 30 minutes) or 400 \"Account is not active. Please contact your administrator.\"; 429 \"Too many login attempts. Please try again later.\" with Retry-After after 10 failures from one address within 15 minutes."
+					},
+					"response": []
+				},
+				{
+					"name": "Change Password",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = JSON.parse(responseBody);",
+									"// Токены сохраняются только из ответа, где они есть: отказ и ответ без сессии их не затирают.",
+									"if (jsonData.token) {",
+									"  pm.collectionVariables.set(\"authToken\", jsonData.token);",
+									"  pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
+									"  console.log(\"authToken and refreshToken saved\");",
+									"} else if (jsonData.passwordChangeRequired) {",
+									"  console.log(\"Password change required: call Change Password\");",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"admin@millikart.az\",\n  \"currentPassword\": \"<CURRENT_PASSWORD>\",\n  \"newPassword\": \"<NEW_PASSWORD: 12+ chars, A-Z, a-z, 0-9, special>\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/change-password",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"change-password"
+							]
+						},
+						"description": "Changes the password by the current one and signs in with the new one (PCI DSS 8.3.5, Р-100). Public, like Login: the same address limit, account lockout and status checks apply; a wrong current password is 400 and counts as a failed attempt. The new password follows the same policy as on user creation and must not repeat any of the last 4 passwords (PCI DSS 8.3.7, Р-102). Returns the same body as Login, with passwordChangeRequired=false; the other sessions of the user are revoked."
 					},
 					"response": []
 				},
@@ -90,7 +148,7 @@
 								"refresh"
 							]
 						},
-						"description": "Rotates the refresh token: returns a new access token and a NEW refresh token in the same family; the presented one is retired. Public — no Authorization header needed. Any refusal is 401 \"Invalid refresh token\" (unknown, expired, revoked, or reused after the 10 s grace window — the last one revokes the whole family and logs REFRESH_TOKEN_REUSE). Send it twice quickly to see the grace window (both succeed); wait >10 s and send the OLD token again to see reuse detection kill the family."
+						"description": "Rotates the refresh token: returns a new access token and a NEW refresh token in the same family; the presented one is retired. Public — no Authorization header needed. Any refusal is 401 \"Invalid refresh token\": unknown, expired, revoked, reused after the 10 s grace window (revokes the whole family and logs REFRESH_TOKEN_REUSE), the user is not ACTIVE, or the user must change the password first (Р-100) — the last two revoke the family too. A missing refreshToken is 400. Send it twice quickly to see the grace window (both succeed); wait >10 s and send the OLD token again to see reuse detection kill the family."
 					},
 					"response": [],
 					"event": [
@@ -141,7 +199,7 @@
 								"logout"
 							]
 						},
-						"description": "Ends the session: revokes the whole refresh-token family. Always 204, even for an unknown or empty token (the endpoint is deliberately not an oracle). NOTE: the access token stays valid until it expires (24 h by default) — there is no blacklist; full revocation arrives when the access-token lifetime is shortened after the frontend learns to refresh (P1-13)."
+						"description": "Ends the session: revokes the whole refresh-token family. 204 for a live, unknown or empty token alike (the endpoint is deliberately not an oracle). The access token is not revoked: it stays valid until it expires, 15 minutes by default (JWT_EXPIRATION_MS) — there is no blacklist."
 					},
 					"response": []
 				}
@@ -158,8 +216,10 @@
 							"script": {
 								"exec": [
 									"var jsonData = JSON.parse(responseBody);",
-									"pm.collectionVariables.set(\"userId\", jsonData.id);",
-									"console.log(\"Set userId to: \" + jsonData.id);"
+									"if (jsonData.id) {",
+									"  pm.collectionVariables.set(\"userId\", jsonData.id);",
+									"  console.log(\"Set userId to: \" + jsonData.id);",
+									"}"
 								],
 								"type": "text/javascript"
 							}
@@ -179,7 +239,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"username\": \"head@company.com\",\n  \"password\": \"securepassword\",\n  \"fullName\": \"Company Head User\",\n  \"role\": \"COMPANY_HEAD\",\n  \"companyId\": \"comp-01\"\n}",
+							"raw": "{\n  \"username\": \"head@company.com\",\n  \"password\": \"<NEW_USER_PASSWORD: 12+ chars, A-Z, a-z, 0-9, special>\",\n  \"fullName\": \"Company Head User\",\n  \"role\": \"COMPANY_HEAD\",\n  \"companyId\": \"comp-01\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -197,7 +257,7 @@
 								"users"
 							]
 						},
-						"description": "Creates a new user. Access restricted to SYSTEM_ADMIN (any company/role) and COMPANY_HEAD (own company, non-admin roles). The returned user ID is automatically saved to the `userId` collection variable."
+						"description": "Creates a user (201). SYSTEM_ADMIN: any role, any company. COMPANY_HEAD: its own company only and roles COMPANY_MANAGER and COMPANY_EMPLOYEE only (403 \"Cannot create user for another company\" / \"Cannot assign this role\"). A company role (COMPANY_HEAD, COMPANY_MANAGER, COMPANY_EMPLOYEE) requires companyId (400 \"Role <ROLE> requires a company\"); SYSTEM_ADMIN and AUDITOR may go without one. Password policy: at least 12 characters with an uppercase letter, a lowercase letter, a digit and a special character. The new user changes the password at first sign-in (passwordChangeRequired=true, Р-100). A taken login — 400 \"Username already exists\", an unknown company — 400 \"Company not found\". The returned id is saved to the `userId` collection variable."
 					},
 					"response": []
 				},
@@ -223,7 +283,7 @@
 								"{{userId}}"
 							]
 						},
-						"description": "Retrieves detailed information for a specific user using the `userId` variable."
+						"description": "Retrieves the user in `userId`. SYSTEM_ADMIN: any user; COMPANY_HEAD: users of its own company. An unknown or deleted user — 400 \"User not found\"; anything else not allowed — 403 \"Access denied\"."
 					},
 					"response": []
 				},
@@ -270,7 +330,7 @@
 								}
 							]
 						},
-						"description": "Retrieves one page of users (paginated since P2-1, 22.08.2026): the answer is a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by username, then id. Soft-deleted accounts are excluded from both content and totalElements. SYSTEM_ADMIN sees everyone, COMPANY_HEAD only its own company."
+						"description": "Retrieves one page of users (P2-1): a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by username, then id. Soft-deleted accounts are excluded from both content and totalElements. SYSTEM_ADMIN sees everyone, COMPANY_HEAD only its own company (a head without a company gets an empty page), other roles — 403."
 					},
 					"response": []
 				},
@@ -309,7 +369,7 @@
 								"{{userId}}"
 							]
 						},
-						"description": "Partially updates user details. Only fields provided in the request payload will be modified."
+						"description": "Partially updates a user: null or absent fields are not changed. SYSTEM_ADMIN: any user; COMPANY_HEAD: itself and COMPANY_MANAGER / COMPANY_EMPLOYEE of its own company, granting only those two roles (Р-85). status is ACTIVE or BLOCKED only (400 \"User status must be ACTIVE or BLOCKED\"); BLOCKED revokes the user's refresh tokens at once, ACTIVE restarts the 90-day inactivity count (Р-101). A password set for someone else must be changed at their next sign-in and revokes their sessions (Р-100); one's own new password must not repeat the last 4 (Р-102). New role and company take effect at the next refresh. companyId — see Move User To Company."
 					},
 					"response": []
 				},
@@ -374,7 +434,7 @@
 								"{{userId}}"
 							]
 						},
-						"description": "Performs a soft delete of a user by setting their status to DELETED."
+						"description": "Soft delete (204): status becomes DELETED and every refresh token of the user is revoked. Same access rules as Update User. An unknown user — 400 \"User not found\"."
 					},
 					"response": []
 				}
@@ -392,7 +452,7 @@
 			"key": "authToken",
 			"value": "",
 			"type": "string",
-			"description": "The JWT token returned by the Login request, used for authentication."
+			"description": "The access token (15 minutes) saved by Login, Change Password and Refresh; paste it into `authToken` of the Directory collection as well."
 		},
 		{
 			"key": "userId",
@@ -403,7 +463,8 @@
 		{
 			"key": "refreshToken",
 			"value": "",
-			"type": "string"
+			"type": "string",
+			"description": "The refresh token saved by Login, Change Password and Refresh; used by Refresh and Logout."
 		}
 	]
 }

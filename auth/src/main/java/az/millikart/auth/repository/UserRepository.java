@@ -2,6 +2,8 @@ package az.millikart.auth.repository;
 
 import az.millikart.auth.domain.User;
 import jakarta.persistence.LockModeType;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -16,17 +18,17 @@ import org.springframework.stereotype.Repository;
 public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByUsername(String username);
 
-    // Вход читает строку под SELECT ... FOR UPDATE: счётчик неудач — прочитал-прибавил-записал, и
-    // параллельные попытки теряли приращения (блокировка Р-28 наступала после десятков попыток, а не
-    // после шести). Держится на время BCrypt одного входа.
+    List<User> findByStatusAndLastActivityAtBefore(String status, Instant threshold);
+
+    // FOR UPDATE: без блокировки параллельные попытки теряют приращения счётчика неудач, и локаут
+    // Р-28 наступает позже шестой. Держится на время BCrypt одного входа.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT u FROM User u WHERE u.username = :username")
     Optional<User> findForLoginByUsername(@Param("username") String username);
 
-    // Нативный SQL: сущности companies в auth нет — поиск по названию компании читает таблицу
-    // модуля directory (осознанный долг общей базы, AGENTS.md §10). LEFT JOIN — иначе из списка
-    // выпадет админ без компании. ORDER BY username, id: id — уникальный тайбрейкер (P2-1). Каждый
-    // LIKE обязан идти с ESCAPE: без него введённый пользователем % вернёт всю таблицу (P3-1).
+    // Нативный SQL: у User нет связи с Company (долг общей базы, AGENTS.md §10). LEFT JOIN — иначе
+    // выпадет админ без компании. id в ORDER BY — уникальный тайбрейкер (P2-1). Каждый LIKE — с
+    // ESCAPE, иначе введённый % вернёт всю таблицу (P3-1).
     @Query(value = """
             SELECT u.* FROM users u
             LEFT JOIN companies c ON c.id = u.company_id

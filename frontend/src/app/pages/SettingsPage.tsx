@@ -18,18 +18,12 @@ import { useLanguage } from '../context/LanguageContext';
 import type { Language } from '../i18n/translations';
 import type { CompanyDto } from '../types/dto';
 
-// P3-6 (24.08.2026): со страницы сняты вкладки Security, Payment и API, врезки со списками
-// терминалов и компаний и закомментированный блок уведомлений. Всё это был локальный
-// useState поверх выдуманных констант: на сервер он не уходил, а «Сохранить» только зажигал
-// зелёную полосу. Живых контрола осталось два — название компании и язык интерфейса, поэтому
-// вкладок больше нет: страница плоская.
+// Живы только название компании и язык; выдуманные вкладки и настройки не возвращать (P3-6).
 export const SettingsPage: React.FC = () => {
   const { user } = useAuth();
   const { language, setLanguage, tObj } = useLanguage();
   const companyId = user?.companyId;
-  // Название компании меняет только SYSTEM_ADMIN (CompanyService.updateCompany), а компания
-  // берётся из claim'а токена. У системных администратора и аудитора claim'а нет — им здесь
-  // править нечего, компании у них на своей странице.
+  // Название меняет только SYSTEM_ADMIN (CompanyService.updateCompany), компания — из claim токена.
   const canEditCompany = user?.role === 'SYSTEM_ADMIN' && Boolean(companyId);
 
   const [companyName, setCompanyName] = useState('');
@@ -40,8 +34,7 @@ export const SettingsPage: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Одна компания по id из токена, а не страница списка: GET /api/v1/companies разрешён только
-  // SYSTEM_ADMIN и AUDITOR, остальным ролям он отвечает 403 и пишет отказ в журнал аудита.
+  // Одна компания по id из токена: список GET /companies остальным ролям — 403 и отказ в журнале.
   useEffect(() => {
     if (!companyId) return;
     const controller = new AbortController();
@@ -61,8 +54,7 @@ export const SettingsPage: React.FC = () => {
   }, [companyId]);
 
   const trimmedName = companyName.trim();
-  // Пустое имя бэкенд молча игнорирует (UpdateCompanyRequest без валидации, updateCompany
-  // пропускает isBlank) и отвечает 200 — то есть «сохранено» было бы неправдой. Не отправляем.
+  // Пустое имя бэкенд молча пропускает и отвечает 200 — «сохранено» было бы неправдой.
   const canSave = canEditCompany && !saving && trimmedName.length > 0 && trimmedName !== loadedName;
 
   const handleSaveCompany = async () => {
@@ -80,8 +72,6 @@ export const SettingsPage: React.FC = () => {
       setLoadedName(name);
       setSaved(true);
     } catch (err: any) {
-      // Отказ показывается текстом бэкенда. Зелёная полоса «сохранено» поверх 403 — ровно то,
-      // ради чего эту страницу и чистили.
       setSaveError(err.response?.data?.message || '');
     } finally {
       setSaving(false);
@@ -96,7 +86,6 @@ export const SettingsPage: React.FC = () => {
 
   return (
     <Box>
-      {/* Header */}
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" sx={{ fontWeight: 600, mb: 1 }}>
           {tObj.settings.title}
@@ -118,7 +107,6 @@ export const SettingsPage: React.FC = () => {
       )}
 
       <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
-        {/* Business Information */}
         <Typography variant="h6" sx={{ fontWeight: 600, mb: 3 }}>
           {tObj.settings.account.title}
         </Typography>
@@ -162,7 +150,6 @@ export const SettingsPage: React.FC = () => {
 
         <Divider sx={{ my: 4 }} />
 
-        {/* Interface */}
         <Typography variant="h6" sx={{ fontWeight: 600, mb: 3 }}>
           {tObj.settings.display.title}
         </Typography>

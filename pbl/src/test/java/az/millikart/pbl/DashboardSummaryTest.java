@@ -374,7 +374,7 @@ public class DashboardSummaryTest {
     }
 
     private Terminal terminal(int id, String name, String companyId) {
-        return Terminal.builder().id(id).name(name).login("login-" + id).password("secret")
+        return Terminal.builder().id(id).name(name).login("login-" + id).terminalRid("TID-" + id)
                 .companyId(companyId).build();
     }
 

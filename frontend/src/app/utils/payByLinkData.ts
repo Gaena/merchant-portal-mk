@@ -1,23 +1,10 @@
 /**
- * Словари платёжной ссылки и форматтеры экранов Pay by Link.
- *
- * Значения — ровно те, что присылает бэкенд:
- * `pbl/src/main/java/az/millikart/pbl/domain/PaymentLinkStatus.java`,
- * `pbl/src/main/java/az/millikart/pbl/domain/UsageType.java`,
- * `pbl/src/main/java/az/millikart/pbl/domain/PaymentType.java`.
- * В ответе они сериализуются именами енумов (`PaymentLinkResponse`,
- * `PaymentLinkSummaryResponse`), то есть всегда в верхнем регистре.
- *
- * Новое значение на бэкенде → добавить сюда, иначе разборщик вернёт `null`
- * и значение покажется как неизвестное. Значений «на будущее» здесь быть не должно:
- * пока их нет, `tsc` ловит сравнение с несуществующим статусом (P2-13, Р-33 — то же
- * правило, что у транзакций в `types/transaction.ts`, P2-12, Р-30).
- *
- * Статуса `paid` у бэкенда нет и не было: оплаченная одноразовая ссылка приходит
- * как `COMPLETED`. Написание одно — `CANCELED`, с одной `l`.
+ * Ровно имена енумов `pbl` (`PaymentLinkStatus`, `UsageType`, `PaymentType`): новое там — сюда,
+ * иначе разбор вернёт `null`; значений «на будущее» не добавлять (P2-13, Р-33). Статуса `paid`
+ * нет: оплаченная одноразовая ссылка — `COMPLETED`; `CANCELED` — с одной `l`.
  */
-// SUSPENDED (P2-8): ссылка заблокированного терминала. Ставится и снимается только блокировкой
-// и разблокировкой терминала в `directory` — мерчант этот статус не выставляет и не снимает.
+// SUSPENDED — ссылка заблокированного терминала: ставит и снимает только блокировка терминала
+// в `directory`, мерчант его не трогает (P2-8).
 export const LINK_STATUSES = ['ACTIVE', 'EXPIRED', 'COMPLETED', 'CANCELED', 'SUSPENDED'] as const;
 
 export type LinkStatus = (typeof LINK_STATUSES)[number];
@@ -30,21 +17,12 @@ export const PAYMENT_TYPES = ['SMS', 'DMS'] as const;
 
 export type PaymentType = (typeof PAYMENT_TYPES)[number];
 
-/**
- * Стадия DMS-платежа. Собственного поля под неё в ответе бэкенда нет — значение
- * появляется только локально, после успешного `POST /transactions/{id}/complete`.
- * Это не словарь бэкенда, поэтому разборщика у него нет.
- */
+// Не словарь бэкенда: поля в ответе нет, значение ставит сама карточка после `/complete`.
 export type DmsStatus = 'authorized' | 'finalized';
 
 /**
- * Общая часть трёх разборщиков ниже: строгое сравнение со словарём, без приведения
- * регистра и trim, никогда не бросает. **Никакой подстановки по умолчанию** — раньше
- * на этом месте стояло `(l.status || 'active').toLowerCase()`, и любое нераспознанное
- * значение молча становилось активной ссылкой, то есть «по ней можно платить».
- *
- * Предупреждение в консоль — единственный побочный эффект: разбор идёт в одном месте,
- * поэтому расхождение со словарём бэкенда видно сразу и с исходным значением.
+ * Строгое сравнение со словарём, без приведения регистра и trim; не бросает. Подстановки по
+ * умолчанию не заводить: нераспознанный статус стал бы активной ссылкой — «по ней можно платить».
  */
 const parseEnumValue = <T extends string>(
   values: readonly T[],
@@ -64,17 +42,14 @@ const parseEnumValue = <T extends string>(
   return null;
 };
 
-/** Разбор `status` из ответа `/api/v1/payment-links*`. Зеркало `parseTransactionStatus`. */
 export function parseLinkStatus(raw: unknown): LinkStatus | null {
   return parseEnumValue(LINK_STATUSES, raw, 'статус ссылки');
 }
 
-/** Разбор `usageType` из ответа. Правила те же, что у `parseLinkStatus`. */
 export function parseLinkUsageType(raw: unknown): LinkUsageType | null {
   return parseEnumValue(LINK_USAGE_TYPES, raw, 'тип использования ссылки');
 }
 
-/** Разбор `paymentType` из ответа. Правила те же, что у `parseLinkStatus`. */
 export function parsePaymentType(raw: unknown): PaymentType | null {
   return parseEnumValue(PAYMENT_TYPES, raw, 'тип платежа');
 }
@@ -83,9 +58,8 @@ export interface PaymentLink {
   id: string;
   shortCode: string;
   url: string;
-  /** Разобранный статус; `null` — бэкенд прислал значение вне словаря, см. `statusRaw`. */
   status: LinkStatus | null;
-  /** Исходное значение статуса. Показывается серым и как есть, когда `status === null`. */
+  /** Исходная строка — показывается серым как есть, когда `status === null`. */
   statusRaw?: string;
   amount: number;
   currency: string;
@@ -99,38 +73,26 @@ export interface PaymentLink {
   paymentType: PaymentType | null;
   maxUses: number;
   /**
-   * Сколько раз ссылкой воспользовались — `currentPaymentsCount` из API. С P2-16 (Р-49)
-   * это состоявшиеся платежи: `SUCCESS` + `REFUNDED` + `PARTIALLY_REFUNDED`. Возврат —
-   * полный или частичный — использование не отменяет: число не уменьшается и слот
-   * не освобождается. В списочном ответе поля нет, там всегда 0.
+   * `currentPaymentsCount` — состоявшиеся платежи (`PAID_STATUSES`, Р-49): возврат число не
+   * уменьшает и слот не освобождает. В списочном ответе поля нет — там 0.
    */
   usedCount: number;
   /**
-   * Сколько из состоявшихся платежей возвращено, полностью или частично, —
-   * `refundedPaymentsCount` из API (P2-16, Р-50). Всегда ≤ `usedCount`. Показывается
-   * на карточке рядом с «использовано N из M» только когда больше нуля. В списочном
-   * ответе поля нет намеренно (счётчик на строку вернул бы N+1) — там всегда 0.
+   * `refundedPaymentsCount` — сколько из них возвращено (Р-50), всегда ≤ `usedCount`. В списочном
+   * ответе поля нет намеренно (N+1) — там 0.
    */
   refundedCount: number;
   createdAt: Date;
   expiresAt: Date;
 
   /**
-   * Время последнего успешного платежа по ссылке — `lastPaidAt` из API (P2-15, Р-46).
-   * `undefined` означает «не оплачивалась»; подставлять сюда что-либо нельзя.
-   *
-   * Возвращённый платёж датой оплаты остаётся: бэкенд ищет по `SUCCESS`, `REFUNDED`
-   * и `PARTIALLY_REFUNDED`, потому что возврат переписывает статус самой транзакции.
+   * `lastPaidAt` (Р-46); `undefined` — не оплачивалась, ничего не подставлять. Возвращённый
+   * платёж датой оплаты остаётся (Р-49).
    */
   paidAt?: Date;
 
-  // ─── Поля, которых в ответе API пока нет ────────────────────────────────────
-  // Мок-генератор, который их заполнял, удалён вместе с P2-13. Разметка их читает,
-  // поэтому они оставлены — но до появления соответствующих полей в API все они
-  // **всегда `undefined`**, и ветки под ними на экран не попадают. Подставлять вместо
-  // них значения по умолчанию запрещено (Р-48): построитель, сочинявший карту и номер
-  // транзакции из этих полей, удалён в P2-15 — он был безвреден ровно до того дня,
-  // когда заработало поле, за которым он прятался.
+  // Этих полей в API нет: из ответа они всегда `undefined`, ветки под ними на экран не попадают.
+  // Значений по умолчанию не подставлять (Р-48).
   redirectUrl?: string;
   note?: string;
   dmsStatus?: DmsStatus;
@@ -140,23 +102,16 @@ export interface PaymentLink {
   transactionId?: string;
   payerIp?: string;
   sentVia?: ('email' | 'whatsapp' | 'copy')[];
-  /**
-   * Эквайринговый терминал ссылки — `PaymentLinkResponse.terminal`. Подписывается логином
-   * на карточке ссылки (`utils/terminals.ts`); пусто, если ответ терминал не назвал.
-   */
+  /** `PaymentLinkResponse.terminal`; подпись — `utils/terminals.ts`. */
   terminalId?: number;
   /**
-   * `PaymentLinkResponse.rid` — ссылка провайдера на саму платёжную ссылку
-   * (`PaymentLink.providerReference`). Не `ridByMerchant`: тот относится к платежу и живёт
-   * в транзакции. Маппинг из API поле пока не переносит — оно всегда undefined.
+   * `PaymentLinkResponse.rid` — ссылка провайдера на саму платёжную ссылку, не `ridByMerchant`
+   * платежа (Р-69). Маппинг поле не переносит — всегда `undefined`.
    */
   providerReference?: string;
 }
 
-/**
- * Ссылки «отправить клиенту». Настоящие `mailto:` и `wa.me`, с кодированием параметров:
- * описание «Invoice #12 & extras» иначе обрывало тело письма на `#`.
- */
+// Параметры кодируются: иначе описание «Invoice #12 & extras» обрежет тело письма на `#`.
 export const mailtoHref = (link: Pick<PaymentLink, 'customerEmail' | 'url'>, subject: string, text: string): string =>
   `mailto:${encodeURIComponent(link.customerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(`${text}\n${link.url}`)}`;
 
@@ -191,23 +146,18 @@ const LINK_STATUS_COLORS: Record<LinkStatus, LinkStatusColors> = {
   COMPLETED: { color: 'info',    bgColor: 'rgba(21,101,192,0.1)', textColor: '#1565c0' },
   EXPIRED:   { color: 'default', bgColor: 'rgba(0,0,0,0.06)',     textColor: '#546e7a' },
   CANCELED:  { color: 'error',   bgColor: 'rgba(198,40,40,0.1)',  textColor: '#c62828' },
-  // Приостановлена не мерчантом и не по сроку: янтарный, чтобы отличалась и от активной,
-  // и от отменённой — по ней нельзя платить, но она вернётся, когда терминал разблокируют.
+  // Янтарный — не спутать ни с активной, ни с отменённой: платить нельзя, но ссылка вернётся
+  // после разблокировки терминала.
   SUSPENDED: { color: 'warning', bgColor: 'rgba(237,108,2,0.12)', textColor: '#ed6c02' },
 };
 
-/** Статус вне словаря бэкенда: серый, чтобы его нельзя было спутать с активной ссылкой. */
+// Статус вне словаря — серый, чтобы не спутать с активной ссылкой.
 const UNKNOWN_STATUS_COLORS: LinkStatusColors = {
   color: 'default',
   bgColor: 'rgba(158,158,158,0.16)',
   textColor: '#616161',
 };
 
-/**
- * Цвет статуса. Аргумент уже разобран `parseLinkStatus`, поэтому ни `toLowerCase()`,
- * ни ветки под два написания `canceled`/`cancelled` здесь больше не нужны.
- * `null` — статус вне словаря: серый, а не «активна» по умолчанию.
- * Зеркало `getStatusColorScheme` из `utils/statusColors.ts` (P2-12).
- */
+/** Зеркало `getStatusColorScheme` из `utils/statusColors.ts` (P2-12). */
 export const getLinkStatusColors = (status: LinkStatus | null | undefined): LinkStatusColors =>
   (status ? LINK_STATUS_COLORS[status] : UNKNOWN_STATUS_COLORS);

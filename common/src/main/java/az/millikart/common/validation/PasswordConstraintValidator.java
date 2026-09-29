@@ -16,7 +16,7 @@ public class PasswordConstraintValidator implements ConstraintValidator<ValidPas
     @Override
     public boolean isValid(String password, ConstraintValidatorContext context) {
         if (password == null) {
-            return true; // Use @NotNull or @NotBlank separately if null is disallowed
+            return true; // null запрещают @NotNull или @NotBlank
         }
 
         if (password.length() < 12) {

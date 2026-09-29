@@ -1,5 +1,6 @@
 package az.millikart.pbl.service;
 
+import az.millikart.pbl.domain.CustomerPhone;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentLinkStatus;
 import az.millikart.pbl.domain.Terminal;
@@ -28,6 +29,7 @@ import az.millikart.common.exception.PaymentOutcomeUnknownException;
 import az.millikart.common.exception.ResourceNotFoundException;
 
 import az.millikart.pbl.provider.AcquiringClient;
+import az.millikart.pbl.provider.ProviderCredentials;
 import az.millikart.pbl.provider.ProviderDeclineReason;
 import az.millikart.pbl.provider.ProviderOrderDetails;
 import az.millikart.pbl.provider.ProviderOrderDetails.TransactionFacts;
@@ -54,6 +56,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -75,11 +78,17 @@ public class PaymentLinkService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentLinkService.class);
 
+    // Незнакомый или внешний статус заказа — WARN один раз на пару «транзакция, статус»: сверка спрашивает
+    // раз в 2 минуты до 7 дней (Р-98). Память процесса: после рестарта — ещё раз.
+    private static final int NOTICED_STATUSES_CEILING = 10_000;
+    private final Map<UUID, String> noticedProviderStatuses = new ConcurrentHashMap<>();
+
     private final PaymentLinkRepository paymentLinkRepository;
     private final TransactionRepository transactionRepository;
     private final TransactionRefundRepository transactionRefundRepository;
     private final TerminalRepository terminalRepository;
     private final AcquiringClient acquiringClient;
+    private final ProviderCredentialsService providerCredentials;
     private final PaymentLinkMapper mapper;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
@@ -93,6 +102,7 @@ public class PaymentLinkService {
                                TransactionRefundRepository transactionRefundRepository,
                                TerminalRepository terminalRepository,
                                AcquiringClient acquiringClient,
+                               ProviderCredentialsService providerCredentials,
                                PaymentLinkMapper mapper,
                                AuditLogService auditLogService,
                                ApplicationEventPublisher eventPublisher,
@@ -105,6 +115,7 @@ public class PaymentLinkService {
         this.transactionRefundRepository = transactionRefundRepository;
         this.terminalRepository = terminalRepository;
         this.acquiringClient = acquiringClient;
+        this.providerCredentials = providerCredentials;
         this.mapper = mapper;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
@@ -115,17 +126,12 @@ public class PaymentLinkService {
     }
 
     public PaymentLinkResponse create(CreatePaymentLinkRequest request, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
-        String companyId = UserPrincipal.getCompanyId(principal);
+        log.info("Request to create payment link: merchantOrderId={}, terminal={}, amount={}, currency={}",
+                request.merchantOrderId(), request.terminal(), request.amount(), request.currency());
 
-        log.info("Request to create payment link: merchantOrderId={}, terminal={}, amount={}, currency={}, userId={}, role={}, companyId={}",
-                request.merchantOrderId(), request.terminal(), request.amount(), request.currency(), userId, rawRole, companyId);
+        String terminalCompanyId = validateAccess(request.terminal(), principal, LINK_WRITE_ROLES).getCompanyId();
 
-        validateAccess(request.terminal(), principal, LINK_WRITE_ROLES);
-
-        // На заблокированном терминале новых платежей нет (Р-38), а ссылка на нём родилась бы
-        // нерабочей: путь открытия её всё равно отвергнет.
+        // На заблокированном терминале ссылка родилась бы нерабочей: открытие её отвергнет (Р-38).
         Terminal terminal = terminalRepository.findById(request.terminal())
                 .orElseThrow(() -> new ResourceNotFoundException("Terminal not found: " + request.terminal()));
         if (terminal.isBlocked()) {
@@ -133,12 +139,16 @@ public class PaymentLinkService {
             throw new BusinessException("terminal " + request.terminal()
                     + " is blocked and cannot take new payments; unblock it or use another terminal");
         }
+        // Без кредов компании и номера терминала ссылка тоже родилась бы нерабочей (Р-93, Р-96).
+        providerCredentials.forTerminal(terminal);
+        providerCredentials.terminalRidOf(terminal);
 
         CustomerDto customer = request.customer();
+        requireCustomerAllowed(request.usageType(), customer);
+        String customerPhone = normalizedPhone(customer);
         String providerRef = "RID-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
-        // P1-9: срок есть у каждой ссылки. Раньше expires_at оставался NULL — планировщик не находил
-        // просроченных, и ссылки не кончались никогда, пока портал рисовал над ними обратный отсчёт.
+        // Срок есть у каждой ссылки (P1-9): без него планировщик не находит просроченных.
         Instant createdAt = Instant.now();
         Instant expiresAt = request.expiresAt() != null
                 ? validateExpiresAt(request.expiresAt(), createdAt)
@@ -155,12 +165,11 @@ public class PaymentLinkService {
                 .description(request.description())
                 .customerName(customer != null ? customer.fullName() : null)
                 .customerEmail(customer != null ? customer.email() : null)
-                .customerPhone(customer != null ? customer.phone() : null)
+                .customerPhone(customerPhone)
                 .paymentType(request.paymentType())
                 .usageType(request.usageType())
                 .maxPayments(request.usageType() == UsageType.MULTIPLE ? request.maxPayments() : null)
-                // Ноль при рождении; дальше его переписывает счёт по PAID_STATUSES — то же число,
-                // что отдаёт API (P2-16). Возврат из набора не выводит, писать нечего.
+                // Дальше колонку переписывает счёт по PAID_STATUSES — то же число, что отдаёт API (P2-16).
                 .currentPaymentsCount(0)
                 .status(PaymentLinkStatus.ACTIVE)
                 .metadata(request.metadata())
@@ -171,20 +180,17 @@ public class PaymentLinkService {
 
         // txTemplate закоммитил запись выше, поэтому fallbackExecution пишет событие сразу (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.PAYMENT_LINK, saved.getId().toString(), AuditAction.CREATE,
-                UserPrincipal.getUsername(principal), companyId,
+                UserPrincipal.getUsername(principal), terminalCompanyId,
                 "Created " + saved.getUsageType() + " " + saved.getPaymentType() + " link for "
                         + saved.getAmount() + " " + saved.getCurrency() + " on terminal "
                         + saved.getTerminalId() + ", expires " + saved.getExpiresAt()));
 
         log.info("Payment link created successfully with ID: {} and provider reference: {}", saved.getId(), providerRef);
-        // У только что созданной ссылки платежей нет — искать нечего.
         return mapper.toResponse(saved, 0, 0, null);
     }
 
-    // Статусы попыток, замораживающие сумму ссылки (P2-9): плательщику уже показали цену, и она
-    // стала частью записи. Перечислены статусы, которые ЗАПИРАЮТ, а не «всё кроме FAILED», — чтобы
-    // новый статус в TransactionStatus по умолчанию запрещал правку, а не тихо разрешал её.
-    // PENDING запирает тоже: это платёж, идущий прямо сейчас.
+    // Статусы попыток, замораживающие сумму ссылки (P2-9): плательщику уже показали цену. Перечислены
+    // ЗАПИРАЮЩИЕ, а не «всё кроме FAILED»: новый статус TransactionStatus по умолчанию запрещает правку.
     private static final Set<TransactionStatus> AMOUNT_LOCKING_STATUSES = EnumSet.of(
             TransactionStatus.PENDING,
             TransactionStatus.AUTHORIZED,
@@ -192,27 +198,23 @@ public class PaymentLinkService {
             TransactionStatus.PARTIALLY_REFUNDED,
             TransactionStatus.REFUNDED);
 
-    // Возвращённая часть PAID_STATUSES (P2-16, Р-50). Использованием ссылки такие платежи быть не
-    // перестают — набор нужен только чтобы показать, сколько из них кончились возвратом.
-    // В списочный ответ не добавлять: список строится без походов в транзакции, счётчик на строку
-    // вернёт N+1, снятый в P2-15.
+    // Возвращённая часть PAID_STATUSES — только для счётчика возвратов, использованием платёж быть не
+    // перестаёт (P2-16, Р-50). В списочный ответ не добавлять: счётчик на строку — N+1 (P2-15).
     private static final Set<TransactionStatus> REFUNDED_STATUSES = EnumSet.of(
             TransactionStatus.REFUNDED,
             TransactionStatus.PARTIALLY_REFUNDED);
 
-    // Сколько раз ссылкой воспользовались: состоявшиеся платежи, возвращённые в том числе
-    // (PAID_STATUSES, Р-49). Это и currentPaymentsCount в API, и колонка, и база для лимита.
+    // Использования — PAID_STATUSES, возвращённые тоже (Р-49): это currentPaymentsCount в API, колонка
+    // и база для лимита.
     private long usedCount(UUID linkId) {
         return transactionRepository.countByLinkIdAndStatusIn(linkId, TransactionStatus.PAID_STATUSES);
     }
 
-    // Сколько платежей ссылки вернули — полностью или частично (P2-16, Р-50).
     private int refundedCount(UUID linkId) {
         return (int) transactionRepository.countByLinkIdAndStatusIn(linkId, REFUNDED_STATUSES);
     }
 
-    // Лишний запрос на вызов, который могут позволить себе только одиночные эндпоинты.
-    // В списке не использовать — там lastPaidAtByLink на всю страницу разом (P2-15, Р-46).
+    // Только для одиночных эндпоинтов; в списке — lastPaidAtByLink на всю страницу (P2-15, Р-46).
     private Instant lastPaidAt(UUID linkId) {
         return transactionRepository
                 .findFirstByLinkIdAndStatusInOrderByCreatedAtDesc(linkId, TransactionStatus.PAID_STATUSES)
@@ -220,10 +222,8 @@ public class PaymentLinkService {
                 .orElse(null);
     }
 
-    // Время последней оплаты на целую страницу одним группирующим запросом (P2-15): вызов на
-    // строку — это двадцать запросов на листинг, тот же N+1, что убрали в P2-4. Сторож —
-    // PaymentLinkListPaginationTest со счётчиком запросов Hibernate. Пустая страница запрос
-    // пропускает: IN () — невалидный SQL.
+    // Один группирующий запрос на страницу (P2-15): вызов на строку — N+1, сторож —
+    // PaymentLinkListPaginationTest. Пустую страницу не запрашивать: IN () — невалидный SQL.
     private Map<UUID, Instant> lastPaidAtByLink(List<PaymentLink> links) {
         if (links.isEmpty()) {
             return Collections.emptyMap();
@@ -236,10 +236,9 @@ public class PaymentLinkService {
         return byLink;
     }
 
-    // Переходы статуса, доступные мерчанту руками (P2-9): всего, чего в таблице нет, отвергается —
-    // иначе срок и лимит ничего не значат (раньше любой статус ставился в ACTIVE, и просроченная
-    // ссылка воскресала одним PATCH). CANCELED → ACTIVE ещё и требует, чтобы срок был впереди.
-    // SUSPENDED недостижим и неотменяем отсюда (P2-8, Р-39): его ставит блокировка терминала.
+    // Ручные переходы статуса (P2-9); остального нет, иначе просроченная ссылка воскресала бы одним
+    // PATCH. CANCELED → ACTIVE — только со сроком впереди. SUSPENDED ставит и снимает только
+    // блокировка терминала (P2-8, Р-39).
     private static final Map<PaymentLinkStatus, Set<PaymentLinkStatus>> ALLOWED_STATUS_TRANSITIONS = Map.of(
             PaymentLinkStatus.ACTIVE, EnumSet.of(PaymentLinkStatus.CANCELED),
             PaymentLinkStatus.EXPIRED, EnumSet.of(PaymentLinkStatus.CANCELED),
@@ -249,22 +248,17 @@ public class PaymentLinkService {
 
     @Transactional
     public PaymentLinkResponse update(UUID id, UpdatePaymentLinkRequest request, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
-        String companyId = UserPrincipal.getCompanyId(principal);
-
-        log.info("Request to update payment link: id={}, userId={}, role={}, companyId={}", id, userId, rawRole, companyId);
+        log.debug("Request to update payment link {}", id);
         PaymentLink link = findLinkOrThrow(id);
 
-        validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES);
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES).getCompanyId();
 
         long usedCount = usedCount(id);
 
-        // Один PATCH — одна правка: сдвинутые поля собираются здесь и пишутся одной строкой (P2-9).
+        // Сдвинутые поля — одной записью журнала на PATCH (P2-9).
         List<String> changes = new ArrayList<>();
 
-        // PATCH, вернувший объект целиком, не должен падать на поле, которое не двигали: сумма,
-        // равная текущей, — не правка и до сторожа не доходит.
+        // Сумма, равная текущей, — не правка: PATCH с объектом целиком не должен падать на несдвинутом поле.
         if (request.amount() != null && request.amount().compareTo(link.getAmount()) != 0) {
             if (transactionRepository.existsByLinkIdAndStatusIn(id, AMOUNT_LOCKING_STATUSES)) {
                 log.warn("Refusing to change the amount of link {}: it already has payment attempts", id);
@@ -280,6 +274,8 @@ public class PaymentLinkService {
         }
         if (request.customer() != null) {
             CustomerDto customer = request.customer();
+            requireCustomerAllowed(link.getUsageType(), customer);
+            String phone = normalizedPhone(customer);
             // В аудит — только имена полей: значения здесь персональные данные.
             if (customer.fullName() != null && !customer.fullName().equals(link.getCustomerName())) {
                 changes.add("customerName");
@@ -289,14 +285,14 @@ public class PaymentLinkService {
                 changes.add("customerEmail");
                 link.setCustomerEmail(customer.email());
             }
-            if (customer.phone() != null && !customer.phone().equals(link.getCustomerPhone())) {
+            if (phone != null && !phone.equals(link.getCustomerPhone())) {
                 changes.add("customerPhone");
-                link.setCustomerPhone(customer.phone());
+                link.setCustomerPhone(phone);
             }
         }
         if (request.expiresAt() != null) {
-            // Потолок отсчитывается от created_at ссылки, а не от now (P1-9): иначе мерчант шагал
-            // бы сроком вперёд по одному PATCH — 90 дней, потом ещё 90 — и потолок не ограничивал бы.
+            // Потолок — от created_at, а не от now (P1-9): иначе цепочка PATCH'ей продлевала бы срок
+            // бесконечно.
             Instant expiresAt = validateExpiresAt(request.expiresAt(), link.getCreatedAt());
             if (!expiresAt.equals(link.getExpiresAt())) {
                 changes.add("expiresAt " + link.getExpiresAt() + " -> " + expiresAt);
@@ -308,8 +304,8 @@ public class PaymentLinkService {
                 log.warn("Cannot set maxPayments on SINGLE use link {}", id);
                 throw new BusinessException("maxPayments can only be set when usageType is MULTIPLE");
             }
-            // Лимит ниже уже прошедших платежей дал бы «3 из 2 использовано» (P2-9). Считается по
-            // использованиям, а не по строкам SUCCESS (P2-16): возвращённый платёж — тоже использование.
+            // Лимит ниже прошедших платежей дал бы «3 из 2 использовано» (P2-9). Считаются использования,
+            // а не строки SUCCESS: возвращённый платёж — тоже использование (P2-16).
             if (request.maxPayments() < usedCount) {
                 log.warn("Refusing to lower maxPayments of link {} to {}: it was already used {} times",
                         id, request.maxPayments(), usedCount);
@@ -326,7 +322,7 @@ public class PaymentLinkService {
             changes.add("metadata");
             link.setMetadata(request.metadata());
         }
-        // Последним, чтобы PATCH и с новым сроком, и с ACTIVE судился по только что заданному сроку.
+        // Статус — последним: ACTIVE проверяется по сроку из того же PATCH.
         if (request.status() != null) {
             applyStatusChange(link, request.status(), changes);
         }
@@ -335,23 +331,21 @@ public class PaymentLinkService {
 
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.PAYMENT_LINK, saved.getId().toString(),
                 saved.getStatus() == PaymentLinkStatus.CANCELED ? AuditAction.CANCEL : AuditAction.UPDATE,
-                UserPrincipal.getUsername(principal), companyId,
+                UserPrincipal.getUsername(principal), terminalCompanyId,
                 changes.isEmpty() ? "No fields changed" : "Changed " + String.join(", ", changes)));
 
-        log.info("Payment link {} updated by userId={}: {}", id, userId,
+        log.info("Payment link {} updated: {}", id,
                 changes.isEmpty() ? "no fields changed" : String.join(", ", changes));
         return mapper.toResponse(saved, (int) usedCount, refundedCount(id), lastPaidAt(id));
     }
 
-    // Установка статуса, который у ссылки уже стоит, — не правка и не ошибка: PATCH, вернувший
-    // объект целиком, не должен на ней падать (P2-9).
+    // Тот же статус — не правка и не ошибка: PATCH с объектом целиком не должен падать (P2-9).
     private void applyStatusChange(PaymentLink link, PaymentLinkStatus target, List<String> changes) {
         PaymentLinkStatus current = link.getStatus();
         if (target == current) {
             return;
         }
-        // У обоих направлений SUSPENDED свой текст: «нельзя сменить с SUSPENDED на ACTIVE» отправило
-        // бы мерчанта искать причину в ссылке, а причина — снятый с обслуживания терминал.
+        // У SUSPENDED свой текст отказа: причина — в заблокированном терминале, а не в ссылке.
         if (current == PaymentLinkStatus.SUSPENDED) {
             log.warn("Refusing status change of suspended link {}: {} -> {}", link.getId(), current, target);
             throw new BusinessException("payment link is suspended because its terminal " + link.getTerminalId()
@@ -367,8 +361,7 @@ public class PaymentLinkService {
             throw new BusinessException("payment link status cannot be changed from " + current
                     + " to " + target);
         }
-        // Снятие отмены не должно возвращать ссылку с уже прошедшим сроком: она была бы ACTIVE и
-        // неоплачиваемой до следующего прохода планировщика. Пустой срок — ссылка без срока.
+        // Просроченную ссылку в ACTIVE не возвращать: она была бы неоплачиваемой до прохода планировщика.
         if (target == PaymentLinkStatus.ACTIVE
                 && link.getExpiresAt() != null && !link.getExpiresAt().isAfter(Instant.now())) {
             log.warn("Refusing to reactivate link {}: it expired at {}", link.getId(), link.getExpiresAt());
@@ -379,17 +372,36 @@ public class PaymentLinkService {
         link.setStatus(target);
     }
 
-    // Проверка присланного мерчантом срока по двум границам (P1-9). Обе — отказ с 400, а не тихое
-    // подрезание: срок, о котором мерчант не просил, хуже отклонённого запроса — ссылка умрёт в
-    // момент, которого никто не планировал. createdAt — точка отсчёта потолка: при создании это
-    // «сейчас», при правке — created_at самой ссылки (почему — в месте вызова).
+    // Клиент — только у одноразовой ссылки: у многоразовой платят разные люди (Р-96). Отказ, а не
+    // молчаливый пропуск: отправитель должен знать, что данные не сохранены.
+    private static void requireCustomerAllowed(UsageType usageType, CustomerDto customer) {
+        if (usageType == UsageType.MULTIPLE && customer != null
+                && (hasText(customer.fullName()) || hasText(customer.email()) || hasText(customer.phone()))) {
+            throw new BusinessException("customer can only be set on a single-use link");
+        }
+    }
+
+    // Хранится как +994XXXXXXXXX (Р-96): провайдер ждёт код страны и номер раздельно.
+    private static String normalizedPhone(CustomerDto customer) {
+        if (customer == null || !hasText(customer.phone())) {
+            return null;
+        }
+        return CustomerPhone.normalize(customer.phone())
+                .orElseThrow(() -> new BusinessException("customer.phone must be an Azerbaijani number: +994 and 9 digits"));
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    // Обе границы — отказ с 400, а не тихое подрезание: ссылка не должна умереть в момент, которого
+    // мерчант не просил (P1-9). createdAt — точка отсчёта потолка, при правке — created_at ссылки.
     private Instant validateExpiresAt(Instant expiresAt, Instant createdAt) {
         if (!expiresAt.isAfter(Instant.now())) {
             log.warn("Refusing expiresAt {}: it is not in the future", expiresAt);
             throw new BusinessException("expiresAt must be in the future");
         }
-        // Ссылки без created_at быть не может (@CreationTimestamp); запасной now оставляет сломанной
-        // строке 400 вместо NullPointerException.
+        // created_at есть всегда (@CreationTimestamp); запасной now даёт сломанной строке 400, а не NPE.
         Instant ceiling = (createdAt != null ? createdAt : Instant.now()).plus(maxLinkTtl);
         if (expiresAt.isAfter(ceiling)) {
             log.warn("Refusing expiresAt {}: the ceiling for this link is {} ({} from its creation time)",
@@ -400,8 +412,7 @@ public class PaymentLinkService {
         return expiresAt;
     }
 
-    // Срок словами, как его читает мерчант: Duration.toString() написал бы PT2160H — то же число
-    // и никакого объяснения.
+    // Срок словами: Duration.toString() показал бы мерчанту PT2160H.
     private static String formatTtl(Duration ttl) {
         if (ttl.toDays() > 0 && ttl.minusDays(ttl.toDays()).isZero()) {
             return ttl.toDays() + (ttl.toDays() == 1 ? " day" : " days");
@@ -414,11 +425,8 @@ public class PaymentLinkService {
 
     @Transactional(readOnly = true)
     public PaymentLinkResponse get(UUID id, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
-        String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to fetch payment link details: id={}, userId={}, role={}, companyId={}", id, userId, rawRole, companyId);
+        log.debug("Request to fetch payment link {}", id);
         PaymentLink link = findLinkOrThrow(id);
 
         validateAccess(link.getTerminalId(), principal, READ_ROLES);
@@ -433,8 +441,7 @@ public class PaymentLinkService {
         String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to list payment links: terminal={}, status={}, userId={}, role={}, companyId={}", terminal, status, userId, rawRole, companyId);
-        // Нераспознанная роль в READ_ROLES не попадает, поэтому отвергается здесь, а не ниже.
+        log.debug("Request to list payment links: terminal={}, status={}", terminal, status);
         if (userRole == null || !READ_ROLES.contains(userRole)) {
             log.warn("Access denied. Role {} is not authorized to list payment links.", rawRole);
             throw new InvalidStateException("Access denied: role " + rawRole + " is not authorized for this action");
@@ -465,7 +472,6 @@ public class PaymentLinkService {
         }
 
         Page<PaymentLink> page = paymentLinkRepository.search(terminal, allowedTerminals, globalReader, status, pageable);
-        // Один запрос на страницу, никогда не на строку (P2-15).
         Map<UUID, Instant> paidAt = lastPaidAtByLink(page.getContent());
         List<PaymentLinkSummaryResponse> content = page.getContent().stream()
                 .map(link -> mapper.toSummary(link, paidAt.get(link.getId())))
@@ -473,24 +479,17 @@ public class PaymentLinkService {
         return PagedResponse.of(page, content);
     }
 
-    // Блокировку терминала не проверяет и не должен (Р-38): списываются деньги, уже удержанные на
-    // карте. «Терминал заблокирован» значит «новых платежей нет», а не «бросить прежние холды» —
-    // отказ оставил бы холд висеть на карте держателя (Void у нас нет), и мерчант не смог бы ни
-    // списать его, ни отменить. Блокировка проверяется там, где платёж НАЧИНАЕТСЯ.
+    // Блокировку терминала не проверять (Р-38): отказ оставил бы холд висеть на карте держателя — Void
+    // у нас нет, и мерчант не смог бы ни списать его, ни отменить.
     @Transactional
     public PaymentLinkResponse completeDms(UUID transactionId, CompleteDmsRequest request, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
-        String companyId = UserPrincipal.getCompanyId(principal);
-
-        log.info("Request to complete DMS: transactionId={}, amount={}, userId={}, role={}, companyId={}", transactionId, request.amount(), userId, rawRole, companyId);
+        log.info("Request to complete DMS: transactionId={}, amount={}", transactionId, request.amount());
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
-        validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES);
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES).getCompanyId();
 
-        // P0-8: раньше SUCCESS принимался и здесь — одну авторизацию можно было склирить дважды,
-        // то есть дважды снять деньги с держателя карты.
+        // Повторное списание SUCCESS дважды сняло бы деньги с держателя карты (P0-8).
         if (transaction.getStatus() == TransactionStatus.SUCCESS) {
             log.warn("Refusing repeat capture of transaction {}: it is already SUCCESS", transactionId);
             throw new BusinessException("Transaction has already been captured");
@@ -502,12 +501,11 @@ public class PaymentLinkService {
         }
 
         if (transaction.getStatus() == TransactionStatus.PENDING) {
-            // PENDING остаётся допустимым: наша копия статуса отстаёт — страница плательщика
-            // опрашивает эквайера ровно один раз (P0-2), и холд, поставленный после опроса, здесь
-            // всё ещё PENDING. Спрашиваем эквайера, а не гадаем. PaymentOutcomeUnknownException из
-            // опроса намеренно не ловится: списывать по непрочитанному статусу нельзя.
+            // Наша копия отстаёт: холд, поставленный после единственного опроса страницы возврата, здесь
+            // ещё PENDING (P0-2). PaymentOutcomeUnknownException опроса не ловить: списывать по
+            // непрочитанному статусу нельзя.
             log.info("Transaction {} is PENDING; polling the acquirer before deciding on the capture", transactionId);
-            // Возвращаются те же управляемые экземпляры, поэтому link выше остаётся той же сущностью.
+            // Возвращаются те же управляемые экземпляры: link выше остаётся той же сущностью.
             transaction = refreshStatus(transaction).transaction();
 
             if (transaction.getStatus() == TransactionStatus.SUCCESS) {
@@ -515,16 +513,14 @@ public class PaymentLinkService {
                 throw new BusinessException("Transaction has already been captured");
             }
             if (transaction.getStatus() != TransactionStatus.AUTHORIZED) {
-                // Отказ откатит обновлённый статус вместе с транзакцией — безвредно: деньги не
-                // двигались, строку добьёт фоновая сверка.
+                // Отказ откатит обновлённый статус — безвредно: деньги не двигались, строку добьёт сверка.
                 log.warn("Cannot complete DMS. Transaction {} is still {} at the acquirer", transactionId, transaction.getStatus());
                 throw new BusinessException("Transaction is in status " + transaction.getStatus()
                         + " and has not been authorized by the acquirer yet. Capture is only possible for an authorized payment.");
             }
         }
 
-        // P0-8: сумма теперь действительно уходит эквайеру, поэтому проверяется до отправки.
-        // @Positive на DTO уже отсёк ноль и минус; здесь то, чего он не видит.
+        // Сумма уходит эквайеру — проверяется до отправки (P0-8); ноль и минус отсёк @Positive на DTO.
         assertCapturableScale(request.amount(), "Capture");
         if (request.amount().compareTo(transaction.getAmount()) > 0) {
             log.warn("Refusing capture of transaction {}: requested {} exceeds the authorized amount {}",
@@ -538,26 +534,24 @@ public class PaymentLinkService {
                     return new BusinessException("Terminal configuration not found");
                 });
 
+        // Креды — до отправки и вне try: их отсутствие — отказ (400), а не неизвестный исход (Р-93).
+        ProviderCredentials credentials = providerCredentials.forTerminal(terminal);
         log.info("Sending DMS Clearing capture request to provider for providerOrderId: {}, amount: {}", transaction.getProviderOrderId(), request.amount());
 
-        // P1-8b: возвращается только при подтверждённом клиринге (tran.match.ridByPmo);
-        // неподтверждённый ответ — 502, и до смены статуса ниже дело не доходит.
+        // Возвращается только при подтверждённом клиринге (tran.match.ridByPmo), иначе 502 (P1-8b).
         MoneyOperationResult capture;
         try {
             capture = acquiringClient.completeDms(
                     transaction.getProviderOrderId(),
                     transaction.getProviderPassword(),
-                    terminal.getLogin(),
-                    terminal.getPassword(),
+                    credentials,
                     request.amount()
             );
         } catch (PaymentOutcomeUnknownException e) {
-            // Единственное денежное событие без локального следа: ниже ничего не выполнится,
-            // транзакция откатится, 502 велит мерчанту проверить перед повтором. AFTER_COMMIT тут
-            // не сработает — потому запись здесь и сейчас (P2-14), и она единственное свидетельство,
-            // что операцию вообще пытались провести.
+            // Транзакция откатится, и событие через eventPublisher пропало бы; logUnresolved пишет своей
+            // транзакцией — единственный след попытки (P2-14). 502 велит проверить статус перед повтором.
             auditLogService.logUnresolved(AuditEntity.TRANSACTION, transactionId.toString(), AuditAction.CAPTURE,
-                    UserPrincipal.getUsername(principal), companyId,
+                    UserPrincipal.getUsername(principal), terminalCompanyId,
                     "Capture of " + request.amount() + " " + link.getCurrency()
                             + " left unconfirmed by the acquirer (providerOrderId "
                             + transaction.getProviderOrderId() + "): " + e.getMessage()
@@ -565,8 +559,8 @@ public class PaymentLinkService {
             throw e;
         }
 
-        // Сырой ответ плюс свидетельство этого списания под своим ключом, чтобы в споре были
-        // идентификаторы эквайера. Сырое тело идёт через ProviderPayloads.withoutSecrets (P0-9).
+        // Свидетельство списания — под своим ключом: в споре нужны идентификаторы эквайера. Сырое тело —
+        // только через ProviderPayloads.withoutSecrets (P0-9).
         Map<String, Object> mergedResponse = new HashMap<>();
         if (transaction.getProviderResponse() != null) {
             mergedResponse.putAll(transaction.getProviderResponse());
@@ -577,18 +571,16 @@ public class PaymentLinkService {
         mergedResponse.put(CAPTURE_KEY, moneyOperationRecord(capture, request.amount(), Instant.now()));
         transaction.setProviderResponse(mergedResponse);
 
-        // P0-8: сколько эквайер реально склирил — отдельно от amount, который остаётся
-        // авторизованной суммой. Потолок возврата читает это поле: вернуть неснятое нельзя.
+        // amount остаётся авторизованной суммой; потолок возврата читает capturedAmount (P0-8).
         transaction.setCapturedAmount(request.amount());
-        // По-прежнему SUCCESS: транзакция рассчитана, просто на списанную сумму. Частичное списание
-        // — не отдельное состояние жизненного цикла.
+        // Частичное списание — тоже SUCCESS, отдельного статуса нет.
         transaction.setStatus(TransactionStatus.SUCCESS);
         transactionRepository.save(transaction);
         log.info("Transaction {} captured successfully for {} of the authorized {} and transitioned to SUCCESS.",
                 transactionId, request.amount(), transaction.getAmount());
 
-        // Считаем использования, а не строки SUCCESS (P2-16): возвращённый платёж держит свой слот,
-        // и это списание может оказаться исчерпывающим лимит. В колонку идёт то же число, что в API.
+        // Использования, а не строки SUCCESS (P2-16): возвращённый платёж держит свой слот. В колонку —
+        // то же число, что в API.
         long usedCount = usedCount(link.getId());
         link.setCurrentPaymentsCount((int) usedCount);
         if (link.getUsageType() == UsageType.SINGLE) {
@@ -601,7 +593,7 @@ public class PaymentLinkService {
         PaymentLink savedLink = paymentLinkRepository.save(link);
 
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, transactionId.toString(),
-                AuditAction.CAPTURE, UserPrincipal.getUsername(principal), companyId,
+                AuditAction.CAPTURE, UserPrincipal.getUsername(principal), terminalCompanyId,
                 "Captured " + request.amount() + " " + link.getCurrency() + " of the authorized "
                         + transaction.getAmount() + " (ridByPmo " + capture.ridByPmo()
                         + ", tranActionId " + capture.tranActionId()
@@ -611,28 +603,21 @@ public class PaymentLinkService {
                 lastPaidAt(savedLink.getId()));
     }
 
-    // Блокировку терминала не проверяет и не должен (Р-38): возврат отдаёт деньги за уже
-    // состоявшийся платёж. Блокировка — решение о будущих платежах; заморозить ею возвраты значило
-    // бы наказать покупателя, и деньги застряли бы до того, как терминал вспомнят разблокировать.
+    // Блокировку терминала не проверять (Р-38): покупатель не получил бы возврат, пока терминал
+    // не разблокируют.
     @Transactional
     public RefundResponse refund(UUID transactionId, RefundRequest request, UserPrincipal principal) {
-        String userId = UserPrincipal.getUserId(principal);
-        String rawRole = UserPrincipal.getRawRole(principal);
-        String companyId = UserPrincipal.getCompanyId(principal);
-
-        log.info("Request to refund transaction: transactionId={}, amount={}, userId={}, role={}, companyId={}", transactionId, request.amount(), userId, rawRole, companyId);
+        log.info("Request to refund transaction: transactionId={}, amount={}", transactionId, request.amount());
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
-        validateAccess(link.getTerminalId(), principal, REFUND_ROLES);
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, REFUND_ROLES).getCompanyId();
 
         if (transaction.getStatus() != TransactionStatus.SUCCESS && transaction.getStatus() != TransactionStatus.PARTIALLY_REFUNDED) {
             log.warn("Cannot refund transaction. Current status: {}", transaction.getStatus());
             throw new BusinessException("Only successful or partially refunded transactions can be refunded");
         }
 
-        // Как в completeDms: сумма уходит эквайеру строкой с двумя знаками, третий знак надо
-        // отвергнуть здесь, а не взрывать на выходе.
         assertCapturableScale(request.amount(), "Refund");
 
         BigDecimal refundableBase = refundableBase(transaction);
@@ -649,18 +634,18 @@ public class PaymentLinkService {
                     return new BusinessException("Terminal configuration not found");
                 });
 
+        ProviderCredentials credentials = providerCredentials.forTerminal(terminal);
         log.info("Sending refund request to provider for providerOrderId: {}, amount: {}", transaction.getProviderOrderId(), request.amount());
 
-        // P1-8b: возвращается только при подтверждённом эквайером возврате (tran.match.ridByPmo).
+        // Возвращается только при подтверждённом возврате (tran.match.ridByPmo), иначе 502 (P1-8b).
         MoneyOperationResult result;
         try {
             result = acquiringClient.refund(transaction.getProviderOrderId(), transaction.getProviderPassword(),
-                    terminal.getLogin(), terminal.getPassword(), request.amount());
+                    credentials, request.amount());
         } catch (PaymentOutcomeUnknownException e) {
-            // То же, что в completeDms, и здесь важнее: деньги могли уйти со счёта мерчанта, а у нас
-            // не осталось ничего. Синхронно — транзакция сейчас откатится и унесла бы событие (P2-14).
+            // Как в completeDms (P2-14): деньги могли уйти со счёта мерчанта, а транзакция откатится.
             auditLogService.logUnresolved(AuditEntity.TRANSACTION, transactionId.toString(), AuditAction.REFUND,
-                    UserPrincipal.getUsername(principal), companyId,
+                    UserPrincipal.getUsername(principal), terminalCompanyId,
                     "Refund of " + request.amount() + " " + link.getCurrency()
                             + " left unconfirmed by the acquirer (providerOrderId "
                             + transaction.getProviderOrderId() + "): " + e.getMessage()
@@ -668,17 +653,14 @@ public class PaymentLinkService {
             throw e;
         }
 
-        // Идентификаторы — собственные у эквайера (§5.7), ничего не выдумывается: раньше читался
-        // несуществующий ключ, а до того подставлялся «REF-XXXXXXXX» — в споре выдуманный номер
-        // возврата хуже, чем никакого.
+        // Нет tranActionId — нет и refundId: выдуманный номер возврата в споре хуже никакого (§5.7).
         if (result.tranActionId() == null) {
             log.warn("Acquirer confirmed the refund of transaction {} (ridByPmo {}) without a tranActionId; "
                     + "the refund response will carry no refundId", transactionId, result.ridByPmo());
         }
 
-        // След каждого возврата: их бывает несколько (частичные), поэтому они складываются в список
-        // под своим ключом, а не перезаписывают друг друга. Сырое тело мержится сверху, как в
-        // completeDms, и идёт через withoutSecrets (P0-9).
+        // Возвраты копятся списком под REFUNDS_KEY: частичных бывает несколько. Сырое тело — через
+        // withoutSecrets (P0-9).
         Map<String, Object> mergedResponse = new HashMap<>();
         if (transaction.getProviderResponse() != null) {
             mergedResponse.putAll(transaction.getProviderResponse());
@@ -690,8 +672,7 @@ public class PaymentLinkService {
         if (mergedResponse.get(REFUNDS_KEY) instanceof List<?> previous) {
             refunds.addAll(previous);
         }
-        // Один момент на свидетельство и на строку возврата: сводка и история операции не должны
-        // расходиться даже на миллисекунды (Р-89).
+        // Один момент на свидетельство и строку возврата: статистика и история операции не расходятся (Р-89).
         Instant refundedAt = Instant.now();
         refunds.add(moneyOperationRecord(result, request.amount(), refundedAt));
         mergedResponse.put(REFUNDS_KEY, refunds);
@@ -706,7 +687,7 @@ public class PaymentLinkService {
             transaction.setStatus(TransactionStatus.PARTIALLY_REFUNDED);
         }
         transactionRepository.save(transaction);
-        // Р-89: возврат строкой со своим временем — по нему сводка главной вычитает возвраты за период.
+        // По refunded_at статистика по ссылкам вычитает возвраты периода (Р-89).
         transactionRefundRepository.save(TransactionRefund.builder()
                 .transaction(transaction)
                 .amount(request.amount())
@@ -715,7 +696,7 @@ public class PaymentLinkService {
                 .build());
 
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, transactionId.toString(),
-                AuditAction.REFUND, UserPrincipal.getUsername(principal), companyId,
+                AuditAction.REFUND, UserPrincipal.getUsername(principal), terminalCompanyId,
                 "Refunded " + request.amount() + " " + link.getCurrency() + " of " + refundableBase
                         + "; refunded so far " + newRefundedAmount + ", transaction now "
                         + transaction.getStatus() + " (ridByPmo " + result.ridByPmo()
@@ -732,10 +713,9 @@ public class PaymentLinkService {
         );
     }
 
-    // Денежные операции сериализуются блокировкой ссылки, взятой ДО чтения транзакции и похода к
-    // эквайеру: иначе два возврата проходили потолок на одном снимке, два списания уходили в шлюз
-    // оба, а конфликт @Version ссылки на коммите откатывал уже подтверждённое списание. Порядок
-    // «ссылка, потом транзакция» — тот же, что у открытия ссылки: взаимной блокировки нет.
+    // Блокировка ссылки — ДО чтения транзакции и похода к эквайеру: иначе два возврата пройдут потолок
+    // на одном снимке, два списания уйдут в шлюз, а конфликт @Version на коммите откатит подтверждённое
+    // списание. Порядок «ссылка, потом транзакция» — как у открытия: взаимной блокировки нет.
     private Transaction lockLinkAndLoadTransaction(UUID transactionId) {
         UUID linkId = transactionRepository.findLinkIdById(transactionId)
                 .orElseThrow(() -> {
@@ -748,10 +728,8 @@ public class PaymentLinkService {
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + transactionId));
     }
 
-    // Свидетельство одного подтверждённого движения денег: три идентификатора эквайера (§5.5-5.7),
-    // сумма и время записи. Значения строками, чтобы в колонке лежало ровно то, что можно
-    // процитировать: сумма в той же форме с двумя знаками, в какой ушла эквайеру. UNNECESSARY здесь
-    // не бросит — assertCapturableScale уже отверг всё, что длиннее двух знаков.
+    // Идентификаторы эквайера (§5.5-5.7), сумма и время — строками, сумма в той форме, что ушла эквайеру.
+    // UNNECESSARY не бросит: длиннее двух знаков отверг assertCapturableScale.
     private static Map<String, Object> moneyOperationRecord(MoneyOperationResult result, BigDecimal amount, Instant at) {
         Map<String, Object> evidence = new HashMap<>();
         evidence.put("tranActionId", result.tranActionId());
@@ -762,17 +740,14 @@ public class PaymentLinkService {
         return evidence;
     }
 
-    // Сколько реально ушло у держателя карты и, значит, может быть возвращено: для DMS —
-    // склиренная при списании сумма, для SMS стадии списания нет и базой служит авторизованная.
-    // P0-8: чтение amount вместо этого и было дырой, которую открывало частичное списание —
-    // авторизовали 1500, списали 500, а вернуть можно было 1500.
+    // Потолок возврата: у DMS — списанная сумма, у SMS — авторизованная. amount у DMS нельзя:
+    // авторизовали 1500, списали 500 — вернуть можно только 500 (P0-8).
     private static BigDecimal refundableBase(Transaction tx) {
         return tx.getCapturedAmount() != null ? tx.getCapturedAmount() : tx.getAmount();
     }
 
-    // Деньги уходят строкой с двумя знаками, и TxpgAcquiringClient форматирует их с UNNECESSARY,
-    // чтобы за спиной мерчанта ничего не округлилось. Третий знак отвергается здесь, на краю, где
-    // это обычные 400, а не сломанный инвариант глубже.
+    // TxpgAcquiringClient форматирует сумму с UNNECESSARY, чтобы ничего не округлилось за спиной
+    // мерчанта: третий знак — 400 здесь, а не исключение в клиенте.
     private static void assertCapturableScale(BigDecimal amount, String operation) {
         if (amount.scale() > 2) {
             log.warn("Refusing {} of {}: more than two decimal places", operation.toLowerCase(), amount);
@@ -780,24 +755,18 @@ public class PaymentLinkService {
         }
     }
 
-    // Проверка статуса для мерчанта: нужна аутентификация и роль на чтение в компании терминала.
     @Transactional
     public TransactionResponse checkAndStatusUpdate(String identifier, UserPrincipal principal) {
-        String rawRole = UserPrincipal.getRawRole(principal);
-        String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to check transaction status: identifier={}, userId={}, role={}, companyId={}",
-                identifier, UserPrincipal.getUserId(principal), rawRole, companyId);
+        log.info("Request to check transaction status: identifier={}", identifier);
 
         Transaction tx = resolveTransaction(identifier);
         validateAccess(tx.getLink().getTerminalId(), principal, READ_ROLES);
         return mapToTransactionResponse(refreshStatus(tx).transaction());
     }
 
-    // Проверка статуса для плательщика (страница возврата от провайдера). Ключ — случайный
-    // ridByMerchant из пути, перебрать его нельзя, поэтому проверки владения здесь нет, а ответ
-    // намеренно беден на персональные данные. Пусто вместо ошибки — чтобы страница не выдала,
-    // существовала ссылка или нет.
+    // Страница возврата плательщика: владение не проверяется — ключ случайный ridByMerchant, его не
+    // перебрать. Ответ беден на персональные данные; пусто вместо ошибки — не выдать, есть ли операция.
     @Transactional
     public Optional<PaymentReceiptView> refreshByRidByMerchant(UUID ridByMerchant) {
         Optional<Transaction> found = transactionRepository.findByRidByMerchant(ridByMerchant);
@@ -810,9 +779,8 @@ public class PaymentLinkService {
         try {
             tx = refreshStatus(tx).transaction();
         } catch (RuntimeException e) {
-            // Страница плательщика обязана отрисоваться и при недоступном эквайере: показываем
-            // последнее известное состояние, а не роняем запрос.
-            log.error("Status refresh failed for transaction {}; rendering last known state", tx.getId(), e);
+            // Страница плательщика рисуется и при недоступном эквайере — последним известным состоянием.
+            log.warn("Status refresh failed for transaction {}: {}; rendering the last known state", tx.getId(), e.getMessage());
         }
         return Optional.of(toReceiptView(tx));
     }
@@ -826,27 +794,23 @@ public class PaymentLinkService {
     // Метка на каждом опросе: как этот сервис классифицировал слово эквайера.
     static final String STATUS_OUTCOME_KEY = "mpStatusOutcome";
 
-    // Метка для UNKNOWN и SETTLED_OTHER: сырое значение status дословно, чтобы при разборе было
-    // видно, что именно сказал эквайер.
+    // Метка для UNKNOWN и SETTLED_OTHER: сырой status эквайера дословно, для ручного разбора.
     static final String PROVIDER_STATUS_KEY = "mpProviderStatus";
 
-    // P1-8b: свидетельство DMS-списания, записанное после подтверждения клиринга.
+    // Свидетельство DMS-списания после подтверждённого клиринга (P1-8b).
     static final String CAPTURE_KEY = "mpCapture";
 
-    // P1-8b: список подтверждённых возвратов той же формы, что CAPTURE_KEY, — их бывает несколько.
+    // Список подтверждённых возвратов той же формы, что CAPTURE_KEY (P1-8b).
     static final String REFUNDS_KEY = "mpRefunds";
 
-    // P1-8b: причина отказа эквайера; отдаётся как TransactionResponse.failureReason.
+    // Причина отказа эквайера — TransactionResponse.failureReason (P1-8b).
     static final String DECLINE_REASON_KEY = "mpDeclineReason";
 
-    // Результат одного опроса: строка транзакции и то, что означало слово эквайера. reconcileOne
-    // смотрит на outcome, решая, можно ли гасить платёж по таймауту.
+    // По outcome reconcileOne решает, можно ли гасить платёж по таймауту.
     public record StatusRefresh(Transaction transaction, ProviderOrderOutcome outcome) {}
 
-    // Сверка одной зависшей транзакции с эквайером: асинхронного колбэка от провайдера нет, и этот
-    // опрос — единственный путь PENDING-строки к финалу. Своя транзакция, чтобы сбой на одной записи
-    // не откатил весь пакет. FAILED ставится только при трёх условиях сразу: после опроса всё ещё
-    // PENDING, опрос удался и вернул понятный нефинальный статус, запись старше maxAge — см. Р-20.
+    // Своя транзакция: сбой на одной записи не откатывает пакет. FAILED — только если опрос удался,
+    // вернул NON_FINAL и запись старше maxAge (Р-20).
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void reconcileOne(UUID transactionId, Duration maxAge) {
         Transaction tx = transactionRepository.findById(transactionId).orElse(null);
@@ -861,11 +825,9 @@ public class PaymentLinkService {
 
         StatusRefresh refresh;
         try {
-            // Тот же опрос и то же отображение статусов, что у путей мерчанта и плательщика.
             refresh = refreshStatus(tx);
         } catch (RuntimeException e) {
-            // Эквайер недоступен или отказал. До опроса ничего не менялось, строка коммитится
-            // нетронутой — снова PENDING, до следующего прохода.
+            // Эквайер недоступен или отказал: строка остаётся PENDING до следующего прохода.
             log.warn("Reconciliation could not reach the acquirer for transaction {}: {}. Leaving it PENDING.",
                     transactionId, e.getMessage());
             return;
@@ -877,33 +839,21 @@ public class PaymentLinkService {
             return;
         }
 
-        // После опроса всё ещё PENDING. По таймауту гасится только статус, понятый как «ещё не
-        // оплачено»; всё остальное остаётся человеку, каким бы старым ни было.
+        // По таймауту гасится только NON_FINAL; остальное — человеку, каким бы старым ни было. WARN о
+        // самом статусе уже дал refreshStatus.
         ProviderOrderOutcome outcome = refresh.outcome();
-        if (outcome == ProviderOrderOutcome.UNKNOWN) {
-            log.warn("Reconciliation is leaving transaction {} PENDING: the acquirer's status is not in "
-                            + "ProviderOrderStatus, so there is no evidence the payment did not happen. "
-                            + "It will not be marked FAILED by age; a human must look at it.",
-                    transactionId);
-            return;
-        }
-        if (outcome == ProviderOrderOutcome.SETTLED_OTHER) {
-            log.warn("Reconciliation is leaving transaction {} PENDING: the acquirer reports a final state "
-                            + "reached outside this service (reversal, refund or closed order). That is not "
-                            + "an abandoned payment, so it will not be marked FAILED by age; the money side "
-                            + "must be reviewed by hand (order.trans[] — AGENTS.md §10).",
-                    transactionId);
+        if (outcome == ProviderOrderOutcome.UNKNOWN || outcome == ProviderOrderOutcome.SETTLED_OTHER) {
+            log.debug("Reconciliation leaves transaction {} PENDING: outcome {} is never timed out", transactionId, outcome);
             return;
         }
         if (outcome != ProviderOrderOutcome.NON_FINAL) {
-            // PAID / AUTHORIZED / FAILED_FINAL меняют статус внутри refreshStatus и сюда не доходят;
-            // сторож на случай, если новый outcome молча получит право на таймаут.
+            // PAID, AUTHORIZED и FAILED_FINAL сюда не доходят; сторож от нового outcome, молча получившего
+            // право на таймаут.
             log.warn("Reconciliation is leaving transaction {} PENDING: outcome {} is not eligible for the "
                     + "abandonment timeout", transactionId, outcome);
             return;
         }
 
-        // Дальше эквайер уже ответил — и ответил, что заказ всё ещё не оплачен.
         Instant createdAt = tx.getCreatedAt();
         if (createdAt == null || createdAt.isAfter(Instant.now().minus(maxAge))) {
             log.debug("Transaction {} is still PENDING but younger than {}; giving the payer more time",
@@ -915,21 +865,18 @@ public class PaymentLinkService {
         if (tx.getProviderResponse() != null) {
             mergedResponse.putAll(tx.getProviderResponse());
         }
-        // Хранит последний payload и то, кто закончил платёж: при разборе спора видно, отказ это
-        // эквайера или наш таймаут.
+        // Метка отличает при разборе спора наш таймаут от отказа эквайера.
         mergedResponse.put(RECONCILIATION_OUTCOME_KEY, OUTCOME_ABANDONED_TIMEOUT);
         mergedResponse.put("reconciledAt", Instant.now().toString());
         tx.setProviderResponse(mergedResponse);
         tx.setStatus(TransactionStatus.FAILED);
         transactionRepository.save(tx);
 
-        // Ссылку намеренно не трогаем: одноразовая должна остаться ACTIVE, чтобы клиент мог начать
-        // попытку заново.
+        // Ссылку не трогать: одноразовая остаётся ACTIVE для новой попытки.
         log.info("Transaction {} abandoned by the payer (older than {}, acquirer still non-final); marked FAILED",
                 transactionId, maxAge);
     }
 
-    // Ищет транзакцию сначала по её UUID, потом по id заказа у провайдера.
     private Transaction resolveTransaction(String identifier) {
         Transaction tx = null;
 
@@ -948,11 +895,9 @@ public class PaymentLinkService {
         return tx;
     }
 
-    // Опрашивает эквайера один раз и применяет переход к транзакции, а при расчёте — к её ссылке.
-    // Транзакция в терминальном статусе возвращается как есть: ничего не спрашивали — ничего и не
-    // известно. Блокировку терминала не проверяет и не должен (Р-38): иначе платежи, шедшие в момент
-    // блокировки, застряли бы в PENDING навсегда — ответ у эквайера есть, а спросить некому.
-    // Пакетный доступ — для OpenLinkService: прошлую попытку он спрашивает у эквайера, а не гасит.
+    // Один опрос эквайера; финальный статус возвращается без опроса. Блокировку терминала не проверять
+    // (Р-38): платежи, шедшие в момент блокировки, застряли бы в PENDING навсегда. Пакетный доступ —
+    // для OpenLinkService: прошлую попытку он спрашивает у эквайера, а не гасит.
     StatusRefresh refreshStatus(Transaction tx) {
         if (tx.getStatus() == TransactionStatus.SUCCESS || tx.getStatus() == TransactionStatus.FAILED
                 || tx.getStatus() == TransactionStatus.REFUNDED || tx.getStatus() == TransactionStatus.PARTIALLY_REFUNDED) {
@@ -961,6 +906,7 @@ public class PaymentLinkService {
         }
 
         UUID transactionId = tx.getId();
+        TransactionStatus before = tx.getStatus();
         PaymentLink link = tx.getLink();
         Terminal terminal = terminalRepository.findById(link.getTerminalId())
                 .orElseThrow(() -> {
@@ -968,28 +914,26 @@ public class PaymentLinkService {
                     return new BusinessException("Terminal configuration not found");
                 });
 
-        Map<String, Object> orderDetails = acquiringClient.getOrderStatus(tx.getProviderOrderId(), tx.getProviderPassword(), terminal.getLogin(), terminal.getPassword());
+        Map<String, Object> orderDetails = acquiringClient.getOrderStatus(tx.getProviderOrderId(), tx.getProviderPassword(),
+                providerCredentials.forTerminal(terminal));
         if (orderDetails == null) {
-            // Раньше было тихим no-op: отсутствующее тело так же неинформативно, как неизвестное
-            // слово, и должно быть так же заметно.
+            // Пустое тело так же неинформативно, как неизвестное слово, и так же заметно.
             log.warn("Acquirer returned no order payload for transaction {} (providerOrderId {}); "
                     + "treating the status as unknown", transactionId, tx.getProviderOrderId());
         }
-        // Без жёсткого приведения: число или объект под "status" роняли ClassCastException посреди
-        // денежного потока. Всё, что не известная строка, — UNKNOWN.
+        // Без приведения к String: число или объект под "status" уронили бы денежный поток
+        // ClassCastException. Всё, кроме известной строки, — UNKNOWN.
         Object raw = orderDetails != null ? orderDetails.get("status") : null;
         ProviderOrderOutcome outcome = ProviderOrderStatus.classify(raw);
-        log.info("Provider order status check result: transactionId={}, providerStatus=\"{}\", outcome={}",
+        log.debug("Provider order status check result: transactionId={}, providerStatus=\"{}\", outcome={}",
                 transactionId, raw, outcome);
 
         boolean holdReleased = false;
         switch (outcome) {
             case PAID -> {
                 tx.setStatus(TransactionStatus.SUCCESS);
-                // Транзакция, только что ставшая SUCCESS, уже внутри этого счёта: Hibernate делает
-                // auto-flush перед JPQL-запросом. Стоявшая здесь «+ 1» считала её второй раз и
-                // закрывала двухплатёжную ссылку после первого платежа (P1-7). Счёт по
-                // PAID_STATUSES (P2-16): возвращённый платёж — тоже использование.
+                // Эта транзакция уже в счёте: auto-flush перед JPQL. «+ 1» здесь посчитает её дважды и
+                // закроет двухплатёжную ссылку после первого платежа (P1-7). Счёт по PAID_STATUSES (P2-16).
                 long usedCount = usedCount(link.getId());
                 link.setCurrentPaymentsCount((int) usedCount);
                 if (link.getUsageType() == UsageType.SINGLE) {
@@ -1004,59 +948,56 @@ public class PaymentLinkService {
             case AUTHORIZED -> tx.setStatus(TransactionStatus.AUTHORIZED);
             case FAILED_FINAL -> tx.setStatus(TransactionStatus.FAILED);
             case NON_FINAL -> {
-                // Заказ есть, никто ещё не заплатил. Менять нечего; reconcileOne может добить позже.
+                // Ещё не оплачено: менять нечего, по таймауту добьёт reconcileOne.
             }
             case SETTLED_OTHER -> {
                 if ((tx.getStatus() == TransactionStatus.AUTHORIZED || tx.getStatus() == TransactionStatus.PENDING)
                         && ProviderOrderDetails.isReleasedAuthorization(orderDetails)) {
-                    // Холд снял банк, не списав ни копейки (Closed ← Authorized, Р-75): денег нет,
-                    // слот ссылки свободен. Иначе транзакция навсегда оставалась бы AUTHORIZED.
+                    // Холд снял банк без списания (Closed ← Authorized, Р-75): денег нет, слот ссылки
+                    // свободен. Иначе транзакция навсегда осталась бы AUTHORIZED.
                     log.info("Acquirer released the authorization of transaction {} (providerOrderId {}) "
                             + "without a capture; marking it FAILED", transactionId, tx.getProviderOrderId());
                     tx.setStatus(TransactionStatus.FAILED);
                     holdReleased = true;
                 } else {
-                    // Реверсал, возврат или закрытие после списания сделаны мимо портала. Статус не
-                    // трогаем: сумм мы не знаем, и REFUNDED положил бы в refunded_amount число, которого
-                    // никто не видел. Такая строка разбирается руками (AGENTS.md §10).
-                    log.warn("Acquirer reports order status \"{}\" for transaction {} (providerOrderId {}): the "
-                                    + "order was changed outside this service (reversal, refund or closed). Local "
-                                    + "status stays {} and reconciliation will NOT mark it FAILED; the money side "
-                                    + "needs a manual review — see project_docs/TXPG-client-side-integration.md §5.8.8.",
-                            raw, transactionId, tx.getProviderOrderId(), tx.getStatus());
+                    // Реверсал, возврат или закрытие мимо портала: статус не трогать — сумм мы не знаем,
+                    // и REFUNDED записал бы выдуманный refunded_amount. Разбор — руками (AGENTS.md §10).
+                    if (firstNotice(transactionId, raw)) {
+                        log.warn("Transaction {} (provider order {}) stays {}: the acquirer reports \"{}\", set outside "
+                                + "this service — never timed out, review the money by hand (AGENTS.md §10)",
+                                transactionId, tx.getProviderOrderId(), tx.getStatus(), raw);
+                    }
                 }
             }
-            case UNKNOWN ->
-                log.warn("Acquirer returned an order status this service does not know: \"{}\" "
-                                + "(transaction {}, providerOrderId {}). The transaction stays {} and will NOT be "
-                                + "marked FAILED by reconciliation. If this status is legitimate, add it to "
-                                + "ProviderOrderStatus — see project_docs/TXPG-client-side-integration.md §5.8.8.",
-                        raw, transactionId, tx.getProviderOrderId(), tx.getStatus());
+            case UNKNOWN -> {
+                if (firstNotice(transactionId, raw)) {
+                    log.warn("Transaction {} (provider order {}) stays {}: unknown acquirer status \"{}\" — never timed "
+                            + "out; if legitimate, add it to ProviderOrderStatus (Р-20)",
+                            transactionId, tx.getProviderOrderId(), tx.getStatus(), raw);
+                }
+            }
+        }
+        if (outcome != ProviderOrderOutcome.UNKNOWN && outcome != ProviderOrderOutcome.SETTLED_OTHER) {
+            noticedProviderStatuses.remove(transactionId);
         }
 
-        // Payload эквайера плюс то, что сервис из него понял; payload бывает неизменяемым — отсюда
-        // копия. P0-9: при orderDetailLevel=2 он несёт пароль заказа, а колонка — след для разбора
-        // споров, поэтому идёт через ProviderPayloads.withoutSecrets на каждом опросе, а не только
-        // при создании.
+        // Копия: payload бывает неизменяемым. При orderDetailLevel=2 он несёт пароль заказа —
+        // withoutSecrets на каждом опросе, а не только при создании (P0-9).
         Map<String, Object> stored = new HashMap<>();
         if (orderDetails != null) {
-            // Свежий payload заменяет прежний: устаревший mpProviderStatus не должен пережить
-            // статус, ставший известным.
+            // Свежий payload заменяет прежний: устаревший mpProviderStatus не переживёт известный статус.
             stored.putAll(ProviderPayloads.withoutSecrets(orderDetails));
         } else if (tx.getProviderResponse() != null) {
-            // Ответа нет — заменять нечем, и сохранённое знание ценно именно здесь: строка остаётся
-            // PENDING на ручной разбор, а стёртый payload оставил бы разбирающему пустоту. Чистим
-            // всё равно: строка, записанная до P0-9, может нести пароль тех времён.
+            // Ответа нет — прежний payload сохраняется для ручного разбора. Через withoutSecrets всё
+            // равно: строка, записанная до P0-9, может нести пароль.
             stored.putAll(ProviderPayloads.withoutSecrets(tx.getProviderResponse()));
         }
         stored.put(STATUS_OUTCOME_KEY, outcome.name());
         if ((outcome == ProviderOrderOutcome.UNKNOWN || outcome == ProviderOrderOutcome.SETTLED_OTHER) && raw != null) {
-            // Строка — дословно, иначе toString(): в любом случае то, что прислал эквайер.
             stored.put(PROVIDER_STATUS_KEY, String.valueOf(raw));
         }
         if (outcome == ProviderOrderOutcome.FAILED_FINAL) {
-            // P1-8b: эквайер говорит, почему отказал (custAttrs, §5.8.7). Мерчант должен видеть
-            // «Invalid PAN», а не голый FAILED.
+            // Причина отказа из custAttrs (§5.8.7): мерчант видит «Invalid PAN», а не голый FAILED (P1-8b).
             ProviderDeclineReason.extract(orderDetails).ifPresent(reason -> {
                 log.info("Acquirer decline reason for transaction {}: \"{}\"", transactionId, reason);
                 stored.put(DECLINE_REASON_KEY, reason);
@@ -1067,9 +1008,22 @@ public class PaymentLinkService {
         }
         tx.setProviderResponse(stored);
         tx = transactionRepository.save(tx);
-        log.info("Transaction {} updated status to: {}", tx.getId(), tx.getStatus());
+        // Опрос без перемены — не событие: сверка делает их сотнями в день.
+        if (tx.getStatus() != before) {
+            log.info("Transaction {} is now {} (was {}), acquirer status \"{}\"", tx.getId(), tx.getStatus(), before, raw);
+        } else {
+            log.debug("Transaction {} stays {}, acquirer status \"{}\"", tx.getId(), tx.getStatus(), raw);
+        }
 
         return new StatusRefresh(tx, outcome);
+    }
+
+    // Потолок — чтобы память не росла без конца, если такие строки никто не разбирает.
+    private boolean firstNotice(UUID transactionId, Object raw) {
+        if (noticedProviderStatuses.size() >= NOTICED_STATUSES_CEILING) {
+            noticedProviderStatuses.clear();
+        }
+        return !String.valueOf(raw).equals(noticedProviderStatuses.put(transactionId, String.valueOf(raw)));
     }
 
     @Transactional(readOnly = true)
@@ -1079,8 +1033,7 @@ public class PaymentLinkService {
         String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
 
-        log.info("Request to list transactions: userId={}, role={}, companyId={}", userId, rawRole, companyId);
-        // Нераспознанный claim роли приходит сюда как null и отвергается, а не идёт дальше.
+        log.debug("Request to list transactions");
         if (userRole == null || !READ_ROLES.contains(userRole)) {
             log.warn("Access denied. Role {} is not authorized to list transactions.", rawRole);
             throw new InvalidStateException("Access denied: role " + rawRole + " is not authorized for this action");
@@ -1111,8 +1064,7 @@ public class PaymentLinkService {
         return PagedResponse.of(page, content);
     }
 
-    // P0-4: здесь стояли MERCHANT_ADMIN / MERCHANT_USER — роли, которых никогда не существовало, и
-    // все, кроме SYSTEM_ADMIN, получали 403. Читать транзакции ссылки — то же, что читать саму ссылку.
+    // Читать транзакции ссылки — то же, что читать саму ссылку (P0-4).
     @Transactional(readOnly = true)
     public List<TransactionResponse> getTransactionsByLinkId(UUID linkId, UserPrincipal principal) {
         PaymentLink link = findLinkOrThrow(linkId);
@@ -1122,10 +1074,7 @@ public class PaymentLinkService {
                 .toList();
     }
 
-    // P3-7: чтения транзакции по id не было вовсе. Карточка операции открывалась только тем, что
-    // список успел положить в состояние роутера, а фронтенд этот адрес уже звал и молча получал
-    // отказ. Без обращения к эквайеру: за свежим исходом ходит /{identifier}/status, открытие
-    // карточки внешнего вызова не стоит.
+    // Без обращения к эквайеру (P3-7): за свежим исходом — /{identifier}/status.
     @Transactional(readOnly = true)
     public TransactionResponse getTransaction(UUID id, UserPrincipal principal) {
         Transaction tx = transactionRepository.findById(id)
@@ -1153,7 +1102,6 @@ public class PaymentLinkService {
         );
     }
 
-    // Схлопывает жизненный цикл транзакции в четыре состояния, которые рисует страница плательщика.
     private static String receiptState(TransactionStatus status) {
         return switch (status) {
             case SUCCESS, REFUNDED, PARTIALLY_REFUNDED -> "PAID";
@@ -1163,10 +1111,8 @@ public class PaymentLinkService {
         };
     }
 
-    // P1-16: маска карты, RRN и код авторизации читаются на лету из providerResponse
-    // (order.srcToken.displayName и запись покупки order.trans[], §5.8.3-5.8.6); раньше читались с
-    // верхнего уровня по ключам, которых там нет, и всегда были пусты. Своих колонок нет намеренно:
-    // payload терминальной транзакции больше не переписывается, поэтому чтение на лету стабильно.
+    // Маска карты, RRN и код авторизации — на лету из providerResponse через ProviderOrderDetails (P1-16).
+    // Своих колонок нет намеренно: payload транзакции в финальном статусе опрос не переписывает.
     private TransactionResponse mapToTransactionResponse(Transaction tx) {
         Map<String, Object> resp = tx.getProviderResponse();
         TransactionFacts facts = ProviderOrderDetails.read(resp);
@@ -1199,29 +1145,9 @@ public class PaymentLinkService {
         );
     }
 
-    /**
-     * История операции из того, что о ней записано, по возрастанию времени.
-     *
-     * Источников ровно три, и у каждого своё время, поставленное в момент события:
-     *   `createdAt`             — операция заведена, статус PENDING (OpenLinkService);
-     *   `CAPTURE_KEY.at`        — холд списан, операция стала SUCCESS;
-     *   `REFUNDS_KEY[i].at`     — возврат подтверждён эквайером.
-     *
-     * Статус после каждого возврата считается нарастающим итогом от той же базы, по которой
-     * решает сам возврат (`refundableBase`): сравнялись — REFUNDED, нет — PARTIALLY_REFUNDED.
-     * Хранить это отдельно незачем, а вывести из уже записанных сумм можно однозначно.
-     *
-     * Последним, и только если текущий статус ничем выше не объяснён, идёт событие STATUS со
-     * временем `updatedAt`. Так на экран попадает SMS-платёж, ставший SUCCESS или FAILED, и
-     * холд, ставший AUTHORIZED: отдельной записи об этих переходах никто не делал, а `updatedAt`
-     * — это и есть момент, когда статус записали. Если после перехода строку меняли (возврат),
-     * события выше уже объясняют состояние, и STATUS не добавляется — иначе он приписал бы
-     * переходу чужое время.
-     *
-     * Ничего, кроме перечисленного, здесь появиться не должно. Генератор, рисовавший «создано»
-     * и «оплачено» одним временем с подписью «Payment successfully completed», выдумывал
-     * обстоятельства платежа (Р-48).
-     */
+    // Только записанное (Р-48, Р-63): createdAt, mpCapture.at, каждое mpRefunds[i].at. STATUS со
+    // временем updatedAt — последним и лишь когда текущий статус выше не объяснён: после возврата
+    // updatedAt принадлежит возврату, и STATUS приписал бы переходу чужое время.
     private List<TransactionResponse.TransactionEvent> statusHistoryOf(Transaction tx, Map<String, Object> resp) {
         List<TransactionResponse.TransactionEvent> events = new ArrayList<>();
 
@@ -1279,8 +1205,7 @@ public class PaymentLinkService {
         return (Map<String, Object>) raw;
     }
 
-    // Время события записано строкой ISO-8601 (moneyOperationRecord). Нечитаемое значение — это
-    // «времени нет», а не повод уронить чтение карточки: событие без времени отсеется выше.
+    // Нечитаемое время — «времени нет», а не падение карточки: такое событие отсеется.
     private static Instant instantOf(Object raw) {
         String text = ProviderPayloads.scalarText(raw);
         if (text == null) {
@@ -1307,33 +1232,31 @@ public class PaymentLinkService {
         }
     }
 
-    // P1-8b: причина отказа, сохранённая refreshStatus, или null, если её нет.
     private static String failureReasonOf(Map<String, Object> providerResponse) {
         Object reason = providerResponse != null ? providerResponse.get(DECLINE_REASON_KEY) : null;
         return reason != null ? String.valueOf(reason) : null;
     }
 
-    // Роли, которым можно читать ссылки и транзакции, — все роли системы.
-    // public, потому что этими же воротами ходит DashboardService: сводка показывает те же
-    // строки, что и список, и своей копии правил доступа заводить не должна (AGENTS §12, п. 8).
+    // public: этими же воротами ходит DashboardService — своей копии правил доступа у статистики быть
+    // не должно (AGENTS §12, п. 8).
     public static final Set<Role> READ_ROLES = EnumSet.allOf(Role.class);
 
-    // Роли, которым можно создавать и менять ссылки и списывать DMS-холд.
+    // Создание и правка ссылок, списание DMS-холда.
     private static final Set<Role> LINK_WRITE_ROLES =
             EnumSet.of(Role.SYSTEM_ADMIN, Role.COMPANY_HEAD, Role.COMPANY_MANAGER, Role.COMPANY_EMPLOYEE);
 
-    // Возврат двигает деньги обратно, поэтому останавливается на уровень выше COMPANY_EMPLOYEE.
+    // Без COMPANY_EMPLOYEE: возврат двигает деньги обратно.
     private static final Set<Role> REFUND_ROLES =
             EnumSet.of(Role.SYSTEM_ADMIN, Role.COMPANY_HEAD, Role.COMPANY_MANAGER);
 
-    // Роли, читающие через все компании, а не только свои терминалы.
+    // Читают через все компании (Р-1).
     public static boolean isGlobalReader(Role role) {
         return role == Role.SYSTEM_ADMIN || role == Role.AUDITOR;
     }
 
-    // Единственные ворота доступа по терминалу. Принимает principal, а не строки роли и компании,
-    // чтобы null-principal и нераспознанная роль кончались отказом, а не NullPointerException.
-    private void validateAccess(Integer terminalId, UserPrincipal principal, Set<Role> allowedRoles) {
+    // Единственные ворота доступа по терминалу. principal, а не строки: null-principal и нераспознанная
+    // роль кончаются отказом, а не NPE. Компания возвращённого терминала — компания записей журнала (Р-104).
+    private Terminal validateAccess(Integer terminalId, UserPrincipal principal, Set<Role> allowedRoles) {
         Role userRole = UserPrincipal.getRole(principal);
         String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
@@ -1341,9 +1264,8 @@ public class PaymentLinkService {
         log.debug("Validating terminal access: terminalId={}, role={}, companyId={}, allowedRoles={}", terminalId, rawRole, companyId, allowedRoles);
         if (userRole == null || !allowedRoles.contains(userRole)) {
             log.warn("Access denied. Role {} is not in allowed roles: {}", rawRole, allowedRoles);
-            // Подшивается под терминал: всё в этом сервисе — ссылки, транзакции, возвраты —
-            // достигается через компанию терминала. Действие READ, то же, что пишет directory
-            // (P3-2): раньше здесь было приватное имя, и поиск по одному не находил другого.
+            // Отказ — под терминал: всё здесь достигается через компанию терминала. Действие READ, как
+            // в directory, — иначе поиск по журналу не находит одно по другому (P3-2).
             auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(terminalId), AuditAction.READ,
                     UserPrincipal.getUsername(principal), companyId,
                     "Denied: role " + rawRole + " is not allowed to act on terminal " + terminalId);
@@ -1356,7 +1278,7 @@ public class PaymentLinkService {
                 });
         if (isGlobalReader(userRole)) {
             log.debug("Access granted. User is a global reader ({}).", userRole);
-            return;
+            return terminal;
         }
         if (companyId == null || !companyId.equals(terminal.getCompanyId())) {
             log.warn("Access denied. User companyId {} does not match terminal companyId {}", companyId, terminal.getCompanyId());
@@ -1367,6 +1289,7 @@ public class PaymentLinkService {
             throw new InvalidStateException("Access denied to terminal: " + terminalId);
         }
         log.debug("Access granted for company: {}", companyId);
+        return terminal;
     }
 
     private PaymentLink findLinkOrThrow(UUID id) {

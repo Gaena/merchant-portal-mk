@@ -1,10 +1,7 @@
 /**
- * Выписка провайдера — ответы сервиса `ecom` (`/api/v1/ecom/transactions`, `project_docs/ecom.md` §2).
- *
- * Статусов восемь, а не шесть, как у операций портала: к словарю платёжных ссылок добавлены
- * `PARTIALLY_PAID` — списано меньше суммы заказа (Р-78) — и `CANCELED` — одобрено, но в итоге ничего
- * не списано (Р-75, Р-77). Источник — `EcomStatusResolver.EcomStatus` на бэкенде; новое значение там —
- * сюда, иначе `parseEcomStatus` вернёт `null` и статус покажется исходной строкой.
+ * Выписка сервиса `ecom` (`project_docs/modules/ecom.md` §2). К шести статусам операций добавлены
+ * `PARTIALLY_PAID` (Р-78) и `CANCELED` (Р-75, Р-77); как выводится статус — там же, §2.3 (Р-92).
+ * Источник — `EcomStatusResolver.EcomStatus`: новое значение там — сюда, иначе разбор вернёт `null`.
  */
 export const ECOM_STATUSES = [
   'PENDING',
@@ -19,7 +16,7 @@ export const ECOM_STATUSES = [
 
 export type EcomStatus = (typeof ECOM_STATUSES)[number];
 
-/** Разбор статуса заказа. Правила те же, что у `parseTransactionStatus`: строго и без подстановок. */
+/** Строго и без подстановок, как `parseTransactionStatus`. */
 export const parseEcomStatus = (raw: unknown): EcomStatus | null => {
   if (typeof raw !== 'string') {
     return null;
@@ -97,16 +94,20 @@ export interface EcomStats {
   totals: EcomCurrencyTotal[];
 }
 
-/** Терминал для фильтра выписки: наш терминал в скоупе и провайдерский за ним. */
+/**
+ * Мерчант скоупа для фильтра выписки (Р-97) — у провайдера терминал и мерчант одно. Номер терминала,
+ * логин и название — из слепка провайдера; у мерчанта без терминала в слепке есть только название.
+ */
 export interface EcomTerminal {
   merchantRid: string;
   title: string | null;
   login: string | null;
+  terminalRid: string | null;
 }
 
 /**
- * Сводка главной (Р-91) — `GET /api/v1/ecom/dashboard/summary`: оплаты картой по всем терминалам скоупа по
- * выписке провайдера. Заказы периода и деньги — те же, что во вкладке E-commerce; суммы — по валютам.
+ * Сводка главной (`GET /ecom/dashboard/summary`, Р-91): заказы периода и деньги — те же, что во
+ * вкладке E-commerce; суммы — по валютам.
  */
 export interface EcomDashboardTotals {
   currency: string | null;
@@ -128,16 +129,14 @@ export interface EcomDashboard {
     currency: string | null;
     merchantRid: string | null;
     login: string | null;
+    terminalRid: string | null;
     title: string | null;
     netAmount: number;
     orderCount: number;
   }[];
 }
 
-/**
- * Тип оплаты заказа — `EcomPaymentType` на бэкенде (Р-87): определяется по операциям заказа.
- * SMS — оплата одним сообщением, DMS — холд и списание.
- */
+/** `EcomPaymentType` (Р-87), по операциям заказа: SMS — одним сообщением, DMS — холд и списание. */
 export const ECOM_PAYMENT_TYPES = ['SMS', 'DMS'] as const;
 
 export type EcomPaymentType = (typeof ECOM_PAYMENT_TYPES)[number];

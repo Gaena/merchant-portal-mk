@@ -71,8 +71,6 @@ import { readMoneyOperationFailure, type MoneyOperationFailure } from '../utils/
 import { linkStatusLabel } from '../i18n/translations';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 const InfoRow: React.FC<{ label: string; value: React.ReactNode; mono?: boolean }> = ({ label, value, mono }) => (
   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', py: 1.25, gap: 2 }}>
     <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0, minWidth: 140 }}>
@@ -127,11 +125,9 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
     });
   }
 
-  // Условие — по наличию самой даты оплаты: статуса `paid` у бэкенда нет (Р-33), а `paidAt`
-  // приходит только вместе с реальными данными о платеже.
+  // По дате оплаты, а не по статусу: статуса `paid` у бэкенда нет (Р-33).
   if (link.paidAt) {
-    // Данных о карте API не отдаёт, поэтому суффикс всегда пуст. Условие оставлено намеренно:
-    // подставлять сюда `Visa ···· 4242` нельзя (Р-48), а появится поле — строка заработает.
+    // Данных о карте API не отдаёт, суффикс пуст; подставлять `Visa ···· 4242` нельзя (Р-48).
     const card = link.cardNetwork && link.cardLast4
       ? ` via ${link.cardNetwork} ···· ${link.cardLast4}`
       : '';
@@ -142,9 +138,7 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
       color: '#2e7d32',
       detail: `${formatCurrency(link.amount, link.currency)}${card}`,
     });
-    // Событие «Customer Redirected» отсюда удалено вместе с P2-15 (Р-48). Времени у него не
-    // было: оно бралось как «оплата + 3 секунды». Придуманная отметка времени события в
-    // платёжном портале недопустима, а `redirectUrl` API не отдаёт вовсе.
+    // «Customer Redirected» не показывается: времени у события в API нет, выдумывать нельзя (Р-48).
   }
 
   if (link.status === 'EXPIRED') {
@@ -157,13 +151,10 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
     });
   }
 
-  // Проверка сравнивалась с написанием через две `l`, а маппинг клал одну — пометка
-  // об отменённой ссылке не показывалась никогда (P2-13).
   if (link.status === 'CANCELED') {
     events.push({
       label: 'Link Cancelled',
-      // Момента отмены бэкенд не отдаёт, и выдумывать его («создано + 30 минут», как было
-      // в мок-генераторе) нельзя: у события на ленте нет времени, пока его нет в API.
+      // Момента отмены бэкенд не отдаёт, выдумывать его нельзя (Р-48).
       time: '—',
       icon: <CancelIcon sx={{ fontSize: 16 }} />,
       color: '#c62828',
@@ -174,18 +165,7 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
   return events;
 };
 
-// ─── Linked transactions ──────────────────────────────────────────────────────
-//
-// Таблица показывает **только** ответ `GET /api/v1/payment-links/{id}/transactions` —
-// настоящие транзакции с настоящими идентификаторами.
-//
-// Здесь стоял генератор запасных строк: при наличии даты оплаты он сочинял транзакцию —
-// платёжную карту по умолчанию, идентификатор, собранный из короткого кода ссылки, и пары
-// SMS / DMS-Auth / DMS-Capture, выведенные из полей ссылки, а не из настоящих платежей.
-// Не был виден он только потому, что дата оплаты из API не приходила. P2-15 это поле
-// включает, поэтому генератор удалён **до** включения (Р-48): выдуманная транзакция на
-// карточке платежа — не «заглушка», а ложные данные об операции с деньгами.
-
+// Только ответ `GET /payment-links/{id}/transactions`: сочинять операции по полям ссылки нельзя (Р-48).
 const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
   const navigate = useNavigate();
   const { tObj } = useLanguage();
@@ -247,8 +227,7 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
             </TableHead>
             <TableBody>
               {displayTxns.map((txn: any) => {
-                // Статус — тем же разбором, что и везде (P2-12): незнакомое значение серое и
-                // как есть, а не «PENDING» по умолчанию.
+                // Незнакомый статус — серый и как есть, а не «PENDING» по умолчанию (P2-12).
                 const status = parseTransactionStatus(txn.status);
                 const statusRaw = txn.status === null || txn.status === undefined ? undefined : String(txn.status);
                 const scheme = getStatusColorScheme(status);
@@ -257,11 +236,7 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                   <TableRow
                     key={txn.id}
                     hover
-                    // Без router state: карточка грузит себя сама (GET /api/v1/transactions/{id},
-                    // P3-7) — как это давно делает таблица последних платежей на главной. Здесь
-                    // собирался целый объект операции, и в нём была выдуманная история статусов:
-                    // «создано» и «оплачено» с одним и тем же временем и подписями, которых никто
-                    // не писал. Настоящую историю отдаёт сам ответ по операции.
+                    // Без router state: карточка операции грузит себя сама (P3-7).
                     onClick={() => navigate(`/transactions/${txn.id}`)}
                     sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'rgba(0,0,0,0.04)' } }}
                   >
@@ -280,10 +255,7 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
                         {txn.createdAt ? formatDateTime(new Date(txn.createdAt)) : '—'}
                       </Typography>
                     </TableCell>
-                    {/* Адрес и устройство плательщика бэкенд заполняет не всегда. Пусто — это
-                        «не записано»; подставлять сюда `127.0.0.1` и правдоподобный
-                        User-Agent, как было до P2-15, значит приписывать платежу
-                        обстоятельства, которых никто не наблюдал (Р-48). */}
+                    {/* Адрес и устройство плательщика бывают пусты — «не записано», ничего не подставлять (Р-48). */}
                     <TableCell>
                       <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
                         {txn.clientIp || '—'}
@@ -327,8 +299,6 @@ const LinkedTransactions: React.FC<{ link: PaymentLink }> = ({ link }) => {
   );
 };
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 import { useLanguage } from '../context/LanguageContext';
 
 export const PayByLinkDetailPage: React.FC = () => {
@@ -370,25 +340,20 @@ export const PayByLinkDetailPage: React.FC = () => {
             amount: l.amount,
             currency: l.currency || 'AZN',
             description: l.description || '',
-            // Пусто — значит не указано (Р-48): подстановка «N/A» делала ветку «клиент не указан»
-            // недостижимой, а кнопки письма и WhatsApp — всегда активными с адресом «N/A».
+            // Пусто — не указано (Р-48): заглушка вроде «N/A» зажгла бы кнопки письма и WhatsApp.
             customerName: l.customer?.fullName || l.customerName || '',
             customerEmail: l.customer?.email || l.customerEmail || '',
             customerPhone: l.customer?.phone || l.customerPhone || '',
             usageType: parseLinkUsageType(l.usageType),
             maxUses: l.maxPayments || 1,
             usedCount: l.currentPaymentsCount || 0,
-            // Сколько из платежей возвращено (P2-16, Р-50). Возврат использование не отменяет:
-            // usedCount при возврате не уменьшается, это отдельная цифра рядом с ним.
+            // Сколько платежей возвращено (Р-50); usedCount возврат не уменьшает.
             refundedCount: l.refundedPaymentsCount || 0,
             createdAt: new Date(l.createdAt),
             expiresAt: l.expiresAt ? new Date(l.expiresAt) : new Date(Date.now() + 86400000),
             paymentType: parsePaymentType(l.paymentType),
-            // Дата последнего успешного платежа (P2-15) — то же поле и то же значение, что
-            // в списке. Пусто — платежей не было.
+            // Последний успешный платёж (P2-15), как в списке; пусто — платежей не было.
             paidAt: l.lastPaidAt ? new Date(l.lastPaidAt) : undefined,
-            // `PaymentLinkResponse.terminal` — эквайринговый терминал ссылки. Маппинг его
-            // не переносил, и карточка терминал не показывала вовсе.
             terminalId: typeof l.terminal === 'number' ? l.terminal : undefined,
           });
         }
@@ -413,15 +378,11 @@ export const PayByLinkDetailPage: React.FC = () => {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [finalizeDialogOpen, setFinalizeDialogOpen] = useState(false);
   const [finalizeBusy, setFinalizeBusy] = useState(false);
-  /**
-   * Отказ списания холда остаётся в окне подтверждения, а не улетает снекбаром: снекбар
-   * уходит через несколько секунд, а неподтверждённый исход — это то, что мерчант обязан
-   * увидеть и разобрать. Разбор исхода — в `utils/moneyOperationError.ts`.
-   */
+  // Отказ списания остаётся в окне, а не в снекбаре: неподтверждённый исход мерчант обязан
+  // увидеть и разобрать (Р-61).
   const [finalizeError, setFinalizeError] = useState<MoneyOperationFailure | null>(null);
 
-  // Проверки по статусу ссылки здесь нет: `paid` бэкенд не присылает, а стадия DMS живёт
-  // в собственном поле (`dmsStatus`), не в статусе ссылки.
+  // Не по статусу ссылки: стадия DMS — отдельное поле `dmsStatus`, которого API пока не отдаёт (Р-48).
   const isDmsAuthorized =
     link?.paymentType === 'DMS' &&
     link?.dmsStatus === 'authorized';
@@ -454,11 +415,8 @@ export const PayByLinkDetailPage: React.FC = () => {
     setSnackbar({ text: msg });
   };
 
-  /**
-   * Отмена ссылки (Р-34). Как и на списке, локальной правки состояния здесь нет: и при успехе,
-   * и при отказе карточка перечитывается с сервера, поэтому «отменена» на экране означает
-   * «отменена на бэкенде», а не «мы отправили запрос».
-   */
+  // Локальной правки нет (Р-34): карточка перечитывается и после успеха, и после отказа —
+  // «отменена» на экране значит «отменена на бэкенде».
   const handleCancel = async () => {
     if (!link) return;
     setCancelBusy(true);
@@ -471,8 +429,7 @@ export const PayByLinkDetailPage: React.FC = () => {
         error: true,
       });
     } finally {
-      // Диалог закрывается в обоих случаях: после отказа он спрашивал бы про отмену ссылки,
-      // которую бэкенд отменять отказался, а текст отказа виден в snackbar.
+      // Окно закрывается и после отказа — текст отказа виден в snackbar.
       setCancelBusy(false);
       setCancelDialogOpen(false);
       fetchLink();
@@ -506,7 +463,6 @@ export const PayByLinkDetailPage: React.FC = () => {
 
   return (
     <Box>
-      {/* ── Page header ──────────────────────────────────────────────────── */}
       <Box sx={{ mb: 3.5, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
           <IconButton onClick={() => navigate('/pay-by-link')} size="small" sx={{ border: '1px solid', borderColor: 'divider' }}>
@@ -581,11 +537,9 @@ export const PayByLinkDetailPage: React.FC = () => {
 
       <Grid container spacing={3}>
 
-        {/* ── LEFT COLUMN ───────────────────────────────────────────────── */}
         <Grid size={{ xs: 12, lg: 8 }}>
           <Stack spacing={3}>
 
-            {/* Amount hero card */}
             <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
               <Box sx={{
                 px: 3, py: 2.5,
@@ -635,7 +589,6 @@ export const PayByLinkDetailPage: React.FC = () => {
                 </Box>
               </Box>
 
-              {/* URL bar */}
               <Box sx={{ px: 3, py: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: 'action.hover', borderTop: '1px solid', borderColor: 'divider' }}>
                 <LinkIcon color="action" fontSize="small" />
                 <Typography
@@ -661,7 +614,6 @@ export const PayByLinkDetailPage: React.FC = () => {
               </Box>
             </Paper>
 
-            {/* Payment details — показываются, когда пришла сама дата оплаты */}
             {link.paidAt && (
               <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
@@ -686,12 +638,8 @@ export const PayByLinkDetailPage: React.FC = () => {
                     </Box>
                   }
                 />
-                {/* Стадия DMS показывается, только когда она **известна**. Раньше здесь стоял
-                    тернарник, у которого ветка «иначе» означала «Finalized — Captured»: поле
-                    `dmsStatus` маппинг из API не заполняет, поэтому с приходом даты оплаты
-                    (P2-15) каждая DMS-ссылка объявлялась бы captured — про холд, который на
-                    самом деле может висеть неснятым. Настоящая стадия видна по статусу
-                    транзакции в таблице связанных операций (`AUTHORIZED` / `SUCCESS`). */}
+                {/* Стадия DMS — только известная: без `dmsStatus` ветка «иначе» объявила бы captured
+                    холд, который висит. Настоящая стадия — статус операции в таблице ниже. */}
                 {link.paymentType === 'DMS' && link.dmsStatus && (
                   <>
                     <Divider sx={{ opacity: 0.5 }} />
@@ -721,12 +669,7 @@ export const PayByLinkDetailPage: React.FC = () => {
                     )}
                   </>
                 )}
-                {/* Строк «Transaction ID», «Payment Method» (карта) и «Payer IP» здесь больше нет
-                    (P2-15, Р-48). Ни одно из трёх полей API по ссылке не отдаёт, и до включения
-                    даты оплаты весь блок просто не рисовался — а с ней он показал бы прочерк,
-                    `undefined ···· undefined` и пустую строку соответственно. Идентификаторы и
-                    карты настоящих платежей есть ниже, в таблице связанных операций, и берутся
-                    оттуда, откуда их присылает бэкенд. */}
+                {/* Номера операции, карты и IP плательщика API по ссылке не отдаёт (Р-48): они — в таблице ниже. */}
                 <Divider sx={{ opacity: 0.5 }} />
                 <InfoRow label="Paid At" value={formatDateTime(link.paidAt)} />
                 <Divider sx={{ opacity: 0.5 }} />
@@ -734,27 +677,26 @@ export const PayByLinkDetailPage: React.FC = () => {
               </Paper>
             )}
 
-            {/* Link settings */}
             <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                 <UsageIcon color="action" fontSize="small" />
                 <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1rem' }}>Link Settings</Typography>
               </Box>
               <Divider sx={{ mb: 2 }} />
-              {/* Терминал ссылки — первой строкой: через него пойдут все платежи по ней.
-                  Подпись — логин, имя идёт под ним (см. `utils/terminals.ts`). */}
               <InfoRow
                 label={tObj.payByLinkDetail.summary.terminal}
                 value={
                   <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                     <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
                       {terminalLabel({
+                        terminalRid: terminalIndex[link.terminalId as number]?.terminalRid,
                         terminalLogin: terminalIndex[link.terminalId as number]?.login,
                         terminalName: terminalIndex[link.terminalId as number]?.name,
                         terminalId: link.terminalId
                       })}
                     </Typography>
                     {terminalSubLabel({
+                      terminalRid: terminalIndex[link.terminalId as number]?.terminalRid,
                       terminalLogin: terminalIndex[link.terminalId as number]?.login,
                       terminalName: terminalIndex[link.terminalId as number]?.name
                     }) && (
@@ -802,9 +744,7 @@ export const PayByLinkDetailPage: React.FC = () => {
                             sx={{ width: 80, height: 6, borderRadius: 3 }}
                           />
                         </Box>
-                        {/* Возврат не отменяет использование (P2-16, Р-49): usedCount выше
-                            не уменьшается, а сколько из платежей вернули — отдельной строкой,
-                            и только когда возвраты были (Р-50). */}
+                        {/* Возврат не отменяет использование (Р-49): возвращённые — отдельной строкой (Р-50). */}
                         {link.refundedCount > 0 && (
                           <Typography variant="caption" color="text.secondary">
                             {tObj.payByLinkDetail.summary.refundedOfUsed}: {link.refundedCount}
@@ -847,14 +787,12 @@ export const PayByLinkDetailPage: React.FC = () => {
               )}
             </Paper>
 
-            {/* Activity timeline */}
             <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2.5 }}>
                 <TimeIcon color="action" fontSize="small" />
                 <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1rem' }}>Activity Timeline</Typography>
               </Box>
               <Box sx={{ position: 'relative', pl: 3 }}>
-                {/* Vertical line */}
                 <Box sx={{
                   position: 'absolute', left: 11, top: 12, bottom: 12,
                   width: 2, bgcolor: 'divider', borderRadius: 1,
@@ -862,7 +800,6 @@ export const PayByLinkDetailPage: React.FC = () => {
 
                 {timeline.map((event, idx) => (
                   <Box key={idx} sx={{ display: 'flex', gap: 2, mb: idx < timeline.length - 1 ? 3 : 0, position: 'relative' }}>
-                    {/* Dot */}
                     <Box sx={{
                       width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
                       bgcolor: event.color, display: 'flex', alignItems: 'center',
@@ -871,7 +808,6 @@ export const PayByLinkDetailPage: React.FC = () => {
                     }}>
                       {event.icon}
                     </Box>
-                    {/* Content */}
                     <Box sx={{ flex: 1, pt: 0.25 }}>
                       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, flexWrap: 'wrap' }}>
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>{event.label}</Typography>
@@ -888,17 +824,14 @@ export const PayByLinkDetailPage: React.FC = () => {
               </Box>
             </Paper>
 
-            {/* Linked transactions */}
             <LinkedTransactions link={link} />
 
           </Stack>
         </Grid>
 
-        {/* ── RIGHT COLUMN ──────────────────────────────────────────────── */}
         <Grid size={{ xs: 12, lg: 4 }}>
           <Stack spacing={3}>
 
-            {/* Customer card */}
             <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                 <PersonIcon color="action" fontSize="small" />
@@ -984,7 +917,6 @@ export const PayByLinkDetailPage: React.FC = () => {
               )}
             </Paper>
 
-            {/* Status & expiry card */}
             <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                 <TimeIcon color="action" fontSize="small" />
@@ -1026,9 +958,7 @@ export const PayByLinkDetailPage: React.FC = () => {
                 <Alert severity="warning" icon={<AuthorizedIcon fontSize="small" />} sx={{ mt: 1 }}>
                   <Typography variant="body2" sx={{ fontWeight: 700 }}>Funds Authorized</Typography>
                   <Typography variant="caption">
-                    {/* Подсказка называет кнопку её настоящей подписью (P3-5a): подпись
-                        теперь переводится, а зашитое «Finalize Payment» указывало бы на
-                        кнопку, которой на азербайджанском и русском экране нет. */}
+                    {/* Кнопка — её переведённой подписью, а не зашитым «Finalize Payment» (P3-5a). */}
                     {formatCurrency(link.amount, link.currency)} is reserved on the customer's card. Press <strong>{tObj.payByLinkDetail.finalizeDMS}</strong> to capture the funds.
                   </Typography>
                 </Alert>
@@ -1055,7 +985,6 @@ export const PayByLinkDetailPage: React.FC = () => {
               )}
             </Paper>
 
-            {/* Quick actions */}
             {(link.status === 'EXPIRED' || link.status === 'CANCELED') && (
               <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
                 <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1rem', mb: 2 }}>{tObj.payByLinkDetail.quickActions}</Typography>
@@ -1077,10 +1006,7 @@ export const PayByLinkDetailPage: React.FC = () => {
 
       </Grid>
 
-      {/* ── Finalize dialog ─────────────────────────────────────────────────
-          Сумма ушла из фразы в рамку рядом с коротким кодом (P3-5a): так подтверждение
-          списания холда выглядит одинаково здесь и на карточке транзакции, а текст
-          обходится без подстановки внутрь предложения. */}
+      {/* Сумма — в рамке, а не во фразе (P3-5a): окно одинаково здесь и на карточке операции. */}
       <ConfirmDialog
         open={finalizeDialogOpen}
         maxWidth="xs"
@@ -1119,8 +1045,7 @@ export const PayByLinkDetailPage: React.FC = () => {
         )}
       </ConfirmDialog>
 
-      {/* ── Cancel dialog ───────────────────────────────────────────────────
-          Слово в слово то же окно, что в списке (P3-5a). */}
+      {/* То же окно, что в списке ссылок (P3-5a). */}
       <ConfirmDialog
         open={cancelDialogOpen}
         maxWidth="xs"
@@ -1149,7 +1074,6 @@ export const PayByLinkDetailPage: React.FC = () => {
         </Box>
       </ConfirmDialog>
 
-      {/* Snackbar */}
       <Snackbar
         open={!!snackbar}
         autoHideDuration={snackbar?.error ? 10000 : 3000}

@@ -58,6 +58,9 @@ pbl:
 mp:
   # Same as production: MockMvc reports 127.0.0.1 as the peer, so it counts as a trusted proxy.
   trusted-proxies: 127.0.0.1,::1
+  credentials:
+    # Test-only key, identical in directory/pbl test configs and CredentialCipherTest.
+    encryption-key: dGVzdC1vbmx5LWNyZWRlbnRpYWxzLWtleS0wMTIzNDU=
 
 management:
   server:

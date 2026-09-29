@@ -32,10 +32,9 @@ import {
 } from './DashboardParts';
 
 /**
- * Статистика оплат по платёжным ссылкам — вкладка «Статистика» страницы Pay by Link (Р-91). Считает
- * `pbl` (`GET /api/v1/dashboard/summary`, Р-89): оплаты, созданные в периоде, минус возвраты,
- * проведённые в периоде; статусы — попытки оплаты. На главной этого больше нет: там весь эквайринг
- * по выписке. Период хранит страница: вкладка размонтируется при переключении.
+ * Вкладка «Статистика» Pay by Link (Р-91). Сводку считает `pbl` (Р-89): оплаты, созданные в периоде,
+ * минус возвраты, проведённые в периоде; статусы — попытки оплаты. Период хранит страница: вкладка
+ * размонтируется при переключении.
  */
 export const LinkPaymentsStats: React.FC<{ period: PeriodKey; onPeriodChange: (period: PeriodKey) => void }> = ({
   period,
@@ -159,12 +158,13 @@ export const LinkPaymentsStats: React.FC<{ period: PeriodKey; onPeriodChange: (p
                 return (
                   <Box key={`${terminal.currency}-${terminal.terminalId}`}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                      {/* Терминал без логина и имени — прочерк, а не номер (Р-81). */}
+                      {/* Подписать нечем — прочерк, а не внутренний id (Р-81). */}
                       <Box>
                         <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: 'monospace' }}>
-                          {terminal.terminalLogin ?? terminal.terminalName ?? '—'}
+                          {terminal.terminalRid ?? terminal.terminalLogin ?? terminal.terminalName ?? '—'}
                         </Typography>
-                        {terminal.terminalName && terminal.terminalName !== terminal.terminalLogin && (
+                        {terminal.terminalName
+                          && terminal.terminalName !== (terminal.terminalRid ?? terminal.terminalLogin) && (
                           <Typography variant="caption" color="text.secondary">{terminal.terminalName}</Typography>
                         )}
                       </Box>

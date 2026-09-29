@@ -159,6 +159,13 @@ public class MigrationOrderTest {
         assertTrue(indexExists("refresh_tokens", "idx_refresh_tokens_user"));
         assertTrue(indexExists("refresh_tokens", "idx_refresh_tokens_family"));
         assertTrue(foreignKeyExists("refresh_tokens", "fk_refresh_tokens_user"));
+        // 005 (Р-100): колонка уже есть — precondition, а не повторный ADD COLUMN.
+        assertTrue(columnExists("users", "password_change_required"));
+        assertTrue(columnExists("users", "last_activity_at"));
+        // 007 (Р-102): таблица, индекс и FK — три отдельных precondition.
+        assertTrue(tableExists("password_history"));
+        assertTrue(indexExists("password_history", "idx_password_history_user"));
+        assertTrue(foreignKeyExists("password_history", "fk_password_history_user"));
     }
 
     // Хелперы

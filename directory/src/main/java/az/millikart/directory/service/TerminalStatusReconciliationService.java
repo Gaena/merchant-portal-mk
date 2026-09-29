@@ -17,33 +17,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Сверка статусов наших терминалов с тем, что видит провайдер.
- *
- * Правила целиком, и каждое — ответ на конкретный вопрос «а что если».
- *
- *   наш ACTIVE, у провайдера выключен
- *       → выключаем, источник PROVIDER, активные ссылки приостанавливаются.
- *         Через терминал, снятый с обслуживания, платёж всё равно не пройдёт, и оставлять
- *         ссылки оплачиваемыми значит отправлять плательщиков в отказ.
- *
- *   наш BLOCKED с источником PROVIDER, у провайдера включён
- *       → включаем обратно, ссылки восстанавливаются существующей логикой.
- *         Без этой ветки одно временное отключение на их стороне гасило бы терминал навсегда:
- *         человек включить его не может, а система бы не стала.
- *
- *   наш BLOCKED с источником MANUAL
- *       → не трогаем никогда, что бы ни говорил провайдер. Это решение клиента, и оно не
- *         отменяется тем, что у провайдера всё в порядке.
- *
- *   у нашего терминала нет привязки к провайдеру, либо его rid не встречается в слепке
- *       → не трогаем. Отсутствие строки — это «не знаем», а не «выключен»; выключение
- *         фиксируется явным флагом в слепке, и только после нескольких пропаданий подряд
- *         (см. ProviderTerminalSyncService в ecom).
- *
- * Актором в журнале стоит «system»: массовая правка чужих платёжных ссылок без человека обязана
- * быть отличима от той, что сделал администратор.
- */
+// Таблица переходов — project_docs/modules/directory.md §3.2 (Р-66). Ручную блокировку (BLOCKED +
+// MANUAL) не снимать никогда: это решение клиента. Нет строки в слепке — «не знаем», не трогать.
 @Service
 public class TerminalStatusReconciliationService {
 
@@ -73,9 +48,8 @@ public class TerminalStatusReconciliationService {
     public ReconcileOutcome reconcile() {
         Map<String, Boolean> activity = snapshot.activityByRid();
         if (activity.isEmpty()) {
-            // Пустой слепок — это «синхронизация ещё не проходила» или «ecom здесь не развёрнут».
-            // Считать его сообщением о том, что у провайдера не осталось терминалов, нельзя:
-            // так выключится всё сразу.
+            // Пустой слепок — «ещё не синхронизировались» или «ecom не развёрнут», а не «у провайдера
+            // нет терминалов»: иначе выключится всё сразу.
             log.info("Terminal reconciliation skipped: the provider snapshot is empty");
             return new ReconcileOutcome(0, 0, 0);
         }
@@ -125,25 +99,30 @@ public class TerminalStatusReconciliationService {
         return new ReconcileOutcome(blocked, unblocked, untouched);
     }
 
-    // Логин и название привязанного терминала принадлежат провайдеру (Р-67): смена у него должна
-    // дойти до terminals. Иначе pbl ходит в шлюз со старым логином, выписка ecom ищет платежи по
-    // нему же, а терминал остаётся ACTIVE без всякого сигнала.
+    // Название, логин и номер — провайдера (Р-67): старый номер отправил бы заказ pbl не на тот
+    // терминал (Р-96).
     private void alignIdentity(Terminal terminal, ProviderTerminalStatusRepository.ProviderTerminalRow row) {
         String login = row.gatewayLogin();
         String title = row.title() != null && !row.title().isBlank() ? row.title() : null;
+        String terminalRid = row.terminalRid() != null && !row.terminalRid().isBlank() ? row.terminalRid() : null;
         boolean loginChanged = login != null && !login.equals(terminal.getLogin());
         boolean titleChanged = title != null && !title.equals(terminal.getName());
-        if (!loginChanged && !titleChanged) {
+        boolean terminalRidChanged = terminalRid != null && !terminalRid.equals(terminal.getTerminalRid());
+        if (!loginChanged && !titleChanged && !terminalRidChanged) {
             return;
         }
         String details = "Provider terminal " + row.rid() + " changed for terminal " + terminal.getId() + ":"
                 + (loginChanged ? " login " + terminal.getLogin() + " -> " + login : "")
-                + (titleChanged ? " name " + terminal.getName() + " -> " + title : "");
+                + (titleChanged ? " name " + terminal.getName() + " -> " + title : "")
+                + (terminalRidChanged ? " terminal " + terminal.getTerminalRid() + " -> " + terminalRid : "");
         if (loginChanged) {
             terminal.setLogin(login);
         }
         if (titleChanged) {
             terminal.setName(title);
+        }
+        if (terminalRidChanged) {
+            terminal.setTerminalRid(terminalRid);
         }
         terminal.setUpdatedBy(SYSTEM_ACTOR);
         terminalRepository.save(terminal);
@@ -153,10 +132,7 @@ public class TerminalStatusReconciliationService {
                 AuditAction.UPDATE, SYSTEM_ACTOR, terminal.getCompanyId(), details));
     }
 
-    /**
-     * Смена статуса вместе с её последствиями для ссылок — тем же порядком, что и у ручной
-     * блокировки: заблокированного терминала с оплачиваемыми ссылками не должно быть ни мгновения.
-     */
+    // Ссылки — в той же транзакции, как у ручной блокировки (Р-39, Р-40).
     private void apply(Terminal terminal, TerminalStatus target, String rid) {
         Integer terminalId = terminal.getId();
         terminal.setStatus(target);
@@ -178,8 +154,8 @@ public class TerminalStatusReconciliationService {
         }
         log.info(details);
 
-        // Синхронно, а не событием после коммита: этот вызов идёт из планировщика, и запись
-        // о массовой правке чужих ссылок должна лечь даже если транзакция дальше упадёт.
+        // Синхронно, а не событием после коммита: запись о массовой правке ссылок должна лечь, даже
+        // если транзакция планировщика дальше упадёт.
         auditLogService.recordSuccess(AuditEvent.of(
                 AuditEntity.TERMINAL,
                 String.valueOf(terminalId),

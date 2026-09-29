@@ -14,10 +14,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-// Единственный путь зависшей PENDING-транзакции к финалу: колбэка от эквайера нет (P1-3), а
-// страница возврата опрашивает его ровно один раз — закрытая до ответа банка вкладка оставила бы
-// запись PENDING навсегда. AUTHORIZED сверка не трогает: холд DMS в ожидании списания — законное
-// состояние покоя. Логика здесь, а не в планировщике, — чтобы её можно было гонять без крона.
+// Единственный путь зависшей PENDING к финалу (P1-3): колбэка нет, страница возврата спрашивает
+// эквайера один раз. AUTHORIZED не трогать: холд DMS в ожидании списания — законное состояние покоя.
 @Service
 public class TransactionReconciliationService {
 
@@ -44,10 +42,9 @@ public class TransactionReconciliationService {
         this.batchSize = batchSize;
     }
 
-    // Верхняя граница give-up-age (P1-8a): с Р-20 PENDING с непрочитанным или чужим финальным
-    // статусом эквайера в FAILED не переводится и остаётся PENDING. Без верхней границы такие
-    // строки, как самые старые, забивали бы каждый пакет, и до свежих платежей сверка не доходила
-    // бы. Старше give-up-age строка жива, но автоматика её не трогает — нужен человек.
+    // Верхняя граница give-up-age обязательна (P1-8a): PENDING с UNKNOWN или SETTLED_OTHER в FAILED не
+    // уходит (Р-20), и без неё такие строки, как самые старые, забьют каждый пакет. Старше give-up-age —
+    // только ручной разбор.
     @Transactional(readOnly = true)
     public int reconcilePendingTransactions() {
         Instant now = Instant.now();
@@ -67,7 +64,7 @@ public class TransactionReconciliationService {
 
         for (UUID transactionId : batch) {
             try {
-                // Каждая запись коммитится своей транзакцией: сбой на одной не должен ронять пакет.
+                // Своя транзакция на запись (REQUIRES_NEW): сбой на одной не роняет пакет.
                 paymentLinkService.reconcileOne(transactionId, maxAge);
             } catch (RuntimeException e) {
                 log.warn("Reconciliation of transaction {} failed; continuing with the rest of the batch",
@@ -87,7 +84,8 @@ public class TransactionReconciliationService {
         return transactionRepository.countByStatusAndCreatedAtBefore(TransactionStatus.PENDING, createdAfter);
     }
 
-    // Даже холостой проход говорит, сколько строк автоматика бросила: их разбирают руками.
+    // Даже холостой проход говорит, сколько строк автоматика бросила: их разбирают руками. Повтор на
+    // каждом проходе — намеренное напоминание, исключение из Р-98 (Р-106).
     private void logGivenUp(Instant createdAfter) {
         long givenUp = countGivenUp(createdAfter);
         if (givenUp > 0) {

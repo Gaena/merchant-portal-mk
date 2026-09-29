@@ -55,11 +55,6 @@ const colorSchemes = {
   }
 };
 
-/**
- * Цвет статуса. Аргумент уже разобран `parseTransactionStatus`, поэтому ни `toUpperCase`,
- * ни ветки под чужие словари (`APPROVED`, `DECLINED`, `3D-FAILED`) здесь больше не нужны.
- * `null` — статус вне словаря бэкенда: серый, а не «успешный» по умолчанию.
- */
 export const getStatusColorScheme = (status: TransactionStatus | EcomStatus | null | undefined) => {
   switch (status) {
     case 'SUCCESS':

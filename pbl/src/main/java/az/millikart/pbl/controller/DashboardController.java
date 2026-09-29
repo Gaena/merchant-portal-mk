@@ -10,9 +10,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-// Сводка главной страницы (P3-7). Отдельный префикс, а не /api/v1/transactions/summary: рядом
-// живёт GET /api/v1/transactions/{id}, и «summary» уехало бы в разбор UUID.
-// Префикс новый — правило прокси на :8080 заведено в vite.config.ts и в nginx.
+// Статистика оплат по ссылкам (P3-7, Р-91). Свой префикс, а не /transactions/summary: «summary» ушло
+// бы в разбор UUID у GET /transactions/{id}. Префикс заведён в прокси vite.config.ts и nginx.
 @RestController
 @RequestMapping("/api/v1/dashboard")
 public class DashboardController {
@@ -23,9 +22,7 @@ public class DashboardController {
         this.dashboardService = dashboardService;
     }
 
-    // from и to — ISO-8601 (2026-08-24T00:00:00Z), оба необязательны: по умолчанию семь
-    // календарных суток по сегодняшний день. Границы окна проверяет сервис и отвечает 400,
-    // а не молча зажимает.
+    // ISO-8601; без них — семь суток по сегодня. Кривое окно — 400 от сервиса, а не молчаливый зажим.
     @GetMapping("/summary")
     public DashboardSummaryResponse summary(
             @RequestParam(required = false) Instant from,

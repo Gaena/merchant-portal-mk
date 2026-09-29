@@ -7,7 +7,8 @@ public record TerminalResponse(
         Integer id,
         String name,
         String login,
-        String password,
+        // Номер терминала у провайдера — им терминал подписан на экранах (Р-96); пусто — подпись логином.
+        String terminalRid,
         String companyId,
         TerminalStatus status,
         String createdBy,

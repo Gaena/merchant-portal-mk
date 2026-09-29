@@ -33,6 +33,14 @@ public class Company {
     @Builder.Default
     private String status = "ACTIVE";
 
+    // Креды компании к провайдеру (Р-93). Логин — с префиксом «MultiMerchantSys/» (Р-94); пароль —
+    // только шифротекст CredentialCipher. Пусто у компаний, заведённых до Р-93.
+    @Column(name = "provider_login")
+    private String providerLogin;
+
+    @Column(name = "provider_password")
+    private String providerPassword;
+
     @Column(name = "created_by")
     private String createdBy;
 

@@ -28,14 +28,17 @@ public class Terminal {
     @Column(name = "name", nullable = false)
     private String name;
 
+    // К провайдеру ходят с кредами компании, а не с логином терминала (Р-93).
     @Column(name = "login", nullable = false)
     private String login;
 
-    @Column(name = "password", nullable = false)
-    private String password;
-
     @Column(name = "company_id", nullable = true)
     private String companyId;
+
+    // Номер терминала у провайдера: с ним создаётся заказ (POST /order?terminalRid=…, Р-96). Пишет
+    // directory; пусто у терминалов, заведённых до Р-96 без справочника, — платежи по ним 400.
+    @Column(name = "terminal_rid")
+    private String terminalRid;
 
     // Пустым не бывает: колонка not null default 'ACTIVE' (005-terminal-status.xml).
     @Enumerated(EnumType.STRING)

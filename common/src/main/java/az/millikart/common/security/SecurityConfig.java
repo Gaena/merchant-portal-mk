@@ -14,15 +14,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-// Запрет по умолчанию: любой путь требует аутентификации, если PublicEndpoints не сказал иного, —
-// новый эндпойнт приватен с момента написания. Прежнее anyRequest().permitAll() отдавало всё
-// приложение проверке префикса внутри JwtAuthFilter и оставляло открытым всё вне /api/v1/, включая
-// actuator и swagger (P1-1). Авторизация (кому что можно) здесь не живёт — она в сервисах.
+// Запрет по умолчанию (P1-1): любой путь требует токена, если PublicEndpoints не сказал иного; не
+// возвращать permitAll(). Авторизация (кому что можно) — в сервисах.
 @Configuration
 @EnableWebSecurity
-// Включено, но не используется: ни одного @PreAuthorize в коде нет, проверки ролей — явные if в
-// сервисах против UserPrincipal.getRole(). Читать как «доступно», а не как второй охраняющий слой,
-// и не переносить проверки в аннотации, не убрав их сначала из сервисов.
+// Включено, но не используется: @PreAuthorize нет нигде, роли проверяют сервисы. Не считать вторым
+// слоем защиты.
 @EnableMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
 
@@ -30,9 +27,7 @@ public class SecurityConfig {
     private final TraceIdFilter traceIdFilter;
     private final SecurityErrorResponder securityErrorResponder;
 
-    // Springdoc регистрирует обработчики только при этом флаге (по умолчанию выключен, включён для
-    // приёмочных тестов). Матчеры следуют за флагом: разрешённый матчер несуществующего пути —
-    // мёртвая конфигурация, переживающая причину, по которой её добавили.
+    // Матчеры springdoc — только при включённом флаге: без него springdoc путей не регистрирует.
     private final boolean swaggerEnabled;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
@@ -48,22 +43,17 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                // CSRF выключен: аутентификация — bearer-токен из заголовка Authorization, никогда
-                // не из куки, так что чужой сайт не заставит браузер его приложить. Сессии, против
-                // которой можно подделать запрос, тоже нет.
+                // CSRF выключен: токен — в заголовке Authorization, не в куке, сессии нет — подделывать нечего.
                 .csrf(AbstractHttpConfigurer::disable)
-                // CORS выключен намеренно, это не недосмотр: SPA отдаётся с того же origin, что и
-                // API, через nginx (project_docs/deployment_guide.md), кросс-доменных запросов не бывает.
-                // Включить CORS — значит начать пускать origin'ы, которым сейчас до API не дойти.
+                // CORS выключен намеренно: SPA и API на одном origin через nginx
+                // (project_docs/guides/deployment_guide.md); включить — пустить чужие origin'ы.
                 .cors(AbstractHttpConfigurer::disable)
-                // Между запросами не хранится ничего, личность несёт токен. Без этого Spring
-                // Security кладёт «исходный запрос» каждого отказа в новую HTTP-сессию, и
-                // не аутентифицированное сканирование выделяет по сессии на запрос.
+                // Без STATELESS Spring Security кладёт исходный запрос каждого отказа в новую
+                // HTTP-сессию, и сканирование без токена выделяет по сессии на запрос.
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> {
-                    // ERROR-диспачи — внутренние forward на /error, а не запросы клиента:
-                    // повторная авторизация подменила бы настоящую ошибку ничего не значащим 401.
-                    // Клиент, запросивший /error напрямую, — REQUEST-диспатч, и токен ему нужен.
+                    // ERROR-диспатч — внутренний forward на /error: повторная авторизация подменила бы
+                    // ошибку пустым 401. Прямой запрос /error — REQUEST-диспатч и требует токена.
                     auth.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll();
                     auth.requestMatchers(PublicEndpoints.PUBLIC_API).permitAll();
                     auth.requestMatchers(PublicEndpoints.INFRASTRUCTURE).permitAll();
@@ -72,7 +62,7 @@ public class SecurityConfig {
                     }
                     auth.anyRequest().authenticated();
                 })
-                // Оба пути отказа отвечают тем же телом ErrorResponse, что и фильтр.
+                // Отказы отвечают тем же ErrorResponse, что и фильтр.
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint(securityErrorResponder)
                         .accessDeniedHandler(securityErrorResponder))

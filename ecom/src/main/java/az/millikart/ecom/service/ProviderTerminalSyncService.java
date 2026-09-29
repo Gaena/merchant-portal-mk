@@ -15,9 +15,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-// Обновление слепка терминалов провайдера (Р-66). Все правила — про то, чтобы чужой сбой не выключил
-// наши терминалы: неудачный и пустой опрос не применяются, гасится терминал только после
-// missingRunsBeforeDisable пропаданий подряд. Статусы наших терминалов сверяет directory.
+// Чужой сбой не должен выключить наши терминалы: неудачный и пустой опрос не применяются, терминал
+// гасится только после missingRunsBeforeDisable пропаданий подряд (Р-66).
 @Service
 public class ProviderTerminalSyncService {
 
@@ -35,8 +34,7 @@ public class ProviderTerminalSyncService {
         this.properties = properties;
     }
 
-    // Итог одного прохода — для журнала и ответа админу на ручной запуск. ambiguous — мерчанты,
-    // пришедшие несколькими разными строками: их в этом проходе не обновили, но и не гасили.
+    // ambiguous — мерчанты, пришедшие несколькими разными строками: не обновлены, но и не погашены.
     public record SyncOutcome(boolean applied, int seen, int ambiguous, int disabled, String skippedBecause) {
 
         public static SyncOutcome skipped(String reason) {
@@ -50,9 +48,9 @@ public class ProviderTerminalSyncService {
         try {
             rows = source.fetchActive();
         } catch (RuntimeException e) {
-            log.error("Provider terminal sync skipped: the gateway could not be queried ({}). "
-                    + "The previous snapshot is kept as is.", e.getMessage(), e);
-            return SyncOutcome.skipped("gateway unavailable");
+            String reason = ProviderSyncFailure.reason(e);
+            log.error("Provider terminal sync skipped: {}. The previous snapshot is kept as is.", reason, e);
+            return SyncOutcome.skipped(reason);
         }
 
         // У работающего эквайринга не бывает нуля терминалов: пустой ответ — оборванная выборка
@@ -64,8 +62,8 @@ public class ProviderTerminalSyncService {
             return SyncOutcome.skipped("empty response");
         }
 
-        // Одна строка на мерчанта (Р-67, Р-79). Одинаковые строки — это одна (например, две привязки
-        // PBY у терминала); разные логины или названия у одного мерчанта сопоставить не с чем.
+        // Одна строка на мерчанта (Р-67, Р-79). Одинаковые строки — это одна (например, две строки
+        // terminalpmo у терминала); разные логины или названия у одного мерчанта сопоставить не с чем.
         Map<String, Set<ProviderTerminalSource.ProviderTerminalRow>> byRid = new LinkedHashMap<>();
         for (ProviderTerminalSource.ProviderTerminalRow row : rows) {
             if (row.rid() == null || row.rid().isBlank()) {
@@ -96,10 +94,11 @@ public class ProviderTerminalSyncService {
                         .firstSeenAt(now)
                         .build();
             }
-            // Логин и название всегда берутся у провайдера: он их хозяин. В terminals смену переносит
-            // сверка directory (Р-67), иначе терминал однажды перестанет ходить в шлюз.
+            // Логин, название и номер — всегда провайдера; в terminals их переносит сверка directory
+            // (Р-67, Р-96).
             terminal.setTitle(row.title());
             terminal.setLogin(row.login());
+            terminal.setTerminalRid(row.terminalRid());
             terminal.setActive(true);
             terminal.setMissingRuns(0);
             terminal.setLastSeenAt(now);

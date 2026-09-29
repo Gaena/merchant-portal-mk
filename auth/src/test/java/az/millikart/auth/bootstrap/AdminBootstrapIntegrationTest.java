@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import az.millikart.auth.domain.User;
+import az.millikart.auth.dto.ChangePasswordRequest;
 import az.millikart.auth.dto.LoginRequest;
 import az.millikart.auth.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -59,8 +60,10 @@ public class AdminBootstrapIntegrationTest {
         assertTrue(admin.getPasswordHash().startsWith("$2"), "password must be stored as a BCrypt hash");
     }
 
+    // Пароль из переменной окружения знает тот, кто ставил систему: при первом входе его меняют (Р-100),
+    // и только новый даёт сессию.
     @Test
-    @DisplayName("the bootstrapped admin can actually log in")
+    @DisplayName("the bootstrapped admin can actually log in, after changing the bootstrap password")
     void bootstrappedAdmin_canLogIn() throws Exception {
         LoginRequest login = new LoginRequest(ADMIN_USERNAME, ADMIN_PASSWORD);
 
@@ -68,6 +71,16 @@ public class AdminBootstrapIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(login)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.role").value("SYSTEM_ADMIN"));
+                .andExpect(jsonPath("$.role").value("SYSTEM_ADMIN"))
+                .andExpect(jsonPath("$.passwordChangeRequired").value(true))
+                .andExpect(jsonPath("$.token").doesNotExist());
+
+        mockMvc.perform(post("/api/v1/auth/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new ChangePasswordRequest(ADMIN_USERNAME, ADMIN_PASSWORD, "ChangedAdmin123!"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("SYSTEM_ADMIN"))
+                .andExpect(jsonPath("$.token").isNotEmpty());
     }
 }

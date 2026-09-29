@@ -8,23 +8,22 @@ import org.springframework.boot.diagnostics.FailureAnalyzer;
 import org.springframework.context.EnvironmentAware;
 import org.springframework.core.env.Environment;
 
-// Превращает отсутствующую переменную окружения в инструкцию, а не в стектрейс: секреты и адреса
-// намеренно объявлены без значений по умолчанию (P0-5, P1-10), поэтому сервис умирает раньше, чем
-// поднимется хоть один наш бин, и JwtProvider объясниться не успевает. Имя класса шире секретов:
-// анализируется «обязательная переменная без дефолта», что бы она ни защищала.
+// Отсутствующая переменная окружения — инструкция, а не стектрейс: у секретов и адресов нет
+// дефолтов (P0-5, P1-10), и сервис падает раньше, чем объяснится JwtProvider. Имя шире секретов:
+// анализируется любая обязательная переменная без дефолта.
 public class MissingSecretFailureAnalyzer implements FailureAnalyzer, EnvironmentAware {
 
     private static final String DB_PASSWORD_PROPERTY = "spring.datasource.password";
 
     private static final String SAME_KEY_EVERYWHERE =
-            "The same value must be set for all three services (auth, directory, pbl): auth signs the "
-                    + "token, directory and pbl verify it, and a mismatch turns every request into 401.";
+            "The same value must be set for all four services (auth, directory, pbl, ecom): auth signs the "
+                    + "token, the others verify it, and a mismatch turns every request into 401.";
 
     private static final String JWT_SECRET_ACTION =
             "Generate a signing key and export it before starting the service:\n"
                     + "\texport JWT_SECRET=\"$(openssl rand -base64 48)\"\n"
                     + SAME_KEY_EVERYWHERE + "\n"
-                    + "See .env.example and project_docs/deployment_guide.md, \"Первый запуск и ротация ключа\".";
+                    + "See .env.example and project_docs/guides/deployment_guide.md, \"Первый запуск и ротация ключа\".";
 
     private static final String DB_PASSWORD_ACTION =
             """
@@ -46,26 +45,32 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
                     + "acquirer returns the payer to after paying:\n"
                     + "\texport PBL_BASE_URL='https://<your domain>/'\n"
                     + "For a local run: export PBL_BASE_URL='http://localhost:8080/'\n"
-                    + "See .env.example and project_docs/deployment_guide.md, section 8.3.";
+                    + "See .env.example and project_docs/guides/deployment_guide.md, section 8.3.";
 
     private static final String PBL_PROVIDER_GATEWAY_BASE_URL_ACTION =
             """
                     Export the address of the acquiring (TXPG) gateway that hosts the payment page:
                     \texport PBL_PROVIDER_GATEWAY_BASE_URL='https://<gateway host>:<port>/'
                     The value comes from MilliKart and differs between the test stand and production.
-                    See .env.example and project_docs/deployment_guide.md, section 8.3.""";
+                    See .env.example and project_docs/guides/deployment_guide.md, section 8.3.""";
 
     private static final String PBL_PROVIDER_API_BASE_URL_ACTION =
             """
                     Export the address of the acquirer's e-commerce API (order status, capture, refund):
                     \texport PBL_PROVIDER_API_BASE_URL='https://<api host>:<port>/'
                     The value comes from MilliKart and differs between the test stand and production.
-                    See .env.example and project_docs/deployment_guide.md, section 8.3.""";
+                    See .env.example and project_docs/guides/deployment_guide.md, section 8.3.""";
+
+    private static final String CREDENTIALS_ENCRYPTION_KEY_ACTION =
+            "Generate an AES-256 key and export it before starting the service:\n"
+                    + "\texport CREDENTIALS_ENCRYPTION_KEY=\"$(openssl rand -base64 32)\"\n"
+                    + "The same value must be set for directory and pbl: directory encrypts company passwords "
+                    + "to the acquirer, pbl decrypts them. A new key makes stored passwords unreadable.\n"
+                    + "See .env.example and project_docs/guides/deployment_guide.md, section 8.3.";
 
     private static final Map<String, String> ACTIONS_BY_VARIABLE = new LinkedHashMap<>();
 
-    // Переменные-адреса, а не секреты: механизм тот же (нет дефолта, тот же отказ), причина другая,
-    // поэтому description() объясняет их отдельно.
+    // Адреса, а не секреты: механизм тот же, причина другая — description() объясняет их отдельно.
     private static final Set<String> ADDRESS_VARIABLES = Set.of(
             "PBL_BASE_URL", "PBL_PROVIDER_GATEWAY_BASE_URL", "PBL_PROVIDER_API_BASE_URL");
 
@@ -76,6 +81,7 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
         ACTIONS_BY_VARIABLE.put("PBL_BASE_URL", PBL_BASE_URL_ACTION);
         ACTIONS_BY_VARIABLE.put("PBL_PROVIDER_GATEWAY_BASE_URL", PBL_PROVIDER_GATEWAY_BASE_URL_ACTION);
         ACTIONS_BY_VARIABLE.put("PBL_PROVIDER_API_BASE_URL", PBL_PROVIDER_API_BASE_URL_ACTION);
+        ACTIONS_BY_VARIABLE.put("CREDENTIALS_ENCRYPTION_KEY", CREDENTIALS_ENCRYPTION_KEY_ACTION);
     }
 
     private Environment environment;
@@ -94,8 +100,7 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
         return analyzeUnboundDatabasePassword(failure);
     }
 
-    // Путь @Value (так читаются JWT_SECRET и PBL_API_TOKEN): нерезолвнутый плейсхолдер сразу даёт
-    // IllegalArgumentException, и переменную называет само сообщение.
+    // Путь @Value (JWT_SECRET, PBL_API_TOKEN): переменную называет сообщение исключения.
     private FailureAnalysis analyzeUnresolvedPlaceholder(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
             String message = cause.getMessage();
@@ -111,10 +116,8 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
         return null;
     }
 
-    // Путь биндера @ConfigurationProperties (так читается spring.datasource.password) плейсхолдеры
-    // терпит: неустановленный DB_PASSWORD уходит в драйвер литералом "${DB_PASSWORD}", и сервис
-    // умирает много позже на ошибке аутентификации БД. Поэтому распознаём по окружению, а не по
-    // исключению: пароль, который всё ещё читается как ${...}, не был подставлен.
+    // Биндер @ConfigurationProperties плейсхолдер терпит: неустановленный DB_PASSWORD уходит в драйвер
+    // литералом и падает позже на аутентификации БД. Поэтому — по окружению, а не по исключению.
     private FailureAnalysis analyzeUnboundDatabasePassword(Throwable failure) {
         if (environment == null || !hasUnresolvedDatabasePassword()) {
             return null;

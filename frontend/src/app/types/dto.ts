@@ -2,10 +2,12 @@ export interface CompanyDto {
   id: string;
   name: string;
   status?: 'ACTIVE' | 'INACTIVE' | 'DISABLED';
+  /** Только у SYSTEM_ADMIN, остальным `null`; пароля в ответе нет вовсе (Р-93). */
+  providerLogin?: string | null;
   createdAt?: string;
 }
 
-/** Статусы терминала бэкенда (`TerminalStatus`). Терминалы не удаляются, а блокируются (P2-8). */
+/** `TerminalStatus` бэкенда; терминалы не удаляются, а блокируются (P2-8). */
 export const TERMINAL_STATUSES = ['ACTIVE', 'BLOCKED'] as const;
 
 export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];
@@ -14,58 +16,64 @@ export interface TerminalDto {
   id: number;
   name: string;
   login: string;
-  password?: string;
+  /** Номер у провайдера (`terminal.rid`, Р-96) — основная подпись; у заведённых до Р-96 пуст. */
+  terminalRid?: string | null;
   companyId: string;
-  /** Бэкенд присылает всегда; поле необязательное только ради ответов, снятых до P2-8. */
+  /** Бэкенд присылает всегда; необязательное намеренно — без поля терминал не прячется (`isTerminalActive`). */
   status?: TerminalStatus;
   createdAt?: string;
 }
 
-/**
- * Ответ `GET /api/v1/terminals/options` — лёгкий фид для селекторов, фильтров и подписей
- * терминала на экранах платежей. Пароля в нём нет и не будет; `login` есть намеренно —
- * см. `TerminalOptionResponse` на бэкенде.
- */
+/** Лёгкий `GET /terminals/options` для селекторов и подписей; `login` в нём намеренно (`TerminalOptionResponse`). */
 export interface TerminalOptionDto {
   id: number;
   name: string;
-  /**
-   * Логин эквайринга — основной параметр терминала: мерчант знает терминал по нему, а не по
-   * имени, которое придумывает сам, и не по внутреннему номеру. Подписывает терминал везде,
-   * где тот показан, — см. `utils/terminals.ts`.
-   */
+  /** Подпись терминала, когда нет `terminalRid` (`utils/terminals.ts`). */
   login: string;
-  /** Бэкенд присылает всегда; поле необязательное только ради ответов, снятых до P2-8. */
+  /** Номер у провайдера (Р-96) — в подписи раньше логина. */
+  terminalRid?: string | null;
+  /** Бэкенд присылает всегда; необязательное намеренно — без поля терминал не прячется (`isTerminalActive`). */
   status?: TerminalStatus;
 }
 
-/**
- * Терминал доступен для новых платежей. Скрывает только явно заблокированный: отсутствие поля —
- * это ответ старого бэкенда, и по нему нельзя прятать все терминалы разом, иначе форма создания
- * ссылки останется пустой без единой причины на экране.
- */
+// Только явно заблокированный: без поля `status` (старый бэкенд) форма ссылки осталась бы пустой
+// без единой причины на экране.
 export const isTerminalActive = (terminal: Pick<TerminalDto, 'status'>): boolean =>
   terminal.status !== 'BLOCKED';
 
 /**
- * Терминал из справочника провайдера (`GET /api/v1/ecom/provider-terminals`, только SYSTEM_ADMIN).
- * `rid` — reference id мерчанта у провайдера, он же `merchantRid` нашего терминала (Р-67, Р-79).
+ * `GET /terminals/provider-terminals` (Р-96): мерчанты логина компании, ещё не заведённые у нас.
+ * `rid` — код мерчанта (`merchantRid`), `terminalRid` — номер терминала у провайдера.
  */
-export interface ProviderTerminalDto {
+export interface ProviderTerminalOption {
   rid: string;
   title: string | null;
   login: string | null;
-  active: boolean;
-  lastSeenAt?: string | null;
+  terminalRid: string;
 }
 
-/** Итог ручного обновления справочника (`POST /api/v1/ecom/provider-terminals/sync`). */
+/** `GET /companies/provider-logins` (Р-95): `login` — с префиксом; `merchants` — его активные мерчанты. */
+export interface ProviderLoginOption {
+  login: string;
+  merchants: string[];
+}
+
+/** Итог обновления слепка логинов мультимерчантов (Р-94). */
+export interface ProviderLoginSyncOutcome {
+  applied: boolean;
+  logins: number;
+  links: number;
+  skippedBecause: string | null;
+}
+
+/** `POST /ecom/provider-terminals/sync`: верхние поля — терминалы, `logins` — логины (Р-94). */
 export interface ProviderTerminalSyncOutcome {
   applied: boolean;
   seen: number;
   ambiguous: number;
   disabled: number;
   skippedBecause: string | null;
+  logins?: ProviderLoginSyncOutcome | null;
 }
 
 export interface UserDto {
@@ -76,6 +84,8 @@ export interface UserDto {
   companyId?: string;
   status?: string;
   createdAt?: string;
+  /** Пароль задал не владелец, и он ещё не сменил его при входе (Р-100). */
+  passwordChangeRequired?: boolean;
 }
 
 export interface AuditLogDto {
@@ -92,9 +102,8 @@ export interface AuditLogDto {
 }
 
 /**
- * Сводка главной страницы (`GET /api/v1/dashboard/summary`, P3-7). Считает база; денег без
- * валюты здесь нет ни в одном поле — колонки currency у транзакций не существует, она на ссылке,
- * и общий итог поверх нескольких валют был бы числом, которого не существует.
+ * Статистика оплат по ссылкам (`GET /dashboard/summary`, Р-91). Денег без валюты нет ни в одном
+ * поле: валюта — на ссылке, общий итог поверх валют был бы несуществующим числом.
  */
 export interface DashboardSummary {
   window: { from: string; to: string; zone: string };
@@ -127,9 +136,11 @@ export interface DashboardCurrencyTotals {
 export interface DashboardTerminalTotal {
   currency: string;
   terminalId: number;
-  /** Логин из таблицы терминалов — основная подпись; `null`, если терминала уже нет. */
+  /** Номер у провайдера (Р-96) — основная подпись. */
+  terminalRid?: string | null;
+  /** Подпись, когда номера нет; `null`, если терминала уже нет. */
   terminalLogin: string | null;
-  /** Имя из таблицы терминалов; `null`, если терминала уже нет — выдумывать его нельзя. */
+  /** `null`, если терминала уже нет, — не выдумывать. */
   terminalName: string | null;
   netAmount: string;
   transactionCount: number;

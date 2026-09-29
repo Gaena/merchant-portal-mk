@@ -3,7 +3,7 @@
 Реализация личного кабинета мерчанта на базе React 18, TypeScript 7, Vite 6 и Material UI 7.
 
 Правила фронтенда — маршруты, авторизация, подтверждения, прокси на сервисы — в корневом
-[`AGENTS.md`](../AGENTS.md), §9; устройство приложения — [`project_docs/application_description.md`](../project_docs/application_description.md), §10.
+[`AGENTS.md`](../AGENTS.md), §9; устройство приложения — [`project_docs/guides/application_description.md`](../project_docs/guides/application_description.md), §10.
 
 ## Команды:
 

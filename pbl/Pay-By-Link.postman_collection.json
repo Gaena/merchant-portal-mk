@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "a1b2c3d4-e5f6-a1b2-c3d4-e5f6a1b2c3d4",
 		"name": "Pay-By-Link Service",
-		"description": "A collection for the Pay-By-Link service, a microservice for generating and managing payment links.",
+		"description": "Pay-By-Link service (`pbl`, port 8080): payment links, transactions, the link statistics and the terminal check. Contract - project_docs/modules/pay-by-link.md.\n\nEvery request except Open Payment Page and Redirect Landing Page needs a JWT: run Login in auth/Auth.postman_collection.json and put its `authToken` into this collection's `authToken` variable (or keep `authToken` in a Postman environment - an environment value overrides the collection one). The access token lives 15 minutes.\n\nSuggested order: Create Payment Link -> Open Payment Page -> pay on the acquirer's page -> Get Payment Link Transactions (fills transactionId, providerOrderId, ridByMerchant) -> Check Transaction Status -> Complete DMS Payment / Refund Transaction.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -16,9 +16,10 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"var jsonData = JSON.parse(responseBody);",
-									"pm.collectionVariables.set(\"linkId\", jsonData.id);",
-									"console.log(\"Set linkId to: \" + jsonData.id);"
+									"if (pm.response.code === 201) {",
+									"    pm.collectionVariables.set('linkId', pm.response.json().id);",
+									"    console.log('Set linkId to: ' + pm.response.json().id);",
+									"}"
 								],
 								"type": "text/javascript"
 							}
@@ -30,15 +31,11 @@
 							{
 								"key": "Content-Type",
 								"value": "application/json"
-							},
-							{
-								"key": "Idempotency-Key",
-								"value": "{{$randomUUID}}"
 							}
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"merchantOrderId\": \"ORDER-{{$timestamp}}\",\n  \"terminal\": 123456789,\n  \"amount\": 1500.50,\n  \"currency\": \"AZN\",\n  \"description\": \"Payment for order #{{$timestamp}}\",\n  \"customer\": {\n    \"fullName\": \"John Doe\",\n    \"email\": \"test@test.com\",\n    \"phone\": \"994509771884\"\n  },\n  \"paymentType\": \"DMS\",\n  \"usageType\": \"MULTIPLE\",\n  \"maxPayments\": 25,\n  \"metadata\": {\n    \"campaign\": \"summer_sale\",\n    \"internalId\": \"998877\"\n  }\n}",
+							"raw": "{\n  \"merchantOrderId\": \"ORDER-{{$timestamp}}\",\n  \"terminal\": {{terminalId}},\n  \"amount\": 1500.5,\n  \"currency\": \"AZN\",\n  \"description\": \"Payment for order #{{$timestamp}}\",\n  \"customer\": {\n    \"fullName\": \"John Doe\",\n    \"email\": \"test@test.com\",\n    \"phone\": \"+994509771884\"\n  },\n  \"paymentType\": \"DMS\",\n  \"usageType\": \"SINGLE\",\n  \"metadata\": {\n    \"campaign\": \"summer_sale\",\n    \"internalId\": \"998877\"\n  }\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -56,7 +53,7 @@
 								"payment-links"
 							]
 						},
-						"description": "Creates a new payment link. The `test` script for this request automatically saves the returned `id` to the `linkId` collection variable for use in other requests.\n\nEvery link has a lifetime. `expiresAt` is optional here: left out, as in this body, the link expires after the configured default (`pbl.link.default-ttl`, 24 hours). Supplied, it must be an ISO-8601 instant in the future and no later than `pbl.link.max-ttl` (90 days) from the moment the link is created - either violation is a 400 naming the latest date allowed. The response carries the resulting `expiresAt` back."
+						"description": "Creates a payment link (pay-by-link.md §5.1). Every role except AUDITOR, on a terminal of the caller's company. The `test` script saves the returned `id` to `linkId`.\n\n`terminal` is our terminal id (`{{terminalId}}`). The terminal must be ACTIVE, its company must have acquirer credentials, and it must carry the provider terminal number (Р-93, Р-96) - otherwise 400 before the acquirer is called.\n\nEvery link has a lifetime. `expiresAt` is optional: left out, as in this body, the link expires after `pbl.link.default-ttl` (24 hours). Supplied, it must be an ISO-8601 instant in the future and no later than `pbl.link.max-ttl` (90 days) from the moment the link is created - either violation is a 400 naming the latest date allowed.\n\n`customer` is for a SINGLE link only: on a MULTIPLE link it is a 400. The phone must be an Azerbaijani number (+994, 994 or 0 and 9 digits) and is stored as +994XXXXXXXXX; name, email and phone go to the acquirer in order.tdsPresetAreq. For MULTIPLE, `maxPayments` (> 0) is required."
 					},
 					"response": []
 				},
@@ -77,7 +74,7 @@
 								"{{linkId}}"
 							]
 						},
-						"description": "Retrieves detailed information for a specific payment link using the `linkId` variable."
+						"description": "One payment link by `{{linkId}}` (pay-by-link.md §5.3). Every role, on the link's terminal. Empty fields are omitted from the answer; `lastPaidAt` is absent until the link is paid."
 					},
 					"response": []
 				},
@@ -112,7 +109,7 @@
 								"{{linkId}}"
 							]
 						},
-						"description": "Partially updates an existing payment link. Only fields provided in the request will be modified.\n\n`expiresAt` obeys the same bounds as on create, except that the 90-day ceiling is measured from the link's own `created_at`, not from the moment of this PATCH - otherwise a chain of updates could push the expiry forward forever."
+						"description": "Partially updates a payment link (pay-by-link.md §5.2): only non-null fields are applied.\n\n`amount` is frozen once the link has an attempt other than FAILED. `status` transitions: ACTIVE -> CANCELED, EXPIRED -> CANCELED, CANCELED -> ACTIVE (the expiry must be in the future); SUSPENDED comes only from blocking the terminal. `expiresAt` obeys the same bounds as on create, except that the 90-day ceiling is measured from the link's own `created_at`, not from the moment of this PATCH - otherwise a chain of updates could push the expiry forward forever. `maxPayments` - MULTIPLE only, not below the number of uses."
 					},
 					"response": []
 				},
@@ -134,30 +131,77 @@
 							"query": [
 								{
 									"key": "page",
-									"value": "0"
+									"value": "0",
+									"description": "Page number, from 0."
 								},
 								{
 									"key": "size",
-									"value": "10"
+									"value": "10",
+									"description": "Page size, default 20. Not clamped: size=0 answers 500."
 								},
 								{
 									"key": "terminal",
 									"value": null,
-									"disabled": true
+									"disabled": true,
+									"description": "Our terminal id. Another company's terminal - 403, an unknown one - 404."
 								},
 								{
 									"key": "status",
-									"value": "ACTIVE"
+									"value": "ACTIVE",
+									"description": "ACTIVE, EXPIRED, COMPLETED, CANCELED or SUSPENDED, exactly; anything else - 400."
 								}
 							]
 						},
-						"description": "Retrieves a paginated list of payment links, with optional filters for terminal and status."
+						"description": "Paginated list of payment links, newest first (createdAt DESC, id DESC), pay-by-link.md §5.4. SYSTEM_ADMIN and AUDITOR see all links, other roles - links on their company's terminals. Rows carry no payment counters; read the single link for them."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Payment Link Transactions",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// The newest attempt of the link fills the variables of the Transactions folder and of the return page.",
+									"if (pm.response.code === 200 && pm.response.json().length > 0) {",
+									"    const newest = pm.response.json()[0];",
+									"    pm.collectionVariables.set('transactionId', newest.id);",
+									"    pm.collectionVariables.set('providerOrderId', newest.providerOrderId || '');",
+									"    pm.collectionVariables.set('ridByMerchant', newest.ridByMerchant || '');",
+									"    console.log('Set transactionId to: ' + newest.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/payment-links/{{linkId}}/transactions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"payment-links",
+								"{{linkId}}",
+								"transactions"
+							]
+						},
+						"description": "Every payment attempt of the link, newest first, without pagination (pay-by-link.md §5.11). Every role, on the link's terminal; the acquirer is not polled. Each opening of the link creates an attempt. The `test` script saves the newest attempt's `id`, `providerOrderId` and `ridByMerchant` to the collection variables."
 					},
 					"response": []
 				},
 				{
 					"name": "Open Payment Page (Customer Redirect)",
 					"request": {
+						"auth": {
+							"type": "noauth"
+						},
 						"method": "GET",
 						"header": [],
 						"url": {
@@ -173,7 +217,32 @@
 								"open"
 							]
 						},
-						"description": "Customer-facing endpoint that validates the link and redirects to the acquiring gateway. Does not require authentication. In Postman, you must disable automatic redirect following in Settings to see the 302 response. The whole open runs in one transaction that locks the link row first (P1-5), so two simultaneous opens cannot register two orders at the acquirer: the duplicate click gets 409. A link that is already paid, or held by an AUTHORIZED payment awaiting capture, gets 403 (P1-6)."
+						"description": "Payer-facing public endpoint (pay-by-link.md §5.5): no token. Validates the link, registers an order at the acquirer (POST /order?terminalRid=... with the company credentials) and answers 302 to the acquirer's payment page. To see the 302 in Postman, turn off automatic redirect following in the request settings.\n\nThe link row is locked with NOWAIT, so a concurrent open, capture or refund of the same link gets 409 at once. The previous PENDING attempt is checked at the acquirer first. A link that is already paid, or held by an AUTHORIZED payment awaiting capture, gets 403; so do blocked, expired, canceled and completed links. Each successful open creates a PENDING transaction - run Get Payment Link Transactions afterwards to pick it up."
+					},
+					"response": []
+				},
+				{
+					"name": "Redirect Landing Page (Payer Receipt)",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/payment-links/redirect/{{ridByMerchant}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"payment-links",
+								"redirect",
+								"{{ridByMerchant}}"
+							]
+						},
+						"description": "The page the acquirer sends the payer back to (pay-by-link.md §5.6): public, no token, answers 200 text/html. The path segment is the attempt's `ridByMerchant` (set by Get Payment Link Transactions). The acquirer's ID, PASSWORD and STATUS query parameters are ignored. The transaction is polled at the acquirer once and the page shows Paid, Authorized (Hold), Failed or Pending; an unknown reference shows a neutral 'information unavailable' page."
 					},
 					"response": []
 				}
@@ -182,6 +251,81 @@
 		{
 			"name": "Transactions",
 			"item": [
+				{
+					"name": "List Transactions",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/transactions?page=0&size=20",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "0",
+									"description": "Page number, from 0."
+								},
+								{
+									"key": "size",
+									"value": "20",
+									"description": "Page size, default 20. Not clamped: size=0 answers 500."
+								}
+							]
+						},
+						"description": "Paginated list of transactions, newest first (createdAt DESC, id DESC), no filters (pay-by-link.md §5.7). SYSTEM_ADMIN and AUDITOR see every company, other roles - transactions on their company's terminals."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Transaction by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"transactions",
+								"{{transactionId}}"
+							]
+						},
+						"description": "One transaction by its UUID (pay-by-link.md §5.12). A plain read - the acquirer is not polled; use Check Transaction Status for a fresh outcome. A non-UUID id answers 400."
+					},
+					"response": []
+				},
+				{
+					"name": "Check Transaction Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/transactions/{{providerOrderId}}/status",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"transactions",
+								"{{providerOrderId}}",
+								"status"
+							]
+						},
+						"description": "Polls the acquirer once for a PENDING or AUTHORIZED transaction and stores the result (pay-by-link.md §5.8); SUCCESS, FAILED, REFUNDED and PARTIALLY_REFUNDED are returned from the database without asking the acquirer. The path takes the transaction UUID or the provider order id (`{{providerOrderId}}`, set by Get Payment Link Transactions). Requires a JWT and a read role on the company of the transaction's terminal. A hold the bank released without a capture (Closed after Authorized) becomes FAILED. 503 when the circuit breaker to the acquirer is open."
+					},
+					"response": []
+				},
 				{
 					"name": "Complete DMS Payment",
 					"request": {
@@ -214,7 +358,7 @@
 								"complete"
 							]
 						},
-						"description": "Finalizes (captures) a previously authorized DMS transaction. You must first open a link to get a transactionId.\n\nA partial capture is allowed: `amount` may be lower than the authorized amount, and the acquirer clears exactly that figure (`{\"tran\": {\"phase\": \"Clearing\", \"amount\": \"500.00\"}}`). It is stored in `captured_amount`, the transaction's `amount` keeps the authorized figure, and later refunds are capped by the captured amount. Returns 400 when `amount` is above the authorized amount or has more than two decimal places, and 400 when the transaction was already captured."
+						"description": "Captures an AUTHORIZED DMS transaction (pay-by-link.md §5.9). Every role except AUDITOR. A PENDING transaction is polled at the acquirer first and captured only if it is authorized. Answers with the payment LINK, not the transaction.\n\nA partial capture is allowed: `amount` may be lower than the authorized amount, and the acquirer clears exactly that figure (`{\"tran\": {\"phase\": \"Clearing\", \"amount\": \"500.00\"}}`). It is stored in `captured_amount`, the transaction's `amount` keeps the authorized figure, and later refunds are capped by the captured amount. 400 when `amount` is above the authorized amount, has more than two decimal places, or the transaction was already captured. 502 means the outcome is unknown: check the status before retrying, never repeat blindly."
 					},
 					"response": []
 				},
@@ -250,34 +394,74 @@
 								"refund"
 							]
 						},
-						"description": "Initiates a refund for a successful transaction. You must first complete a DMS payment or have a successful SMS payment to get a transactionId.\n\nThe ceiling is the captured amount, not the authorized one: `captured_amount` after a DMS capture, `amount` when there was no capture (every SMS payment). Refunding exactly that amount moves the transaction to REFUNDED; less leaves it PARTIALLY_REFUNDED. The response carries the acquirer's own identifiers from its exec-tran answer: `acquirerReference` (tran.match.ridByPmo — the processing-centre id, never null on 200: a refund without it is reported as 502, outcome unknown), `refundId` (tran.match.tranActionId, may be null) and `approvalCode` (may be null). Nothing is generated locally."
+						"description": "Refunds a SUCCESS or PARTIALLY_REFUNDED transaction (pay-by-link.md §5.10). SYSTEM_ADMIN, COMPANY_HEAD and COMPANY_MANAGER only.\n\n`reason` is accepted and NOT USED: it is not stored, not written to the audit journal and not sent to the acquirer (open task REFUND-REASON).\n\nThe ceiling is the captured amount, not the authorized one: `captured_amount` after a DMS capture, `amount` when there was no capture (every SMS payment), minus what was already refunded. Refunding exactly the rest moves the transaction to REFUNDED; less leaves it PARTIALLY_REFUNDED. The response carries the acquirer's own identifiers from its exec-tran answer: `acquirerReference` (tran.match.ridByPmo - never null on 200), `refundId` (tran.match.tranActionId, may be null) and `approvalCode` (may be null). 502 means the outcome is unknown: check the status before retrying - a repeated refund pays twice."
 					},
 					"response": []
-				},
+				}
+			]
+		},
+		{
+			"name": "Dashboard",
+			"item": [
 				{
-					"name": "Check Transaction Status",
+					"name": "Dashboard Summary",
 					"request": {
 						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{apiToken}}"
-							}
-						],
+						"header": [],
 						"url": {
-							"raw": "{{baseUrl}}/api/v1/transactions/{{providerOrderId}}/status",
+							"raw": "{{baseUrl}}/api/v1/dashboard/summary",
 							"host": [
 								"{{baseUrl}}"
 							],
 							"path": [
 								"api",
 								"v1",
-								"transactions",
-								"{{providerOrderId}}",
-								"status"
+								"dashboard",
+								"summary"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "2026-09-01T00:00:00Z",
+									"disabled": true,
+									"description": "ISO-8601 instant, optional. Default - the start of the day six days before `to` (seven calendar days)."
+								},
+								{
+									"key": "to",
+									"value": "2026-09-08T00:00:00Z",
+									"disabled": true,
+									"description": "ISO-8601 instant, optional, exclusive. Default - now. The window may not exceed 92 days."
+								}
 							]
 						},
-						"description": "Merchant-only endpoint: polls the provider for the current status of a transaction and persists the result. Requires a JWT and a read role on the company that owns the transaction's terminal. The payer's return page no longer calls this - it is rendered server-side."
+						"description": "Payment link statistics over a window, counted by the database (pay-by-link.md §5.13): payments made through payment links only, money per currency, refunds counted by refund date. Days and hours are cut in PBL_DASHBOARD_ZONE (Asia/Baku). A role without a company gets zeros. 400 when `from` is after `to` or the window exceeds 92 days."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Acquiring",
+			"item": [
+				{
+					"name": "Terminal Check",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/acquiring/terminal-checks/{{terminalId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"acquiring",
+								"terminal-checks",
+								"{{terminalId}}"
+							]
+						},
+						"description": "SYSTEM_ADMIN only (pay-by-link.md §5.14). Places a real, never-paid Order_SMS for 1.00 AZN on the terminal's provider number with its company credentials and reports whether a payment can be created. No body. Always 200 with an outcome: OK, INVALID_CREDENTIALS, REJECTED or UNREACHABLE. Other roles - 403 (written to the audit journal); an unknown terminal - 404; a company without credentials or a terminal without the provider number - 400."
 					},
 					"response": []
 				}
@@ -289,7 +473,7 @@
 		"bearer": [
 			{
 				"key": "token",
-				"value": "{{apiToken}}",
+				"value": "{{authToken}}",
 				"type": "string"
 			}
 		]
@@ -302,10 +486,16 @@
 			"description": "The base URL for the Pay-By-Link service."
 		},
 		{
-			"key": "apiToken",
+			"key": "authToken",
 			"value": "",
 			"type": "string",
-			"description": "JWT from POST /api/v1/auth/login. The static fallback token is off by default and has no built-in value."
+			"description": "JWT access token from POST /api/v1/auth/login (Login in the Auth collection, its authToken variable). Lives 15 minutes. The static fallback token of pbl is off by default and has no built-in value."
+		},
+		{
+			"key": "terminalId",
+			"value": "1",
+			"type": "string",
+			"description": "Our terminal id (directory: GET /api/v1/terminals/options). Used by Create Payment Link and Terminal Check."
 		},
 		{
 			"key": "linkId",
@@ -317,13 +507,19 @@
 			"key": "transactionId",
 			"value": "",
 			"type": "string",
-			"description": "The ID of a transaction, which you must set manually after opening a link."
+			"description": "The UUID of a transaction, set by 'Get Payment Link Transactions' (the newest attempt of the link)."
 		},
 		{
 			"key": "providerOrderId",
 			"value": "",
 			"type": "string",
-			"description": "The order ID returned by the provider, used by the Redirect Page to check payment status."
+			"description": "The acquirer's order id of that transaction, set by 'Get Payment Link Transactions'; used by Check Transaction Status."
+		},
+		{
+			"key": "ridByMerchant",
+			"value": "",
+			"type": "string",
+			"description": "The attempt's ridByMerchant, set by 'Get Payment Link Transactions'; used by Redirect Landing Page."
 		}
 	]
 }

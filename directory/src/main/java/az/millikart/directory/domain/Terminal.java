@@ -31,41 +31,33 @@ public class Terminal {
     @Column(name = "name", nullable = false)
     private String name;
 
+    // «TerminalSys/…». К провайдеру с ним не ходят (Р-93), выписка не читает (Р-97): только подпись
+    // терминала без номера.
     @Column(name = "login", nullable = false)
     private String login;
-
-    @Column(name = "password", nullable = false)
-    private String password;
 
     @Column(name = "company_id")
     private String companyId;
 
-    // Никогда не null: колонка not null default 'ACTIVE' (005-terminal-status.xml).
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     @Builder.Default
     private TerminalStatus status = TerminalStatus.ACTIVE;
 
-    // Кто поставил текущий статус. Не null по той же причине: колонка not null default 'MANUAL'
-    // (006-terminal-status-source.xml), и для всех существующих строк это правда — до появления
-    // синхронизации статусы ставили только люди.
     @Enumerated(EnumType.STRING)
     @Column(name = "status_source", nullable = false, length = 16)
     @Builder.Default
     private TerminalStatusSource statusSource = TerminalStatusSource.MANUAL;
 
-    /**
-     * Reference id **мерчанта**, который задаёт **провайдер**, — словарь провайдера:
-     *
-     *   merchantRid   — reference id мерчанта, его задаёт провайдер (это поле);
-     *   ridByMerchant — reference id платежа, его задаёт мерчант (`pbl`, в транзакции).
-     *
-     * У провайдера один терминал — это один мерчант, поэтому здесь и стоит его rid: заполняется
-     * при заведении, когда админ выбирает строку из слепка, а логин с названием приходят оттуда
-     * же. Пусто у терминалов, заведённых до синхронизации; их сверка не касается.
-     */
+    // Мерчант у провайдера (merchant.rid), не путать с ridByMerchant платежа в pbl (Р-69). По нему
+    // сверка находит терминал в слепке; пусто — сверка терминал не трогает.
     @Column(name = "merchant_rid")
     private String merchantRid;
+
+    // Номер терминала у провайдера (terminal.rid): с ним pbl создаёт заказ (Р-96). Пусто — платежей
+    // терминал не принимает.
+    @Column(name = "terminal_rid")
+    private String terminalRid;
 
     @Column(name = "created_by")
     private String createdBy;

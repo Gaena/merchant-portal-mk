@@ -2,21 +2,17 @@ package az.millikart.pbl.provider;
 
 import java.util.Map;
 
-// Словарь значений order.status эквайера (§5.8.8, v0.1.3). Слово MAJOR в заголовке раздела не
-// случайно: полноты списка эквайер не обещает, поэтому незнакомое слово — UNKNOWN, а не FAILED
-// (инвариант Р-20: неизвестность не доказательство, что платежа не было). Сверка точная и
-// регистрозависимая: лишний пробел или другой регистр — это другой статус, и он должен быть виден.
+// Словарь order.status эквайера (§5.8.8). Полноты он не обещает: незнакомое слово — UNKNOWN, а не
+// FAILED (Р-20). Сверка точная и регистрозависимая: другой регистр или пробел — другой статус.
 public final class ProviderOrderStatus {
 
-    // Что статус провайдера значит для локальной транзакции.
     public enum ProviderOrderOutcome {
         PAID,
         AUTHORIZED,
         FAILED_FINAL,
         NON_FINAL,
-        // Финал, до которого довела операция не с нашей стороны: реверсал или возврат у эквайера
-        // либо закрытие заказа для API. Деньги могли вернуться, но сколько — локально неизвестно,
-        // поэтому локальный статус не трогается. Никогда не повод пометить транзакцию FAILED.
+        // Финал от операции мимо портала (реверсал, возврат, закрытие): сколько денег вернулось —
+        // неизвестно, поэтому локальный статус не трогается и FAILED не ставится никогда.
         SETTLED_OTHER,
         // Нет в словаре. Сюда же null, пустое и не-строки.
         UNKNOWN
@@ -25,16 +21,13 @@ public final class ProviderOrderStatus {
     // §5.8.8: FullyPaid — успешная покупка.
     private static final String FULLY_PAID = "FullyPaid";
 
-    // Cleared (списание холда) и Authorized (холд поставлен) взяты из исходников: контракт
-    // описывает только SMS, DMS (Order_DMS) в нём не описан вовсе, и эти статусы им НЕ подтверждены
-    // (AGENTS.md §10). Оставлены, чтобы не сломать работающий DMS-поток; ждут подтверждения
-    // от MilliKart.
+    // Cleared (холд списан) и Authorized (холд поставлен) — из старого кода, контрактом не подтверждены:
+    // DMS в нём нет (AGENTS.md §10). Не удалять — на них держится DMS-поток.
     private static final String CLEARED = "Cleared";
 
     private static final String AUTHORIZED = "Authorized";
 
-    // §5.8.8: Rejected — ошибочная транзакция, Expired — истекла по времени. Failed и Declined
-    // взяты из исходников и контрактом не подтверждены.
+    // Rejected и Expired — §5.8.8; Failed и Declined — из старого кода, контрактом не подтверждены.
     private static final String REJECTED = "Rejected";
     private static final String EXPIRED = "Expired";
     private static final String FAILED = "Failed";
@@ -43,9 +36,8 @@ public final class ProviderOrderStatus {
     // §5.1 и §5.8.3 (prevStatus): заказ есть, карту ещё не вводили.
     private static final String PREPARING = "Preparing";
 
-    // §5.8.8: PartPaid — частичный реверсал или возврат, Cancelled — полный реверсал, Refused —
-    // полный возврат, Closed — по заказу нельзя слать запросы. Canceled с одной l — написание из
-    // нашего старого кода; держится рядом, чтобы ни одно из двух не свалилось в UNKNOWN.
+    // §5.8.8: PartPaid — частичный реверсал или возврат, Cancelled — полный реверсал, Refused — полный
+    // возврат, Closed — запросы по заказу закрыты. Canceled — написание старого кода, держится рядом.
     private static final String PART_PAID = "PartPaid";
     private static final String CANCELLED = "Cancelled";
     private static final String CANCELED_LEGACY_SPELLING = "Canceled";
@@ -70,8 +62,7 @@ public final class ProviderOrderStatus {
 
     private ProviderOrderStatus() {}
 
-    // raw — значение под ключом status как оно пришло с провода: может быть null или вовсе не
-    // строкой. Результат никогда не null, метод не бросает.
+    // raw — как пришло с провода, бывает null и не строкой; результат не null никогда.
     public static ProviderOrderOutcome classify(Object raw) {
         if (!(raw instanceof String status)) {
             return ProviderOrderOutcome.UNKNOWN;

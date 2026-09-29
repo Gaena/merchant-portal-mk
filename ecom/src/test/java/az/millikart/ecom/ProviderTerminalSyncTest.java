@@ -11,6 +11,7 @@ import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.service.ProviderTerminalSource;
 import az.millikart.ecom.service.ProviderTerminalSource.ProviderTerminalRow;
 import az.millikart.ecom.service.ProviderTerminalSyncService;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Assertions;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 
 // Слепок терминалов провайдера: что бы ни ответил шлюз, живые терминалы не должны гаснуть от одного
 // сбоя. Выключенный терминал приостанавливает платёжные ссылки под ним, поэтому цена ошибки здесь —
@@ -45,12 +47,14 @@ class ProviderTerminalSyncTest {
     // Недоступный шлюз — это «спросить не удалось», а не «терминалов больше нет».
     @Test
     void aFailedQueryChangesNothing() {
-        when(source.fetchActive()).thenThrow(new IllegalStateException("connection refused"));
+        when(source.fetchActive()).thenThrow(new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection",
+                new SQLException("IO Error: The Network Adapter could not establish the connection")));
 
         ProviderTerminalSyncService.SyncOutcome outcome = service.sync();
 
         Assertions.assertFalse(outcome.applied());
-        Assertions.assertEquals("gateway unavailable", outcome.skippedBecause());
+        Assertions.assertEquals("gateway unavailable: IO Error: The Network Adapter could not establish the connection",
+                outcome.skippedBecause());
         verify(repository, never()).save(any());
     }
 
@@ -69,7 +73,7 @@ class ProviderTerminalSyncTest {
 
     @Test
     void aNewTerminalIsRecordedAsActive() {
-        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("E1120020", "BazarStore", "login-1")));
+        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("E1120020", "BazarStore", "login-1", "login-1")));
 
         ProviderTerminalSyncService.SyncOutcome outcome = service.sync();
 
@@ -83,7 +87,7 @@ class ProviderTerminalSyncTest {
     void aTerminalIsDisabledOnlyAfterThreeConsecutiveAbsences() {
         stored.add(ProviderTerminal.builder().rid("E1120020").active(true).missingRuns(0).build());
         // В выгрузке приходит другой терминал: список не пуст, но нашего в нём нет.
-        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("OTHER", "Other", "login-2")));
+        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("OTHER", "Other", "login-2", "login-2")));
 
         Assertions.assertEquals(0, service.sync().disabled(), "first absence must not disable anything");
         Assertions.assertEquals(1, stored.getFirst().getMissingRuns());
@@ -103,30 +107,31 @@ class ProviderTerminalSyncTest {
                 .rid("E1120020").active(true).missingRuns(0).build();
         stored.add(terminal);
 
-        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("OTHER", "Other", "login-2")));
+        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("OTHER", "Other", "login-2", "login-2")));
         service.sync();
         Assertions.assertEquals(1, terminal.getMissingRuns());
 
-        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("E1120020", "BazarStore", "login-1")));
+        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("E1120020", "BazarStore", "login-1", "login-1")));
         service.sync();
 
         Assertions.assertEquals(0, terminal.getMissingRuns());
         Assertions.assertTrue(terminal.isActive());
     }
 
-    // Логин и название принадлежат провайдеру: сменил у себя — сменилось и у нас, иначе терминал
-    // однажды перестанет ходить в шлюз.
+    // Логин, название и номер терминала принадлежат провайдеру: сменил у себя — сменилось и у нас, иначе
+    // заказ однажды уйдёт на чужой или несуществующий терминал (Р-96).
     @Test
     void theLoginAndTitleAlwaysFollowTheProvider() {
         ProviderTerminal terminal = ProviderTerminal.builder()
-                .rid("E1120020").title("Old name").login("old-login").active(true).build();
+                .rid("E1120020").title("Old name").login("old-login").terminalRid("OLD-TID").active(true).build();
         stored.add(terminal);
-        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("E1120020", "New name", "new-login")));
+        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("E1120020", "New name", "new-login", "00044556")));
 
         service.sync();
 
         Assertions.assertEquals("New name", terminal.getTitle());
         Assertions.assertEquals("new-login", terminal.getLogin());
+        Assertions.assertEquals("00044556", terminal.getTerminalRid());
     }
 
     // Одинаковые строки одного мерчанта — это один терминал (например, две привязки PBY), а не
@@ -134,8 +139,8 @@ class ProviderTerminalSyncTest {
     @Test
     void identicalRowsForOneMerchant_countAsOne() {
         when(source.fetchActive()).thenReturn(List.of(
-                new ProviderTerminalRow("E1120020", "BazarStore", "BS00001"),
-                new ProviderTerminalRow("E1120020", "BazarStore", "BS00001")));
+                new ProviderTerminalRow("E1120020", "BazarStore", "BS00001", "BS00001"),
+                new ProviderTerminalRow("E1120020", "BazarStore", "BS00001", "BS00001")));
 
         ProviderTerminalSyncService.SyncOutcome outcome = service.sync();
 
@@ -154,8 +159,8 @@ class ProviderTerminalSyncTest {
                 .rid("E1120020").title("BazarStore").login("BS00001").active(true).missingRuns(2).build();
         stored.add(terminal);
         when(source.fetchActive()).thenReturn(List.of(
-                new ProviderTerminalRow("E1120020", "BazarStore", "BS00001"),
-                new ProviderTerminalRow("E1120020", "BazarStore", "BS00009")));
+                new ProviderTerminalRow("E1120020", "BazarStore", "BS00001", "BS00001"),
+                new ProviderTerminalRow("E1120020", "BazarStore", "BS00009", "BS00009")));
 
         for (int run = 0; run < 3; run++) {
             ProviderTerminalSyncService.SyncOutcome outcome = service.sync();
@@ -172,8 +177,8 @@ class ProviderTerminalSyncTest {
     @Test
     void anAmbiguousNewMerchant_isNotCreated() {
         when(source.fetchActive()).thenReturn(List.of(
-                new ProviderTerminalRow("NEW", "New shop", "PBY-1"),
-                new ProviderTerminalRow("NEW", "New shop", "PBY-2")));
+                new ProviderTerminalRow("NEW", "New shop", "PBY-1", "PBY-1"),
+                new ProviderTerminalRow("NEW", "New shop", "PBY-2", "PBY-2")));
 
         ProviderTerminalSyncService.SyncOutcome outcome = service.sync();
 
@@ -186,8 +191,8 @@ class ProviderTerminalSyncTest {
     @Test
     void aRowWithoutARidIsIgnoredWithoutFailingTheRun() {
         when(source.fetchActive()).thenReturn(List.of(
-                new ProviderTerminalRow(null, "Broken", "login-x"),
-                new ProviderTerminalRow("E1120020", "BazarStore", "login-1")));
+                new ProviderTerminalRow(null, "Broken", "login-x", "login-x"),
+                new ProviderTerminalRow("E1120020", "BazarStore", "login-1", "login-1")));
 
         ProviderTerminalSyncService.SyncOutcome outcome = service.sync();
 

@@ -2,12 +2,7 @@ package az.millikart.pbl.dto;
 
 import az.millikart.pbl.provider.dto.TerminalCheckResult;
 
-/**
- * Что показать администратору после проверки терминала.
- *
- * `outcome` — один из четырёх исходов, и фронт различает их все. `message` — слова провайдера,
- * когда они есть: при отказе они и есть объяснение, почему терминал не принимает оплаты.
- */
+// message — слова провайдера, когда они есть: при отказе это и есть объяснение для администратора.
 public record TerminalCheckResponse(
         TerminalCheckResult.Outcome outcome,
         String providerErrorCode,

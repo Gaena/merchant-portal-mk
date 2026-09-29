@@ -17,7 +17,6 @@ import {
   TableHead,
   TableRow,
   Chip,
-  Switch,
   IconButton,
   Dialog,
   DialogTitle,
@@ -28,6 +27,8 @@ import {
   TablePagination,
   Tooltip,
   InputAdornment,
+  Autocomplete,
+  MenuItem,
 } from '@mui/material';
 import {
   Business as BusinessIcon,
@@ -37,42 +38,54 @@ import {
   CheckCircle as CheckCircleIcon,
   Block as BlockIcon,
   Search as SearchIcon,
+  Edit as EditIcon,
+  Sync as SyncIcon,
 } from '@mui/icons-material';
 
 import { useLanguage } from '../context/LanguageContext';
-import type { TranslationDictionary } from '../i18n/translations';
-import type { CompanyDto } from '../types/dto';
+import type { CompanyDto, ProviderLoginOption, ProviderTerminalSyncOutcome } from '../types/dto';
 
-/** Действие, ждущее подтверждения. Пока оно не подтверждено, на сервер ничего не уходит. */
-type PendingAction =
-  | { kind: 'delete'; company: CompanyDto }
-  | { kind: 'status'; company: CompanyDto; nextStatus: 'ACTIVE' | 'INACTIVE' };
+type CompanyStatus = 'ACTIVE' | 'INACTIVE';
+
+// Статус без значения — активный: так его читают и список, и форма правки.
+const statusOf = (company: CompanyDto): CompanyStatus =>
+  (company.status === 'ACTIVE' || !company.status ? 'ACTIVE' : 'INACTIVE');
 
 export const CompaniesPage: React.FC = () => {
   const { user } = useAuth();
   const { tObj } = useLanguage();
-  // Кто видит страницу — решает RoleRoute (auth/routeAccess.ts: SYSTEM_ADMIN и AUDITOR по матрице
-  // AGENTS.md §6). Здесь isAdmin только прячет запись: POST/PATCH/DELETE /companies — только SYSTEM_ADMIN,
-  // и бэкенд это проверяет сам; UI лишь не показывает кнопки, которые вернут 403.
+  // isAdmin только прячет кнопки, которые вернут 403: права проверяет бэкенд, страницу — RoleRoute.
   const isAdmin = user?.role === 'SYSTEM_ADMIN';
 
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ id: '', name: '' });
+  const [form, setForm] = useState({ id: '', name: '', providerLogin: '', providerPassword: '' });
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState('');
-  // Ни удаление, ни смена статуса не выполняются по клику: сначала окно подтверждения.
-  // Удаление компании к тому же необратимо из портала — updateCompany на удалённой отвечает
-  // «Company not found», воскресить её через API нечем.
-  const [pending, setPending] = useState<PendingAction | null>(null);
+  // Удаление необратимо из портала: удалённую компанию API не находит, вернуть её нечем.
+  const [pendingDelete, setPendingDelete] = useState<CompanyDto | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  // Пароль в форме правки пуст: прочитать его нельзя, только заменить (Р-93).
+  const [editCompany, setEditCompany] = useState<CompanyDto | null>(null);
+  const [editForm, setEditForm] = useState<{ name: string; providerLogin: string; providerPassword: string; status: CompanyStatus }>(
+    { name: '', providerLogin: '', providerPassword: '', status: 'ACTIVE' });
+  const [editError, setEditError] = useState('');
+  const [editConfirm, setEditConfirm] = useState<string[] | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  // Логин сверяется со справочником (Р-94); новый логин провайдера попадёт туда по расписанию
+  // или сразу по кнопке синхронизации.
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<ProviderTerminalSyncOutcome | null>(null);
+  const [syncError, setSyncError] = useState('');
+  // Логин выбирается из свободных логинов справочника (Р-95); серверная проверка остаётся —
+  // логин могут занять или выключить.
+  const [loginOptions, setLoginOptions] = useState<ProviderLoginOption[]>([]);
+  const [loginOptionsState, setLoginOptionsState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [searchQuery, setSearchQuery] = useState('');
-  // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
-  // чтобы не слать запрос на каждую букву.
+  // Поиск — серверный: клиентский фильтр видел бы только текущую страницу (P3-1).
   const debouncedSearch = useDebounced(searchQuery, 300);
 
-  // Страница берётся с сервера (P2-1): `/api/v1/companies` отвечает `PagedResponse`.
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [totalElements, setTotalElements] = useState(0);
@@ -87,7 +100,6 @@ export const CompaniesPage: React.FC = () => {
       setCompanies(list);
       setTotalElements(res.data?.totalElements ?? list.length);
     } catch (err) {
-      // Гонка ответов: устаревший запрос отменён эффектом ниже, его исход не трогает экран.
       if (axios.isCancel(err)) return;
       setCompanies([]);
       setTotalElements(0);
@@ -104,20 +116,10 @@ export const CompaniesPage: React.FC = () => {
     return () => controller.abort();
   }, [fetchCompanies]);
 
-  const applyStatus = async (company: CompanyDto, newStatus: 'ACTIVE' | 'INACTIVE') => {
-    try {
-      // Только статус: PATCH с прежним названием бэкенд записывал в аудит как «Name changed from X to X».
-      await apiClient.patch(`/api/v1/companies/${company.id}`, { status: newStatus });
-      setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, status: newStatus } : c));
-      setSnackbar(`Company status updated to ${newStatus}`);
-    } catch (err: any) {
-      setSnackbar(err.response?.data?.message || 'Failed to update company status');
-    }
-  };
-
+  // Креды к провайдеру обязательны (Р-93).
   const handleCreate = async () => {
-    if (!form.id.trim() || !form.name.trim()) {
-      setError('Company ID and Name are required');
+    if (!form.id.trim() || !form.name.trim() || !form.providerLogin.trim() || !form.providerPassword.trim()) {
+      setError(tObj.companies.formIncomplete);
       return;
     }
     setError('');
@@ -125,17 +127,180 @@ export const CompaniesPage: React.FC = () => {
       await apiClient.post('/api/v1/companies', {
         id: form.id.trim(),
         name: form.name.trim(),
+        providerLogin: form.providerLogin.trim(),
+        providerPassword: form.providerPassword.trim(),
       });
-      // Не дописываем строку в массив: список постраничный и отсортирован сервером по имени —
-      // новая компания может принадлежать другой странице.
+      // Перечитываем, а не дописываем: новая компания может оказаться на другой странице.
       fetchCompanies();
       setCreateOpen(false);
-      setForm({ id: '', name: '' });
-      setSnackbar('Company created successfully');
+      setForm({ id: '', name: '', providerLogin: '', providerPassword: '' });
+      setSnackbar(tObj.companies.created);
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to create company');
+      setError(err.response?.data?.message || tObj.companies.createFailed);
     }
   };
+
+  const loadLoginOptions = async () => {
+    setLoginOptionsState('loading');
+    try {
+      const res = await apiClient.get<ProviderLoginOption[]>('/api/v1/companies/provider-logins');
+      setLoginOptions(Array.isArray(res.data) ? res.data : []);
+      setLoginOptionsState('ready');
+    } catch {
+      setLoginOptions([]);
+      setLoginOptionsState('failed');
+    }
+  };
+
+  const openEdit = (company: CompanyDto) => {
+    setEditCompany(company);
+    setEditForm({ name: company.name ?? '', providerLogin: company.providerLogin ?? '', providerPassword: '', status: statusOf(company) });
+    setEditError('');
+    setSyncResult(null);
+    setSyncError('');
+    loadLoginOptions();
+  };
+
+  const openCreate = () => {
+    setError('');
+    setSyncResult(null);
+    setSyncError('');
+    setForm(f => ({ ...f, providerLogin: '' }));
+    loadLoginOptions();
+    setCreateOpen(true);
+  };
+
+  const syncProviderDirectory = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    setSyncError('');
+    try {
+      const res = await apiClient.post<ProviderTerminalSyncOutcome>('/api/v1/ecom/provider-terminals/sync');
+      setSyncResult(res.data);
+      await loadLoginOptions();
+    } catch (err: any) {
+      setSyncError(err.response?.data?.message || tObj.terminals.providerTerminalLoadFailed);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // current — логин самой компании: среди свободных его нет, но остаться на нём можно.
+  const loginPicker = (value: string, onChange: (login: string) => void, current?: string | null) => {
+    const options = current && !loginOptions.some(option => option.login === current)
+      ? [{ login: current, merchants: [] }, ...loginOptions]
+      : loginOptions;
+    return (
+      <Box>
+        <Autocomplete
+          options={options}
+          value={options.find(option => option.login === value) ?? null}
+          loading={loginOptionsState === 'loading'}
+          onChange={(_, option) => onChange(option?.login ?? '')}
+          getOptionLabel={option => option.login}
+          isOptionEqualToValue={(option, selected) => option.login === selected.login}
+          renderOption={({ key, ...optionProps }, option) => (
+            <li key={key} {...optionProps}>
+              <Box>
+                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{option.login}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {option.merchants.length > 0 ? option.merchants.join(', ') : '—'}
+                </Typography>
+              </Box>
+            </li>
+          )}
+          renderInput={params => (
+            <TextField {...params} label={`${tObj.companies.providerLogin} *`} helperText={tObj.companies.providerLoginHint} />
+          )}
+        />
+        {loginOptionsState === 'failed' && <Alert severity="error" sx={{ mt: 1 }}>{tObj.common.loadFailed}</Alert>}
+        {loginOptionsState === 'ready' && options.length === 0 && (
+          <Alert severity="info" sx={{ mt: 1 }}>{tObj.companies.providerLoginEmpty}</Alert>
+        )}
+      </Box>
+    );
+  };
+
+  const directorySync = (
+    <Box>
+      <Button size="small" startIcon={<SyncIcon />} disabled={syncing} onClick={syncProviderDirectory}>
+        {syncing ? tObj.common.loading : tObj.terminals.syncDirectory}
+      </Button>
+      {syncResult?.logins && (
+        <Alert severity={syncResult.logins.applied ? 'success' : 'warning'} sx={{ mt: 1 }}>
+          {syncResult.logins.applied
+            ? `${tObj.companies.loginsSyncApplied}: ${syncResult.logins.logins}`
+            : `${tObj.companies.loginsSyncSkipped}: ${syncResult.logins.skippedBecause ?? '—'}`}
+        </Alert>
+      )}
+      {syncError && <Alert severity="error" sx={{ mt: 1 }}>{syncError}</Alert>}
+    </Box>
+  );
+
+  // Только изменившиеся поля; пустой пароль бэкенд читает как «не менять».
+  const editPayload = (): Record<string, string> => {
+    if (!editCompany) return {};
+    const payload: Record<string, string> = {};
+    const name = editForm.name.trim();
+    const login = editForm.providerLogin.trim();
+    if (name !== (editCompany.name ?? '')) payload.name = name;
+    if (login && login !== (editCompany.providerLogin ?? '')) payload.providerLogin = login;
+    if (editForm.providerPassword.trim()) payload.providerPassword = editForm.providerPassword.trim();
+    if (editForm.status !== statusOf(editCompany)) payload.status = editForm.status;
+    return payload;
+  };
+
+  const statusLabel = (status: CompanyStatus) => (status === 'ACTIVE' ? tObj.common.active : tObj.common.inactive);
+
+  const editChanges = (payload: Record<string, string>): string[] => {
+    if (!editCompany) return [];
+    const changes: string[] = [];
+    if (payload.name !== undefined) changes.push(`${tObj.companies.name}: ${editCompany.name || '—'} → ${payload.name}`);
+    if (payload.providerLogin !== undefined) {
+      changes.push(`${tObj.companies.providerLogin}: ${editCompany.providerLogin || '—'} → ${payload.providerLogin}`);
+    }
+    if (payload.providerPassword !== undefined) changes.push(tObj.companies.providerPasswordReplaced);
+    if (payload.status !== undefined) {
+      changes.push(`${tObj.companies.status}: ${statusLabel(statusOf(editCompany))} → ${statusLabel(payload.status as CompanyStatus)}`);
+    }
+    return changes;
+  };
+
+  // Без изменений PATCH не уходит: он всё равно оставил бы запись в журнале аудита.
+  const askEdit = () => {
+    if (!editCompany) return;
+    if (!editForm.name.trim() || (!editForm.providerLogin.trim() && editCompany.providerLogin)) {
+      setEditError(tObj.companies.formIncomplete);
+      return;
+    }
+    setEditError('');
+    const changes = editChanges(editPayload());
+    if (changes.length === 0) {
+      setEditCompany(null);
+      setSnackbar(tObj.companies.editNothingChanged);
+      return;
+    }
+    setEditConfirm(changes);
+  };
+
+  const saveEdit = async () => {
+    if (!editCompany || editBusy) return;
+    setEditBusy(true);
+    try {
+      const res = await apiClient.patch<CompanyDto>(`/api/v1/companies/${editCompany.id}`, editPayload());
+      setCompanies(prev => prev.map(c => (c.id === editCompany.id ? res.data : c)));
+      setEditCompany(null);
+      setSnackbar(tObj.companies.updated);
+    } catch (err: any) {
+      setEditError(err.response?.data?.message || tObj.companies.updateFailed);
+    } finally {
+      setEditBusy(false);
+      setEditConfirm(null);
+    }
+  };
+
+  const editPending = editConfirm !== null ? editPayload() : {};
+  const credentialsChanging = editPending.providerLogin !== undefined || editPending.providerPassword !== undefined;
 
   const applyDelete = async (company: CompanyDto) => {
     try {
@@ -148,26 +313,20 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
-  // Единственное место, откуда действие уходит на сервер. Кнопка заблокирована на время
-  // запроса: второй клик по «Удалить» иначе ушёл бы вторым DELETE.
-  const runPending = async () => {
-    if (!pending || confirmBusy) return;
+  // Единственный путь DELETE на сервер; confirmBusy не пускает второй клик вторым запросом.
+  const runDelete = async () => {
+    if (!pendingDelete || confirmBusy) return;
     setConfirmBusy(true);
     try {
-      if (pending.kind === 'delete') {
-        await applyDelete(pending.company);
-      } else {
-        await applyStatus(pending.company, pending.nextStatus);
-      }
+      await applyDelete(pendingDelete);
     } finally {
       setConfirmBusy(false);
-      setPending(null);
+      setPendingDelete(null);
     }
   };
 
   return (
     <Box>
-      {/* Header */}
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -182,7 +341,7 @@ export const CompaniesPage: React.FC = () => {
             {tObj.common.refresh}
           </Button>
           {isAdmin && (
-            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateOpen(true)}>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
               {tObj.companies.addCompany}
             </Button>
           )}
@@ -195,7 +354,6 @@ export const CompaniesPage: React.FC = () => {
         </Alert>
       )}
 
-      {/* Search Bar */}
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider' }}>
         <TextField
           size="small"
@@ -213,7 +371,6 @@ export const CompaniesPage: React.FC = () => {
         />
       </Paper>
 
-      {/* Table */}
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
         <TableContainer>
           <Table>
@@ -221,21 +378,24 @@ export const CompaniesPage: React.FC = () => {
               <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.companyId}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.name}</TableCell>
+                {isAdmin && <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.providerLogin}</TableCell>}
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.status}</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>{tObj.common.actions}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }} align="center">{tObj.common.actions}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {companies.map((comp) => {
-                const isActive = comp.status === 'ACTIVE' || !comp.status;
+                const isActive = statusOf(comp) === 'ACTIVE';
                 return (
                   <TableRow key={comp.id} hover>
                     <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'primary.main' }}>
                       {comp.id}
                     </TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>{comp.name}</TableCell>
+                    {isAdmin && (
+                      <TableCell sx={{ fontFamily: 'monospace' }}>{comp.providerLogin || '—'}</TableCell>
+                    )}
                     <TableCell>
                       <Chip
                         icon={isActive ? <CheckCircleIcon fontSize="small" /> : <BlockIcon fontSize="small" />}
@@ -245,27 +405,20 @@ export const CompaniesPage: React.FC = () => {
                         sx={{ fontWeight: 600 }}
                       />
                     </TableCell>
-                    <TableCell>
-                      <Tooltip title={isActive ? tObj.common.inactive : tObj.common.active}>
-                        <Switch
-                          checked={isActive}
-                          onChange={() => setPending({
-                            kind: 'status',
-                            company: comp,
-                            nextStatus: isActive ? 'INACTIVE' : 'ACTIVE',
-                          })}
-                          color="success"
-                          disabled={!isAdmin}
-                        />
-                      </Tooltip>
-                    </TableCell>
                     <TableCell sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
                       {comp.createdAt ? new Date(comp.createdAt).toLocaleString() : 'N/A'}
                     </TableCell>
                     <TableCell align="center">
                       {isAdmin && (
+                        <Tooltip title={tObj.companies.editCompany}>
+                          <IconButton color="primary" size="small" onClick={() => openEdit(comp)}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {isAdmin && (
                         <Tooltip title={tObj.common.delete}>
-                          <IconButton color="error" size="small" onClick={() => setPending({ kind: 'delete', company: comp })}>
+                          <IconButton color="error" size="small" onClick={() => setPendingDelete(comp)}>
                             <DeleteIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -276,7 +429,7 @@ export const CompaniesPage: React.FC = () => {
               })}
               {companies.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={isAdmin ? 6 : 5} align="center" sx={{ py: 6 }}>
                     <BusinessIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                     <Typography color="text.secondary">No companies found in directory.</Typography>
                   </TableCell>
@@ -296,7 +449,6 @@ export const CompaniesPage: React.FC = () => {
         />
       </Paper>
 
-      {/* Create Dialog */}
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.companies.createDialogTitle}</DialogTitle>
         <DialogContent>
@@ -316,6 +468,17 @@ export const CompaniesPage: React.FC = () => {
               placeholder="e.g. Acme Supermarket LLC"
               fullWidth
             />
+            {loginPicker(form.providerLogin, login => setForm(f => ({ ...f, providerLogin: login })))}
+            {directorySync}
+            <TextField
+              label={`${tObj.companies.providerPassword} *`}
+              type="password"
+              value={form.providerPassword}
+              onChange={e => setForm(f => ({ ...f, providerPassword: e.target.value }))}
+              helperText={tObj.companies.providerPasswordHint}
+              autoComplete="new-password"
+              fullWidth
+            />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
@@ -324,46 +487,97 @@ export const CompaniesPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Confirm Dialog: удаление и смена статуса — одно окно на два действия,
-          заголовок, вопрос, цвет и надпись кнопки считаются из `pending.kind`. */}
+      <Dialog open={editCompany !== null} onClose={() => { if (!editBusy) setEditCompany(null); }} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.companies.editCompany}: {editCompany?.id}</DialogTitle>
+        <DialogContent>
+          {editError && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{editError}</Alert>}
+          <Stack spacing={2.5} sx={{ mt: 1 }}>
+            <TextField
+              label={`${tObj.companies.name} *`}
+              value={editForm.name}
+              onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+              fullWidth
+            />
+            {loginPicker(editForm.providerLogin,
+              login => setEditForm(f => ({ ...f, providerLogin: login })),
+              editCompany?.providerLogin)}
+            {directorySync}
+            <TextField
+              label={tObj.companies.newProviderPassword}
+              type="password"
+              value={editForm.providerPassword}
+              onChange={e => setEditForm(f => ({ ...f, providerPassword: e.target.value }))}
+              helperText={tObj.companies.newProviderPasswordHint}
+              autoComplete="new-password"
+              fullWidth
+            />
+            <TextField
+              select
+              label={tObj.companies.status}
+              value={editForm.status}
+              onChange={e => setEditForm(f => ({ ...f, status: e.target.value === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE' }))}
+              helperText={tObj.companies.statusWarning}
+              fullWidth
+            >
+              <MenuItem value="ACTIVE">{tObj.common.active}</MenuItem>
+              <MenuItem value="INACTIVE">{tObj.common.inactive}</MenuItem>
+            </TextField>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setEditCompany(null)} disabled={editBusy}>{tObj.common.cancel}</Button>
+          <Button variant="contained" onClick={askEdit} disabled={editBusy}>{tObj.common.save}</Button>
+        </DialogActions>
+      </Dialog>
+
       <ConfirmDialog
-        open={pending !== null}
-        title={confirmTitle(tObj, pending)}
-        question={confirmQuestion(tObj, pending)}
-        confirmLabel={pending?.kind === 'delete' ? tObj.common.delete : tObj.common.confirm}
-        confirmColor={pending?.kind === 'delete' ? 'error' : 'primary'}
-        busy={confirmBusy}
-        onConfirm={runPending}
-        onCancel={() => setPending(null)}
+        open={editConfirm !== null}
+        title={tObj.companies.editConfirmTitle}
+        question={tObj.companies.editConfirmQuestion}
+        confirmLabel={tObj.common.confirm}
+        confirmColor="primary"
+        busy={editBusy}
+        onConfirm={saveEdit}
+        onCancel={() => setEditConfirm(null)}
       >
-        {/* Что именно сейчас изменится — прямо в окне: подтверждать «компанию» вслепую
-            значит подтверждать не глядя. */}
-        {pending && (
+        {editCompany && (
           <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
-            <Typography variant="body2" sx={{ fontWeight: 700 }}>{pending.company.name}</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>{editCompany.name}</Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.secondary', mb: 1 }}>
+              {editCompany.id}
+            </Typography>
+            <Stack spacing={1}>
+              {(editConfirm ?? []).map(change => (
+                <Typography key={change} variant="body2">{change}</Typography>
+              ))}
+            </Stack>
+          </Box>
+        )}
+        {credentialsChanging && <Alert severity="warning" sx={{ mt: 2 }}>{tObj.companies.credentialsWarning}</Alert>}
+        {editPending.status !== undefined && <Alert severity="info" sx={{ mt: 2 }}>{tObj.companies.statusWarning}</Alert>}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={tObj.companies.deleteTitle}
+        question={tObj.companies.deleteQuestion}
+        confirmLabel={tObj.common.delete}
+        confirmColor="error"
+        busy={confirmBusy}
+        onConfirm={runDelete}
+        onCancel={() => setPendingDelete(null)}
+      >
+        {pendingDelete && (
+          <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>{pendingDelete.name}</Typography>
             <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>
-              {pending.company.id}
+              {pendingDelete.id}
             </Typography>
           </Box>
         )}
-        {pending?.kind === 'delete' && (
-          <Alert severity="warning" sx={{ mt: 2 }}>{tObj.companies.deleteIrreversible}</Alert>
-        )}
+        <Alert severity="warning" sx={{ mt: 2 }}>{tObj.companies.deleteIrreversible}</Alert>
       </ConfirmDialog>
     </Box>
   );
 };
 
-// Заголовок и вопрос — три разных случая, и путать их нельзя: снятие пометки «активна» и
-// удаление отличаются последствиями настолько, что общий текст был бы вреднее отсутствия окна.
-function confirmTitle(tObj: TranslationDictionary, pending: PendingAction | null): string {
-  if (!pending) return '';
-  if (pending.kind === 'delete') return tObj.companies.deleteTitle;
-  return pending.nextStatus === 'ACTIVE' ? tObj.companies.activateTitle : tObj.companies.deactivateTitle;
-}
-
-function confirmQuestion(tObj: TranslationDictionary, pending: PendingAction | null): string {
-  if (!pending) return '';
-  if (pending.kind === 'delete') return tObj.companies.deleteQuestion;
-  return pending.nextStatus === 'ACTIVE' ? tObj.companies.activateQuestion : tObj.companies.deactivateQuestion;
-}

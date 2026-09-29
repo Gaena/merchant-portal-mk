@@ -1,5 +1,6 @@
 package az.millikart.pbl;
 
+import az.millikart.common.security.CredentialCipher;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -71,6 +72,9 @@ class PblAuditIntegrationTest {
     private TerminalRepository terminalRepository;
 
     @Autowired
+    private CredentialCipher credentialCipher;
+
+    @Autowired
     private AuditLogTestRepository auditLogs;
 
     @Autowired
@@ -87,6 +91,7 @@ class PblAuditIntegrationTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "test-company", "other-company");
 
         terminalRepository.save(terminal(TERMINAL_ID, "test-company"));
         terminalRepository.save(terminal(FOREIGN_TERMINAL_ID, "other-company"));
@@ -100,7 +105,7 @@ class PblAuditIntegrationTest {
     @Test
     void refund_isRecordedWithAmountAndAcquirerIdentifiers() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(any(), anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-77", "RID-42", "APPR-9", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
@@ -118,10 +123,30 @@ class PblAuditIntegrationTest {
                 .contains("40.00", "AZN", "RID-42", "TRAN-77", "PARTIALLY_REFUNDED");
     }
 
+    // Р-104: запись о деньгах — компании терминала, а не того, кто действовал. У администратора компании
+    // нет, и раньше его возврат по ссылке компании в её журнале не был виден.
+    @Test
+    void anAdminRefund_isRecordedForTheCompanyOfTheTerminal() throws Exception {
+        Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
+        when(acquiringClient.refund(any(), anyString(), any(), any()))
+                .thenReturn(new MoneyOperationResult("TRAN-78", "RID-44", "APPR-7", Map.of("status", "ok")));
+        String adminToken = "Bearer " + jwtProvider.generateToken("admin-user", "admin@millikart.az", "SYSTEM_ADMIN", null);
+
+        mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":10.00}"))
+                .andExpect(status().isOk());
+
+        AuditLog record = single("REFUND");
+        assertThat(record.getPerformedBy()).isEqualTo("admin@millikart.az");
+        assertThat(record.getCompanyId()).isEqualTo("test-company");
+    }
+
     @Test
     void capture_isRecordedWithAmountAndAcquirerIdentifiers() throws Exception {
         Transaction held = transaction(TransactionStatus.AUTHORIZED, PaymentType.DMS);
-        when(acquiringClient.completeDms(any(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(any(), anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-88", "RID-43", "APPR-8", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + held.getId() + "/complete")
@@ -143,7 +168,7 @@ class PblAuditIntegrationTest {
     @Test
     void refundWithUnknownOutcome_isRecordedEvenThoughTheTransactionRolledBack() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(any(), anyString(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException("No confirmation received from the acquirer"));
 
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
@@ -170,7 +195,7 @@ class PblAuditIntegrationTest {
     @Test
     void captureWithUnknownOutcome_isRecordedEvenThoughTheTransactionRolledBack() throws Exception {
         Transaction held = transaction(TransactionStatus.AUTHORIZED, PaymentType.DMS);
-        when(acquiringClient.completeDms(any(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.completeDms(any(), anyString(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException("No confirmation received from the acquirer"));
 
         mockMvc.perform(post("/api/v1/transactions/" + held.getId() + "/complete")
@@ -250,7 +275,7 @@ class PblAuditIntegrationTest {
     @Test
     void auditFailure_doesNotBreakRefund() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), anyString(), anyString(), any()))
+        when(acquiringClient.refund(any(), anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-99", "RID-99", "APPR-99", Map.of("status", "ok")));
 
         jdbcTemplate.execute("DROP TABLE audit_logs");
@@ -275,8 +300,7 @@ class PblAuditIntegrationTest {
         return Terminal.builder()
                 .id(id)
                 .name("Terminal " + id)
-                .login("TerminalSys/Admin")
-                .password("1234")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId(companyId)
                 .build();
     }

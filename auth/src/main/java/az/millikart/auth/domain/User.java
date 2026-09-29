@@ -58,6 +58,17 @@ public class User {
     @Column(name = "lockout_until")
     private Instant lockoutUntil;
 
+    // Пароль задал не владелец — при создании, сбросе или bootstrap: до смены сессии нет (PCI DSS 8.3.5, Р-100).
+    @Column(name = "password_change_required", nullable = false)
+    @Builder.Default
+    private boolean passwordChangeRequired = false;
+
+    // Активность — вход, refresh, создание, разблокировка; от неё 90 дней до автоблокировки (Р-101).
+    // Не «последний вход»: у заведённых до Р-101 это момент миграции.
+    @Column(name = "last_activity_at", nullable = false)
+    @Builder.Default
+    private Instant lastActivityAt = Instant.now();
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

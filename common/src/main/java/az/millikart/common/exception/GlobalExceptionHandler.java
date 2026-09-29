@@ -23,8 +23,7 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    // Маркер для мониторинга: каждое появление — движение денег с неизвестным исходом, и каждое
-    // требует, чтобы человек сверил его с эквайером.
+    // Маркер мониторинга: движение денег с неизвестным исходом, человек сверяет его с эквайером.
     private static final String PAYMENT_OUTCOME_UNKNOWN_MARKER = "PAYMENT_OUTCOME_UNKNOWN";
 
     @ExceptionHandler(UnauthorizedException.class)
@@ -42,9 +41,8 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
     }
 
-    // 502, а не 400: 400 сказал бы мерчанту, что операция отклонена и её безопасно повторить, — а у
-    // эквайера она могла уже пройти. Единственный верный следующий шаг — проверить транзакцию, а не
-    // выстрелить запросом ещё раз.
+    // 502, а не 400: 400 сказал бы мерчанту, что операцию безопасно повторить, а у эквайера она могла
+    // пройти. Следующий шаг — проверить статус, а не повторять.
     @ExceptionHandler(PaymentOutcomeUnknownException.class)
     public ResponseEntity<ErrorResponse> handlePaymentOutcomeUnknown(PaymentOutcomeUnknownException ex,
                                                                      HttpServletRequest request) {
@@ -65,9 +63,8 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request);
     }
 
-    // Тело 429 без счётчиков и порогов: сказать вызывающему, сколько попыток осталось, — научить
-    // его держаться прямо под лимитом. Секунды округляются вверх минимум до одной, потому что
-    // Retry-After: 0 читается как «повторяй прямо сейчас».
+    // Тело 429 без счётчиков и порогов: иначе вызывающий держится прямо под лимитом. Retry-After не
+    // меньше 1: 0 читается как «повторяй сейчас».
     @ExceptionHandler(TooManyRequestsException.class)
     public ResponseEntity<ErrorResponse> handleTooManyRequests(TooManyRequestsException ex, HttpServletRequest request) {
         long retryAfterSeconds = Math.max(1, ex.getRetryAfter().toSeconds());
@@ -102,6 +99,22 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, message, request);
     }
 
+    // Нет обязательного параметра или он не того типа — ошибка клиента, 400 (Р-103). Имя параметра —
+    // в ответ, присланное значение не отражаем.
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingParameter(
+            org.springframework.web.bind.MissingServletRequestParameterException ex, HttpServletRequest request) {
+        log.debug("Missing parameter {} in {} {}", ex.getParameterName(), request.getMethod(), request.getRequestURI());
+        return build(HttpStatus.BAD_REQUEST, "Required parameter '" + ex.getParameterName() + "' is missing", request);
+    }
+
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
+        log.debug("Parameter {} of the wrong type in {} {}", ex.getName(), request.getMethod(), request.getRequestURI());
+        return build(HttpStatus.BAD_REQUEST, "Parameter '" + ex.getName() + "' has an invalid value", request);
+    }
+
     @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(
             org.springframework.http.converter.HttpMessageNotReadableException ex,
@@ -110,10 +123,8 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, "Invalid request payload format or parameter value", request);
     }
 
-    // Запрос, не попавший ни в один обработчик. Без этого он падал в handleUnexpected и возвращался
-    // как 500 «Unexpected server error» с ERROR в логе — за опечатку в URL. С P1-1 это стало
-    // важнее: actuator уехал на свой порт, swagger по умолчанию выключен, и пути actuator и
-    // springdoc на основном порту — ровно этот случай, где «не найдено» и есть честный ответ.
+    // Путь без обработчика — 404, а не 500 с ERROR за опечатку в URL. Сюда же попадают actuator и
+    // выключенный springdoc на рабочем порту (P1-1).
     @ExceptionHandler({
             org.springframework.web.servlet.resource.NoResourceFoundException.class,
             org.springframework.web.servlet.NoHandlerFoundException.class
@@ -123,10 +134,7 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.NOT_FOUND, "Endpoint not found", request);
     }
 
-    // Верный путь, неверный глагол — GET /api/v1/auth/login по @PostMapping: так делает браузер с
-    // вставленным в него адресом API и любой сканер со всем подряд. Тот же дефект, что у
-    // handleNoHandler, только про метод: без этого — 500 со стектрейсом, будто виноват сервис.
-    // Allow не любезность: RFC 9110 требует его на 405, и только он делает отказ действенным.
+    // Верный путь, неверный метод — 405, а не 500 со стектрейсом. Allow на 405 требует RFC 9110.
     @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ErrorResponse> handleMethodNotSupported(
             org.springframework.web.HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
@@ -145,8 +153,7 @@ public class GlobalExceptionHandler {
         return response.body(body(HttpStatus.METHOD_NOT_ALLOWED, message, request));
     }
 
-    // Та же форма ещё раз: тело, которое эндпойнт не умеет читать (form-post в JSON-API, запрос
-    // вовсе без Content-Type). Ошибка клиента, поэтому 415 и строка DEBUG, а не 500 со стектрейсом.
+    // Тело, которое эндпоинт не читает (form-post, нет Content-Type), — ошибка клиента: 415, а не 500.
     @ExceptionHandler(org.springframework.web.HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<ErrorResponse> handleMediaTypeNotSupported(
             org.springframework.web.HttpMediaTypeNotSupportedException ex, HttpServletRequest request) {
@@ -173,8 +180,7 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(status).body(body(status, message, request));
     }
 
-    // Единственная форма, которую имеет любой ответ об ошибке, с какими бы статусом и заголовками
-    // он ни шёл.
+    // Единая форма любого ответа об ошибке.
     private ErrorResponse body(HttpStatus status, String message, HttpServletRequest request) {
         return new ErrorResponse(
                 Instant.now(),

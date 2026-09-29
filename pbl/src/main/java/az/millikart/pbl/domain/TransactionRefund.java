@@ -17,9 +17,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-// Подтверждённый эквайером возврат — строкой, со временем возврата (Р-89). Пишется в той же
-// транзакции, что и рост refunded_amount; свидетельство для спора по-прежнему лежит в
-// provider_response.mpRefunds. Сводка главной вычитает возвраты по refundedAt, а не по дате платежа.
+// Подтверждённый возврат со временем возврата: по нему статистика вычитает возвраты (Р-89). Пишется
+// в одной транзакции с ростом refunded_amount; свидетельство для спора — provider_response.mpRefunds.
 @Entity
 @Table(name = "transaction_refunds")
 @Getter

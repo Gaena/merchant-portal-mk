@@ -1,5 +1,7 @@
 package az.millikart.pbl;
 
+import az.millikart.common.security.CredentialCipher;
+import org.springframework.jdbc.core.JdbcTemplate;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -66,6 +68,12 @@ public class PaymentLinkLastPaidAtTest {
     private TerminalRepository terminalRepository;
 
     @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private CredentialCipher credentialCipher;
+
+    @Autowired
     private EntityManagerFactory entityManagerFactory;
 
     // Шпион, а не мок: настоящие запросы выполняются, считаем лишь кого и сколько раз спросили.
@@ -80,12 +88,12 @@ public class PaymentLinkLastPaidAtTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "test-company");
 
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Test Terminal")
-                .login("TerminalSys/Admin")
-                .password("1234")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId("test-company")
                 .build());
 

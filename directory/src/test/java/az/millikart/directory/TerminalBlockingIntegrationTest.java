@@ -6,7 +6,6 @@ import az.millikart.common.audit.AuditOutcome;
 import az.millikart.common.security.JwtProvider;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.directory.domain.TerminalStatus;
-import az.millikart.directory.dto.CreateCompanyRequest;
 import az.millikart.directory.dto.CreateTerminalRequest;
 import az.millikart.directory.dto.UpdateTerminalRequest;
 import az.millikart.directory.repository.CompanyRepository;
@@ -36,13 +35,13 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
+import static az.millikart.directory.DirectoryTestFixtures.company;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -108,6 +107,7 @@ public class TerminalBlockingIntegrationTest {
         auditLogRepository.deleteAll();
         terminalRepository.deleteAll();
         companyRepository.deleteAll();
+        DirectoryTestFixtures.providerLogins(jdbcTemplate, "comp-01");
 
         adminToken = "Bearer " + jwtProvider.generateToken("000", "admin@millikart.az", "SYSTEM_ADMIN", null);
         employeeTokenCompany1 = "Bearer " + jwtProvider.generateToken("444", "employee@comp1.com", "COMPANY_EMPLOYEE", "comp-01");
@@ -203,7 +203,7 @@ public class TerminalBlockingIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, null, null, TerminalStatus.ACTIVE))))
+                                new UpdateTerminalRequest(null, null, TerminalStatus.ACTIVE))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("ACTIVE")));
 
@@ -219,7 +219,7 @@ public class TerminalBlockingIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, null, null, TerminalStatus.BLOCKED))))
+                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED))))
                 .andExpect(status().isOk());
 
         assertThat(statusOf(link)).isEqualTo("CANCELED");
@@ -234,7 +234,7 @@ public class TerminalBlockingIntegrationTest {
                 .when(paymentLinkStatusRepository).suspendActiveLinks(anyInt());
 
         assertThatThrownBy(() -> terminalService.updateTerminal(terminal,
-                new UpdateTerminalRequest(null, null, null, null, TerminalStatus.BLOCKED),
+                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED),
                 adminPrincipal()))
                 .isInstanceOf(DataAccessResourceFailureException.class);
 
@@ -276,7 +276,7 @@ public class TerminalBlockingIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, null, null, TerminalStatus.BLOCKED))))
+                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED))))
                 .andExpect(status().isForbidden());
 
         assertThat(terminalRepository.findById(terminal).orElseThrow().getStatus())
@@ -303,7 +303,7 @@ public class TerminalBlockingIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, null, null, status))))
+                                new UpdateTerminalRequest(null, null, status))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is(status.name())));
     }
@@ -341,77 +341,11 @@ public class TerminalBlockingIntegrationTest {
         mockMvc.perform(post("/api/v1/companies")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateCompanyRequest(id, name))))
+                        .content(objectMapper.writeValueAsString(company(id, name))))
                 .andExpect(status().isCreated());
     }
 
-    // --- пароль терминала ------------------------------------------------------------------
-
-    // Пароль эквайринга уходит наружу ровно одним путём и только администратору системы.
-    // Каждое чтение оставляет след: посмотреть чужой платёжный ключ — как раз то событие,
-    // ради которого журнал и заведён.
-    @Test
-    public void password_isRevealedToASystemAdmin_andRecorded() throws Exception {
-        mockMvc.perform(get("/api/v1/terminals/{id}/password", terminal)
-                        .header(HttpHeaders.AUTHORIZATION, adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id", is(terminal)))
-                .andExpect(jsonPath("$.password", is("term_pass")));
-
-        List<AuditLog> reads = auditLogRepository.findAll().stream()
-                .filter(record -> "READ".equals(record.getAction())
-                        && String.valueOf(terminal).equals(record.getEntityId()))
-                .toList();
-        assertThat(reads).hasSize(1);
-        assertThat(reads.getFirst().getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
-        assertThat(reads.getFirst().getPerformedBy()).isEqualTo("admin@millikart.az");
-        // Сам ключ в журнал не попадает: журнал читают не только те, кому пароль полагается.
-        assertThat(reads.getFirst().getDetails()).doesNotContain("term_pass");
-    }
-
-    // Сотруднику компании пароль не показывают, хотя терминалы своей компании он читает свободно.
-    @Test
-    public void password_isRefusedToEveryoneElse_andTheAttemptIsRecorded() throws Exception {
-        mockMvc.perform(get("/api/v1/terminals/{id}/password", terminal)
-                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
-                .andExpect(status().isForbidden());
-
-        List<AuditLog> denied = auditLogRepository.findAll().stream()
-                .filter(record -> record.getOutcome() == AuditOutcome.DENIED)
-                .toList();
-        assertThat(denied).hasSize(1);
-        assertThat(denied.getFirst().getAction()).isEqualTo("READ");
-        assertThat(denied.getFirst().getPerformedBy()).isEqualTo("employee@comp1.com");
-    }
-
-    // В обычном ответе по терминалу пароль как был замаскирован, так и остаётся: отдельный путь
-    // заведён именно для того, чтобы списки и карточки ключа не несли.
-    @Test
-    public void terminalResponse_keepsThePasswordMasked() throws Exception {
-        mockMvc.perform(get("/api/v1/terminals/{id}", terminal)
-                        .header(HttpHeaders.AUTHORIZATION, adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.password", is("********")));
-    }
-
-    // Менять пароль тоже может только администратор системы: молча проигнорировать чужую попытку
-    // нельзя — глава компании решил бы, что ключ сменён, и остался бы со старым.
-    @Test
-    public void passwordChange_byAnyoneButASystemAdmin_isRefusedAndChangesNothing() throws Exception {
-        String headTokenCompany1 = "Bearer " + jwtProvider.generateToken(
-                "111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
-
-        mockMvc.perform(patch("/api/v1/terminals/{id}", terminal)
-                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"password\":\"stolen-key\"}"))
-                .andExpect(status().isForbidden());
-
-        assertThat(terminalRepository.findById(terminal).orElseThrow().getPassword())
-                .isEqualTo("term_pass");
-    }
-
-    // Остальные поля глава компании правит по-прежнему: ограничение касается ключа, а не терминала.
+    // Правка терминала руководителем компании осталась: заводит терминалы только администратор (Р-93).
     @Test
     public void nameChange_byACompanyHead_stillGoesThrough() throws Exception {
         String headTokenCompany1 = "Bearer " + jwtProvider.generateToken(
@@ -425,25 +359,21 @@ public class TerminalBlockingIntegrationTest {
                 .andExpect(jsonPath("$.name", is("Renamed Terminal")));
     }
 
-    /**
-     * Момент времени так, как его пишет приложение.
-     *
-     * Колонка `expires_at` объявлена как `timestamp` без зоны, и Hibernate кладёт в неё `Instant`
-     * в UTC. `java.sql.Timestamp.from(...)`, который стоял здесь раньше, драйвер переводит в
-     * **локальную зону JVM**: на машине в Баку срок «час назад» ложился в базу как «через три
-     * часа», разблокировка считала ссылку живой и возвращала её в ACTIVE вместо EXPIRED.
-     * На H2 расхождение не проявлялось — поймалось сразу после переезда на PostgreSQL.
-     */
+    // Как пишет приложение: expires_at — timestamp без зоны, Hibernate кладёт Instant в UTC.
+    // Timestamp.from драйвер переводит в зону JVM: в Баку «час назад» ложился как «через три часа»,
+    // и разблокировка возвращала просроченную ссылку в ACTIVE. На H2 не видно.
     private static LocalDateTime utc(Instant instant) {
         return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 
+    // Терминал выбирается из справочника провайдера (Р-93): сначала строка справочника с этим названием.
     private int createTerminal(String name) throws Exception {
+        String rid = "RID-" + UUID.randomUUID().toString().substring(0, 8);
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", rid, name, "term_login");
         String body = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                new CreateTerminalRequest(name, "term_login", "term_pass", "comp-01", null))))
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", rid))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status", is("ACTIVE")))
                 .andReturn().getResponse().getContentAsString();

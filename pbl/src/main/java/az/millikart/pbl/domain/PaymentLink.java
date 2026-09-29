@@ -45,7 +45,7 @@ public class PaymentLink {
     @Column(name = "version")
     private Long version;
 
-    // Идентификатор ссылки на стороне эквайера, в его терминах — rid.
+    // Короткий номер ссылки RID-XXXXXXXX (rid в ответе API); генерируется у нас, эквайеру не уходит.
     @Column(name = "provider_reference")
     private String providerReference;
 
@@ -58,7 +58,6 @@ public class PaymentLink {
     @Column(name = "amount", nullable = false)
     private BigDecimal amount;
 
-    // Трёхбуквенный код валюты по ISO 4217, например AZN.
     @Column(name = "currency", nullable = false)
     private String currency;
 

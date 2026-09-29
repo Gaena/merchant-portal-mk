@@ -45,6 +45,7 @@ public class TxpgDataSourceConfig {
     @Bean("txpgDataSource")
     @ConfigurationProperties("ecom.txpg.datasource.hikari")
     public DataSource txpgDataSource(@Qualifier("txpgDataSourceProperties") DataSourceProperties properties) {
+        requireGatewaySettings(properties);
         HikariDataSource dataSource = properties.initializeDataSourceBuilder()
                 .type(HikariDataSource.class)
                 .build();
@@ -53,13 +54,29 @@ public class TxpgDataSourceConfig {
         return dataSource;
     }
 
+    // Пул ленивый: без проверки сервис стартовал бы без адреса и учётки, а сбой всплыл бы только в
+    // синхронизации (Р-103). Нерезолвнутый ${…} приходит текстом — отсюда проверка на «${».
+    static void requireGatewaySettings(DataSourceProperties properties) {
+        requireSet(properties.getUrl(), "ECOM_TXPG_URL", "address");
+        requireSet(properties.getUsername(), "ECOM_TXPG_USERNAME", "user name");
+        requireSet(properties.getPassword(), "ECOM_TXPG_PASSWORD", "password");
+    }
+
+    private static void requireSet(String value, String variable, String what) {
+        if (value == null || value.isBlank() || value.startsWith("${")) {
+            throw new IllegalStateException("The environment variable " + variable + " is not set: ecom has no "
+                    + what + " for the provider gateway database.\n"
+                    + "How to fix: set " + variable + " in the environment of the ecom service "
+                    + "(project_docs/guides/deployment_guide.md, section 8.3). There is no default on purpose: the gateway is someone else's database.");
+        }
+    }
+
     @Bean(TXPG_JDBC)
     public NamedParameterJdbcTemplate txpgJdbcTemplate(@Qualifier("txpgDataSource") DataSource txpgDataSource,
                                                        TxpgProperties properties) {
         JdbcTemplate template = new JdbcTemplate(txpgDataSource);
-        // Потолок на время запроса — наш собственный предохранитель. Выписка за квартал по
-        // крупному мерчанту не должна держать соединение к боевому шлюзу неограниченно долго;
-        // у провайдера свой statement timeout, но полагаться на чужую настройку нельзя.
+        // Свой потолок: на statement timeout провайдера полагаться нельзя, а выписка за квартал не должна
+        // держать соединение к боевому шлюзу неограниченно.
         template.setQueryTimeout((int) properties.getQueryTimeout().toSeconds());
         template.setFetchSize(properties.getFetchSize());
         return new NamedParameterJdbcTemplate(template);

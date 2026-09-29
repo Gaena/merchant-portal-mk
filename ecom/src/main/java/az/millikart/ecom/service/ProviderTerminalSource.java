@@ -2,15 +2,13 @@ package az.millikart.ecom.service;
 
 import java.util.List;
 
-// Откуда берётся список терминалов провайдера. Отдельным интерфейсом, потому что это единственное
-// место, зависящее от формы их данных: правила гашения и сверка с нашими терминалами от неё не зависят.
 public interface ProviderTerminalSource {
 
     // Активные терминалы провайдера. Контракт: полный список или исключение. Частичный ответ
     // недопустим — отсутствие в списке читается как «выключен», и оборванная выборка погасила бы живые.
     List<ProviderTerminalRow> fetchActive();
 
-    // Строка выгрузки: мерчант у провайдера, его название и логин терминала.
-    record ProviderTerminalRow(String rid, String title, String login) {
+    // rid — мерчант; terminalRid — номер терминала (terminal.rid), с ним pbl создаёт заказ (Р-96).
+    record ProviderTerminalRow(String rid, String title, String login, String terminalRid) {
     }
 }

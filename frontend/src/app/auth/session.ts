@@ -1,40 +1,36 @@
 /**
- * Хранилище сессии — единственное место, где живут токены.
- *
- * - **access-токен — только в памяти** (модульная переменная). В `localStorage` он не попадает:
- *   всё, что там лежит, доступно любому XSS. Перезагрузка вкладки его теряет — и это нормально,
- *   сессия восстанавливается через refresh (`AuthProvider` + `client.ts`).
- * - **refresh-токен — в `localStorage`** под ключом `mp_refresh_token`. Иного способа пережить
- *   перезагрузку без httpOnly-cookie нет; cookie требуют правок бэкенда (Set-Cookie, CSRF,
- *   SameSite) — отдельная задача.
- * - **профиль** (`UserProfile`) — в памяти, собирается из ответа `/login` или `/refresh`.
- *
- * Модуль не знает про React и про HTTP: React подписывается через `subscribe`/`getUser`
- * (`useSyncExternalStore`), HTTP делает `api/client.ts`. Так у access-токена нет пути обратно
- * в React-состояние или в хранилище.
+ * Единственное место, где живут токены (AGENTS §9). Access-токен — только в памяти: `localStorage`
+ * читает любой XSS. Refresh — в `localStorage`: без httpOnly-cookie иначе не пережить перезагрузку.
+ * React и HTTP модуль не знает — у access-токена нет пути в React-состояние или в хранилище.
  */
 import { parseRole, type Role } from '../types/role';
 
 export interface UserProfile {
-  /** `sub` из JWT (email пользователя). Пусто, если claim не удалось прочитать. */
+  /** `sub` из JWT; если не читается — логин из формы входа или пусто. */
   email: string;
   role: Role;
   /** claim `companyId` из JWT; у `SYSTEM_ADMIN` и системного `AUDITOR` отсутствует. */
   companyId?: string;
 }
 
-/** Тело ответа `POST /api/v1/auth/login` и `POST /api/v1/auth/refresh` (`auth.dto.LoginResponse`). */
+/** Ответ `/login` и `/refresh` (`auth.dto.LoginResponse`). */
 export interface LoginResponse {
   token: string;
   expiresIn: number;
   role: string;
   refreshToken: string;
   refreshExpiresIn: number;
+  /** Пароль задан не владельцем: токенов нет, сессию даёт только `/change-password` (Р-100). */
+  passwordChangeRequired?: boolean;
 }
 
-export type AuthErrorCode = 'UNKNOWN_ROLE' | 'MALFORMED_RESPONSE' | 'NO_REFRESH_TOKEN' | 'SESSION_CLEARED';
+export type AuthErrorCode =
+  | 'UNKNOWN_ROLE'
+  | 'MALFORMED_RESPONSE'
+  | 'NO_REFRESH_TOKEN'
+  | 'SESSION_CLEARED'
+  | 'PASSWORD_CHANGE_REQUIRED';
 
-/** Ошибка сессии, различимая по `code` (для перевода текста в UI). Не axios-ошибка. */
 export class AuthError extends Error {
   readonly code: AuthErrorCode;
 
@@ -48,19 +44,27 @@ export class AuthError extends Error {
 export const REFRESH_TOKEN_KEY = 'mp_refresh_token';
 
 /**
- * Ключи, под которыми прежняя версия фронтенда держала access-токен и профиль в `localStorage`.
- * Новый код их не читает, но у уже работавших пользователей они остались бы лежать до очистки
- * браузера — вместе с живым (до 24 ч) access-токеном. Сносим при первой загрузке.
+ * Выход по простою (PCI DSS 8.2.8, Р-99). Отметка действия общая для вкладок: работа в одной не
+ * выкидывает из другой. Refresh-токен сервер гасит через 20 минут без обновления, поэтому
+ * `auth/idle.ts` обновляет его не реже раза в `KEEP_ALIVE_AFTER_MS`.
  */
+export const LAST_ACTIVITY_KEY = 'mp_last_activity';
+export const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+export const KEEP_ALIVE_AFTER_MS = 5 * 60 * 1000;
+
+// Ключи access-токена и профиля старых сборок: у пользователей они лежат до очистки браузера,
+// поэтому стираются при загрузке.
 const LEGACY_KEYS = ['token', 'user'] as const;
 
 let accessToken: string | null = null;
 let currentUser: UserProfile | null = null;
-/**
- * Поколение сессии: растёт при каждом сбросе (`clearSession`, выход в другой вкладке).
- * Нужно, чтобы ответ `/refresh`, ушедшего до выхода, не воскресил сессию после него —
- * см. `client.ts:doRefresh`.
- */
+let lastTokenAt = 0;
+// Копия в памяти: без доступного хранилища вкладка считает простой сама.
+let lastActivityInMemory = 0;
+// Сессию закрыл простой — форма входа скажет об этом один раз.
+let endedByIdle = false;
+// Растёт при каждом сбросе: ответ `/refresh`, ушедшего до выхода, не воскресит сессию
+// (`client.ts:doRefresh`).
 let sessionGeneration = 0;
 const listeners = new Set<() => void>();
 
@@ -68,19 +72,11 @@ const notify = () => {
   listeners.forEach((listener) => listener());
 };
 
-// ─── access-токен (память) ───────────────────────────────────────────────────
-
 export const getAccessToken = (): string | null => accessToken;
 
-/** Номер поколения сессии; меняется только при сбросе. Снимок «до», сравнение «после». */
 export const getSessionGeneration = (): number => sessionGeneration;
 
-// ─── refresh-токен (localStorage) ────────────────────────────────────────────
-
-/**
- * Любое чтение `localStorage` — под `try/catch`: доступ может быть запрещён (приватный режим
- * Safari, политика браузера), а повреждённое значение не должно ронять приложение.
- */
+// Доступ к `localStorage` бывает запрещён (приватный режим, политика браузера) — всё под try/catch.
 export const getRefreshToken = (): string | null => {
   try {
     const value = localStorage.getItem(REFRESH_TOKEN_KEY);
@@ -99,12 +95,45 @@ const writeRefreshToken = (value: string | null) => {
       localStorage.setItem(REFRESH_TOKEN_KEY, value);
     }
   } catch (error) {
-    // Без записи сессия проживёт до перезагрузки вкладки — хуже, но не сломано.
     console.warn('[auth] localStorage is not writable; session will not survive a reload', error);
   }
 };
 
-// ─── профиль и подписка (для React) ──────────────────────────────────────────
+export const getLastActivity = (): number => {
+  let stored = 0;
+  try {
+    const value = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+    stored = Number.isFinite(value) ? value : 0;
+  } catch {
+    // Хранилище недоступно — считаем по памяти вкладки.
+  }
+  return Math.max(stored, lastActivityInMemory);
+};
+
+export const markActivity = (now: number): void => {
+  lastActivityInMemory = now;
+  try {
+    localStorage.setItem(LAST_ACTIVITY_KEY, String(now));
+  } catch {
+    // Без записи другие вкладки не узнают о действии — каждая считает свой простой.
+  }
+};
+
+/** Нет отметки вовсе — тоже истёк: время последнего действия неизвестно. */
+export const isIdleExpired = (now: number): boolean => now - getLastActivity() > IDLE_TIMEOUT_MS;
+
+export const getLastTokenAt = (): number => lastTokenAt;
+
+export const markEndedByIdle = (): void => {
+  endedByIdle = true;
+};
+
+/** Чтение и сброс раздельно: StrictMode зовёт инициализатор `useState` дважды и потерял бы сообщение. */
+export const hasIdleNotice = (): boolean => endedByIdle;
+
+export const clearIdleNotice = (): void => {
+  endedByIdle = false;
+};
 
 export const getUser = (): UserProfile | null => currentUser;
 
@@ -115,9 +144,6 @@ export const subscribe = (listener: () => void): (() => void) => {
   };
 };
 
-// ─── переходы состояния ──────────────────────────────────────────────────────
-
-/** Сбрасывает всё: access из памяти, refresh из хранилища, профиль. Идемпотентно. */
 export const clearSession = (): void => {
   const hadSession = accessToken !== null || currentUser !== null || getRefreshToken() !== null;
   sessionGeneration += 1;
@@ -129,7 +155,7 @@ export const clearSession = (): void => {
   }
 };
 
-/** Сброс только памяти — когда хранилище уже очистила другая вкладка (событие `storage`). */
+// Только память: хранилище уже очистила другая вкладка (событие `storage`).
 const dropInMemorySession = (): void => {
   sessionGeneration += 1;
   const had = accessToken !== null || currentUser !== null;
@@ -141,15 +167,9 @@ const dropInMemorySession = (): void => {
 };
 
 /**
- * Принимает ответ `/login` или `/refresh` и делает его текущей сессией.
- *
- * **Fail-closed:** если роль не распознана (`parseRole` → `null`) или в ответе нет токенов —
- * сессия не создаётся, старая (если была) сбрасывается, и бросается `AuthError`. Никакой роли
- * по умолчанию: раньше пропущенная роль подменялась системным администратором (fail-open) —
- * пользователь без роли молча получал максимальные права.
- *
- * @param emailHint email, введённый в форме входа — запасной вариант, если `sub` в JWT
- *                  не читается. На refresh подсказки нет, тогда email берётся только из JWT.
+ * Fail-closed: нераспознанная роль или нет токенов — старая сессия сбрасывается и бросается
+ * `AuthError`. Роли по умолчанию не заводить: пользователь без роли получил бы её права.
+ * `emailHint` — логин из формы входа на случай нечитаемого `sub`; у refresh его нет.
  */
 export const applyLoginResponse = (data: LoginResponse, emailHint?: string): UserProfile => {
   if (!data || typeof data.token !== 'string' || data.token.length === 0
@@ -177,17 +197,14 @@ export const applyLoginResponse = (data: LoginResponse, emailHint?: string): Use
 
   accessToken = data.token;
   writeRefreshToken(data.refreshToken);
+  lastTokenAt = Date.now();
   currentUser = { email, role, companyId };
   notify();
   return currentUser;
 };
 
-/**
- * Читает payload JWT **без проверки подписи** — только чтобы показать email и companyId.
- * Подпись проверяет бэкенд на каждом запросе; здесь токен уже получен от него по TLS.
- * Никаких решений о доступе на этих claims не принимается — роль берётся из поля `role`
- * ответа и проверяется `parseRole`.
- */
+// Payload без проверки подписи — только для показа email и companyId. Решений о доступе на этих
+// claims не принимать: подпись проверяет бэкенд, роль берётся из поля `role` через `parseRole`.
 const decodeJwtClaims = (token: string): Record<string, unknown> | null => {
   try {
     const payload = token.split('.')[1];
@@ -204,26 +221,25 @@ const decodeJwtClaims = (token: string): Record<string, unknown> | null => {
   }
 };
 
-// ─── миграция и синхронизация вкладок ────────────────────────────────────────
-
 if (typeof window !== 'undefined') {
   try {
     LEGACY_KEYS.forEach((key) => localStorage.removeItem(key));
   } catch {
-    // Недоступное хранилище — нечего и чистить.
+    // Хранилище недоступно — нечего и чистить.
   }
 
-  /**
-   * Выход в одной вкладке гасит цепочку refresh-токенов на сервере, но access-токены других
-   * вкладок остаются валидными до истечения (stateless-проверка). Событие `storage` приходит
-   * во все *остальные* вкладки того же origin — по нему выходим и там, не дожидаясь протухания.
-   */
+  // Выход гасит refresh-цепочку на сервере, но access-токены других вкладок живут до истечения.
+  // Событие `storage` приходит в остальные вкладки — выходим и там.
   window.addEventListener('storage', (event) => {
-    // key === null — это localStorage.clear(): refresh-токена тоже больше нет.
+    // key === null — это localStorage.clear(): refresh-токена тоже нет.
     const refreshGone = event.key === null
       ? getRefreshToken() === null
       : (event.key === REFRESH_TOKEN_KEY && event.newValue === null);
     if (refreshGone) {
+      // Другая вкладка вышла по простою — форма входа скажет об этом и здесь.
+      if (isIdleExpired(Date.now())) {
+        endedByIdle = true;
+      }
       dropInMemorySession();
     }
   });

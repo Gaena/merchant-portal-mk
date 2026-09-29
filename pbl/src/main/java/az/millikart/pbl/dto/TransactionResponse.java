@@ -10,9 +10,7 @@ public record TransactionResponse(
         UUID paymentLinkId,
         String status,
         BigDecimal amount,
-        // Сколько эквайер реально склирил при списании DMS; null для SMS-платежей и для холдов,
-        // которые не списывали. После частичного списания меньше amount и служит потолком, по
-        // которому меряется каждый возврат этой транзакции.
+        // Списано при клиринге DMS; null у SMS и у несписанных холдов. Потолок возвратов (P0-8).
         BigDecimal capturedAmount,
         BigDecimal refundedAmount,
         String currency,
@@ -20,9 +18,7 @@ public record TransactionResponse(
         String merchantOrderId,
         String paymentType,
         Integer terminalId,
-        // Reference id платежа, заданный мерчантом (словарь провайдера). Не путать с merchantRid —
-        // reference id самого мерчанта, который задаёт провайдер. По ссылкам, заведённым порталом,
-        // заполнен всегда: его генерирует OpenLinkService.
+        // Номер платежа у мерчанта, не путать с merchantRid — мерчантом у провайдера (Р-69).
         String ridByMerchant,
         String cardNumberMasked,
         String rrn,
@@ -34,39 +30,17 @@ public record TransactionResponse(
         String clientIp,
         String userAgent,
         String providerOrderId,
-        /**
-         * Что и когда с операцией происходило — только записанное, по возрастанию времени.
-         * Собирается в PaymentLinkService.statusHistoryOf из createdAt, метки списания
-         * (mpCapture) и списка возвратов (mpRefunds): у каждого из них есть своё время,
-         * записанное в момент события.
-         *
-         * Переходов, времени которых никто не записывал, здесь нет и не будет. У SMS-платежа
-         * нет отдельного события «стал SUCCESS» — есть лишь updatedAt, и он попадает сюда
-         * единственным финальным событием, когда текущий статус ничем выше не объяснён.
-         * Дорисовывать недостающее (две записи с одним временем, «Payment successfully
-         * completed» под выдуманной датой) нельзя: карточка операции с деньгами — не то место,
-         * где догадка сходит за факт.
-         */
+        // Только записанные события, по возрастанию времени (PaymentLinkService.statusHistoryOf, Р-63).
         List<TransactionEvent> statusHistory,
-        // Причина отказа словами эквайера: custAttrs DeclineDescription, иначе
-        // PmoDeclineDescription, иначе PmoResultCode (контракт §5.8.7). Заполнен только у FAILED,
-        // чей финальный опрос статуса принёс причину; иначе null.
+        // Причина отказа словами эквайера (контракт §5.8.7, Р-24); только у FAILED.
         String failureReason
 ) {
 
-    /**
-     * Одно записанное событие жизни операции.
-     *
-     * `status` — состояние операции ПОСЛЕ события, из того же словаря TransactionStatus, что
-     * и `TransactionResponse.status`: фронтенд разбирает их одним разбором.
-     *
-     * `amount` и `acquirerReference` заполнены только у денежных событий — списания и возврата.
-     * Ссылка — это tran.match.ridByPmo, та самая, что весома в споре (§5.7).
-     */
+    // status — состояние ПОСЛЕ события, из словаря TransactionStatus. amount и acquirerReference
+    // (tran.match.ridByPmo, контракт §5.7) — только у списания и возврата.
     public record TransactionEvent(
             Instant at,
-            // CREATED, CAPTURED, REFUNDED или STATUS — что именно произошло. STATUS означает
-            // «операция пришла в это состояние», без записи о том, каким действием.
+            // CREATED, CAPTURED, REFUNDED или STATUS — переход, о действии которого записи нет.
             String type,
             String status,
             BigDecimal amount,

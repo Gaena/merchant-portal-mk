@@ -12,17 +12,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-// Лимит неудачных входов на адрес. Локаут аккаунта (6 неудач, 30 минут, PCI-DSS 8.3.4, Р-28) —
-// отдельный механизм, и этим лимитом он не заменяется: без лимита на источник любой, зная почту
-// мерчанта, выключает его на полчаса шестью неудачами. Счётчики намеренно в памяти (Caffeine,
-// Р-27): строка в базу на каждую неудачу сделала бы защиту от перебора усилителем нагрузки.
+// Лимит неудачных входов на адрес, в дополнение к локауту аккаунта (Р-28): без него любой, зная
+// почту мерчанта, выключает его на полчаса. Счётчики в памяти намеренно (Р-27): строка в базу на
+// каждую неудачу сделала бы защиту усилителем нагрузки.
 @Component
 public class LoginRateLimiter {
 
     private static final Logger log = LoggerFactory.getLogger(LoginRateLimiter.class);
 
-    // Маркер мониторинга: адрес исчерпал попытки входа. Одна строка — опечатка в пароле, поток с
-    // одного адреса — перебор, поток сразу со многих — распределённый, который лимитер не ловит.
+    // Маркер мониторинга: адрес исчерпал попытки. Поток со многих адресов — распределённый перебор,
+    // который лимитер не ловит.
     static final String LOGIN_RATE_LIMITED_MARKER = "LOGIN_RATE_LIMITED";
 
     // Сообщает только факт отказа: ни счётчиков, ни порогов.
@@ -44,7 +43,7 @@ public class LoginRateLimiter {
         this(enabled, maxFailures, window, Ticker.systemTicker());
     }
 
-    // Тот же лимитер на тикере вызывающего — так юнит-тест перешагивает окно.
+    // Для тестов: на тикере вызывающего тест перешагивает окно.
     LoginRateLimiter(boolean enabled, int maxFailures, Duration window, Ticker ticker) {
         if (maxFailures < 1) {
             throw new IllegalStateException("auth.login.rate-limit.max-failures must be at least 1, got " + maxFailures);
@@ -68,9 +67,7 @@ public class LoginRateLimiter {
         }
     }
 
-    // Звать ПЕРВЫМ — до поиска пользователя и до BCrypt: смысл лимита в том, что дорогая работа не
-    // делается, а проверка после 100 мс хэширования уже оплатила ту атаку, которую должна была
-    // предотвратить. Бросает TooManyRequestsException с остатком окна, наружу это HTTP 429.
+    // Звать первым, до поиска пользователя и BCrypt: проверка после хэширования уже оплатила атаку.
     public void checkAllowed(String clientIp) {
         if (!enabled || clientIp == null) {
             return;
@@ -85,10 +82,8 @@ public class LoginRateLimiter {
         throw new TooManyRequestsException(MESSAGE, retryAfter);
     }
 
-    // Считается каждая неудача, включая несуществующий логин: из него и состоит перебор логинов, а
-    // неучтённый даёт прощупывать базу даром. true возвращается ровно раз за окно — на попытке,
-    // достигшей лимита; на этом держится «одна запись в журнал за окно, а не на каждую попытку»
-    // (P2-14): остальные попытки отбивает checkAllowed, не доходя сюда.
+    // Считается и несуществующий логин: из него состоит перебор. true — ровно раз за окно, на попытке,
+    // достигшей лимита: на этом держится одна запись в журнал за окно (P2-14).
     public boolean recordFailure(String clientIp) {
         if (!enabled || clientIp == null) {
             return false;
@@ -102,8 +97,7 @@ public class LoginRateLimiter {
         return false;
     }
 
-    // Успешный вход обнуляет счётчик адреса: офис за одним NAT не запирает сам себя, пока люди
-    // входят. Копится только серия неудач подряд — а это и есть перебор.
+    // Успешный вход обнуляет счётчик адреса: офис за одним NAT не запирает сам себя.
     public void reset(String clientIp) {
         if (clientIp == null) {
             return;
@@ -111,8 +105,8 @@ public class LoginRateLimiter {
         failures.invalidate(clientIp);
     }
 
-    // Возраст записи — время с последней ЗАСЧИТАННОЙ неудачи. Пока адрес отбивается, попытки не
-    // считаются, поэтому долбёжка не продлевает блокировку и не сокращает её.
+    // Возраст записи — с последней засчитанной неудачи: отбитые попытки не считаются и блокировку
+    // не продлевают.
     private Duration remainingWindow(String clientIp) {
         Duration left = failures.policy().expireAfterWrite()
                 .flatMap(expiration -> expiration.ageOf(clientIp))
@@ -121,7 +115,7 @@ public class LoginRateLimiter {
         return left.isNegative() || left.isZero() ? Duration.ofSeconds(1) : left;
     }
 
-    // Открыто тестам: сколько неудач числится за адресом прямо сейчас.
+    // Для тестов.
     Optional<Integer> failuresOf(String clientIp) {
         return Optional.ofNullable(failures.getIfPresent(clientIp));
     }

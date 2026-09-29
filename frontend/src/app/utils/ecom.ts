@@ -15,12 +15,9 @@ import {
   type EcomTerminal,
 } from '../types/ecom';
 
-/**
- * Запросы к выписке провайдера и разбор ответов. Разбор — только здесь: страницы получают уже
- * типизированные заказы, как операции портала получают их из `utils/mapTransaction.ts`.
- */
+// Разбор ответов выписки — только здесь: страницы получают уже типизированные заказы.
 
-/** Потолок периода — `ecom.txpg.max-window` по умолчанию. Сервер проверит сам; здесь — чтобы не слать заведомый отказ. */
+/** `ecom.txpg.max-window` по умолчанию; проверка здесь — чтобы не слать заведомый отказ. */
 export const ECOM_MAX_WINDOW_DAYS = 92;
 
 export type PeriodProblem = 'invalid' | 'tooLong';
@@ -104,11 +101,8 @@ const mapStats = (raw: any): EcomStats => {
   return { orderCount: amount(raw?.orderCount) ?? 0, statusCounts, totals };
 };
 
-/**
- * Параметры запроса. `merchantRids` уходит повторяющимся ключом (`merchantRids=a&merchantRids=b`):
- * axios по умолчанию шлёт `merchantRids[]=a`, такой ключ контроллер не узнает, и фильтр по
- * терминалу молча пропал бы — выписка пришла бы по всем терминалам.
- */
+// `merchantRids` — повторяющимся ключом: `merchantRids[]=a` от axios контроллер не узнает, и выписка
+// молча пришла бы по всем терминалам.
 const periodParams = (query: Pick<EcomQuery, 'dateFrom' | 'dateTo' | 'merchantRids' | 'paymentType'>): URLSearchParams => {
   const params = new URLSearchParams();
   params.set('dateFrom', query.dateFrom.toISOString());
@@ -138,7 +132,7 @@ export const fetchEcomPage = async (
   };
 };
 
-/** Итоги — по периоду, терминалам и типу оплаты; сумма, поиск и статус на них не влияют (`ecom.md` §2.5). */
+/** Сумма, поиск и статус на итоги не влияют (`project_docs/modules/ecom.md` §2.5). */
 export const fetchEcomStats = async (
   query: Pick<EcomQuery, 'dateFrom' | 'dateTo' | 'merchantRids' | 'paymentType'>,
   signal?: AbortSignal
@@ -147,7 +141,6 @@ export const fetchEcomStats = async (
   return mapStats(res.data);
 };
 
-/** Сводка главной (Р-91): период обязателен, разбор — здесь, как у всей выписки. */
 export const fetchEcomDashboard = async (dateFrom: Date, dateTo: Date, signal?: AbortSignal): Promise<EcomDashboard> => {
   const res = await apiClient.get('/api/v1/ecom/dashboard/summary', {
     params: { dateFrom: dateFrom.toISOString(), dateTo: dateTo.toISOString() },
@@ -190,6 +183,7 @@ export const fetchEcomDashboard = async (dateFrom: Date, dateTo: Date, signal?: 
           currency: text(t?.currency),
           merchantRid: text(t?.merchantRid),
           login: text(t?.login),
+          terminalRid: text(t?.terminalRid),
           title: text(t?.title),
           netAmount: amount(t?.netAmount) ?? 0,
           orderCount: amount(t?.orderCount) ?? 0,
@@ -203,7 +197,12 @@ export const fetchEcomTerminals = async (signal?: AbortSignal): Promise<EcomTerm
   if (!Array.isArray(res.data)) return [];
   return res.data
     .filter((row: any) => typeof row?.merchantRid === 'string')
-    .map((row: any) => ({ merchantRid: row.merchantRid, title: text(row.title), login: text(row.login) }));
+    .map((row: any) => ({
+      merchantRid: row.merchantRid,
+      title: text(row.title),
+      login: text(row.login),
+      terminalRid: text(row.terminalRid),
+    }));
 };
 
 export const fetchEcomOrder = async (orderId: string, signal?: AbortSignal): Promise<EcomOrder> => {
@@ -211,23 +210,28 @@ export const fetchEcomOrder = async (orderId: string, signal?: AbortSignal): Pro
   return mapEcomOrder(res.data);
 };
 
-/**
- * Одобрена ли операция выписки. Слово провайдера — `Approved` (`EcomOrderAssembler.APPROVED`);
- * разбор здесь, а не в странице. `null` — код не пришёл: это «неизвестно», а не отказ.
- */
+/** Слово провайдера — `Approved` (`EcomOrderAssembler.APPROVED`); `null` — «неизвестно», а не отказ. */
 export const operationApproved = (operation: Pick<EcomOperation, 'resultCode'>): boolean | null =>
   operation.resultCode === null ? null : operation.resultCode === 'Approved';
 
-/**
- * Подпись терминала заказа — тот же порядок, что у операций портала (Р-59): логин, под ним название.
- * Логина в заказе нет, он приходит из списка терминалов скоупа; без него — название мерчанта, затем rid.
- */
+/** Порядок как у `terminalLabel` (Р-96), последним — код мерчанта. */
+export const ecomTerminalName = (
+  terminal: Pick<EcomTerminal, 'terminalRid' | 'login' | 'title'> & { merchantRid: string | null }
+): string => terminal.terminalRid ?? terminal.login ?? terminal.title ?? terminal.merchantRid ?? '—';
+
+// Номера и логина в заказе нет — они из списка терминалов скоупа; без них — название мерчанта
+// из заказа, затем его код.
 export const ecomTerminalLabel = (
   order: Pick<EcomOrder, 'merchantRid' | 'merchantTitle'>,
   terminals: ReadonlyMap<string, EcomTerminal>
 ): { label: string; subLabel: string } => {
   const terminal = order.merchantRid ? terminals.get(order.merchantRid) : undefined;
   const title = terminal?.title ?? order.merchantTitle;
-  const label = terminal?.login ?? title ?? order.merchantRid ?? '—';
+  const label = ecomTerminalName({
+    terminalRid: terminal?.terminalRid ?? null,
+    login: terminal?.login ?? null,
+    title,
+    merchantRid: order.merchantRid,
+  });
   return { label, subLabel: title && title !== label ? title : '' };
 };

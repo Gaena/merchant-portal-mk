@@ -1,6 +1,7 @@
 package az.millikart.directory.repository;
 
 import az.millikart.directory.domain.Company;
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,10 +12,9 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface CompanyRepository extends JpaRepository<Company, String> {
 
-    // Фильтр статуса и поиск обязаны быть в запросе (P2-1, P3-1): отсев строк после чтения страницы
-    // даёт короткие страницы и totalElements, считающий записи, которых вызывающий не видит.
-    // status в схеме NOT NULL, поэтому <> ничего не теряет. LIKE только с escape '!' — иначе
-    // введённый пользователем % вернёт всю таблицу; индекса под LIKE '%…%' нет намеренно.
+    // Фильтр и поиск — в запросе: отсев после чтения даёт короткие страницы и неверный totalElements
+    // (P2-1, P3-1). status NOT NULL, так что <> ничего не теряет. Без escape '!' введённый % вернёт
+    // всю таблицу.
     @Query("""
             select c from Company c
             where c.status <> :excluded
@@ -25,4 +25,13 @@ public interface CompanyRepository extends JpaRepository<Company, String> {
     Page<Company> search(@Param("excluded") String excluded,
                          @Param("search") String search,
                          Pageable pageable);
+
+    // Удалённые тоже считаются: мягкое удаление логин из уникального индекса не освобождает (Р-93).
+    boolean existsByProviderLogin(String providerLogin);
+
+    boolean existsByProviderLoginAndIdNot(String providerLogin, String id);
+
+    // Удалённые тоже: их логин уникальный индекс не освобождает (Р-95).
+    @Query("select c.providerLogin from Company c where c.providerLogin is not null")
+    List<String> findAllProviderLogins();
 }

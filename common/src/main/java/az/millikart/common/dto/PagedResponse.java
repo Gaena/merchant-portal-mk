@@ -3,8 +3,7 @@ package az.millikart.common.dto;
 import java.util.List;
 import org.springframework.data.domain.Page;
 
-// Единственный конверт постраничного ответа в проекте: эту форму возвращает каждый эндпойнт со
-// списком, чтобы клиент листал транзакции и журнал аудита одинаково. Второго не заводить.
+// Единственный конверт постраничного ответа в проекте (P2-1); второго не заводить.
 public record PagedResponse<T>(
         List<T> content,
         long totalElements,

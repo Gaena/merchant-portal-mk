@@ -1,6 +1,8 @@
 package az.millikart.common.security;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -8,6 +10,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -20,6 +23,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
     private static final String BEARER_PREFIX = "Bearer ";
+    // Логин вошедшего — в каждой строке лога запроса (logback-spring.xml): сообщения его не повторяют.
+    public static final String MDC_USER_KEY = "user";
 
     private final JwtProvider jwtProvider;
     private final String fallbackApiToken;
@@ -32,9 +37,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                           @Value("${pbl.security.api-token:}") String fallbackApiToken,
                           @Value("${pbl.security.api-token-enabled:false}") boolean fallbackApiTokenEnabled,
                           @Value("${springdoc.api-docs.enabled:false}") boolean swaggerEnabled) {
-        // Статический токен аутентифицирует как SYSTEM_ADMIN без пароля, поэтому встроенного
-        // значения у него быть не должно: известный дефолт — это бэкдор. Включён без значения —
-        // ошибка конфигурации: флаг поднят, проверка мертва. Поэтому падаем на старте.
+        // Статический токен даёт SYSTEM_ADMIN без пароля: дефолта нет (известный дефолт — бэкдор), а
+        // включённый флаг без значения роняет старт.
         if (fallbackApiTokenEnabled && (fallbackApiToken == null || fallbackApiToken.isBlank())) {
             throw new IllegalStateException(
                     "pbl.security.api-token-enabled is true but pbl.security.api-token is empty. "
@@ -90,8 +94,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 }
                 role = (String) claims.get("role");
                 companyId = (String) claims.get("companyId");
+            } catch (ExpiredJwtException e) {
+                // Штатно раз в 15 минут у каждого вошедшего: фронтенд обновит токен сам.
+                log.debug("Rejected an expired token for {}", path);
+                writeUnauthorized(request, response, "Invalid or expired JWT token");
+                return;
+            } catch (JwtException | IllegalArgumentException e) {
+                log.warn("Rejected an invalid token for {}: {}", path, e.getClass().getSimpleName());
+                writeUnauthorized(request, response, "Invalid or expired JWT token");
+                return;
             } catch (Exception e) {
-                log.error("Failed to parse and validate JWT token for path {}", path, e);
+                log.error("Unexpected failure while reading a token for {}", path, e);
                 writeUnauthorized(request, response, "Invalid or expired JWT token");
                 return;
             }
@@ -103,8 +116,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Claim остаётся здесь сырой строкой намеренно: разбирает её UserPrincipal, а
-        // нераспознанное значение должно дойти до сервисов как «нет роли», а не быть отвергнуто.
+        // Роль — сырой строкой намеренно: разбирает её UserPrincipal, нераспознанная доходит до
+        // сервисов как «нет роли».
         String finalRole = role != null ? role : Role.COMPANY_EMPLOYEE.name();
         String finalUsername = username != null ? username : "system";
 
@@ -118,17 +131,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         request.setAttribute("userRole", finalRole);
         request.setAttribute("companyId", companyId);
 
+        MDC.put(MDC_USER_KEY, finalUsername);
         try {
             filterChain.doFilter(request, response);
         } finally {
+            MDC.remove(MDC_USER_KEY);
             SecurityContextHolder.clearContext();
         }
     }
 
-    // Публичных путей здесь нет — они в PublicEndpoints, общем с SecurityConfig. Прежняя версия
-    // решала по префиксу и пропускала всё, что вне /api/v1/, — так и остались открыты actuator и
-    // swagger. Springdoc — единственный условный случай: его пути существуют лишь при
-    // springdoc.api-docs.enabled, и SecurityConfig разрешает их по тому же флагу.
+    // Публичные пути — только PublicEndpoints, общий с SecurityConfig (P1-1); springdoc — по тому же
+    // флагу, что и там.
     private boolean requiresAuthentication(String path) {
         if (PublicEndpoints.isPublic(path)) {
             return false;

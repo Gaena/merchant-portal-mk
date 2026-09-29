@@ -1,6 +1,8 @@
 package az.millikart.pbl;
 
+import az.millikart.common.security.CredentialCipher;
 import az.millikart.common.testing.PostgresTestContainer;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -19,14 +21,21 @@ import az.millikart.pbl.provider.AcquiringClient;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
+import az.millikart.pbl.service.PaymentLinkService;
 import az.millikart.pbl.service.TransactionReconciliationService;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -71,6 +80,9 @@ class TransactionReconciliationIntegrationTest {
     private TerminalRepository terminalRepository;
 
     @Autowired
+    private CredentialCipher credentialCipher;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @MockBean
@@ -81,12 +93,12 @@ class TransactionReconciliationIntegrationTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "test-company");
 
         terminalRepository.save(Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Test Terminal")
-                .login("TerminalSys/Admin")
-                .password("1234")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId("test-company")
                 .build());
     }
@@ -111,7 +123,7 @@ class TransactionReconciliationIntegrationTest {
 
         Assertions.assertEquals(0, reconciliationService.reconcilePendingTransactions());
 
-        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
         Assertions.assertEquals(TransactionStatus.PENDING, statusOf(fresh));
     }
 
@@ -140,7 +152,7 @@ class TransactionReconciliationIntegrationTest {
     @Test
     void reconcile_pendingOlderThanMaxAge_providerUnreachable_staysPending() {
         Transaction tx = agedTransaction("UNREACHABLE", TransactionStatus.PENDING, MAX_AGE.plusHours(1));
-        when(acquiringClient.getOrderStatus(anyString(), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
                 .thenThrow(new BusinessException("Order status check failed: connection refused"));
 
         Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
@@ -159,7 +171,7 @@ class TransactionReconciliationIntegrationTest {
 
         Assertions.assertEquals(0, reconciliationService.reconcilePendingTransactions());
 
-        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
         Assertions.assertEquals(TransactionStatus.AUTHORIZED, statusOf(authorized));
     }
 
@@ -172,7 +184,7 @@ class TransactionReconciliationIntegrationTest {
 
         Assertions.assertEquals(0, reconciliationService.reconcilePendingTransactions());
 
-        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
         Assertions.assertEquals(TransactionStatus.SUCCESS, statusOf(success));
         Assertions.assertEquals(TransactionStatus.FAILED, statusOf(failed));
         Assertions.assertEquals(TransactionStatus.REFUNDED, statusOf(refunded));
@@ -204,9 +216,9 @@ class TransactionReconciliationIntegrationTest {
         Transaction broken = agedTransaction("STUCK", TransactionStatus.PENDING, Duration.ofMinutes(30));
         Transaction healthy = agedTransaction("OK", TransactionStatus.PENDING, Duration.ofMinutes(10));
 
-        when(acquiringClient.getOrderStatus(eq("ORD-STUCK"), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(eq("ORD-STUCK"), anyString(), any()))
                 .thenThrow(new BusinessException("Order status check failed: connection refused"));
-        when(acquiringClient.getOrderStatus(eq("ORD-OK"), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(eq("ORD-OK"), anyString(), any()))
                 .thenReturn(Map.of("status", "FullyPaid"));
 
         Assertions.assertEquals(2, reconciliationService.reconcilePendingTransactions());
@@ -238,6 +250,36 @@ class TransactionReconciliationIntegrationTest {
         Assertions.assertNull(providerResponse.get("reconciliationOutcome"),
                 "an unknown status is not evidence of abandonment — no timeout marker");
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE, linkStatusOf(tx));
+    }
+
+    // Сверка спрашивает каждые 2 минуты до 7 дней: WARN о незнакомом статусе — один раз на пару «транзакция,
+    // статус», а не на каждый проход. Новое слово той же транзакции — снова WARN.
+    @Test
+    void reconcile_unknownWord_isWarnedOncePerTransactionAndWord() {
+        Logger serviceLogger = (Logger) LoggerFactory.getLogger(PaymentLinkService.class);
+        ListAppender<ILoggingEvent> events = new ListAppender<>();
+        events.start();
+        serviceLogger.addAppender(events);
+        try {
+            Transaction tx = agedTransaction("UNKNOWN-ONCE", TransactionStatus.PENDING, MAX_AGE.plusHours(1));
+            providerAnswers("Paid");
+            reconciliationService.reconcilePendingTransactions();
+            reconciliationService.reconcilePendingTransactions();
+            providerAnswers("Settled");
+            reconciliationService.reconcilePendingTransactions();
+
+            List<String> warnings = events.list.stream()
+                    .filter(event -> event.getLevel() == Level.WARN)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.contains(tx.getId().toString()))
+                    .toList();
+            Assertions.assertEquals(2, warnings.size(), warnings.toString());
+            Assertions.assertTrue(warnings.get(0).contains("\"Paid\""), warnings.get(0));
+            Assertions.assertTrue(warnings.get(1).contains("\"Settled\""), warnings.get(1));
+            Assertions.assertEquals(TransactionStatus.PENDING, reload(tx).getStatus());
+        } finally {
+            serviceLogger.detachAppender(events);
+        }
     }
 
     // Refused = возвращён целиком, PartPaid = частично отменён или возвращён (§5.8.8): деньги
@@ -302,7 +344,7 @@ class TransactionReconciliationIntegrationTest {
     @Test
     void reconcile_providerAnswersWithoutStatusKey_staysPending() {
         Transaction tx = agedTransaction("NO-STATUS", TransactionStatus.PENDING, MAX_AGE.plusHours(1));
-        when(acquiringClient.getOrderStatus(anyString(), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
                 .thenReturn(Map.of("id", "ORD-NO-STATUS"));
 
         Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
@@ -317,7 +359,7 @@ class TransactionReconciliationIntegrationTest {
     @Test
     void reconcile_providerAnswersWithNumericStatus_staysPendingWithoutClassCast() {
         Transaction tx = agedTransaction("NUMERIC", TransactionStatus.PENDING, MAX_AGE.plusHours(1));
-        when(acquiringClient.getOrderStatus(anyString(), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
                 .thenReturn(Map.of("status", 200));
 
         Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
@@ -336,7 +378,7 @@ class TransactionReconciliationIntegrationTest {
         Transaction tx = agedTransaction("NULL-BODY", TransactionStatus.PENDING, MAX_AGE.plusHours(1));
         tx.setProviderResponse(Map.of("hppUrl", "https://hpp.example/pay/ORD-NULL-BODY", "status", "Preparing"));
         transactionRepository.save(tx);
-        when(acquiringClient.getOrderStatus(anyString(), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
                 .thenReturn(null);
 
         Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
@@ -362,7 +404,7 @@ class TransactionReconciliationIntegrationTest {
 
         Assertions.assertEquals(0, reconciliationService.reconcilePendingTransactions());
 
-        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
         Assertions.assertEquals(TransactionStatus.PENDING, statusOf(givenUp));
         Assertions.assertNull(reload(givenUp).getProviderResponse());
     }
@@ -384,7 +426,7 @@ class TransactionReconciliationIntegrationTest {
     // Фикстуры
 
     private void providerAnswers(String providerStatus) {
-        when(acquiringClient.getOrderStatus(anyString(), anyString(), anyString(), anyString()))
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
                 .thenReturn(Map.of("status", providerStatus));
     }
 

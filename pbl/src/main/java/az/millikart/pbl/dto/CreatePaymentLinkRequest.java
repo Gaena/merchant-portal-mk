@@ -39,9 +39,8 @@ public record CreatePaymentLinkRequest(
         @Positive(message = "maxPayments must be greater than 0")
         Integer maxPayments,
 
-        // Необязателен: без него ссылка получает срок по умолчанию (pbl.link.default-ttl), а не
-        // живёт вечно. @Future здесь намеренно нет — сверху срок ограничен pbl.link.max-ttl, и обе
-        // проверки живут в сервисе, где отказ может назвать потолок, который мерчант перешёл.
+        // Без него — pbl.link.default-ttl. @Future не ставить: обе границы проверяет сервис, и отказ
+        // называет превышенный потолок pbl.link.max-ttl (P1-9).
         Instant expiresAt,
 
         Map<String, Object> metadata

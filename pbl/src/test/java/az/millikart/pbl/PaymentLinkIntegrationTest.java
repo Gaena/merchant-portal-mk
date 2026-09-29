@@ -1,5 +1,6 @@
 package az.millikart.pbl;
 
+import az.millikart.common.security.CredentialCipher;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.emptyOrNullString;
 import static org.hamcrest.Matchers.is;
@@ -7,6 +8,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -28,6 +30,7 @@ import az.millikart.pbl.domain.Transaction;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
 import az.millikart.pbl.provider.AcquiringClient;
+import az.millikart.pbl.provider.ProviderCredentials;
 import az.millikart.pbl.provider.StubAcquirerConfig;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
@@ -92,6 +95,9 @@ class PaymentLinkIntegrationTest {
     private TerminalRepository terminalRepository;
 
     @Autowired
+    private CredentialCipher credentialCipher;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
@@ -127,12 +133,12 @@ class PaymentLinkIntegrationTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "test-company", "other-company");
 
         Terminal terminal = Terminal.builder()
                 .id(TERMINAL_ID)
                 .name("Test Terminal")
-                .login("TerminalSys/Admin")
-                .password("1234")
+                .login("TerminalSys/Admin").terminalRid("TID-Admin")
                 .companyId("test-company")
                 .build();
         terminalRepository.save(terminal);
@@ -140,8 +146,7 @@ class PaymentLinkIntegrationTest {
         Terminal foreignTerminal = Terminal.builder()
                 .id(FOREIGN_TERMINAL_ID)
                 .name("Other Company Terminal")
-                .login("TerminalSys/Other")
-                .password("4321")
+                .login("TerminalSys/Other").terminalRid("TID-Other")
                 .companyId("other-company")
                 .build();
         terminalRepository.save(foreignTerminal);
@@ -164,12 +169,8 @@ class PaymentLinkIntegrationTest {
         return builder.header(HttpHeaders.AUTHORIZATION, token);
     }
 
+    // Многоразовая ссылка — без клиента: у неё его не бывает (Р-96).
     private ObjectNode validCreateRequest() {
-        ObjectNode customer = objectMapper.createObjectNode();
-        customer.put("fullName", "John Doe");
-        customer.put("email", "test@test.com");
-        customer.put("phone", "994509771884");
-
         ObjectNode metadata = objectMapper.createObjectNode();
         metadata.put("campaign", "summer_sale");
 
@@ -179,7 +180,6 @@ class PaymentLinkIntegrationTest {
         request.put("amount", new BigDecimal("1500.50"));
         request.put("currency", "AZN");
         request.put("description", "Payment for order #123456");
-        request.set("customer", customer);
         request.put("paymentType", "DMS");
         request.put("usageType", "MULTIPLE");
         request.put("maxPayments", 25);
@@ -234,6 +234,66 @@ class PaymentLinkIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(validCreateRequest())))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // Р-93: без кредов компании ссылка родилась бы нерабочей — отказ при создании, а не при открытии.
+    @Test
+    void createPaymentLink_companyWithoutCredentials_returns400() throws Exception {
+        jdbcTemplate.update("UPDATE companies SET provider_login = NULL, provider_password = NULL WHERE id = 'test-company'");
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validCreateRequest())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("has no acquirer credentials")));
+    }
+
+    // Клиент — только у одноразовой ссылки (Р-96): у многоразовой отказ, а не молчаливый пропуск.
+    @Test
+    void createPaymentLink_multiUseWithACustomer_returns400() throws Exception {
+        ObjectNode request = validCreateRequest();
+        request.set("customer", objectMapper.createObjectNode().put("fullName", "John Doe"));
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("customer can only be set on a single-use link")));
+    }
+
+    // Телефон — только азербайджанский и хранится как +994XXXXXXXXX: провайдер ждёт код и номер раздельно.
+    @Test
+    void createPaymentLink_customerPhone_isNormalizedOrRefused() throws Exception {
+        ObjectNode request = smsSingleCreateRequest();
+        request.put("description", "Phone fixture");
+        request.set("customer", objectMapper.createObjectNode().put("fullName", "Test Testov")
+                .put("email", "test@test.az").put("phone", "0 (70) 330-10-25"));
+        String body = mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID id = UUID.fromString(objectMapper.readTree(body).get("id").asText());
+        Assertions.assertEquals("+994703301025", paymentLinkRepository.findById(id).orElseThrow().getCustomerPhone());
+
+        request.set("customer", objectMapper.createObjectNode().put("phone", "+7 999 123 45 67"));
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("customer.phone must be an Azerbaijani number: +994 and 9 digits")));
+    }
+
+    // Без номера терминала у провайдера ссылка родилась бы нерабочей: заказ создаётся на терминале (Р-96).
+    @Test
+    void createPaymentLink_terminalWithoutProviderNumber_returns400() throws Exception {
+        jdbcTemplate.update("UPDATE terminals SET terminal_rid = NULL WHERE id = ?", TERMINAL_ID);
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validCreateRequest())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("has no provider terminal number")));
     }
 
     @Test
@@ -526,6 +586,48 @@ class PaymentLinkIntegrationTest {
                 .andExpect(header().string("Location", containsString("rid=")));
     }
 
+    // Р-103: circuit breaker к эквайеру открыт — вызов не ушёл, это 503 «попробуйте позже», а не 500
+    // «сбой у нас» со стектрейсом.
+    @Test
+    void openPaymentLink_withTheCircuitOpen_isServiceUnavailable() throws Exception {
+        UUID id = createLinkAndGetId(headToken);
+        Mockito.doThrow(io.github.resilience4j.circuitbreaker.CallNotPermittedException.createCallNotPermittedException(
+                        io.github.resilience4j.circuitbreaker.CircuitBreaker.ofDefaults("acquiring")))
+                .when(acquiringClient).createEcomOrder(any(), any(), any(), any(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", id))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status", is(503)))
+                .andExpect(jsonPath("$.message", containsString("nothing was sent")));
+    }
+
+    // Р-103: кривой параметр — ошибка клиента, 400 с именем параметра, а не 500.
+    @Test
+    void aParameterOfTheWrongType_isABadRequest() throws Exception {
+        mockMvc.perform(get("/api/v1/transactions/not-a-uuid")
+                        .header(HttpHeaders.AUTHORIZATION, headToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Parameter 'id' has an invalid value")));
+        mockMvc.perform(get("/api/v1/payment-links").param("status", "FOO")
+                        .header(HttpHeaders.AUTHORIZATION, headToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Parameter 'status' has an invalid value")));
+    }
+
+    // Р-93: заказ у провайдера заводится от имени компании терминала — её расшифрованными кредами.
+    @Test
+    void openPaymentLink_sendsTheCompanyCredentialsToTheProvider() throws Exception {
+        UUID id = createLinkAndGetId(headToken);
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", id))
+                .andExpect(status().isFound());
+
+        verify(acquiringClient).createEcomOrder(any(),
+                eq(new ProviderCredentials(CompanyCredentialsFixture.loginOf("test-company"),
+                        CompanyCredentialsFixture.passwordOf("test-company"))),
+                eq("TID-Admin"), any(), anyString());
+    }
+
     // --- P0-9: order password не попадает ни в provider_response, ни в лог ------------------
 
     // Открытие ссылки пишет ответ эквайера в provider_response. У order password своя колонка,
@@ -577,9 +679,11 @@ class PaymentLinkIntegrationTest {
                     .filter(message -> message.contains(password))
                     .toList();
             Assertions.assertTrue(offending.isEmpty(), "the order password reached the log: " + offending);
+            // Открытие описывает одна строка INFO (Р-98); без неё проверка выше прошла бы на пустом логе.
             Assertions.assertTrue(logEvents.list.stream().map(ILoggingEvent::getFormattedMessage)
-                            .anyMatch(message -> message.startsWith("Redirecting customer to HPP URL: ")),
-                    "the redirect line itself must still be logged (without its query string)");
+                            .anyMatch(message -> message.startsWith("Link " + id + " opened: ")
+                                    && message.contains(pending.getProviderOrderId())),
+                    "the opening itself must still be logged, with the provider order and without the password");
         } finally {
             root.detachAppender(logEvents);
         }
@@ -597,7 +701,7 @@ class PaymentLinkIntegrationTest {
                 "status", "FullyPaid",
                 "ridByMerchant", "123123871283618376123",
                 "amount", 5))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken))
                 .andExpect(status().isOk())
@@ -628,7 +732,7 @@ class PaymentLinkIntegrationTest {
                 "password", "legacy-secret"));
         transactionRepository.save(pending);
         doReturn(null)
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken))
                 .andExpect(status().isOk())
@@ -649,7 +753,7 @@ class PaymentLinkIntegrationTest {
     void completeDms_pendingAndProviderSaysUnknownStatus_returns400AndDoesNotCapture() throws Exception {
         Transaction pending = createTransaction(TERMINAL_ID, "DMS-UNKNOWN", TransactionStatus.PENDING);
         doReturn(Map.of("status", "Settled"))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         ObjectNode complete = objectMapper.createObjectNode();
         complete.put("amount", new BigDecimal("100.00"));
@@ -660,7 +764,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("has not been authorized by the acquirer yet")));
 
-        verify(acquiringClient, never()).completeDms(anyString(), anyString(), anyString(), anyString(), any());
+        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
         Assertions.assertEquals(TransactionStatus.PENDING,
                 transactionRepository.findById(pending.getId()).orElseThrow().getStatus());
     }
@@ -900,7 +1004,7 @@ class PaymentLinkIntegrationTest {
                         Map.of("rid", "PmoResultCode", "valAsStr", "05"),
                         Map.of("rid", "DeclineDescription", "valAsStr", "Invalid PAN"),
                         Map.of("rid", "PmoDeclineDescription", "valAsStr", "Invalid cvv2 for this card."))))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken))
                 .andExpect(status().isOk())
@@ -926,7 +1030,7 @@ class PaymentLinkIntegrationTest {
                 "custAttrs", List.of(
                         Map.of("rid", "PrevStatus", "valAsStr", "Preparing"),
                         Map.of("rid", "PmoResultCode", "valAsStr", "Approved"))))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         String body = mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken))
                 .andExpect(status().isOk())
@@ -945,7 +1049,7 @@ class PaymentLinkIntegrationTest {
     void checkStatus_fullPayload_returnsMaskedCardRrnAndApprovalCode() throws Exception {
         Transaction pending = createTransaction(TERMINAL_ID, "TX-CARD-FACTS", TransactionStatus.PENDING);
         doReturn(contractOrderPayload())
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken))
                 .andExpect(status().isOk())
@@ -961,7 +1065,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.cardNumberMasked", is("426863******3689")))
                 .andExpect(jsonPath("$.rrn", is("629677123123123123")))
                 .andExpect(jsonPath("$.approvalCode", is("629677")));
-        verify(acquiringClient, times(1)).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+        verify(acquiringClient, times(1)).getOrderStatus(anyString(), anyString(), any());
     }
 
     // P1-16: список и карточка читают один и тот же сохранённый payload одним парсером, поэтому
@@ -971,7 +1075,7 @@ class PaymentLinkIntegrationTest {
     void listTransactions_showsTheSameCardFactsAsTheStatusCard() throws Exception {
         Transaction pending = createTransaction(TERMINAL_ID, "TX-CARD-FACTS-LIST", TransactionStatus.PENDING);
         doReturn(contractOrderPayload())
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         String card = mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken))
                 .andExpect(status().isOk())
@@ -1023,7 +1127,7 @@ class PaymentLinkIntegrationTest {
     void redirectPage_forPendingPayment_rendersPendingState() throws Exception {
         // Провайдер ещё не рассчитал заказ: одна проверка, дальше просто говорим об этом.
         doReturn(Map.of("status", "Preparing"))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         Transaction tx = createTransaction(TERMINAL_ID, "ORDER-PENDING", TransactionStatus.PENDING);
 
@@ -1101,13 +1205,13 @@ class PaymentLinkIntegrationTest {
         Transaction held = attemptFixture(link, TransactionStatus.AUTHORIZED);
         // Открытие спрашивает эквайера о холде, прежде чем отказать: холд жив.
         doReturn(Map.of("id", 11338, "status", "Authorized"))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Payment link has an authorized payment awaiting capture")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
         Assertions.assertEquals(TransactionStatus.AUTHORIZED,
                 transactionRepository.findById(held.getId()).orElseThrow().getStatus());
     }
@@ -1119,7 +1223,7 @@ class PaymentLinkIntegrationTest {
         PaymentLink link = linkFixture(UsageType.SINGLE, null);
         Transaction abandoned = attemptFixture(link, TransactionStatus.PENDING);
         doReturn(Map.of("id", 11338, "status", "Preparing"))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
                 .andExpect(status().isFound());
@@ -1139,13 +1243,13 @@ class PaymentLinkIntegrationTest {
         PaymentLink link = linkFixture(UsageType.SINGLE, null);
         attemptFixture(link, TransactionStatus.PENDING);
         doReturn(Map.of("id", 11338, "status", "FullyPaid"))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Single-use payment link has already been used")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // Холд одноразовой ссылки банк снял сам, ничего не списав (Closed ← Authorized, Р-75): слот
@@ -1156,7 +1260,7 @@ class PaymentLinkIntegrationTest {
         Transaction held = attemptFixture(link, TransactionStatus.AUTHORIZED);
         doReturn(Map.of("id", 11338, "status", "Closed", "prevStatus", "Authorized",
                 "trans", List.of(Map.of("clearAmount", 0, "billingStatus", "Normal"))))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
                 .andExpect(status().isFound());
@@ -1171,13 +1275,13 @@ class PaymentLinkIntegrationTest {
         PaymentLink link = linkFixture(UsageType.MULTIPLE, 1);
         attemptFixture(link, TransactionStatus.AUTHORIZED);
         doReturn(Map.of("id", 11338, "status", "Authorized"))
-                .when(acquiringClient).getOrderStatus(anyString(), anyString(), anyString(), anyString());
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
         mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Payment link has an authorized payment awaiting capture")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // --- P1-7: рассчитанный платёж должен считаться один раз --------------------------------
@@ -1352,7 +1456,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Payment link has expired")));
 
-        verify(acquiringClient, never()).createEcomOrder(any(), anyString(), anyString(), any(), anyString());
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
     }
 
     // Свёртка PaymentLinkScheduler ходит раз в пять минут. Она была верна и P1-9 её не трогал —

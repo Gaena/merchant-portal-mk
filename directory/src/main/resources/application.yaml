@@ -22,28 +22,32 @@ spring:
 
 directory:
   terminal-reconciliation:
-    # Сверка статусов терминалов со слепком, который держит ecom. Период тот же, что и у самой
-    # синхронизации: решение о наших терминалах принимается здесь, где смена статуса уже умеет
-    # приостанавливать и восстанавливать платёжные ссылки.
+    # Сверка статусов терминалов со слепком ecom (Р-66): здесь, потому что смена статуса в directory
+    # ведёт и платёжные ссылки.
     enabled: ${DIRECTORY_TERMINAL_RECONCILIATION_ENABLED:true}
     cron: "${DIRECTORY_TERMINAL_RECONCILIATION_CRON:0 */15 * * * *}"
 
 pbl:
   security:
-    # Must be byte-for-byte the same value as in auth and pbl, otherwise tokens issued by auth
+    # Must be byte-for-byte the same value as in auth, pbl and ecom, otherwise tokens issued by auth
     # fail verification here. No default on purpose.
     jwt:
       secret: ${JWT_SECRET}
-      # Kept in step with auth (P1-13: 15 minutes). This service only verifies tokens — the
-      # lifetime is stamped into the token by auth at issue time — so the value here matters only
-      # for JwtProvider's own default; it is declared to keep the three configurations identical.
+      # Lifetime is stamped by auth; kept in step with it to keep the four configurations identical (P1-13).
       expiration-ms: ${JWT_EXPIRATION_MS:900000} # 15 minutes
+
+mp:
+  # Whose X-Real-IP / X-Forwarded-For we trust; the same line as in auth, pbl and ecom (Р-103).
+  trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+  credentials:
+    # Ключ AES-256 для паролей компаний к провайдеру (Р-93): 32 байта в base64, одно значение в directory
+    # и pbl — directory шифрует, pbl расшифровывает. Без значения по умолчанию намеренно (CredentialCipher).
+    encryption-key: ${CREDENTIALS_ENCRYPTION_KEY}
 
 management:
   server:
-    # Actuator lives on its own port bound to the loopback interface, so it is physically
-    # unreachable from outside the machine — it is not protected by a token, and the liveness
-    # probes that call it have none to present. Ports: auth 9081, directory 9082, pbl 9080.
+    # Loopback-only port instead of a token: probes have none to present.
+    # Ports: auth 9081, directory 9082, pbl 9080, ecom 9083.
     port: ${MANAGEMENT_PORT:9082}
     address: 127.0.0.1
   endpoints:
@@ -52,15 +56,12 @@ management:
         include: health,info,metrics
   endpoint:
     health:
-      # Safe to keep because of the address binding above: database connectivity, free disk space
-      # and versions are visible from this machine only, and nothing on the public port serves them.
+      # Safe only because of the loopback binding above.
       show-details: always
 
 springdoc:
-  # Off in normal operation: /v3/api-docs is a complete map of the API. Turned on with
-  # SWAGGER_ENABLED=true for acceptance testing (project_docs/technical_handover.md lists Swagger as delivered
-  # documentation), then turned back off — see project_docs/deployment_guide.md. While off, springdoc registers
-  # no handlers and SecurityConfig adds no matchers for these paths.
+  # Off by default: /v3/api-docs maps the whole API. SWAGGER_ENABLED=true only for acceptance testing
+  # (project_docs/guides/deployment_guide.md).
   api-docs:
     enabled: ${SWAGGER_ENABLED:false}
     path: /v3/api-docs

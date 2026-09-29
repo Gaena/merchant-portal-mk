@@ -77,12 +77,7 @@ import { formatCurrency } from '../utils/format';
 import { linkStatusLabel } from '../i18n/translations';
 import type { TranslationDictionary } from '../i18n/translations';
 
-// ─── Local status config with icons ──────────────────────────────────────────
-
-/**
- * Иконка статуса. Ветка `null` — статус вне словаря бэкенда: вопросительный знак, а не
- * «просрочена» и не «активна», чтобы неизвестное значение нельзя было принять за знакомое.
- */
+// null — статус вне словаря бэкенда: вопросительный знак, чтобы неизвестное не приняли за знакомое.
 const statusIcon = (status: LinkStatus | null) => {
   switch (status) {
     case 'ACTIVE':
@@ -97,22 +92,16 @@ const statusIcon = (status: LinkStatus | null) => {
   }
 };
 
-/** Подпись, цвет и иконка статуса. Значение уже разобрано `parseLinkStatus`. */
 const getStatusConfig = (link: PaymentLink, tObj: TranslationDictionary) => ({
   label: linkStatusLabel(tObj, link.status, link.statusRaw),
   color: getLinkStatusColors(link.status).color,
   icon: statusIcon(link.status),
 });
 
-/** Текст ошибки от бэкенда (`ErrorResponse.message`), с запасным общим текстом (Р-34). */
 const messageFrom = (err: any, fallback: string): string =>
   err?.response?.data?.message || err?.response?.data?.error || fallback;
 
-/**
- * Срок жизни ссылки из формы — в `expiresAt` запроса. Раньше выбор никуда не уходил и любая
- * ссылка жила `pbl.link.default-ttl` (24 ч); потолок `pbl.link.max-ttl` — 90 дней, 30 дней в него
- * укладываются.
- */
+// Потолок срока на бэкенде — `pbl.link.max-ttl` (90 дней), 30 дней в него укладываются.
 type ExpiryOption = 'h1' | 'h24' | 'h72' | 'd7' | 'd30';
 const EXPIRY_MS: Record<ExpiryOption, number> = {
   h1: 3_600_000,
@@ -123,7 +112,11 @@ const EXPIRY_MS: Record<ExpiryOption, number> = {
 };
 const EXPIRY_OPTIONS: ExpiryOption[] = ['h1', 'h24', 'h72', 'd7', 'd30'];
 
-/** Пустая форма создания ссылки. */
+// Азербайджанский номер: +994, 994 или 0 и 9 цифр; пробелы, дефисы и скобки допустимы (Р-96). Зеркало
+// CustomerPhone в pbl — меняется вместе с ним.
+const isAzerbaijaniPhone = (value: string): boolean =>
+  /^(?:\+994|994|0)\d{9}$/.test(value.trim().replace(/[\s\-()]/g, ''));
+
 const emptyForm = () => ({
   terminalId: '', amount: '', currency: 'AZN', description: '', customerName: '',
   customerEmail: '', customerPhone: '', usageType: 'SINGLE' as LinkUsageType, maxUses: '2',
@@ -131,26 +124,24 @@ const emptyForm = () => ({
 });
 
 /**
- * Форма, заполненная полями ссылки, — для кнопки «Создать новую ссылку с теми же данными» на
- * карточке истёкшей или отменённой ссылки. Срок жизни — по умолчанию: прежний уже истёк.
- * Терминала здесь нет: его подставляют, только когда известен список активных терминалов.
- * Тип использования или оплаты вне словаря (`null`) заменяется значением по умолчанию: это
- * выбор в форме, мерчант видит его до создания, а не подпись у существующей ссылки.
+ * Форма для «Создать новую ссылку с теми же данными». Срок — по умолчанию: прежний истёк; терминал
+ * подставляется, когда известен список активных. Тип вне словаря (`null`) — значение по умолчанию:
+ * это выбор в форме, мерчант видит его до создания.
  */
 const formFromLink = (link: PaymentLink) => ({
   ...emptyForm(),
   amount: String(link.amount),
   currency: link.currency || 'AZN',
   description: link.description,
-  customerName: link.customerName,
-  customerEmail: link.customerEmail,
-  customerPhone: link.customerPhone,
+  // У многоразовой ссылки клиента нет (Р-96): у старых он мог остаться в базе, но в новую не переносится.
+  customerName: link.usageType === 'MULTIPLE' ? '' : link.customerName,
+  customerEmail: link.usageType === 'MULTIPLE' ? '' : link.customerEmail,
+  customerPhone: link.usageType === 'MULTIPLE' ? '' : link.customerPhone,
   usageType: link.usageType ?? 'SINGLE',
   maxUses: link.usageType === 'MULTIPLE' ? String(link.maxUses) : '2',
   paymentType: link.paymentType ?? 'SMS',
 });
 
-/** Строка ответа списка или карточки — в `PaymentLink`. Одна на список и на ответ создания. */
 const mapLink = (l: any, fallbackTerminal?: number): PaymentLink => ({
   id: l.id,
   shortCode: String(l.id).slice(0, 8).toUpperCase(),
@@ -162,8 +153,7 @@ const mapLink = (l: any, fallbackTerminal?: number): PaymentLink => ({
   amount: Number(l.amount),
   currency: l.currency || 'AZN',
   description: l.description || '',
-  // Пусто — значит не указано (Р-48): подстановка «N/A» делала ветку «клиент не указан»
-  // недостижимой, а кнопки письма и WhatsApp — всегда активными с адресом «N/A».
+  // Пусто — не указано (Р-48): заглушка вроде «N/A» зажгла бы кнопки письма и WhatsApp.
   customerName: l.customer?.fullName || l.customerName || '',
   customerEmail: l.customer?.email || l.customerEmail || '',
   customerPhone: l.customer?.phone || l.customerPhone || '',
@@ -175,26 +165,19 @@ const mapLink = (l: any, fallbackTerminal?: number): PaymentLink => ({
   createdAt: new Date(l.createdAt),
   expiresAt: l.expiresAt ? new Date(l.expiresAt) : new Date(Date.now() + 86400000),
   paymentType: parsePaymentType(l.paymentType),
-  // Дата последнего успешного платежа (P2-15). Для многоразовой ссылки это именно
-  // последний платёж, отсюда `lastPaidAt` на стороне API (Р-46). Пусто — платежей
-  // не было; подставлять сюда что-либо нельзя.
+  // Последний успешный платёж (P2-15, Р-46); пусто — платежей не было, ничего не подставлять.
   paidAt: l.lastPaidAt ? new Date(l.lastPaidAt) : undefined,
-  // Терминал ссылки: карточка подписывает его логином, и без этого поля она ждала бы
-  // собственного запроса, показывая до него прочерк.
+  // Без терминала карточка, открытая из списка, ждала бы своего запроса, показывая прочерк.
   terminalId: typeof l.terminal === 'number' ? l.terminal : fallbackTerminal,
 });
 
-/** Вкладки страницы: список ссылок (по умолчанию) и статистика оплат по ссылкам. */
 type PayByLinkTab = 'links' | 'stats';
-
-// ─── Component ───────────────────────────────────────────────────────────────
 
 export const PayByLinkPage: React.FC = () => {
   const navigate = useNavigate();
   const { tObj } = useLanguage();
-  // Вкладка — в адресе (`?tab=stats`): ссылку на статистику можно отправить, обновление страницы
-  // её не сбрасывает. Нет параметра или он незнакомый — список. Переключение заменяет запись
-  // истории, а не добавляет: «назад» уводит со страницы, а не листает вкладки.
+  // Вкладка — в адресе (`?tab=stats`), незнакомое значение — список. Переключение заменяет запись
+  // истории: «назад» уводит со страницы, а не листает вкладки.
   const [searchParams, setSearchParams] = useSearchParams();
   const tab: PayByLinkTab = searchParams.get('tab') === 'stats' ? 'stats' : 'links';
   const handleTabChange = (_: React.SyntheticEvent, value: PayByLinkTab) => {
@@ -212,32 +195,24 @@ export const PayByLinkPage: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [selectedLink, setSelectedLink] = useState<PaymentLink | null>(null);
-  /**
-   * Ссылка, отмену которой сейчас подтверждают (P3-5a). Держим саму ссылку, а не её id:
-   * окну нужны `shortCode` и сумма — в таблице из двадцати похожих строк только они и
-   * отличают ту, по которой промахнулись, от той, которую собирались отменить.
-   */
+  // Саму ссылку, а не id: окну нужны `shortCode` и сумма, чтобы отличить её от похожих строк (P3-5a).
   const [cancelTarget, setCancelTarget] = useState<PaymentLink | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
-  // Фильтр по статусу — серверный (`GET /payment-links?status=`): клиентский фильтр видел
-  // только текущую страницу. Поиска у списка нет — на бэкенде нет параметра.
+  // Фильтр по статусу — серверный: клиентский видел бы только текущую страницу. Поиска нет —
+  // у `GET /payment-links` нет параметра.
   const [statusFilter, setStatusFilter] = useState<LinkStatus | 'all'>('all');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; error?: boolean }>({ open: false, message: '' });
 
-  // Create form state
   const [form, setForm] = useState(emptyForm);
   const [formError, setFormError] = useState('');
   const [generating, setGenerating] = useState(false);
   const [newlyCreatedLink, setNewlyCreatedLink] = useState<PaymentLink | null>(null);
 
-  // Карточек «активных / завершённых / выручка» здесь больше нет: они считались по одной
-  // серверной странице (десять строк из пятидесяти), а «выручка» складывала суммы поверх валют.
-  // Сводку по ссылкам считает бэкенд — `GET /api/v1/dashboard/summary`, `paymentLinks`.
+  // Сводку по ссылкам считает бэкенд (вкладка «Статистика»), по странице списка её не считать.
 
-  // «Скопировано» — только когда буфер действительно принял текст: в небезопасном контексте
-  // `writeText` отказывает, и прежний код всё равно рапортовал об успехе.
+  // «Скопировано» — только после успеха `writeText`: в небезопасном контексте он отказывает.
   const handleCopy = (url: string) => {
     navigator.clipboard.writeText(url)
       .then(() => setSnackbar({ open: true, message: tObj.common.copied }))
@@ -253,8 +228,7 @@ export const PayByLinkPage: React.FC = () => {
 
   const [totalElements, setTotalElements] = useState(0);
 
-  // Страница приходит с сервера уже нарезанной по `page`/`size`; резать её ещё раз на клиенте
-  // нельзя — так вторая и дальше страницы всегда оказывались пустыми при полном счётчике.
+  // Страница уже нарезана сервером: резать её на клиенте нельзя — вторая и дальше окажутся пустыми.
   const fetchPaymentLinks = useCallback(() => {
     const params: Record<string, unknown> = { page, size: rowsPerPage };
     if (statusFilter !== 'all') params.status = statusFilter;
@@ -267,19 +241,14 @@ export const PayByLinkPage: React.FC = () => {
         }
       })
       .catch(err => {
-        // Список не очищается: перечитывание вызывается в том числе после отмены (Р-34),
-        // и упавший запрос не должен стирать с экрана строки, о судьбе которых мы ничего
-        // не узнали. Пустой список остаётся пустым — на первой загрузке это то же самое.
+        // Список не очищается: перечитывание идёт и после отмены (Р-34), и сбой не должен
+        // стирать строки, о судьбе которых ничего не известно.
         console.warn('[pay-by-link] не удалось получить список ссылок:', err);
       });
   }, [page, rowsPerPage, statusFilter]);
 
-  /**
-   * Отмена ссылки (Р-34). Локальной правки `setLinks` здесь нет намеренно: раньше её делала
-   * и ветка `catch`, поэтому неудавшаяся отмена — отказ бэкенда, нехватка прав, оборванная
-   * сеть — всё равно рисовала ссылку отменённой, пока по ней продолжали платить.
-   * Состояние строки в обоих случаях перечитывается с сервера.
-   */
+  // Строку не правим локально (Р-34): и после успеха, и после отказа она перечитывается с сервера,
+  // иначе неудавшаяся отмена нарисовала бы ссылку отменённой, пока по ней платят.
   const handleCancel = async () => {
     if (!cancelTarget) return;
     setCancelBusy(true);
@@ -289,9 +258,7 @@ export const PayByLinkPage: React.FC = () => {
     } catch (err) {
       setSnackbar({ open: true, message: messageFrom(err, tObj.payByLink.linkCancelFailed), error: true });
     } finally {
-      // Окно закрывается и после отказа: иначе оно спрашивало бы про отмену ссылки,
-      // которую бэкенд отменять отказался, а причина отказа видна в snackbar. Так же
-      // ведёт себя карточка ссылки.
+      // Окно закрывается и после отказа — причина видна в snackbar; так же ведёт себя карточка.
       setCancelBusy(false);
       setCancelTarget(null);
       fetchPaymentLinks();
@@ -301,10 +268,8 @@ export const PayByLinkPage: React.FC = () => {
   useEffect(() => {
     fetchPaymentLinks();
 
-    // Лёгкий список терминалов (Р-45): форме нужны только id, имя и статус, а полная карточка
-    // постранична с P2-1. Фильтрует потребитель, а не сервер: здесь берём только активные —
-    // на заблокированном бэкенд откажет в создании ссылки (P2-8), и предлагать его в списке
-    // значит вести пользователя к 400.
+    // Лёгкий список (Р-45), фильтрует потребитель: только активные — на заблокированном
+    // бэкенд откажет в создании ссылки (P2-8).
     apiClient.get('/api/v1/terminals/options')
       .then(res => {
         const rawContent = Array.isArray(res.data) ? res.data : (res.data?.content || []);
@@ -313,11 +278,8 @@ export const PayByLinkPage: React.FC = () => {
       .catch(() => {});
   }, [fetchPaymentLinks]);
 
-  /**
-   * «Создать новую ссылку с теми же данными» с карточки ссылки приходит сюда как `state.prefill`:
-   * форма открывается заполненной, а state сразу стирается из записи истории — иначе обновление
-   * страницы открывало бы форму снова. Из адреса уходит и `?tab=stats`: форма — над списком ссылок.
-   */
+  // `state.prefill` с карточки ссылки сразу стирается из истории, иначе обновление страницы
+  // открыло бы форму снова; `?tab=stats` уходит тоже — форма над списком ссылок.
   const location = useLocation();
   const [prefillTerminalId, setPrefillTerminalId] = useState<number | null>(null);
   useEffect(() => {
@@ -360,10 +322,14 @@ export const PayByLinkPage: React.FC = () => {
       return;
     }
     // Лимит платежей — целое число не меньше единицы, как на бэкенде (`maxPayments > 0`).
-    // Раньше пустое поле и «0» молча превращались в лимит 5.
     const maxPayments = Number(form.maxUses);
     if (form.usageType === 'MULTIPLE' && (!Number.isInteger(maxPayments) || maxPayments < 1)) {
       setFormError(tObj.payByLink.invalidMaxUses);
+      return;
+    }
+    // Телефон — только азербайджанский (Р-96), то же правило, что CustomerPhone на бэкенде.
+    if (form.usageType === 'SINGLE' && form.customerPhone.trim() && !isAzerbaijaniPhone(form.customerPhone)) {
+      setFormError(tObj.payByLink.customerPhoneInvalid);
       return;
     }
     setFormError('');
@@ -384,15 +350,14 @@ export const PayByLinkPage: React.FC = () => {
         payload.maxPayments = maxPayments;
       }
 
-      // Только то, что ввели. Раньше пустые поля клиента заменялись на «N/A»,
-      // «customer@example.com» и «+994500000000» — и это сохранялось в базу, показывалось в
-      // списке и уходило в письмо. `CustomerDto` допускает null в каждом поле.
+      // Только введённое: пустое поле клиента — null, без заглушек (Р-48).
       const customer = {
         fullName: form.customerName.trim() || null,
         email: form.customerEmail.trim() || null,
         phone: form.customerPhone.trim() || null,
       };
-      if (customer.fullName || customer.email || customer.phone) {
+      // Клиент — только у одноразовой ссылки: у многоразовой бэкенд его отвергает (Р-96).
+      if (form.usageType === 'SINGLE' && (customer.fullName || customer.email || customer.phone)) {
         payload.customer = customer;
       }
 
@@ -410,8 +375,8 @@ export const PayByLinkPage: React.FC = () => {
     }
   };
 
-  // Пока запрос идёт, окно не закрыть: ответ прилетал в закрытое окно, и следующее открытие
-  // показывало «ссылка создана» про прошлую ссылку.
+  // Пока запрос идёт, окно не закрыть: иначе ответ придёт в закрытое окно, и следующее открытие
+  // покажет «ссылка создана» про прошлую ссылку.
   const handleCloseCreate = () => {
     if (generating) return;
     setCreateOpen(false);
@@ -421,7 +386,6 @@ export const PayByLinkPage: React.FC = () => {
 
   return (
     <Box>
-      {/* Header */}
       <Box sx={{ mb: 2, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600, mb: 0.5 }}>
@@ -442,7 +406,6 @@ export const PayByLinkPage: React.FC = () => {
         </Button>
       </Box>
 
-      {/* Кнопка создания — в шапке, над вкладками: ссылку создают и со статистики. */}
       <Tabs value={tab} onChange={handleTabChange} sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}>
         <Tab value="links" id="pay-by-link-tab-links" aria-controls="pay-by-link-panel-links"
              icon={<LinkIcon />} iconPosition="start" label={tObj.payByLink.tabs.links} sx={{ minHeight: 48 }} />
@@ -458,14 +421,12 @@ export const PayByLinkPage: React.FC = () => {
         </Box>
       )}
 
-      {/* Filters & Table */}
       {tab === 'links' && (
         <Paper elevation={0} role="tabpanel" id="pay-by-link-panel-links" aria-labelledby="pay-by-link-tab-links"
                sx={{ border: '1px solid', borderColor: 'divider' }}>
-          {/* Toolbar */}
           <Box sx={{ p: 2.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', borderBottom: '1px solid', borderColor: 'divider' }}>
             <FilterIcon color="action" />
-            {/* Без счётчиков в кнопках: они считались по одной странице, а не по всей выборке. */}
+            {/* Счётчиков в кнопках нет: страница — не вся выборка. */}
             <ToggleButtonGroup
               size="small"
               exclusive
@@ -486,7 +447,6 @@ export const PayByLinkPage: React.FC = () => {
             </Box>
           </Box>
 
-          {/* Table */}
           <TableContainer>
             <Table>
               <TableHead>
@@ -516,7 +476,6 @@ export const PayByLinkPage: React.FC = () => {
                       onClick={() => navigate(`/pay-by-link/${link.id}`, { state: { link } })}
                       sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'rgba(0,0,0,0.02)' } }}
                     >
-                      {/* Link */}
                       <TableCell>
                         <Box>
                           <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'primary.main', letterSpacing: 0.5 }}>
@@ -528,7 +487,6 @@ export const PayByLinkPage: React.FC = () => {
                         </Box>
                       </TableCell>
 
-                      {/* Customer */}
                       <TableCell>
                         {link.customerName ? (
                           <Box>
@@ -546,21 +504,18 @@ export const PayByLinkPage: React.FC = () => {
                         )}
                       </TableCell>
 
-                      {/* Description */}
                       <TableCell>
                         <Typography variant="body2" sx={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {link.description}
                         </Typography>
                       </TableCell>
 
-                      {/* Amount */}
                       <TableCell align="right">
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>
                           {formatCurrency(link.amount, link.currency)}
                         </Typography>
                       </TableCell>
 
-                      {/* Payment Type */}
                       <TableCell>
                         <Chip
                           label={link.paymentType ?? '—'}
@@ -571,7 +526,6 @@ export const PayByLinkPage: React.FC = () => {
                         />
                       </TableCell>
 
-                      {/* Status */}
                       <TableCell>
                         <Chip
                           icon={cfg.icon as React.ReactElement}
@@ -583,10 +537,8 @@ export const PayByLinkPage: React.FC = () => {
                         />
                       </TableCell>
 
-                      {/* Usage */}
                       <TableCell>
-                        {/* В списочном ответе счётчика платежей нет (P2-16): показывается только
-                            лимит, «0 из N» здесь был бы выдумкой. Число использований — на карточке. */}
+                        {/* Счётчика платежей в списочном ответе нет (P2-16): только лимит. */}
                         {link.usageType === 'MULTIPLE' ? (
                           <Typography variant="caption" sx={{ fontWeight: 600 }}>
                             {tObj.payByLink.multipleUse} · {link.maxUses}
@@ -598,12 +550,9 @@ export const PayByLinkPage: React.FC = () => {
                         )}
                       </TableCell>
 
-                      {/* Expires */}
                       <TableCell>
-                        {/* Дату оплаты вместо срока показываем только у завершённой ссылки (Р-47).
-                            У активной многоразовой с тремя платежами из пяти важнее, сколько ей
-                            осталось жить: срок — то, что ещё может измениться, а дата платежа
-                            видна на карточке. */}
+                        {/* Дата оплаты вместо срока — только у завершённой ссылки (Р-47): у активной
+                            важнее, сколько ей осталось. */}
                         {link.status === 'COMPLETED' && link.paidAt ? (
                           <Box>
                             <Typography variant="caption" color="success.main" sx={{ fontWeight: 600 }}>
@@ -630,7 +579,6 @@ export const PayByLinkPage: React.FC = () => {
                         )}
                       </TableCell>
 
-                      {/* Actions */}
                       <TableCell align="center" onClick={e => e.stopPropagation()}>
                         <Stack direction="row" spacing={0.5} justifyContent="center">
                           <Tooltip title={tObj.payByLink.copyLink}>
@@ -688,7 +636,6 @@ export const PayByLinkPage: React.FC = () => {
         </Paper>
       )}
 
-      {/* ── Create Dialog ──────────────────────────────────────────────────── */}
       <Dialog open={createOpen} onClose={handleCloseCreate} maxWidth="sm" fullWidth scroll="paper">
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pb: 1 }}>
           <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: 'primary.light', color: 'white', display: 'flex' }}>
@@ -705,7 +652,6 @@ export const PayByLinkPage: React.FC = () => {
         <Divider />
 
         <DialogContent sx={{ pt: 3 }}>
-          {/* Success state */}
           {newlyCreatedLink ? (
             <Box>
               <Alert severity="success" sx={{ mb: 3 }}>
@@ -747,8 +693,6 @@ export const PayByLinkPage: React.FC = () => {
                   </Box>
                 )}
               </Stack>
-              {/* Настоящие ссылки mailto / wa.me, а не копирование текста «mailto:…» в буфер,
-                  как было. Без адреса или телефона кнопка погашена — отправлять некуда. */}
               <Stack direction="row" spacing={1.5} sx={{ mt: 3 }}>
                 <Button
                   variant="outlined"
@@ -786,8 +730,6 @@ export const PayByLinkPage: React.FC = () => {
                   onChange={e => setForm(f => ({ ...f, terminalId: e.target.value }))}
                   helperText={tObj.payByLink.terminalHelper}
                 >
-                  {/* Терминал подписан логином — основным его параметром; имя идёт после,
-                      как пояснение, а числовой id мерчанту ничего не говорит. */}
                   {terminals.map((t) => (
                     <MenuItem key={t.id} value={t.id}>
                       <Box component="span" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
@@ -805,7 +747,6 @@ export const PayByLinkPage: React.FC = () => {
 
               {formError && <Alert severity="error">{formError}</Alert>}
 
-              {/* Amount */}
               <Box>
                 <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 700, color: 'text.primary' }}>
                   {tObj.payByLink.amountLabel}
@@ -837,7 +778,6 @@ export const PayByLinkPage: React.FC = () => {
                 </Box>
               </Box>
 
-              {/* Description */}
               <TextField
                 fullWidth
                 label={tObj.payByLink.descriptionLabel}
@@ -846,7 +786,8 @@ export const PayByLinkPage: React.FC = () => {
                 helperText={tObj.payByLink.descriptionHint}
               />
 
-              {/* Customer */}
+              {/* Customer — только у одноразовой ссылки (Р-96): многоразовой платят разные люди. */}
+              {form.usageType === 'SINGLE' && (
               <Box>
                 <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 700, color: 'text.primary' }}>
                   {tObj.payByLink.customerSection}
@@ -872,20 +813,20 @@ export const PayByLinkPage: React.FC = () => {
                       label={tObj.payByLink.customerPhoneLabel}
                       value={form.customerPhone}
                       onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))}
+                      placeholder="+994 70 330 10 25"
+                      helperText={tObj.payByLink.customerPhoneHint}
                     />
                   </Box>
                 </Stack>
               </Box>
+              )}
 
-              {/* Link Options. Полей «redirect URL», «внутренняя заметка» и «отправить письмо»
-                  здесь больше нет: бэкенд их не принимает и письма не шлёт — контролы собирали
-                  значения и молча выбрасывали. */}
+              {/* Полей «redirect URL», «заметка» и «отправить письмо» нет: бэкенд их не принимает. */}
               <Box>
                 <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 700, color: 'text.primary' }}>
                   {tObj.payByLink.linkSettings}
                 </Typography>
                 <Stack spacing={2}>
-                  {/* Payment type — SMS vs DMS */}
                   <Box>
                     <Typography variant="body2" sx={{ mb: 0.75, fontWeight: 600, color: 'text.primary' }}>
                       {tObj.payByLink.paymentTypeLabel}
@@ -905,7 +846,6 @@ export const PayByLinkPage: React.FC = () => {
                     </Typography>
                   </Box>
 
-                  {/* Expiry */}
                   <TextField
                     select
                     fullWidth
@@ -919,7 +859,6 @@ export const PayByLinkPage: React.FC = () => {
                     ))}
                   </TextField>
 
-                  {/* Usage type */}
                   <Box>
                     <Typography variant="body2" sx={{ mb: 1, color: 'text.secondary' }}>{tObj.payByLink.usageTypeLabel}</Typography>
                     <ToggleButtonGroup
@@ -976,7 +915,6 @@ export const PayByLinkPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* ── Share Dialog ───────────────────────────────────────────────────── */}
       <Dialog open={shareOpen && !!selectedLink} onClose={() => setShareOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.payByLink.shareDialogTitle}</DialogTitle>
         <DialogContent>
@@ -1027,7 +965,6 @@ export const PayByLinkPage: React.FC = () => {
               >
                 {tObj.payByLink.sendWhatsApp}
               </Button>
-              {/* Кнопки «QR-код» здесь больше нет: она копировала в буфер текст «feature coming soon». */}
             </Stack>
           )}
         </DialogContent>
@@ -1038,9 +975,7 @@ export const PayByLinkPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* ── Cancel confirmation ────────────────────────────────────────────
-          Тот же вопрос и те же кнопки, что на карточке ссылки (P3-5a): отмена из списка
-          и отмена с карточки — одно действие, и читаться оно должно одинаково. */}
+      {/* Те же вопрос и кнопки, что на карточке ссылки (P3-5a): это одно действие. */}
       <ConfirmDialog
         open={cancelTarget !== null}
         maxWidth="xs"
@@ -1071,7 +1006,6 @@ export const PayByLinkPage: React.FC = () => {
         )}
       </ConfirmDialog>
 
-      {/* Snackbar */}
       <Snackbar
         open={snackbar.open}
         autoHideDuration={snackbar.error ? 10000 : 3000}

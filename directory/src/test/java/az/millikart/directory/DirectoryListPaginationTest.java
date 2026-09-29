@@ -85,7 +85,6 @@ public class DirectoryListPaginationTest {
         return terminalRepository.saveAndFlush(Terminal.builder()
                 .id(id).name(name)
                 .login("term_login_" + id)
-                .password("term_pass_" + id)
                 .companyId(companyId).status(status)
                 .createdBy("seeder").updatedBy("seeder").build());
     }
@@ -408,15 +407,15 @@ public class DirectoryListPaginationTest {
     public void terminalSearch_percentAndUnderscore_areLiteral() throws Exception {
         seedCompany("comp-01", "MilliKart LLC", "ACTIVE");
         terminalRepository.saveAndFlush(Terminal.builder()
-                .id(700301).name("Rate 100%").login("loginA").password("x")
+                .id(700301).name("Rate 100%").login("loginA")
                 .companyId("comp-01").status(TerminalStatus.ACTIVE)
                 .createdBy("seeder").updatedBy("seeder").build());
         terminalRepository.saveAndFlush(Terminal.builder()
-                .id(700302).name("with_underscore").login("loginB").password("x")
+                .id(700302).name("with_underscore").login("loginB")
                 .companyId("comp-01").status(TerminalStatus.ACTIVE)
                 .createdBy("seeder").updatedBy("seeder").build());
         terminalRepository.saveAndFlush(Terminal.builder()
-                .id(700303).name("haus").login("loginC").password("x")
+                .id(700303).name("haus").login("loginC")
                 .companyId("comp-01").status(TerminalStatus.ACTIVE)
                 .createdBy("seeder").updatedBy("seeder").build());
 
@@ -462,8 +461,8 @@ public class DirectoryListPaginationTest {
     //
     // Логин с этой проверки снят намеренно: мерчант опознаёт терминал по логину, и фид подписывает
     // им терминал на экранах платежей. Ворота у фида те же, что у постраничного GET
-    // /api/v1/terminals, который логин отдаёт и так, — видимости это не прибавляет. Пароль под
-    // запретом остаётся: он и в полной карточке уходит замаскированным.
+    // /api/v1/terminals, который логин отдаёт и так, — видимости это не прибавляет. Пароля у терминала
+    // нет вовсе (Р-93), и поля с таким именем в фиде быть не должно.
     @Test
     public void options_carryTheTerminalLoginButNeverItsPassword() throws Exception {
         seedCompany("comp-01", "MilliKart LLC", "ACTIVE");
@@ -475,11 +474,10 @@ public class DirectoryListPaginationTest {
                 .andReturn().getResponse().getContentAsString();
 
         Assertions.assertFalse(raw.contains("password"), "the feed must not name a password field: " + raw);
-        Assertions.assertFalse(raw.contains("term_pass_500701"), "no password value may leak: " + raw);
 
         JsonNode json = objectMapper.readTree(raw);
-        Assertions.assertEquals(List.of("id", "name", "login", "status"), fieldNames(json.get(0)),
-                "four fields, nothing else");
+        Assertions.assertEquals(List.of("id", "name", "login", "terminalRid", "status"), fieldNames(json.get(0)),
+                "five fields, nothing else: terminalRid names the terminal on screens since Р-96");
         Assertions.assertEquals("term_login_500701", json.get(0).get("login").asText(),
                 "the login is what names the terminal on the payment screens: " + raw);
     }

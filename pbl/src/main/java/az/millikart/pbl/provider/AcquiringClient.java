@@ -9,26 +9,20 @@ import java.util.Map;
 import java.util.UUID;
 
 public interface AcquiringClient {
-    EcomCreateOrderResponse createEcomOrder(PaymentLink link, String login, String password, UUID ridByMerchant, String hppRedirectUrl);
+    // Все вызовы — с кредами компании терминала, а не терминала (Р-93).
+    // Заказ создаётся на терминале провайдера: POST /order?terminalRid=… (Р-96).
+    EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
+                                            UUID ridByMerchant, String hppRedirectUrl);
 
-    // Обе денежные операции возвращают результат, только если эквайер подтвердил её через
-    // tran.match.ridByPmo; принятый, но неподтверждённый ответ — PaymentOutcomeUnknownException,
-    // но никогда не результат (P1-8b).
-    MoneyOperationResult completeDms(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount);
+    // Денежные операции возвращают результат, только если в ответе есть tran.match.ridByPmo; без него —
+    // PaymentOutcomeUnknownException (P1-8b).
+    MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
 
-    MoneyOperationResult refund(String providerOrderId, String password, String login, String terminalPassword, BigDecimal amount);
+    MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
 
-    Map<String, Object> getOrderStatus(String providerOrderId, String password, String login, String terminalPassword);
+    Map<String, Object> getOrderStatus(String providerOrderId, String password, ProviderCredentials credentials);
 
-    /**
-     * Проверяет учётные данные терминала пробным заказом.
-     *
-     * Единственный вызов у провайдера, который проверяет разом и логин с паролем, и то, что
-     * терминалу разрешены оплаты, — это заведение заказа. Запрос статуса проверяет только первое.
-     * Пробный заказ остаётся у провайдера неоплаченным и через десять минут уходит в Expired;
-     * в выписку такие не попадают, и на такую нагрузку провайдер дал согласие.
-     *
-     * Никогда не бросает: любой исход — это результат, который надо показать администратору.
-     */
-    TerminalCheckResult checkTerminalCredentials(String login, String password);
+    // Пробный заказ: только он проверяет разом креды и право принимать оплаты (Р-70, Р-93). Никогда
+    // не бросает — любой исход показывается администратору.
+    TerminalCheckResult checkOrderCreation(ProviderCredentials credentials, String terminalRid);
 }

@@ -11,14 +11,10 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-// Определяет адрес клиента один раз за запрос и только через ClientIp.resolve — единственный
-// санкционированный путь, чтобы подделанный forwarding-заголовок не подсадил чужой адрес. Дальше
-// адрес доступен в ClientIpHolder (журнал аудита) и в MDC под clientIp для каждой строки лога;
-// и холдер, и запись MDC снимаются в finally — потоки контейнера переиспользуются.
+// Адрес клиента — один раз за запрос, только через ClientIp.resolve; дальше он в ClientIpHolder и в
+// MDC. Оба снимаются в finally: потоки контейнера переиспользуются.
 @Component
-// Порядок задан явно: адрес обязан быть на месте, когда работают security-цепочка и контроллеры,
-// а строки, пишущиеся при отказе в запросе, — ровно те, которым он нужнее всего. Порядок
-// регистрации по умолчанию поставил бы этот фильтр после security-цепочки.
+// Первым: адрес нужен security-цепочке и строкам отказов, а по умолчанию фильтр встал бы после неё.
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class ClientIpFilter extends OncePerRequestFilter {
 

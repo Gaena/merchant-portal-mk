@@ -1,5 +1,6 @@
 package az.millikart.pbl.scheduler;
 
+import az.millikart.common.logging.SchedulerRun;
 import az.millikart.pbl.service.TransactionReconciliationService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -17,6 +18,8 @@ public class TransactionReconciliationScheduler {
 
     @Scheduled(cron = "${pbl.reconciliation.cron}")
     public void run() {
-        reconciliationService.reconcilePendingTransactions();
+        try (var ignored = SchedulerRun.start("tx-reconcile")) {
+            reconciliationService.reconcilePendingTransactions();
+        }
     }
 }

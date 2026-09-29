@@ -1,17 +1,18 @@
-# История работ MP
+# История работ MP (архив)
 
-Журнал устранения находок ревью от 14.08.2026 и всех работ после него: очередь спринтов,
-журнал по датам, описание сентябрьских работ и полные описания закрытых задач. Файл только
-дописывается: старые записи не правятся, даже если описанное в них с тех пор изменилось.
+**Архив, заморожен 29.09.2026.** Журнал устранения находок ревью от 14.08.2026 и всех работ после
+него: очередь спринтов, журнал по датам, описание сентябрьских работ, полные описания закрытых задач
+и снимок покрытия тестов. Файл не правится и не дописывается.
 
 Где что теперь:
-- решения Р-NN — [`decisions.md`](decisions.md);
+- открытые задачи — [`plan.md`](../plan.md);
+- решения Р-NN — [`decisions.md`](../decisions.md);
 - правила и известные ограничения, действующие сейчас, — корневой `AGENTS.md`;
-- находки ревью — [`code_review.md`](code_review.md), заморожен: все пункты закрыты.
+- находки ревью — [`code_review.md`](code_review.md), тоже в архиве: все пункты закрыты.
 
 Упоминания файлов в записях — на момент записи. 13.09.2026 документы переехали в `project_docs/`,
-а `problems.md`, `.agents/workflows/*` и `pbl/.agents/workflows/pbl.md` удалены — их тексты
-остались в истории git.
+29.09.2026 — в `project_docs/guides/`, `modules/`, `external/` и `archive/`; `problems.md`,
+`.agents/workflows/*` и `pbl/.agents/workflows/pbl.md` удалены — их тексты остались в истории git.
 
 **Легенда статусов:** `—` не начато · `ТЗ` задание составлено · `WIP` в работе · `REVIEW` ждёт проверки · `✅` принято
 
@@ -19,7 +20,7 @@
 
 ## Принятые решения
 
-Таблица перенесена в [`decisions.md`](decisions.md) 13.09.2026 — там все решения Р-1…Р-72.
+Таблица перенесена в [`decisions.md`](../decisions.md) 13.09.2026 — там все решения Р-1…Р-72.
 
 ---
 
@@ -70,6 +71,8 @@ P2-1 … P2-12 и P3 — см. `code_review.md`, §4 и §5. Разбираем 
 **Кросс-задача:** ввести `enum Role` в `common` и убрать строковые литералы (P2-7).
 Разблокирует P0-4 и P1-15, делает невозможным класс ошибок «опечатка в роли».
 Решено делать не первым шагом, а когда дойдём до P0-4.
+
+Открытые задачи на 29.09.2026 перенесены в [`plan.md`](../plan.md).
 
 ---
 
@@ -4871,6 +4874,384 @@ handleDelete|handleRefund|handleComplete|handleFinalize}` — это кнопк�
   словаре: `payByLinkDetail.quickActions`, `payByLinkDetail.createSameLink` на трёх языках.
 - **Тесты.** Фронтенд-тестов у страниц нет; `npm run typecheck`, `npx oxlint src/app` — без ошибок.
 - Документы: только эта запись — контракты API не менялись.
+
+---
+
+### 17.09.2026 — руководство системного администратора
+
+- **Зачем.** Системному администратору, который заводит мерчантов, нужна инструкция без контрактов API и
+  понятное объяснение, как база портала связана с базой провайдера.
+- **Что.** Новый `admin_guide.md`: порядок заведения (компания → терминал → пользователи) по экранам
+  портала, кнопка «Тест» и её исходы, ошибки заведения терминала, изменение, блокировка и автоматическая
+  блокировка по справочнику провайдера, терминалы, заведённые самой компанией (скоуп по логину, Р-83),
+  роли, проверка результата, вывод компании из работы (статус и удаление компании ничего не останавливают),
+  частые вопросы. Раздел «Как связаны две базы»: справочник-копия раз в 15 минут, привязка по
+  `merchant_rid`, выписка по логину терминала, сверка статусов, оплата по ссылке через API шлюза, а не
+  через базу. Сверено с кодом `CompanyService`, `TerminalService`, `TerminalStatusReconciliationService`,
+  `UserService` и страниц «Компании», «Терминалы», «Пользователи».
+- Документы: `admin_guide.md` (новый), строка в таблице `AGENTS.md` §2, список документов в `README.md`.
+
+---
+
+### 24.09.2026 — статус заказа выписки `ecom` по статусу провайдера (Р-92)
+
+- **Зачем.** Требование заказчика: статус заказа — по последнему статусу заказа у провайдера. `FullyPaid` —
+  «успешно» без сверки суммы; SMS — только статус заказа; DMS — по `clearamt`, но без списаний в истории —
+  по статусу провайдера. До этого статус выводился из сумм, и оплаченный заказ с пустым `clearamt` выходил
+  «отменённым», а `FullyPaid` со списанным меньше суммы — «частично оплаченным».
+- **ecom.** `EcomStatusResolver`: прежнее правило стало `byMoney`, добавлены словарь `byProviderStatus`
+  (`FullyPaid`, `PartPaid`, `Refused`, `Cancelled`, `Rejected`/`Declined`/`Failed`/`Expired`, `Authorized`;
+  `Closed` — по предыдущему статусу, `Closed` ← `Authorized` — `CANCELED`; `PartPaid` с одобренным возвратом —
+  `PARTIALLY_REFUNDED`) и выбор `resolve`. `EcomOrderAssembler.money` определяет тип заказа по парам
+  `EcomPaymentType.DMS` (как фильтр Р-87), признак «в истории есть ненулевой `clearamt`» и наличие одобренного
+  возврата. Суммы, SQL и фильтр Р-71 не менялись. На выгрузке стенда статус сменился у одного заказа —
+  175378 (`Rejected` ← `Authorized`, холд не списан): был `CANCELED`, стал `FAILED`.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `EcomStatusResolverTest` — денежные тесты переведены на `byMoney`,
+  новые: `FullyPaid` при любых деньгах, SMS по статусу, DMS со списаниями по деньгам и без них по статусу,
+  молчащий статус → деньги, словарь провайдера, `PartPaid` с возвратом, `Closed` по предыдущему статусу,
+  незнакомые формы статуса. `EcomOrderAssemblerTest` — ожидание 175378 в
+  `everyProviderStatusSeenOnTheStand_mapsAsExpected`, `FullyPaid` вместо `PENDING` в
+  `operationWithoutPhase_isUnknown_andDoesNotBreakTheStatement` и
+  `approvedButUnknownOperation_isShownButNotCounted_andNotReportedAsFailed`; новые: SMS `FullyPaid` без
+  `clearamt` и со списанным меньше суммы, DMS `FullyPaid` без списания, DMS без `clearamt` по статусу, SMS
+  по статусу поверх денег. `./gradlew :ecom:compileTestJava`, `npm run typecheck` — без ошибок.
+- Документы: `decisions.md` (Р-92), `ecom.md` §2.3, `AGENTS.md` §10, `technical_handover.md` §4.6, комментарий
+  в `frontend/src/app/types/ecom.ts`.
+
+---
+
+### 24.09.2026 — креды провайдера у компании, пароль терминала снят (Р-93)
+
+- **Зачем.** Требование заказчика: запросы к провайдеру идут не от имени терминала, а от имени компании
+  (у провайдера — мультимерчант); логин и пароль задаёт и меняет только системный администратор, пароль
+  хранится зашифрованным (AES-256), ключ — в файле свойств. Понятие логина и пароля терминала пропадает.
+- **common.** `CredentialCipher` — AES-256-GCM, случайный IV, base64(IV ‖ шифротекст); на пустом ключе,
+  не-base64 и ключе не 32 байт сервис не стартует. Не `@Component`: бин объявляют `directory` и `pbl`
+  (`CredentialCipherConfig`), ключ `mp.credentials.encryption-key: ${CREDENTIALS_ENCRYPTION_KEY}`.
+  `MissingSecretFailureAnalyzer` знает новую переменную.
+- **directory.** Миграция `008`: `companies.provider_login` (уникальный индекс) и `provider_password`,
+  удаление `terminals.password`. Компания: креды обязательны при создании, в правке необязательны (пустой
+  пароль — не менять), занятый логин — 409, логин в ответе только `SYSTEM_ADMIN`, пароль — никогда;
+  журнал — `Provider login changed from … to …` и `Provider password changed` без значения. Терминал:
+  заводит только `SYSTEM_ADMIN` выбором из справочника (`companyId` и `merchantRid` обязательны), ручное
+  заведение снято; пароля нет ни в запросах, ни в ответах; `GET /terminals/{id}/password` и
+  `TerminalPasswordResponse` удалены; логин из `PATCH` убран — его меняет только сверка.
+- **pbl.** Миграция `011`: `companies`, если её ещё нет (в виде `auth/002`), колонки кредов, удаление
+  `terminals.password`. `ProviderCredentialsService.forTerminal` читает креды компании терминала
+  (`CompanyCredentialsRepository`) и расшифровывает пароль; компании без кредов и терминалу без компании —
+  400 до провайдера: при создании и открытии ссылки, списании, возврате, проверке статуса и «Тесте».
+  `AcquiringClient` принимает `ProviderCredentials` вместо логина и пароля терминала;
+  `checkTerminalCredentials` → `checkOrderCreation`. «Тест» остался только у заведённого терминала:
+  `POST /acquiring/terminal-checks` без номера и `TerminalCheckRequest` удалены.
+- **Отложено до селектов мультимерчанта.** `order.terminal.rid` (это `txpg.terminal.rid`, у нас его нет)
+  в запросе создания заказа; подпись терминала на экранах по `terminal.rid` — пока логин; скоуп выписки и
+  сверка по логину терминала — логин остаётся в базе.
+- **Фронтенд.** «Компании»: логин и пароль к провайдеру в форме создания, колонка логина у
+  администратора, окно «Доступ к провайдеру» (логин, новый пароль) с подтверждением списка изменений.
+  «Терминалы»: снята колонка пароля и его показ, поля логина и пароля в формах, ручное заведение и «Тест»
+  до сохранения; кнопка добавления — только `SYSTEM_ADMIN` (`TERMINAL_CREATE_ROLES`). Тексты — на трёх
+  языках, ключи пароля терминала удалены из словаря.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `CredentialCipherTest` (новый); `directory` —
+  `DirectoryIntegrationTest` (новые: креды обязательны, пароль шифротекстом и не в ответе, логин только
+  администратору, уникальность логина, смена кредов в журнале без пароля, пустой пароль не меняет,
+  пароля терминала нет; заведение терминала только администратором, `createTerminal_asManager_returns201`
+  стал `createTerminal_asManager_returns403`), `TerminalBlockingIntegrationTest` (четыре теста пароля
+  терминала удалены), `SharedSchemaMigrationTest` (два новых — порядок миграций кредов),
+  `AuditLogIntegrationTest`, `DirectoryListPaginationTest`, `TerminalStatusReconciliationTest` — фикстуры;
+  `pbl` — `TerminalCheckIntegrationTest` (переписан: креды компании, отказ без кредов, проверки до
+  заведения нет), `TxpgAcquiringClientTest` (новый: Basic с кредами компании во всех вызовах, пароль не в
+  логах), `MoneyOperationsIntegrationTest` и `PaymentLinkIntegrationTest` (новые: 400 без кредов, креды
+  компании уходят провайдеру), остальные — фикстура `CompanyCredentialsFixture`.
+  `./gradlew compileTestJava` по всем модулям, `npm run typecheck`, `npx oxlint src/app` — без ошибок.
+- Документы: `decisions.md` (Р-93), `AGENTS.md` §4, §5, §6, §7, §9, §10, §11, `directory.md`, `pay-by-link.md`,
+  `application_description.md`, `deployment_guide.md` (§8.1, §8.3, §20), `technical_handover.md` (§4.1,
+  §4.2, §4.4, §4.6), `admin_guide.md`, `README.md`, `.env.example`, Postman-коллекция `directory`.
+
+---
+
+### 24.09.2026 — логин компании сверяется со слепком логинов мультимерчантов (Р-94)
+
+- **Зачем.** Заказчик прислал запрос логинов провайдера (`login`, `login2merchant`, `merchant` и др.):
+  при заведении компании и смене её логина проверять, что логин — активный мультимерчант с мерчантами.
+- **Запрос.** Присланный тянул лишнее: `terminal`, `terminalpmo`, `pmo` присоединялись через
+  `l.terminalid`, у `MultiMerchantSys` он пуст — терминалов запрос не давал; логин искался без `ownerkind`;
+  статусы не фильтровались; подпись «linked directly» для мультимерчанта неверна. Взяты
+  `login → login2merchant → merchant` и пять колонок, `ownerkind = 'MultiMerchantSys'`.
+- **ecom.** Миграция `003`: `provider_logins` (строка на связь «логин — мерчант», логин без связей —
+  строкой с пустым мерчантом). `TxpgProviderLoginSource`, `ProviderLoginSyncService` (замена слепка целиком;
+  сбой и пустой ответ не применяются), `ProviderTerminalSyncScheduler` обновляет оба слепка, каждый в своей
+  попытке. `POST /api/v1/ecom/provider-terminals/sync` обновляет оба и отдаёт `logins` рядом с прежними
+  полями.
+- **directory.** `ProviderLoginSnapshotRepository` читает слепок нативно; `CompanyService` при создании и
+  смене логина требует `MultiMerchantSys/`, непустой слепок, логин в нём, `Active` и активную связь с
+  мерчантом — иначе 400 с причиной. Правка без смены логина слепок не читает.
+- **Фронтенд.** В формах компании (заведение и «Доступ к провайдеру») — кнопка «Обновить справочник» с
+  итогом по логинам и подсказка про `MultiMerchantSys/<логин>`; тексты на трёх языках.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `ProviderLoginSyncTest`, `TxpgProviderLoginSourceTest` (новые);
+  `DirectoryIntegrationTest` — четыре новых (только мультимерчант; нет в слепке, выключен, без мерчантов;
+  пустой слепок; смена логина проверяется, правка без неё — нет), логины компаний в прежних тестах —
+  `MultiMerchantSys/…`; фикстура `DirectoryTestFixtures.providerLogins` в `DirectoryIntegrationTest`,
+  `AuditLogIntegrationTest`, `TerminalBlockingIntegrationTest`. `compileTestJava` по `directory` и `ecom`,
+  `npm run typecheck`, `npx oxlint src/app` — без ошибок.
+- Документы: `decisions.md` (Р-94), `ecom.md` §1, §3.2, §3.3, `directory.md` §3.1, `AGENTS.md` §5, §10,
+  `application_description.md`, `admin_guide.md`, `technical_handover.md` §4.2, `deployment_guide.md` §8.3,
+  `README.md`, Postman-коллекция `directory`.
+
+---
+
+### 24.09.2026 — логин компании выбирается из справочника (Р-95)
+
+- **Зачем.** Предложение заказчика: не вводить логин компании руками, а выбирать из логинов провайдера,
+  ещё не заведённых у нас.
+- **directory.** `GET /api/v1/companies/provider-logins` (`SYSTEM_ADMIN`, отказ — `COMPANY` / `LIST` в
+  журнал): логины `provider_logins`, годные к проверке Р-94, минус занятые любой компанией, включая
+  удалённые (`CompanyRepository.findAllProviderLogins`), с префиксом `MultiMerchantSys/` и названиями
+  мерчантов активных связей (`ProviderLoginSnapshotRepository.eligibleLogins`). `POST`/`PATCH` не менялись.
+- **Фронтенд.** В формах компании поле логина заменено выбором с поиском (логин и под ним мерчанты); в
+  окне «Доступ к провайдеру» в список добавлен текущий логин компании; после «Обновить справочник» список
+  перечитывается; пустой список объясняет, почему логина может не быть. Ручного ввода нет. Тексты — на
+  трёх языках.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `DirectoryIntegrationTest` —
+  `freeProviderLogins_listOnlyLoginsThatPassTheCheck_andAreNotTaken`,
+  `freeProviderLogins_areForASystemAdminOnly`. `:directory:compileTestJava`, `npm run typecheck`,
+  `npx oxlint src/app` — без ошибок.
+- Документы: `decisions.md` (Р-95), `directory.md` §3.1, `AGENTS.md` §6, §9, `admin_guide.md` §4,
+  `technical_handover.md` §4.2, Postman-коллекция `directory`.
+
+---
+
+### 24.09.2026 — причина несостоявшейся синхронизации справочников
+
+- **Зачем.** На локальной схеме `TXPG` без `LOGIN2MERCHANT` синхронизация логинов отвечала `gateway
+  unavailable`, хотя шлюз был доступен, а не хватало таблицы.
+- **ecom.** `ProviderSyncFailure.reason`: нет соединения (`DataAccessResourceFailureException`) — `gateway
+  unavailable: …`, иначе — `gateway query failed: …`, с первой строкой самой глубокой причины. Используют
+  обе синхронизации — терминалов и логинов; та же строка — в логе и в `skippedBecause`.
+- **Локальная схема `TXPG`** (контейнер `oracle-free`, вне репозитория) дополнена по выгрузке заказчика:
+  `LOGIN2MERCHANT`, логин 523 `MultiMerchantSys` `bazarstore@company.com`, мерчанты 584 и 585, у
+  `LOGIN.TERMINALID` снят `NOT NULL`. Слепок логинов снялся: 4 связи.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `ProviderTerminalSyncTest.aFailedQueryChangesNothing` (обрыв
+  соединения), `ProviderLoginSyncTest.aFailedQueryKeepsThePreviousSnapshot_andNamesTheDatabaseError`
+  (`ORA-00942`). `:ecom:compileTestJava` — без ошибок.
+- Документы: `ecom.md` §3.2.
+
+---
+
+### 24.09.2026 — терминал мультимерчанта в заказе, терминалы только мерчантов компании, клиент ссылки (Р-96)
+
+- **Зачем.** Заказчик прислал запросы провайдера (логины и терминалы, цепочка «логин мультимерчанта →
+  `login2merchant` → мерчант → логин `TerminalSys` → терминал») и новый пример создания заказа:
+  `POST /order?terminalRid=…` с кредами компании и `tdsPresetAreq` с данными клиента.
+- **ecom.** Справочник терминалов берёт `t.rid` и только логины `TerminalSys` (миграция `004`:
+  `provider_terminals.terminal_rid`). На выгрузке стенда фильтр чинит мерчантов с логинами `TerminalUser`
+  (TEST 3, мерчант 1), которые справочник считал неоднозначными и не обновлял.
+- **directory.** Миграция `009`: `terminals.terminal_rid`. Заведение берёт номер из справочника и требует,
+  чтобы мерчант был связан активной связью с логином компании (`provider_logins`), иначе 400; строка без
+  номера — 400. `GET /api/v1/terminals/provider-terminals?companyId=` (`SYSTEM_ADMIN`) — терминалы мерчантов
+  логина компании, активные, с номером и ещё не заведённые. Сверка переносит смену номера, как логин и
+  название. `terminalRid` — в `TerminalResponse` и `TerminalOptionResponse`.
+- **pbl.** Миграция `012`: `terminals.terminal_rid`. `ProviderCredentialsService.terminalRidOf` — без
+  номера 400 до провайдера (создание и открытие ссылки, «Тест»). `createEcomOrder` и `checkOrderCreation`
+  шлют `?terminalRid=…`; в заказ добавлен `tdsPresetAreq` — имя, почта и телефон клиента одноразовой ссылки,
+  только заполненные, телефон как `{cc, subscriber}`; персональные данные в лог не идут. `CustomerPhone`:
+  азербайджанский номер (`+994`/`994`/`0` и 9 цифр) хранится как `+994XXXXXXXXX`, иное — 400. Клиент у
+  многоразовой ссылки при создании и правке — 400. `terminalRid` — в `topTerminals` сводки ссылок.
+- **Фронтенд.** Подпись терминала — `terminalRid`, у старых — логин (`utils/terminals.ts`, страницы
+  терминалов, ссылок, операции, статистика). Форма терминала берёт список по компании и перечитывает его
+  при смене компании. Форма ссылки: блок «Клиент» только у одноразовой, проверка телефона, подсказка;
+  «Создать новую ссылку с теми же данными» не переносит клиента многоразовой. Тексты на трёх языках.
+- **Тесты** (прогнал пользователь 24.09.2026, зелёные): `ecom` — `TxpgProviderTerminalSourceTest` (`t.rid`, фильтр
+  `TerminalSys`), `ProviderTerminalSyncTest.theLoginAndTitleAlwaysFollowTheProvider` (номер);
+  `directory` — `createTerminal_ofAMerchantOutsideTheCompanyLogin_isRefused`,
+  `providerTerminals_forACompany_listOnlyItsFreeMerchants`, номер в `testTerminalLifecycleAndRBAC`,
+  `TerminalStatusReconciliationTest.aProviderLoginChangeReachesOurTerminal`, поля фида в
+  `DirectoryListPaginationTest`, фикстуры `DirectoryTestFixtures.companyTerminal`/`linkMerchant`;
+  `pbl` — `CustomerPhoneTest` (новый), `TxpgAcquiringClientTest` (номер в адресе, `tdsPresetAreq`, его
+  отсутствие у многоразовой и без годных полей), `PaymentLinkIntegrationTest` (клиент у многоразовой,
+  телефон, терминал без номера, номер в заказе), `TerminalCheckIntegrationTest` (терминал без номера);
+  фикстуры терминалов с `terminalRid`, многоразовая ссылка в фикстуре — без клиента.
+  `compileTestJava` по `directory`, `ecom`, `pbl`, `npm run typecheck`, `npx oxlint src/app` — без ошибок.
+- Документы: `decisions.md` (Р-96), `AGENTS.md` §5, §7, §9, §10, `directory.md`, `pay-by-link.md`,
+  `ecom.md` §3, `application_description.md`, `deployment_guide.md` §8.3, `admin_guide.md` §5,
+  `technical_handover.md` §4.2, Postman-коллекции `directory` и `pbl`.
+
+---
+
+### 25.09.2026 — выписка и главная по мерчантам логина компании (Р-97)
+
+- **Зачем.** Последний шаг Р-96: у мультимерчанта платежи компании — это заказы мерчантов её логина, а не
+  логинов её терминалов. Провайдер прислал запрос «терминалы мерчантов логина» (`login2merchant` →
+  логины `TerminalSys`); подзапрос оттуда и есть новый скоуп. Заодно — правило прода «логин `TerminalSys` =
+  `TERMINALPMO.MID` = `merchant.rid`»: нашего кода оно не меняет, MID и TID шлюз берёт по `terminalRid`.
+- **ecom.** `EcomScopeService`: компания → `companies.provider_login` (`CompanyLoginRepository`, нативный
+  запрос) → активные связи логина в `provider_logins` (`ProviderLoginRepository.findLinkedMerchantRids`);
+  `SYSTEM_ADMIN` и `AUDITOR` — логины всех компаний. `EcomScope` и `EcomTransactionFilter` несут один список
+  мерчантов — скоуп, суженный фильтром; в SQL `m.rid in (:merchant_rids)` вместо подзапроса по `login`
+  с `ownerkind = 'TerminalSys'`. Сущность `Terminal` и `TerminalRepository` удалены: `ecom` больше не
+  читает `terminals`. `terminalRid` — в `/transactions/terminals` и `topTerminals` сводки; мерчант без
+  терминала в справочнике подписан названием из слепка логинов.
+- **directory.** Перенос терминала в другую компанию (`PATCH /terminals/{id}` с `companyId`) — по правилу
+  заведения Р-96: мерчант терминала активно связан с логином новой компании, иначе `400`; терминал без
+  `merchant_rid` не переносится. Раньше перенос не проверялся, и ссылки уходили бы с кредами чужого логина.
+- **Фронтенд.** Подпись терминала в выписке, карточке заказа, фильтре и на главной — номер терминала, затем
+  логин, затем название (`ecomTerminalName` в `utils/ecom.ts`). Отказ переноса показывает окно правки
+  терминала текстом сервера, своих правок не понадобилось.
+- **Локальный стенд.** В `oracle-free` дозаведены терминалы 504/503 (BS00003/BS00004), их логины 532/531
+  и строки `TERMINALPMO`, мерчанты 443/444 переименованы — как на скриншоте провайдера. Запрос страницы
+  выписки с новым скоупом исполнен там вручную.
+- **Тесты** (прогнал пользователь 25.09.2026, зелёные): `ecom` — `EcomScopeServiceTest` (переписан: логин компании,
+  все компании у администратора, пустой скоуп без логина и без префикса, отказы),
+  `EcomTransactionScopeTest` (мерчанты во всех запросах, фильтр сужает и страницу, и итоги, подписи
+  фильтра со слепка логинов, `terminalRid` в сводке; тест «терминал без привязки виден по логину» снят
+  вместе с правилом), `TxpgTransactionRepositoryTest` (скоуп `m.rid`, логинов в запросах нет);
+  `directory` — `DirectoryIntegrationTest.moveTerminal_onlyToACompanyWhoseLoginKnowsItsMerchant`,
+  `moveTerminal_withoutAProviderMerchant_isRefused_butOtherEditsAreNot`.
+  `compileTestJava` по `ecom` и `directory`, `npm run typecheck`, `npm run lint` — без ошибок.
+- Документы: `decisions.md` (Р-97), `AGENTS.md` §5, §6, §9, §10, `ecom.md` §2.1, §2.6, §2.8, §3.3,
+  `directory.md` §2.2 и `PATCH /terminals`, `application_description.md`, `admin_guide.md`,
+  `technical_handover.md` §4.6, Postman-коллекция `directory` (Update Terminal).
+
+---
+
+### 25.09.2026 — правка компании одним окном, статус только ACTIVE или INACTIVE
+
+- **Зачем.** Заказчику нужно менять у компании юридическое название, логин к провайдеру и статус. Название
+  на экране не менялось вовсе, статус — переключателем в строке списка.
+- **Фронтенд.** Окно «Доступ к провайдеру» стало окном «Редактировать компанию» (карандаш в строке):
+  название, логин из справочника с «Обновить справочник», новый пароль, статус. Подтверждение перечисляет
+  изменения и предупреждает только о затронутом: креды — «неверные остановят платежи», статус — «ничего
+  не останавливает». В PATCH — только изменившиеся поля; без изменений запрос не уходит; стереть логин у
+  компании, у которой он есть, нельзя. Колонка с переключателем статуса и дублирующийся заголовок
+  «Действия» убраны, окно смены статуса и его тексты — тоже. Тексты на трёх языках.
+- **directory.** `PATCH /companies/{id}` принимает статус только `ACTIVE` или `INACTIVE`, иначе `400`:
+  раньше `"status": "DELETED"` удалял компанию в обход `DELETE` и его записи в журнале, а любое другое
+  значение ложилось в базу как есть.
+- **Тесты** (прогнал пользователь 25.09.2026, зелёные): `directory` — `DirectoryIntegrationTest.companyStatus_isOnlyActiveOrInactive`.
+  `compileTestJava` по `directory`, `npm run typecheck`, `npm run lint` — без ошибок. В браузере окно не
+  проверялось: вход в портал — паролем, его агент не вводит.
+- Документы: `AGENTS.md` §9, `directory.md` §3.1, `admin_guide.md` §4.2 и §10, `technical_handover.md`,
+  Postman-коллекция `directory` (Update Company).
+
+---
+
+### 25.09.2026 — ревью логов: уровни, объём, MDC (Р-98)
+
+- **Зачем.** Ревью 241 вызова логирования. Секретов в логах нет, но уровни и объём мешали: каждый истёкший
+  access-токен давал ERROR со стектрейсом (раз в 15 минут на пользователя), отказы провайдера шли ERROR со
+  стектрейсом, неизвестный исход — двумя стектрейсами, полный ответ провайдера (~3 КБ) писался на INFO при
+  каждом опросе статуса, а сверка каждые 2 минуты до 7 дней повторяла два длинных WARN по каждой зависшей
+  операции. Открытие ссылки давало 7 строк INFO, чтения в `pbl` — INFO с полями пользователя.
+- **common.** `JwtAuthFilter`: истёкший токен — DEBUG, поддельный — WARN без стектрейса, прочее — ERROR;
+  логин вошедшего — в MDC `user`. `SchedulerRun.start` — свой `traceId` у прогона планировщика (во всех пяти).
+  Шаблон `logback-spring.xml`: `[traceId] [clientIp] [user]`.
+- **pbl.** Запрос и ответ `createEcomOrder` и `getOrderStatus` — DEBUG, тела `completeDms`/`refund` — DEBUG
+  (итог — строка `CONFIRMED`); отказы шлюза — WARN без стектрейса; при неизвестном исходе стектрейс только у
+  `GlobalExceptionHandler`. Опрос статуса: перемена — одна строка INFO, без перемены — DEBUG; незнакомый или
+  внешний статус — WARN один раз на пару «транзакция, статус» и одной фразой. Открытие ссылки — одна строка
+  INFO. Чтения — DEBUG; из сообщений убраны `userId`/`role`/`companyId` и адрес клиента (они в MDC).
+  Текст о провайдере без HTTPS: креды компании, а не терминала (Р-93).
+- **auth, directory.** Адрес клиента и актор убраны из сообщений — они в MDC.
+- **ecom.** Выписка, итоги, главная и карточка заказа — одна строка INFO: период, мерчанты, заказы, время.
+- **Тесты** (прогнал пользователь 29.09.2026, зелёные): `common` — `JwtAuthFilterTest` (новый: истёкший токен без
+  ERROR/WARN, поддельный — один WARN без стектрейса, `user` в MDC только на время запроса); `pbl` —
+  `TransactionReconciliationIntegrationTest.reconcile_unknownWord_isWarnedOncePerTransactionAndWord`.
+  `PaymentLinkIntegrationTest.openPaymentLink_redirectCarriesThePassword_butNoLogLineDoes` ищет теперь строку
+  открытия `Link … opened:` вместо ушедшей на DEBUG строки редиректа. `AuditLogIntegrationTest.
+  companyStatusChange_isItsOwnBlockAndUnblockEvent` блокирует компанию статусом `INACTIVE`: `BLOCKED` с
+  проверки статуса компании (25.09.2026) — 400. `TxpgAcquiringClientTest` и `UrlConfigurationCheckTest` не менялись.
+  `compileJava`/`compileTestJava` по всем модулям — без ошибок.
+- Документы: `decisions.md` (Р-98), `AGENTS.md` §8, `deployment_guide.md` §17.1.
+
+---
+
+### 29.09.2026 — выход по простою, PCI DSS 8.2.8 (Р-99)
+
+- **Зачем.** Портал при каждом открытии оказывался уже залогинен: refresh-токен в `localStorage` жил
+  30 дней и продлевался каждым обновлением, так что сессия не кончалась никогда. PCI DSS 4.0.1 п. 8.2.8
+  требует нового входа после 15 минут простоя.
+- **auth.** `AUTH_REFRESH_TTL` по умолчанию `PT20M` вместо `P30D` — граница простоя на сервере: без
+  обновления 20 минут сессия гаснет и без фронтенда. Тестовый профиль повторяет боевое значение.
+- **Фронтенд.** `auth/idle.ts` (`useIdleLogout`): действие — ввод пользователя, не запросы к API; отметка
+  общая для вкладок (`localStorage['mp_last_activity']`, `session.ts`); 15 минут без действий — `logout` и
+  сообщение на форме входа (три языка). Пока пользователь работает, пара обновляется, если старше 5 минут.
+  `AuthProvider` при загрузке после простоя не зовёт `/refresh`, а гасит токен (`POST /logout`). Первое
+  открытие после выкладки попросит войти: отметки ещё нет, а время последнего действия неизвестно.
+- **Проверено в браузере** на подставном refresh-токене: отметка 20 минут назад — `/refresh` не вызывается,
+  уходит `/logout`, токен стёрт, форма входа с сообщением о простое; отметка минуту назад — `/refresh`,
+  как прежде. Сам выход по таймеру в работающей вкладке в браузере не проверялся: для этого нужен вход.
+- **Тесты** (прогнал пользователь 29.09.2026, зелёные): `auth` — `RefreshTokenIntegrationTest` (`refreshExpiresIn` = 1200).
+  `npm run typecheck`, `npm run lint` — без ошибок.
+- Документы: `decisions.md` (Р-99), `AGENTS.md` §9 и §12, `auth.md` §4.1 и §6, `deployment_guide.md`,
+  `technical_handover.md` §4.1.
+
+---
+
+### 29.09.2026 — смена выданного пароля при первом входе, PCI DSS 8.3.5 (Р-100)
+
+- **Зачем.** Пароль пользователю задаёт администратор или руководитель, и он же его знает; пароль
+  первого администратора лежит в файле окружения. PCI DSS 4.0.1 п. 8.3.5: такой пароль меняется при
+  первом же использовании.
+- **auth.** Миграция `005`: `users.password_change_required` (по умолчанию `false` — существующие учётки не
+  затронуты). Флаг ставят `POST /users`, сброс чужого пароля через `PATCH /users/{id}` (с гашением его
+  сессий) и bootstrap. Вход с флагом — `200` с `passwordChangeRequired: true` без токенов и запись
+  `LOGIN`/`DENIED` `Login held…`. Новый публичный `POST /api/v1/auth/change-password`: проверки входа
+  (`AuthService.authenticate`, общий с `login`), новый пароль по политике и не равен текущему, флаг
+  снимается, прочие сессии гасятся, сессия выдаётся. `/refresh` с флагом — `401` и гашение цепочки.
+  `passwordChangeRequired` — в `UserResponse`. У `LoginResponse` маскирующий `toString`.
+- **Фронтенд.** Вход с флагом открывает на той же странице форму смены (новый пароль, повтор, правила —
+  зеркало `PasswordConstraintValidator` в `utils/password.ts`), затем сессия. `AuthContext.changePassword`.
+  На экране пользователей — подсказка при создании и сбросе и метка «Ждёт смены пароля». Тексты на трёх языках.
+- **Тесты** (прогнал пользователь 29.09.2026, зелёные): `auth` — `PasswordChangeIntegrationTest` (новый: создание →
+  вход без сессии → отказы смены → смена и вход; сброс администратором гасит сессии и снова требует смену;
+  свой пароль через `PATCH` смены не требует; смена по своей воле гасит прочие сессии),
+  `AdminBootstrapIntegrationTest.bootstrappedAdmin_canLogIn` (через смену пароля), `MigrationOrderTest` (колонка 005 на восстановленной базе),
+  `AuthIntegrationTest` (жизненный цикл — через смену; фикстура `createUser` — пользователь, уже сменивший
+  пароль). `compileTestJava` по `auth`, `npm run typecheck`, `npm run lint` — без ошибок. В браузере не
+  проверялось: нужен перезапуск `auth` с новой миграцией.
+- Документы: `decisions.md` (Р-100), `AGENTS.md` §6 и §9, `auth.md` §4.1, §4.1.1, §4.1.3, §4.2,
+  `application_description.md`, `deployment_guide.md` §20.1, `admin_guide.md` §6, `technical_handover.md`
+  §4.1 и §4.4, Postman-коллекция `auth`.
+
+---
+
+### 29.09.2026 — блокировка учёток без активности 90 дней, PCI DSS 8.2.6 (Р-101)
+
+- **Зачем.** Учётка уволенного сотрудника или забытый доступ оставались входом в систему навсегда.
+  PCI DSS 4.0.1 п. 8.2.6: неактивная учётка отключается не позже чем через 90 дней.
+- **auth.** Миграция `006`: `users.last_activity_at`, существующим строкам — момент миграции. Отметку ставят
+  вход и смена пароля при входе (`AuthService.startSession`), обновление сессии (не чаще раза в сутки),
+  создание, разблокировка через `PATCH /users/{id}`. `InactiveAccountService.blockInactive` раз в сутки
+  (`InactiveAccountScheduler`, `auth.inactivity.*`, по умолчанию `0 45 3 * * *`, 90 дней) блокирует
+  `ACTIVE`-учётки старше порога: `BLOCKED`, гашение refresh-токенов, `USER`/`BLOCK` от `system`.
+  Администраторы не исключение.
+- **Тесты** (прогнал пользователь 29.09.2026, зелёные): `auth` — `InactiveAccountIntegrationTest` (новый: блокировка
+  после 90 дней и не раньше, администратор тоже, сессии гаснут; вход сбрасывает отсчёт, `BLOCKED` и
+  `DELETED` не трогаются; разблокировка сбрасывает отсчёт; обновление сессии — активность не чаще раза в
+  сутки), `MigrationOrderTest` (колонка `006` на восстановленной базе). `compileTestJava` по `auth` — без
+  ошибок.
+- Документы: `decisions.md` (Р-101), `AGENTS.md` §7, `auth.md` (таблица `users`, §4.1.5, §6),
+  `application_description.md`, `deployment_guide.md` (переменные, §20.3 — единственный заблокированный
+  администратор), `admin_guide.md` §6.3, `technical_handover.md` §4.1 и §4.4.
+
+---
+
+### 29.09.2026 — запрет четырёх последних паролей, PCI DSS 8.3.7 (Р-102)
+
+- **Зачем.** Пароль можно было сменить на тот же или вернуть прежний через раз. PCI DSS 4.0.1 п. 8.3.7:
+  новый пароль не повторяет ни один из четырёх последних.
+- **auth.** Миграция `007`: `password_history` (BCrypt прежних паролей, индекс и FK на `users` с каскадом).
+  `PasswordHistoryService`: `requireNotRecent` сверяет новый пароль с текущим и тремя прежними,
+  `rememberCurrent` кладёт текущий в историю и держит три последних. Сверка — в `AuthService.changePassword`
+  (прежняя проверка «не равен текущему» вошла в неё) и в `UserService.updateUser` для своего пароля; сброс
+  чужого историю не сверяет, но пишет.
+- **Фронтенд.** Правила пароля на форме смены при входе называют и запрет четырёх последних (три языка).
+- **Тесты** (прогнал пользователь 29.09.2026, зелёные): `auth` — `PasswordHistoryIntegrationTest` (новый: четыре последних
+  под запретом, пятый назад можно, история — три строки; своя правка через `PATCH` проверяется; сброс
+  администратором не проверяется, а следующая смена владельцем — да), `PasswordChangeIntegrationTest`
+  (новый текст отказа), `MigrationOrderTest` (таблица, индекс и FK `007` на восстановленной базе).
+  `compileTestJava` по `auth`, `npm run typecheck`, `npm run lint` — без ошибок.
+- Документы: `decisions.md` (Р-102), `AGENTS.md` §5, `auth.md` (таблица `password_history`, §4.1.3, §4.2),
+  `application_description.md`, `admin_guide.md` §6.3, `technical_handover.md` §4.1, Postman-коллекция `auth`.
 
 ---
 

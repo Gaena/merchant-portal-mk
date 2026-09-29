@@ -57,15 +57,10 @@ type EditForm = { fullName: string; role: string; companyId: string; status: str
 export const UsersPage: React.FC = () => {
   const { user: currentUser } = useAuth();
   const { tObj } = useLanguage();
-  /**
-   * Компанию нового пользователя выбирает только SYSTEM_ADMIN. COMPANY_HEAD заводит людей в свою
-   * (`UserService.validateCreatePermission`), и она известна из токена; список всех компаний ему
-   * недоступен (`GET /companies` — 403), так что раньше селект оставался пустым, `companyId`
-   * уходил пустым, и сервер отвечал «Cannot create user for another company».
-   */
+  // Компанию нового пользователя выбирает только SYSTEM_ADMIN; руководитель заводит людей в свою
+  // компанию из токена — список `GET /companies` ему отвечает 403.
   const isAdmin = currentUser?.role === 'SYSTEM_ADMIN';
   const ownCompanyId = currentUser?.companyId ?? '';
-  // Роли, которые этот пользователь портала может выдать при создании и правке.
   const grantableRoles: readonly Role[] = isAdmin ? ALL_ROLES : HEAD_MANAGED_ROLES;
   // Себя узнаём по логину: id пользователя в токене фронтенд не хранит, логин — это `sub` (email).
   const isSelf = (u: UserDto) => (u.username || '').toLowerCase() === (currentUser?.email || '').toLowerCase();
@@ -73,19 +68,18 @@ export const UsersPage: React.FC = () => {
   // администратор — всех, руководитель — себя и людей ниже своей роли; список ему и так отдают по его компании.
   const canWrite = (u: UserDto) => isAdmin || isSelf(u) || HEAD_MANAGED_ROLES.includes(u.role as Role);
   const [usersList, setUsersList] = useState<UserDto[]>([]);
-  // Удаление уходит на сервер только после подтверждения: оно мягкое, но необратимое из
-  // портала (updateUser на удалённом отвечает «User not found») и гасит все сессии сразу.
+  // Удаление мягкое, но необратимое из портала и сразу гасит все сессии — только через подтверждение.
   const [pendingDelete, setPendingDelete] = useState<UserDto | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [snackbar, setSnackbar] = useState('');
   const [companiesList, setCompaniesList] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Dialog & Form
   const [userDialogOpen, setUserDialogOpen] = useState(false);
-  // Роль по умолчанию — первая из тех, что этот пользователь может выдать: у руководителя
-  // «Руководитель компании» больше не выдаётся (Р-85), и форма не должна с неё начинаться.
+  // Роль по умолчанию — из выдаваемых: руководитель «Руководителя компании» не выдаёт (Р-85).
   const defaultRole = isAdmin ? 'COMPANY_HEAD' : 'COMPANY_MANAGER';
+  // Роли, которым компания обязательна (Р-90, Р-103); администратору и аудитору её не подставляем.
+  const isCompanyRole = (role: string) => role === 'COMPANY_HEAD' || role === 'COMPANY_MANAGER' || role === 'COMPANY_EMPLOYEE';
   const [userForm, setUserForm] = useState({
     username: '',
     password: '',
@@ -104,11 +98,9 @@ export const UsersPage: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
-  // Поиск и фильтр по роли — серверные (P3-1): клиентский фильтр видел только текущую страницу.
-  // 300 мс задержки, чтобы не слать запрос на каждую букву.
+  // Поиск и фильтр по роли — серверные: клиентский фильтр видел бы только текущую страницу (P3-1).
   const debouncedSearch = useDebounced(searchQuery, 300);
 
-  // Страница берётся с сервера (P2-1): `/api/v1/users` отвечает `PagedResponse`, а не массивом.
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [totalElements, setTotalElements] = useState(0);
@@ -125,7 +117,6 @@ export const UsersPage: React.FC = () => {
         setTotalElements(res.data?.totalElements ?? content.length);
       })
       .catch(err => {
-        // Гонка ответов: устаревший запрос отменён эффектом ниже, его исход не трогает экран.
         if (axios.isCancel(err)) return;
         setUsersList([]);
         setTotalElements(0);
@@ -145,8 +136,7 @@ export const UsersPage: React.FC = () => {
 
   useEffect(() => {
     if (isAdmin) {
-      // Компании нужны для выпадающего списка и подписей, поэтому берём их одной страницей
-      // по потолку (200 — тот же лимит, что у журнала аудита).
+      // Компании нужны для списка и подписей — одной страницей по потолку размера на сервере (200).
       apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 } })
         .then(res => {
           const content = Array.isArray(res.data) ? res.data : (res.data?.content || []);
@@ -181,6 +171,10 @@ export const UsersPage: React.FC = () => {
       setUserError(tObj.users.formIncomplete);
       return;
     }
+    if (isAdmin && isCompanyRole(userForm.role) && !userForm.companyId) {
+      setUserError(tObj.users.companyRequired);
+      return;
+    }
     setCreating(true);
     try {
       const payload = {
@@ -191,8 +185,7 @@ export const UsersPage: React.FC = () => {
         companyId: (isAdmin ? userForm.companyId : ownCompanyId) || undefined,
       };
       await apiClient.post('/api/v1/users', payload);
-      // Не дописываем строку в массив: список постраничный и отсортирован сервером — новая
-      // учётная запись может принадлежать другой странице, а на этой строк станет больше `size`.
+      // Перечитываем, а не дописываем: новая учётная запись может оказаться на другой странице.
       fetchUsers();
       setUserDialogOpen(false);
       setUserForm({
@@ -222,7 +215,6 @@ export const UsersPage: React.FC = () => {
         fetchUsers();
       }
     } catch (err: any) {
-      // Полосой на странице, а не системным alert'ом: остальные экраны отвечают так же.
       setSnackbar(err.response?.data?.message || tObj.users.deleteFailed);
     } finally {
       setDeleteBusy(false);
@@ -257,10 +249,7 @@ export const UsersPage: React.FC = () => {
     });
   };
 
-  /**
-   * Что изменится, если сохранить форму. Пустой список — менять нечего, и запрос не уходит вовсе:
-   * PATCH без изменений всё равно оставил бы запись «No fields changed» в журнале аудита.
-   */
+  // Пустой список — PATCH не уходит: он всё равно оставил бы «No fields changed» в журнале аудита.
   const pendingEditChanges = (): string[] => {
     if (!editing) return [];
     const changes: string[] = [];
@@ -331,7 +320,6 @@ export const UsersPage: React.FC = () => {
 
   return (
     <Box>
-      {/* Header */}
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -363,7 +351,6 @@ export const UsersPage: React.FC = () => {
         </Alert>
       )}
 
-      {/* Filters Bar */}
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         <TextField
           size="small"
@@ -396,7 +383,6 @@ export const UsersPage: React.FC = () => {
         </TextField>
       </Paper>
 
-      {/* Users Table */}
       <TableContainer component={Paper} variant="outlined">
         {loading ? (
           <Box sx={{ p: 6, textAlign: 'center' }}>
@@ -420,21 +406,22 @@ export const UsersPage: React.FC = () => {
                   <TableCell sx={{ fontWeight: 600 }}>{u.username}</TableCell>
                   <TableCell>{u.fullName || '—'}</TableCell>
                   <TableCell>
-                    {/* Роль — подписью из словаря; незнакомая — как прислал сервер (Р-48). */}
                     <Chip label={roleLabel(u.role)} color="primary" size="small" variant="outlined" />
                   </TableCell>
                   <TableCell>{getCompanyName(u.companyId) || '—'}</TableCell>
                   <TableCell>
-                    {/* Статус — из ответа: чип «Active» на всех строках подряд скрывал заблокированных. */}
                     <Chip
                       label={statusLabel(u.status)}
                       color={u.status === 'ACTIVE' ? 'success' : u.status === 'BLOCKED' ? 'warning' : 'default'}
                       size="small"
                     />
+                    {u.passwordChangeRequired === true && (
+                      <Chip label={tObj.users.passwordChangePending} size="small" variant="outlined" sx={{ ml: 1 }} />
+                    )}
                   </TableCell>
                   <TableCell align="center">
-                    {/* Кнопки — только там, где бэкенд примет действие (Р-62, Р-85). Удалить себя
-                        из этого списка нельзя: так легко лишить себя доступа одним кликом. */}
+                    {/* Кнопки — только там, где бэкенд примет действие (Р-62, Р-85); удалить себя нельзя,
+                        чтобы не лишиться доступа одним кликом. */}
                     {canWrite(u) && (
                       <Tooltip title={tObj.users.editUser}>
                         <IconButton color="primary" size="small" onClick={() => handleOpenEdit(u)}>
@@ -466,7 +453,6 @@ export const UsersPage: React.FC = () => {
         />
       </TableContainer>
 
-      {/* Create User Dialog */}
       <Dialog open={userDialogOpen} onClose={() => { if (!creating) setUserDialogOpen(false); }} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.users.createDialogTitle}</DialogTitle>
         <DialogContent>
@@ -487,6 +473,7 @@ export const UsersPage: React.FC = () => {
               value={userForm.password}
               onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))}
               placeholder="••••••••"
+              helperText={tObj.users.issuedPasswordHint}
               fullWidth
               required
             />
@@ -502,7 +489,11 @@ export const UsersPage: React.FC = () => {
               select
               label={tObj.users.role}
               value={userForm.role}
-              onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))}
+              onChange={e => {
+                const role = e.target.value;
+                // Администратор и аудитор — без компании; вернуть её можно выбором ниже.
+                setUserForm(f => ({ ...f, role, companyId: isCompanyRole(role) ? f.companyId : '' }));
+              }}
               fullWidth
             >
               {/* Только роли, которые бэкенд даст выдать: руководитель — менеджера и сотрудника (Р-85). */}
@@ -518,6 +509,7 @@ export const UsersPage: React.FC = () => {
                 onChange={e => setUserForm(f => ({ ...f, companyId: e.target.value }))}
                 fullWidth
               >
+                <MenuItem value="">{tObj.users.noCompany}</MenuItem>
                 {companiesList.map((c) => (
                   <MenuItem key={c.id} value={c.id}>
                     {c.name} ({c.id})
@@ -535,7 +527,6 @@ export const UsersPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Edit User Dialog (Р-90) */}
       <Dialog open={editing !== null} onClose={() => { if (!editBusy) setEditing(null); }} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>
           {tObj.users.editDialogTitle}
@@ -616,7 +607,9 @@ export const UsersPage: React.FC = () => {
                 autoComplete="new-password"
                 value={editForm.password}
                 onChange={e => setEditForm(f => ({ ...f, password: e.target.value }))}
-                helperText={tObj.users.newPasswordHint}
+                helperText={isSelf(editing)
+                  ? tObj.users.newPasswordHint
+                  : `${tObj.users.newPasswordHint} ${tObj.users.issuedPasswordHint}`}
                 fullWidth
               />
             </Stack>
@@ -628,7 +621,6 @@ export const UsersPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Confirm Edit Dialog: построчно, что именно изменится — роль, компания и статус меняют права. */}
       <ConfirmDialog
         open={editConfirm !== null}
         title={<>{tObj.users.editConfirmTitle} {editing?.username}</>}
@@ -649,7 +641,6 @@ export const UsersPage: React.FC = () => {
         <Alert severity="info" sx={{ mt: 2 }}>{tObj.users.editSessionsHint}</Alert>
       </ConfirmDialog>
 
-      {/* Confirm Delete Dialog */}
       <ConfirmDialog
         open={pendingDelete !== null}
         title={tObj.users.deleteTitle}
@@ -659,7 +650,6 @@ export const UsersPage: React.FC = () => {
         onConfirm={handleDeleteUser}
         onCancel={() => setPendingDelete(null)}
       >
-        {/* Кого именно удаляем — в самом окне: у списка бывает по двадцать похожих строк. */}
         {pendingDelete && (
           <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
             <Typography variant="body2" sx={{ fontWeight: 700 }}>

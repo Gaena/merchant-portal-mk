@@ -7,10 +7,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-// Прокси, чьим forwarding-заголовкам верит ClientIp: mp.trusted-proxies из TRUSTED_PROXIES, по
-// умолчанию 127.0.0.1,::1 — то есть всё наше развёртывание, один nginx на той же машине через
-// loopback (project_docs/deployment_guide.md). Расширять список только когда второй прокси реально появился:
-// каждый адрес в нём вправе назвать любого клиента, а список «на всякий случай» — обход лимитера.
+// Прокси, чьим forwarding-заголовкам верит ClientIp; по умолчанию loopback — nginx на той же машине
+// (project_docs/guides/deployment_guide.md). Расширять только при реальном втором прокси: каждый
+// адрес в списке вправе назвать любого клиента, и лишний — обход лимитера.
 @Component
 public class TrustedProxies {
 
@@ -37,9 +36,7 @@ public class TrustedProxies {
         }
     }
 
-    // Никогда не null. Пустой набор означает «forwarding-заголовкам не верить», адрес всегда
-    // берётся у пира: это правильная настройка для сервиса, перед которым ничего не стоит, и
-    // безопасный откат, а не авария — адреса просто становятся менее точными.
+    // Никогда не null. Пустой набор — заголовкам не верить, адрес берётся у пира: безопасный откат.
     public Set<String> addresses() {
         return addresses;
     }

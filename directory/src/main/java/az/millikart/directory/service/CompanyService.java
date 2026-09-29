@@ -3,19 +3,26 @@ package az.millikart.directory.service;
 import az.millikart.directory.domain.Company;
 import az.millikart.directory.dto.CompanyResponse;
 import az.millikart.directory.dto.CreateCompanyRequest;
+import az.millikart.directory.dto.ProviderLoginOption;
 import az.millikart.directory.dto.UpdateCompanyRequest;
 import az.millikart.common.dto.PagedResponse;
 import az.millikart.common.exception.BusinessException;
+import az.millikart.common.exception.ConflictException;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.directory.repository.CompanyRepository;
+import az.millikart.directory.repository.ProviderLoginSnapshotRepository;
 
 import az.millikart.common.audit.AuditAction;
 import az.millikart.common.audit.AuditEntity;
 import az.millikart.common.audit.AuditEvent;
 import az.millikart.common.audit.AuditLogService;
 import az.millikart.common.search.SearchTerms;
+import az.millikart.common.security.CredentialCipher;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,20 +40,31 @@ public class CompanyService {
     private static final Logger log = LoggerFactory.getLogger(CompanyService.class);
 
     private static final String STATUS_ACTIVE = "ACTIVE";
+    private static final String STATUS_INACTIVE = "INACTIVE";
 
-    // Маркер мягкого удаления: такая компания невидима на всех путях чтения.
-    private static final String STATUS_DELETED = "DELETED";
+    // Мягкое удаление: чтение и список компаний отдают её как несуществующую.
+    static final String STATUS_DELETED = "DELETED";
+
+    // Логин компании к провайдеру — только мультимерчант (Р-94): Basic-логин MultiMerchantSys/<login>.
+    static final String MULTI_MERCHANT_PREFIX = "MultiMerchantSys/";
+    private static final String PROVIDER_ACTIVE = "Active";
 
     private final CompanyRepository companyRepository;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
+    private final CredentialCipher credentialCipher;
+    private final ProviderLoginSnapshotRepository providerLogins;
 
     public CompanyService(CompanyRepository companyRepository,
                           AuditLogService auditLogService,
-                          ApplicationEventPublisher eventPublisher) {
+                          ApplicationEventPublisher eventPublisher,
+                          CredentialCipher credentialCipher,
+                          ProviderLoginSnapshotRepository providerLogins) {
         this.companyRepository = companyRepository;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
+        this.credentialCipher = credentialCipher;
+        this.providerLogins = providerLogins;
     }
 
     @Transactional
@@ -54,10 +72,10 @@ public class CompanyService {
         String actorUsername = UserPrincipal.getUsername(principal);
         Role actorRole = UserPrincipal.getRole(principal);
 
-        log.info("Request to create company: id={}, name={} by actor: {}", request.id(), request.name(), actorUsername);
+        log.info("Request to create company: id={}, name={}", request.id(), request.name());
 
         if (actorRole != Role.SYSTEM_ADMIN) {
-            // Подшивается под компанию актора, не названную в запросе (AuditLogService.logDenied).
+            // Отказ пишется с компанией актора, а не цели (Р-104).
             auditLogService.logDenied(AuditEntity.COMPANY, request.id(), AuditAction.CREATE, actorUsername,
                     UserPrincipal.getCompanyId(principal),
                     "Denied: role " + UserPrincipal.getRawRole(principal)
@@ -68,34 +86,36 @@ public class CompanyService {
         if (companyRepository.existsById(request.id())) {
             throw new BusinessException("Company with ID '" + request.id() + "' already exists");
         }
+        requireActiveMultiMerchantLogin(request.providerLogin());
+        requireFreeProviderLogin(request.providerLogin(), null);
 
         Company company = Company.builder()
                 .id(request.id())
                 .name(request.name())
+                .providerLogin(request.providerLogin())
+                .providerPassword(credentialCipher.encrypt(request.providerPassword()))
                 .status(STATUS_ACTIVE)
                 .createdBy(actorUsername)
                 .updatedBy(actorUsername)
                 .build();
 
-        company = companyRepository.save(company);
+        // Даты ставит Hibernate при flush; без него ответ ушёл бы с пустыми датами (Р-103).
+        company = companyRepository.saveAndFlush(company);
 
-        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
                 AuditEntity.COMPANY,
                 company.getId(),
                 AuditAction.CREATE,
                 actorUsername,
                 company.getId(),
-                "Created company: " + company.getName()
+                "Created company: " + company.getName() + ", provider login " + company.getProviderLogin()
         ));
 
-        return mapToResponse(company);
+        return mapToResponse(company, actorRole);
     }
 
-    // Страница компаний (P2-1) с поиском по name и id (P3-1). Страницы, фильтр мягкого удаления,
-    // поиск и порядок — работа базы, не памяти. Сортировка name + id: имена компаний не уникальны,
-    // а без уникального довеска база вправе упорядочить одинаковые имена по-разному между двумя
-    // запросами страниц, и компания попадёт то на обе соседние страницы, то ни на одну.
+    // Сортировка кончается id: имена не уникальны, и без него компания попадала бы то на обе соседние
+    // страницы, то ни на одну (P2-1). Фильтр удалённых и поиск — в запросе, не в памяти (P3-1).
     @Transactional(readOnly = true)
     public PagedResponse<CompanyResponse> listCompanies(Pageable pageable, UserPrincipal principal,
                                                         String search) {
@@ -114,8 +134,25 @@ public class CompanyService {
                 SearchTerms.toLikePattern(search), byName);
 
         return PagedResponse.of(page, page.getContent().stream()
-                .map(this::mapToResponse)
+                .map(company -> mapToResponse(company, actorRole))
                 .collect(Collectors.toList()));
+    }
+
+    // Список для формы — удобство: логин могут занять или выключить до сохранения, поэтому проверка
+    // при сохранении остаётся (Р-95).
+    @Transactional(readOnly = true)
+    public List<ProviderLoginOption> listFreeProviderLogins(UserPrincipal principal) {
+        if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
+            auditLogService.logDenied(AuditEntity.COMPANY, "ALL", AuditAction.LIST,
+                    UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                    "Denied: role " + UserPrincipal.getRawRole(principal) + " attempted to list provider logins");
+            throw new InvalidStateException("Access denied");
+        }
+        Set<String> taken = new HashSet<>(companyRepository.findAllProviderLogins());
+        return providerLogins.eligibleLogins().stream()
+                .map(login -> new ProviderLoginOption(MULTI_MERCHANT_PREFIX + login.login(), login.merchants()))
+                .filter(option -> !taken.contains(option.login()))
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -130,7 +167,7 @@ public class CompanyService {
         }
 
         validateAccess(company.getId(), principal, actorRole, actorCompanyId);
-        return mapToResponse(company);
+        return mapToResponse(company, actorRole);
     }
 
     @Transactional
@@ -152,6 +189,13 @@ public class CompanyService {
             throw new BusinessException("Company not found");
         }
 
+        // Правкой ставятся только эти два: DELETED — это удаление со своей записью в журнале, а иное
+        // значение ни один экран не прочтёт.
+        if (request.status() != null && !request.status().isBlank()
+                && !STATUS_ACTIVE.equals(request.status()) && !STATUS_INACTIVE.equals(request.status())) {
+            throw new BusinessException("Company status must be ACTIVE or INACTIVE");
+        }
+
         StringBuilder changes = new StringBuilder();
         String previousStatus = company.getStatus();
         if (request.name() != null && !request.name().isBlank()) {
@@ -162,11 +206,22 @@ public class CompanyService {
             changes.append("Status changed from '").append(company.getStatus()).append("' to '").append(request.status()).append("'. ");
             company.setStatus(request.status());
         }
+        String providerLogin = request.providerLogin();
+        if (providerLogin != null && !providerLogin.isBlank() && !providerLogin.equals(company.getProviderLogin())) {
+            requireActiveMultiMerchantLogin(providerLogin);
+            requireFreeProviderLogin(providerLogin, company.getId());
+            changes.append("Provider login changed from '").append(company.getProviderLogin()).append("' to '").append(providerLogin).append("'. ");
+            company.setProviderLogin(providerLogin);
+        }
+        // Сам пароль в журнал не пишется — только факт смены (Р-93).
+        if (request.providerPassword() != null && !request.providerPassword().isBlank()) {
+            changes.append("Provider password changed. ");
+            company.setProviderPassword(credentialCipher.encrypt(request.providerPassword()));
+        }
 
         company.setUpdatedBy(actorUsername);
-        company = companyRepository.save(company);
+        company = companyRepository.saveAndFlush(company);
 
-        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
                 AuditEntity.COMPANY,
                 company.getId(),
@@ -176,8 +231,8 @@ public class CompanyService {
                 changes.toString()
         ));
 
-        // Смена статуса — отдельное событие, как у пользователей и терминалов (P3-2): ревизор ищет
-        // блокировки по действию, а не вычитывая прозу каждого UPDATE.
+        // Смена статуса — отдельная запись BLOCK/UNBLOCK: ревизор ищет блокировки по действию, а не
+        // в тексте UPDATE (P3-2).
         if (request.status() != null && !request.status().isBlank()
                 && !request.status().equals(previousStatus)) {
             boolean reactivated = STATUS_ACTIVE.equals(request.status());
@@ -192,7 +247,7 @@ public class CompanyService {
             ));
         }
 
-        return mapToResponse(company);
+        return mapToResponse(company, actorRole);
     }
 
     @Transactional
@@ -214,7 +269,6 @@ public class CompanyService {
         company.setUpdatedBy(actorUsername);
         companyRepository.save(company);
 
-        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
                 AuditEntity.COMPANY,
                 company.getId(),
@@ -240,15 +294,50 @@ public class CompanyService {
         throw new InvalidStateException("Access denied");
     }
 
-    private CompanyResponse mapToResponse(Company company) {
+    // Логин к провайдеру уникален (Р-93): две компании с одним логином ходили бы к провайдеру одним ключом.
+    private void requireFreeProviderLogin(String providerLogin, String companyId) {
+        boolean taken = companyId == null
+                ? companyRepository.existsByProviderLogin(providerLogin)
+                : companyRepository.existsByProviderLoginAndIdNot(providerLogin, companyId);
+        if (taken) {
+            throw new ConflictException("Provider login is already used by another company");
+        }
+    }
+
+    // Только при сохранении — заведении или смене логина: уже сохранённые логины слепок не трогает (Р-94).
+    private void requireActiveMultiMerchantLogin(String providerLogin) {
+        if (!providerLogin.startsWith(MULTI_MERCHANT_PREFIX) || providerLogin.length() == MULTI_MERCHANT_PREFIX.length()) {
+            throw new BusinessException("Provider login must be a multimerchant login: " + MULTI_MERCHANT_PREFIX + "<login>");
+        }
+        if (!providerLogins.synchronised()) {
+            throw new BusinessException("The provider login list has not been synchronised yet; "
+                    + "refresh the provider directory and try again");
+        }
+        String login = providerLogin.substring(MULTI_MERCHANT_PREFIX.length());
+        List<ProviderLoginSnapshotRepository.LoginLink> links = providerLogins.linksOf(login);
+        if (links.isEmpty()) {
+            throw new BusinessException("Provider login " + providerLogin
+                    + " is not in the synchronised list of multimerchant logins");
+        }
+        if (links.stream().noneMatch(link -> PROVIDER_ACTIVE.equals(link.loginStatus()))) {
+            throw new BusinessException("Provider login " + providerLogin + " is not active at the provider");
+        }
+        if (links.stream().noneMatch(link -> PROVIDER_ACTIVE.equals(link.linkStatus()) && link.merchantRid() != null)) {
+            throw new BusinessException("Provider login " + providerLogin + " has no active merchants at the provider");
+        }
+    }
+
+    // Логин к провайдеру видит только SYSTEM_ADMIN: он его и задаёт (Р-93).
+    private CompanyResponse mapToResponse(Company company, Role actorRole) {
         return new CompanyResponse(
                 company.getId(),
                 company.getName(),
                 company.getStatus(),
+                actorRole == Role.SYSTEM_ADMIN ? company.getProviderLogin() : null,
                 company.getCreatedBy(),
-                company.getCreatedAt() != null ? company.getCreatedAt() : java.time.Instant.now(),
+                company.getCreatedAt(),
                 company.getUpdatedBy(),
-                company.getUpdatedAt() != null ? company.getUpdatedAt() : java.time.Instant.now()
+                company.getUpdatedAt()
         );
     }
 }

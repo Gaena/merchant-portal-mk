@@ -1,5 +1,6 @@
 package az.millikart.directory;
 
+import static az.millikart.directory.DirectoryTestFixtures.company;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -15,7 +16,6 @@ import az.millikart.common.security.JwtProvider;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.common.audit.AuditLog;
 import az.millikart.common.audit.AuditOutcome;
-import az.millikart.directory.dto.CreateCompanyRequest;
 import az.millikart.directory.dto.UpdateCompanyRequest;
 import az.millikart.common.audit.AuditLogRepository;
 import az.millikart.directory.repository.CompanyRepository;
@@ -40,6 +40,7 @@ import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -56,6 +57,9 @@ public class AuditLogIntegrationTest {
 
     @Autowired
     private CompanyRepository companyRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private TerminalRepository terminalRepository;
@@ -95,6 +99,7 @@ public class AuditLogIntegrationTest {
         auditLogs.deleteAll();
         terminalRepository.deleteAll();
         companyRepository.deleteAll();
+        DirectoryTestFixtures.providerLogins(jdbcTemplate, "comp-01", "comp-rb", "comp-long");
 
         adminToken = "Bearer " + jwtProvider.generateToken("000", "admin@millikart.az", "SYSTEM_ADMIN", null);
         managerTokenCompany2 = "Bearer " + jwtProvider.generateToken("333", "manager@comp2.com", "COMPANY_MANAGER", "comp-02");
@@ -152,6 +157,7 @@ public class AuditLogIntegrationTest {
     // P3-2: смена статуса компании — отдельное событие BLOCK/UNBLOCK, как уже было для
     // пользователей и терминалов, а не строка внутри общего UPDATE, которую найдёшь лишь
     // полнотекстовым чтением журнала. Запись UPDATE с описанием полей при этом остаётся.
+    // Статусы компании — только ACTIVE и INACTIVE (25.09.2026); BLOCKED здесь стоял до этой проверки.
     @Test
     public void companyStatusChange_isItsOwnBlockAndUnblockEvent() throws Exception {
         createCompanyViaHttp("comp-01", "MilliKart LLC");
@@ -161,7 +167,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest(null, "BLOCKED"))))
+                                new UpdateCompanyRequest(null, "INACTIVE", null, null))))
                 .andExpect(status().isOk());
 
         List<AuditLog> afterBlock = auditLogs.findAll();
@@ -170,14 +176,14 @@ public class AuditLogIntegrationTest {
         assertThat(block.getEntityType()).isEqualTo("COMPANY");
         assertThat(block.getEntityId()).isEqualTo("comp-01");
         assertThat(block.getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
-        assertThat(block.getDetails()).contains("BLOCKED", "was ACTIVE");
+        assertThat(block.getDetails()).contains("INACTIVE", "was ACTIVE");
 
         auditLogs.deleteAll();
         mockMvc.perform(patch("/api/v1/companies/comp-01")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest(null, "ACTIVE"))))
+                                new UpdateCompanyRequest(null, "ACTIVE", null, null))))
                 .andExpect(status().isOk());
 
         assertThat(auditLogs.findAll()).extracting(AuditLog::getAction)
@@ -189,7 +195,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest(null, "ACTIVE"))))
+                                new UpdateCompanyRequest(null, "ACTIVE", null, null))))
                 .andExpect(status().isOk());
         assertThat(auditLogs.findAll()).extracting(AuditLog::getAction).containsExactly("UPDATE");
     }
@@ -200,7 +206,7 @@ public class AuditLogIntegrationTest {
     public void rolledBackOperation_leavesNoAuditRecord() {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         tx.executeWithoutResult(status -> {
-            companyService.createCompany(new CreateCompanyRequest("comp-rb", "Rolled Back LLC"), adminPrincipal());
+            companyService.createCompany(company("comp-rb", "Rolled Back LLC"), adminPrincipal());
             // Событие аудита уже опубликовано; теперь операция падает.
             status.setRollbackOnly();
         });
@@ -222,7 +228,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-long", overlongName))))
+                                company("comp-long", overlongName))))
                 .andExpect(status().is5xxServerError());
 
         assertThat(companyRepository.existsById("comp-long")).isFalse();
@@ -240,7 +246,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, managerTokenCompany2)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest("Hijacked LLC", null))))
+                                new UpdateCompanyRequest("Hijacked LLC", null, null, null))))
                 .andExpect(status().isForbidden());
 
         assertThat(companyRepository.findById("comp-01").orElseThrow().getName())
@@ -300,7 +306,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("Z".repeat(400), overlongName))))
+                                company("Z".repeat(400), overlongName))))
                 .andExpect(status().isForbidden());
 
         List<AuditLog> records = auditLogs.findAll();
@@ -320,7 +326,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-victim", "Fabricated entry"))))
+                                company("comp-victim", "Fabricated entry"))))
                 .andExpect(status().isForbidden());
 
         List<AuditLog> records = auditLogs.findAll();
@@ -368,7 +374,7 @@ public class AuditLogIntegrationTest {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         tx.executeWithoutResult(status -> {
             assertThatThrownBy(() -> companyService.updateCompany("comp-01",
-                    new UpdateCompanyRequest("Hijacked LLC", null), managerOfCompany2()))
+                    new UpdateCompanyRequest("Hijacked LLC", null, null, null), managerOfCompany2()))
                     .isInstanceOf(InvalidStateException.class);
             status.setRollbackOnly();
         });
@@ -391,7 +397,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-01", "MilliKart LLC"))))
+                                company("comp-01", "MilliKart LLC"))))
                 .andExpect(status().isCreated());
 
         assertThat(companyRepository.existsById("comp-01"))
@@ -415,7 +421,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-01", "MilliKart LLC"))))
+                                company("comp-01", "MilliKart LLC"))))
                 .andExpect(status().isForbidden());
 
         assertThat(serviceLogAppender.list)
@@ -434,7 +440,7 @@ public class AuditLogIntegrationTest {
                         .header("X-Real-IP", "198.51.100.7")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-01", "MilliKart LLC"))))
+                                company("comp-01", "MilliKart LLC"))))
                 .andExpect(status().isCreated());
 
         assertThat(auditLogs.findAll())
@@ -454,7 +460,7 @@ public class AuditLogIntegrationTest {
                         .header("X-Real-IP", "198.51.100.7")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-01", "MilliKart LLC"))))
+                                company("comp-01", "MilliKart LLC"))))
                 .andExpect(status().isCreated());
 
         assertThat(auditLogs.findAll())
@@ -468,7 +474,7 @@ public class AuditLogIntegrationTest {
     @Test
     public void directServiceCall_outsideRequest_recordsWithoutClientIp() {
         assertThatCode(() -> companyService.createCompany(
-                new CreateCompanyRequest("comp-01", "MilliKart LLC"), adminPrincipal()))
+                company("comp-01", "MilliKart LLC"), adminPrincipal()))
                 .doesNotThrowAnyException();
 
         List<AuditLog> records = auditLogs.findAll();
@@ -483,7 +489,7 @@ public class AuditLogIntegrationTest {
         mockMvc.perform(post("/api/v1/companies")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateCompanyRequest(id, name))))
+                        .content(objectMapper.writeValueAsString(company(id, name))))
                 .andExpect(status().isCreated());
     }
 }

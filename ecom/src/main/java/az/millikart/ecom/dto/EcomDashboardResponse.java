@@ -6,9 +6,8 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
-// Сводка главной страницы (Р-91): оплаты картой по всем терминалам скоупа — по выписке провайдера, а
-// не по платёжным ссылкам портала. Заказы периода и деньги заказа — те же, что во вкладке E-commerce и в
-// её /stats (Р-74…Р-78): период — по дате создания заказа. Суммы — по валютам, общего итога нет.
+// Сводка главной — по выписке провайдера, а не по ссылкам портала: те же заказы и деньги, что во вкладке
+// E-commerce (Р-91). Суммы — по валютам, общего итога нет.
 public record EcomDashboardResponse(
         Window window,
         List<CurrencyTotals> totals,
@@ -32,8 +31,9 @@ public record EcomDashboardResponse(
     public record DailyTotal(LocalDate date, String currency, BigDecimal netAmount, long orderCount) {
     }
 
-    // login и title — из слепка терминалов провайдера; нет в слепке — название мерчанта из выписки, логина нет.
-    public record TerminalTotal(String currency, String merchantRid, String login, String title,
+    // login, terminalRid и title — из слепка терминалов провайдера; нет в слепке — название мерчанта из
+    // выписки, логина и номера нет.
+    public record TerminalTotal(String currency, String merchantRid, String login, String terminalRid, String title,
                                 BigDecimal netAmount, long orderCount) {
     }
 }

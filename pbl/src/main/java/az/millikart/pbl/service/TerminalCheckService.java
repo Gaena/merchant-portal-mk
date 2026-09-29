@@ -15,49 +15,34 @@ import az.millikart.pbl.provider.dto.TerminalCheckResult;
 import az.millikart.pbl.repository.TerminalRepository;
 import org.springframework.stereotype.Service;
 
-/**
- * Проверка учётных данных терминала у провайдера.
- *
- * **Только SYSTEM_ADMIN** — те же ворота, что у чтения и смены пароля терминала: проверка
- * пароля отвечает на вопрос «подходит ли этот ключ», и перебирать ключи чужим ролям незачем.
- *
- * Два режима. Для терминала, который ещё заводят, учётные данные приходят в запросе; для уже
- * заведённого берутся из базы по номеру, и пароль при этом наружу не уходит вовсе — ответ
- * говорит только, подошёл ли он.
- *
- * Каждая проверка ложится в журнал аудита вместе с исходом. Пробный заказ у провайдера — это
- * внешний след, и в нашем журнале должно быть видно, кто и когда его оставил. Пароль в запись
- * не попадает.
- */
+// Кнопка «Тест»: настоящий пробный заказ у провайдера с кредами компании терминала (Р-70, Р-93). Только
+// SYSTEM_ADMIN — перебирать ключи другим ролям незачем. Каждая проверка — в журнал: заказ оставляет след.
 @Service
 public class TerminalCheckService {
 
     private final AcquiringClient acquiringClient;
     private final TerminalRepository terminalRepository;
+    private final ProviderCredentialsService providerCredentials;
     private final AuditLogService auditLogService;
 
     public TerminalCheckService(AcquiringClient acquiringClient,
                                 TerminalRepository terminalRepository,
+                                ProviderCredentialsService providerCredentials,
                                 AuditLogService auditLogService) {
         this.acquiringClient = acquiringClient;
         this.terminalRepository = terminalRepository;
+        this.providerCredentials = providerCredentials;
         this.auditLogService = auditLogService;
-    }
-
-    public TerminalCheckResponse checkNew(String login, String password, UserPrincipal principal) {
-        requireSystemAdmin(principal, "NEW", "credentials for login " + login);
-        TerminalCheckResult result = acquiringClient.checkTerminalCredentials(login, password);
-        record("NEW", null, principal, "Checked acquiring credentials for login " + login, result);
-        return TerminalCheckResponse.of(result);
     }
 
     public TerminalCheckResponse checkExisting(Integer terminalId, UserPrincipal principal) {
         requireSystemAdmin(principal, String.valueOf(terminalId), "terminal " + terminalId);
         Terminal terminal = terminalRepository.findById(terminalId)
                 .orElseThrow(() -> new ResourceNotFoundException("Terminal not found: " + terminalId));
-        TerminalCheckResult result = acquiringClient.checkTerminalCredentials(terminal.getLogin(), terminal.getPassword());
+        TerminalCheckResult result = acquiringClient.checkOrderCreation(providerCredentials.forTerminal(terminal),
+                providerCredentials.terminalRidOf(terminal));
         record(String.valueOf(terminalId), terminal.getCompanyId(), principal,
-                "Checked acquiring credentials of terminal " + terminalId, result);
+                "Checked payment creation on terminal " + terminalId + " with the company credentials", result);
         return TerminalCheckResponse.of(result);
     }
 
