@@ -278,15 +278,17 @@ public class TerminalService {
             changes.append("Name changed from '").append(terminal.getName()).append("' to '").append(request.name()).append("'. ");
             terminal.setName(request.name());
         }
-        if (request.companyId() != null && !request.companyId().isBlank()) {
+        // Та же компания — не перенос: PATCH объектом целиком по терминалу удалённой компании иначе падал
+        // бы на её проверке (Р-107) и не блокировал терминал.
+        if (request.companyId() != null && !request.companyId().isBlank()
+                && !request.companyId().equals(terminal.getCompanyId())) {
             validateWriteAccessToCompany(request.companyId(), principal,
                     String.valueOf(id), AuditAction.UPDATE,
                     "move terminal " + id + " to company " + request.companyId());
             Company target = liveCompany(request.companyId());
             // Как при заведении: иначе ссылки ушли бы к провайдеру с кредами компании, чей логин
             // этого мерчанта не знает, а выписка его платежей осталась бы у прежней (Р-96, Р-97).
-            if (!target.getId().equals(terminal.getCompanyId())
-                    && (terminal.getMerchantRid() == null || !merchantsOfCompanyLogin(target).contains(terminal.getMerchantRid()))) {
+            if (terminal.getMerchantRid() == null || !merchantsOfCompanyLogin(target).contains(terminal.getMerchantRid())) {
                 throw new BusinessException("Terminal " + id + " cannot be moved to company " + target.getId()
                         + ": its provider merchant is not linked to the multimerchant login of that company");
             }

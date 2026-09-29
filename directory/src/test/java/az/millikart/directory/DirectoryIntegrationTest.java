@@ -835,6 +835,35 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.message", is("Company with ID 'comp-02' not found")));
     }
 
+    // Регрессия Р-107: удалённая компания проверялась и тогда, когда companyId в PATCH — текущий, и
+    // объект целиком с блокировкой получал 400, а терминал удалённой компании продолжал принимать платежи.
+    // Та же компания — не перенос: ни проверки, ни «CompanyId changed from X to X» в журнале.
+    @Test
+    public void terminalOfADeletedCompany_isBlockedByAPatchCarryingItsOwnCompanyId() throws Exception {
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Other Shop", "comp-02", adminToken);
+        mockMvc.perform(delete("/api/v1/companies/comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isNoContent());
+        auditLogRepository.deleteAll();
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateTerminalRequest(null, "comp-02", TerminalStatus.BLOCKED))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("BLOCKED")))
+                .andExpect(jsonPath("$.companyId", is("comp-02")));
+
+        assertThat(terminalRepository.findById(terminalId).orElseThrow().getStatus()).isEqualTo(TerminalStatus.BLOCKED);
+        List<AuditLog> updates = auditLogRepository.findAll().stream()
+                .filter(record -> "UPDATE".equals(record.getAction()))
+                .toList();
+        assertThat(updates).singleElement()
+                .satisfies(record -> assertThat(record.getDetails()).doesNotContain("CompanyId changed"));
+    }
+
     // Фикстуры
 
     private void assertCompanyRefused(String providerLogin, String reason) throws Exception {
