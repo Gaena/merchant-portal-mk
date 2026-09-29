@@ -2,8 +2,8 @@
 
 > Правила, инварианты и грабли для AI-агентов и разработчиков. Если код и этот файл расходятся,
 > прав код, а файл правится в том же изменении.
-> Ссылки вида «P2-8» ведут в историю работ `project_docs/fix_plan.md`, вида «Р-37» — в реестр решений
-> `project_docs/decisions.md`. Истории в этом файле нет: только то, что действует сейчас.
+> Ссылки вида «Р-37» ведут в реестр решений `project_docs/decisions.md`, вида «P2-8» — в архив
+> истории работ `project_docs/archive/fix_plan.md`. Истории в этом файле нет: только то, что действует сейчас.
 
 ---
 
@@ -29,8 +29,8 @@ mp/
 │                       #   testFixtures — контейнер PostgreSQL для тестов
 ├── auth/               # :8081 — вход, refresh и logout, пользователи
 ├── directory/          # :8082 — компании, терминалы, чтение журнала аудита, сверка статусов терминалов
-├── pbl/                # :8080 — платёжные ссылки, транзакции, сводка главной, TXPG, кнопка «Тест»
-├── ecom/               # :8083 — выписка провайдера и слепок его терминалов (чтение схемы TXPG)
+├── pbl/                # :8080 — платёжные ссылки, транзакции, статистика по ссылкам, TXPG, кнопка «Тест»
+├── ecom/               # :8083 — выписка провайдера, сводка главной, слепки терминалов и логинов (чтение TXPG)
 ├── frontend/           # :3000 (dev) — React SPA на Vite
 ├── project_docs/       # документация проекта, таблица ниже
 ├── .env.example        # шаблон переменных окружения (реальный .env — в .gitignore)
@@ -43,18 +43,21 @@ mp/
 | Файл | Что в нём | Когда править |
 |:---|:---|:---|
 | `decisions.md` | реестр решений Р-NN | принято решение — строка в конец таблицы |
-| `fix_plan.md` | история: очередь спринтов, журнал, описания закрытых задач | задача закрыта — запись в конец |
-| `auth.md`, `directory.md`, `pay-by-link.md`, `ecom.md` | контракты API: запросы, ответы, отказы | изменился эндпоинт, его ответ или отказы |
-| `application_description.md` | обзор архитектуры: модули и связи, схема БД (ER и миграции), фоновые процессы, интеграция с TXPG | новая таблица, колонка, миграция, планировщик, связь между сервисами |
-| `deployment_guide.md` | установка и эксплуатация: переменные, systemd, nginx, порты | новая переменная, порт, маршрут, сервис |
-| `admin_guide.md` | руководство системного администратора: заведение компаний, терминалов и пользователей, связь базы портала с базой провайдера простым языком | изменились экран или правила заведения, сверка терминалов со справочником провайдера |
-| `technical_handover.md` | техпаспорт для заказчика; словарь событий аудита (§4.4) | новое событие аудита или видимая заказчику функция |
-| `code_review.md` | ревью от 14.08.2026 | заморожен, все пункты закрыты |
-| `TXPG-client-side-integration.md` | контракт MilliKart «Client side integration» v0.1.3 | внешний документ, не правится |
+| `plan.md` | открытые задачи | задача заведена — строка; сделана — строка удаляется (Р-105) |
+| `modules/auth.md`, `directory.md`, `pay-by-link.md`, `ecom.md` | контракты API: запросы, ответы, отказы | изменился эндпоинт, его ответ или отказы |
+| `guides/application_description.md` | обзор архитектуры: модули и связи, схема БД (ER и миграции), фоновые процессы, интеграция с TXPG | новая таблица, колонка, миграция, планировщик, связь между сервисами |
+| `guides/deployment_guide.md` | установка и эксплуатация: переменные (полный перечень — §20.1), systemd, nginx, порты | новая переменная, порт, маршрут, сервис |
+| `guides/admin_guide.md` | руководство системного администратора: заведение компаний, терминалов и пользователей, связь базы портала с базой провайдера простым языком | изменились экран или правила заведения, сверка терминалов со справочником провайдера |
+| `guides/technical_handover.md` | техпаспорт для заказчика; правила и словарь событий аудита (§4.4) | новое событие аудита или видимая заказчику функция |
+| `external/TXPG-client-side-integration.md` | контракт MilliKart «Client side integration» v0.1.3 | внешний документ, не правится |
+| `external/NON-PSP Ecom.postman_collection.json` | вызовы API шлюза MilliKart на тестовом стенде (не наш `ecom`) | внешний документ, не правится |
+| `archive/fix_plan.md`, `archive/code_review.md` | история работ до 29.09.2026 и ревью от 14.08.2026 | заморожены |
 
-Правила и известные ограничения — здесь, в §10. Postman-коллекции: `auth/Auth.postman_collection.json`,
-`directory/Directory.postman_collection.json`, `pbl/Pay-By-Link.postman_collection.json`,
-`pbl/NON-PSP Ecom.postman_collection.json`. Контракт эквайера — источник словаря статусов заказа
+Журнала работ нет (Р-105): что сделано и почему — в сообщении коммита, принятое решение — в
+`decisions.md`. Правила и известные ограничения — здесь, в §10. Postman-коллекции сервисов:
+`auth/Auth.postman_collection.json`, `directory/Directory.postman_collection.json`,
+`pbl/Pay-By-Link.postman_collection.json`, `ecom/Ecom.postman_collection.json`; токен берётся запросом
+Login из Auth-коллекции. Контракт эквайера — источник словаря статусов заказа
 (§5.8.8) и ответов `exec-tran` (§5.5–5.7); он описывает только SMS, `Order_DMS` в нём нет.
 
 ---
@@ -73,7 +76,7 @@ mp/
 | SpringDoc OpenAPI | 2.5.0 | `common/build.gradle` |
 | Caffeine | 3.1.8 — только счётчики лимита входа (`LoginRateLimiter`) | `common/build.gradle` |
 | Liquibase | из BOM | — |
-| PostgreSQL | **16** — в проде и в тестовом контейнере (Р-73); часть тестов на H2 (§11) | `project_docs/deployment_guide.md` §4.5, `PostgresTestContainer` |
+| PostgreSQL | **16** — в проде и в тестовом контейнере (Р-73); часть тестов на H2 (§11) | `project_docs/guides/deployment_guide.md` §4.5, `PostgresTestContainer` |
 | Oracle JDBC | `ojdbc11` 23.4, только `ecom` | `ecom/build.gradle` |
 | Testcontainers | 1.20.6 — выше BOM Boot, причина в §11 | `build.gradle` |
 | Gradle wrapper | 8.5 | `gradle/wrapper/gradle-wrapper.properties` |
@@ -126,16 +129,18 @@ npm run preview                 # отдать dist/ локально
 
 **Перед запуском нужна PostgreSQL** (`DB_URL`, `DB_USERNAME` — с дефолтами на локальную базу
 `postgres`). Схему создаёт Liquibase на старте (`ddl-auto: validate`, миграции не отключать).
-Порядок старта сервисов значения не имеет (P1-2): каждый changeset общей таблицы обложен своим
-`<preConditions>`.
+`auth`, `directory` и `pbl` стартуют в любом порядке (P1-2): каждый changeset общей таблицы обложен
+своим `<preConditions>`. `ecom` на пустой базе — только после `directory` или `pbl`: `terminals` и
+`audit_logs` он не создаёт (`project_docs/guides/application_description.md` §4.2).
 
 ⚠ **Без переменных окружения сервис не стартует, и дефолтов у секретов нет.** `DB_PASSWORD` и
 `JWT_SECRET` нужны всем четырём сервисам, причём `JWT_SECRET` — байт в байт одинаковый, иначе
 токен от `auth` не проходит в остальных. `pbl` дополнительно требует `PBL_BASE_URL`,
 `PBL_PROVIDER_GATEWAY_BASE_URL` и `PBL_PROVIDER_API_BASE_URL` (P1-10), `ecom` — `ECOM_TXPG_URL`,
 `ECOM_TXPG_USERNAME` и `ECOM_TXPG_PASSWORD`; `directory` и `pbl` — `CREDENTIALS_ENCRYPTION_KEY`, одно
-значение на оба (ключ AES-256 паролей компаний к провайдеру, Р-93). Полный перечень — `.env.example` и
-`project_docs/deployment_guide.md` §8.3, процедура первого запуска — там же, §20.
+значение на оба (ключ AES-256 паролей компаний к провайдеру, Р-93). Полный перечень —
+`project_docs/guides/deployment_guide.md` §20.1 (шаблон — `.env.example`), запись в `mp.env` — там же, §8.3,
+процедура первого запуска — §20.
 
 ```bash
 export DB_PASSWORD='...'
@@ -167,11 +172,11 @@ export JWT_SECRET="$(openssl rand -base64 48)"   # одно значение н�
    |:---|:---|:---|
    | `users`, `refresh_tokens`, `password_history` | `auth` | — |
    | `companies` | `auth` (создаёт) + `directory` (дополняет), `pbl` (создаёт, если ещё нет, и добавляет колонки кредов) | `auth` читает название нативным запросом для поиска пользователей; `pbl` — креды компании к провайдеру (Р-93); `ecom` — логин компании для скоупа выписки (Р-97) |
-   | `terminals` | `directory` (создаёт и дополняет), `pbl` (создаёт, если ещё нет; `terminal_rid`, если ещё нет), `ecom` (`status_source`, `merchant_rid`, если ещё нет) | `pbl` читает напрямую, минуя REST |
-   | `payment_links`, `transactions` | `pbl` | `directory` меняет статусы ссылок нативным запросом при блокировке терминала (Р-39) |
-   | `audit_logs` | `directory`, `auth`, `pbl` — каждый с преконтролями, создаёт стартовавший первым | пишут все четыре сервиса через `common` |
-   | `provider_terminals` | `ecom` | `directory` читает нативным запросом для сверки статусов терминалов |
-   | `provider_logins` | `ecom` | `directory` читает нативным запросом для проверки логина компании (Р-94); `ecom` строит по нему скоуп выписки (Р-97) |
+   | `terminals` | `directory` (создаёт и дополняет), `pbl` (создаёт, если ещё нет; `terminal_rid`, если ещё нет), `ecom` (`status_source`, `merchant_rid`, если ещё нет); внешний ключ на `companies` — `auth` | `pbl` читает напрямую, минуя REST |
+   | `payment_links`, `transactions`, `transaction_refunds` | `pbl` | `directory` меняет статусы ссылок нативным запросом при блокировке терминала (Р-39) |
+   | `audit_logs` | `directory`, `auth`, `pbl` — каждый с преконтролями, создаёт стартовавший первым | пишут все четыре сервиса через `common`; читает `directory` (`GET /audit-logs`) |
+   | `provider_terminals` | `ecom` | `directory` читает нативным запросом: справочник формы и заведение терминала (Р-93), сверка статуса, названия, логина и номера |
+   | `provider_logins` | `ecom` | `directory` читает нативным запросом: проверка логина компании (Р-94), список свободных логинов (Р-95), мерчант терминала (Р-96); `ecom` строит по нему скоуп выписки (Р-97) |
 
 3. **Разделение ответственности:** `auth` не управляет компаниями и терминалами; `directory` не
    выдаёт JWT; к API эквайера ходит только `pbl`, к базе провайдера — только `ecom`, и только на
@@ -311,13 +316,16 @@ POST /api/v1/payment-links            → PaymentLink(status=ACTIVE), возвр
      expiresAt не передан → now + pbl.link.default-ttl (24 ч); передан → проверка
      «в будущем» и «не дальше pbl.link.max-ttl (90 д) от created_at», иначе 400 (P1-9)
 GET  /api/v1/payment-links/{id}/open  → (публично) OpenLinkService.openAndBuildRedirect
-     ОДНА транзакция целиком (с 17.08.2026, P1-5):
-       1. findWithLockById(id)                         [SELECT … FOR UPDATE на строке ссылки]
-       2. проверка статуса/срока/лимита; слот занимают SUCCESS и AUTHORIZED (P1-6)
-       3. САМАЯ СВЕЖАЯ PENDING → FAILED (findFirst…, ровно одна);
-          если она создана уже после начала запроса — это второй одновременный клик → 409
-       4. POST в TXPG /order → providerOrderId + password   [HTTP, блокировка удерживается]
-       5. Transaction(status=PENDING); пароль — в provider_password, в provider_response
+     ОДНА транзакция целиком (P1-5):
+       1. findWithLockById(id)                [SELECT … FOR UPDATE NOWAIT на строке ссылки; занята → 409]
+       2. терминал и статус/срок ссылки
+       3. самая свежая PENDING-попытка сверяется с эквайером (refreshStatus): оплаченная займёт слот,
+          неоплаченная остаётся PENDING до сверки; создана уже после начала запроса — это второй
+          одновременный клик → 409
+       4. лимит: слот занимают PAID_STATUSES и AUTHORIZED (P1-6); все заняты — сначала опрашивается
+          последний холд: снятый банком без списания становится FAILED и слот освобождает
+       5. POST в TXPG /order?terminalRid=… → providerOrderId + password   [HTTP, блокировка удерживается]
+       6. Transaction(status=PENDING); пароль — в provider_password, в provider_response
           его нет (P0-9: {hppUrl, id, status})
      → 302 на hppUrl?id=…&password=…  (в лог — только адрес, ProviderPayloads.urlForLog)
 плательщик платит на HPP
@@ -339,7 +347,7 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
 | `Authorized` | `AUTHORIZED` | `AUTHORIZED` | старый код (DMS) |
 | `Rejected`, `Expired`, `Failed`, `Declined` | `FAILED_FINAL` | `FAILED` | §5.8.8 / старый код |
 | `Preparing` | `NON_FINAL` | не меняется; **единственный**, кого сверка гасит по `max-age` | §5.1, §5.8.3 |
-| `PartPaid`, `Cancelled`, `Canceled`, `Refused`, `Closed` | `SETTLED_OTHER` | не меняется, WARN, `FAILED` по таймауту запрещён | §5.8.8 |
+| `PartPaid`, `Cancelled`, `Canceled`, `Refused`, `Closed` | `SETTLED_OTHER` | не меняется, WARN, `FAILED` по таймауту запрещён; исключение — холд, снятый банком без списания (`Closed` после `Authorized`, `ProviderOrderDetails.isReleasedAuthorization`): `FAILED` с причиной «Authorization released by the acquirer without capture» | §5.8.8, Р-75 |
 | всё остальное, `null`, не-строка | `UNKNOWN` | не меняется, WARN, `FAILED` по таймауту запрещён | — |
 
 **Три суммы у транзакции** (P0-8) — не путать:
@@ -398,7 +406,7 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
 легитимное состояние покоя. Параметры — `pbl.reconciliation.*`.
 
 **Планировщики** (их шесть: по два в `pbl` и `auth`, по одному в `ecom` и `directory`) — таблица с
-расписаниями и выключателями в `project_docs/application_description.md` §9. В тестовых профилях
+расписаниями и выключателями в `project_docs/guides/application_description.md` §9. В тестовых профилях
 `pbl` и `auth` сверка и уборка выключены — тесты вызывают сервисы напрямую.
 
 ---
@@ -504,7 +512,7 @@ axios-клиент, shadcn/Radix, Tailwind, страницы на моках, с
 вкладки настроек и сочинённую историю не возвращать (P3-6, P3-7).
 
 **Главная — весь эквайринг компании** (Р-91): оплаты картой по всем мерчантам логина компании по выписке
-провайдера (`ecom.md` §2.8, Р-97), у `SYSTEM_ADMIN` и `AUDITOR` — по мерчантам логинов всех компаний. Цифры совпадают с
+провайдера (`project_docs/modules/ecom.md` §2.8, Р-97), у `SYSTEM_ADMIN` и `AUDITOR` — по мерчантам логинов всех компаний. Цифры совпадают с
 вкладкой E-commerce за тот же период: те же заказы (по дате создания) и те же правила денег. Каждое открытие
 главной — проход по периоду на боевой базе шлюза; период по умолчанию — 7 дней. Общие куски обеих панелей —
 `components/DashboardParts.tsx`.
@@ -574,7 +582,7 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 **Прокси на бэкенд** (`vite.config.ts`, только dev): `/api/v1/auth`, `/api/v1/users` → 8081 ·
 `/api/v1/companies`, `/api/v1/terminals`, `/api/v1/audit-logs` → 8082 · `/api/v1/payment-links`,
 `/api/v1/transactions`, `/api/v1/dashboard`, `/api/v1/acquiring` → 8080 · `/api/v1/ecom` → 8083.
-Новый префикс — сюда и в конфиг nginx (`project_docs/deployment_guide.md` §11).
+Новый префикс — сюда и в конфиг nginx (`project_docs/guides/deployment_guide.md` §11).
 
 **Моков нет.** Форматтеры сумм и дат — `utils/format.ts` (бывший `mockData.ts`). `formatCurrency`
 без валюты печатает число без знака валюты, а не AZN: у операции портала валюта приходит со
@@ -610,13 +618,13 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 
 ### Известные ограничения
 
-Осознанные и не исправленные на 13.09.2026. Разборы — в `project_docs/fix_plan.md` и в истории git
-(`problems.md`, удалён 13.09.2026).
+Осознанные и не исправленные. Разборы — в `project_docs/decisions.md`, в архиве
+`project_docs/archive/fix_plan.md` и в истории git. Задачи, которые решено сделать, — `project_docs/plan.md`.
 
 - **Общая база и суперпользователь.** Все сервисы в одной базе и ходят в неё под `postgres`; есть
   кросс-модульные нативные запросы (`auth`, `pbl` и `ecom` → `companies`, `directory` → `payment_links`,
   `provider_terminals` и `provider_logins`). Изоляции между сервисами нет, и права на журнал аудита (Р-42,
-  `project_docs/deployment_guide.md` §5.1a) пока ни на что не влияют. `DATABASECHANGELOG` одна на всех —
+  `project_docs/guides/deployment_guide.md` §5.1a) пока ни на что не влияют. `DATABASECHANGELOG` одна на всех —
   поэтому id changeset'ов несут имя модуля.
 - **Терминалы без номера у провайдера платежей не принимают** (Р-96): `terminals.terminal_rid` пуст у
   заведённых до Р-96 без справочника — создание ссылки, открытие и «Тест» по ним дают 400. Логин
@@ -644,7 +652,8 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
   `PENDING` для ручного разбора, а по уже `SUCCESS` внешний возврат не замечается вовсе: суммы из
   `order.trans[]` не читаются.
 - **Вход.** Верный пароль к заблокированному аккаунту отличим от неверного (принято при P3-Auth);
-  лимит попыток по адресу стоит только на `/api/v1/auth/login`.
+  лимит попыток по адресу стоит только там, где проверяется пароль: `/api/v1/auth/login` и
+  `/api/v1/auth/change-password`.
 - **Правки платёжной ссылки не версионируются** — остаются запись `UPDATE` в журнале и строка в логе.
 - **Возвраты до P1-8b сводка не вычитает.** У них нет записи в `mpRefunds`, поэтому миграция
   `pbl/010` не перенесла их в `transaction_refunds`, а дату им не выдумываем (Р-48). `hourlyTotals`
@@ -744,10 +753,11 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
   `refund`, `completeDms` и `refreshStatus`: иначе холд провисит на карте, клиент не получит возврат,
   а `PENDING` не дожмётся. Проверка — только в создании ссылки и `openAndBuildRedirect`.
 - **Статусы терминалов синхронизируются с провайдером** (Р-66). Неудачный опрос и пустой слепок не
-  применяются; терминал гасится после трёх пропаданий подряд; `status_source = MANUAL` не трогается
-  никогда; выключенный синхронизацией включает только она. Отсутствие строки в слепке — «не знаем»,
+  применяются; терминал гасится после трёх пропаданий подряд — любой работающий, и разблокированный
+  вручную тоже; ручную блокировку (`BLOCKED` + `MANUAL`) сверка не снимает никогда; выключенный
+  синхронизацией включает только она. Отсутствие строки в слепке — «не знаем»,
   а не «выключен»; терминал без `merchant_rid` сверка не касается. Актор в журнале — `system`. Полная таблица
-  переходов — `project_docs/directory.md` §3.2.
+  переходов — `project_docs/modules/directory.md` §3.2.
 - **Логин компании — только активный мультимерчант из слепка `provider_logins`** (Р-94):
   `MultiMerchantSys/<login>`, `Active`, хотя бы одна связь `Active` с мерчантом. Проверка — только при
   сохранении (заведение, смена логина); сохранённые логины слепок не трогает. Слепок — все логины
@@ -819,7 +829,7 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
   статусов из планировщика. Ошибку записи журнала не пробрасывать.
   Машинерия одна на проект — `az.millikart.common.audit` (Р-41).
 - **`entityType` и `action` — только константы `AuditEntity` / `AuditAction`** (P3-2). Новое
-  значение — сначала в словарь и в таблицу `project_docs/technical_handover.md` §4.4, потом в код.
+  значение — сначала в словарь и в таблицу `project_docs/guides/technical_handover.md` §4.4, потом в код.
   Соглашения: `entityId` у `AUTH` — всегда логин; `"ALL"` — действие над списком; `"NEW"` — отказ
   в заведении терминала, у которого ещё нет номера; смена статуса —
   `BLOCK`/`UNBLOCK`, а не текст в `UPDATE`; `companyId` у отказа — компания актора; актор
@@ -904,7 +914,7 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 **Контейнер:**
 - Объявлен один раз — `common` testFixtures, `PostgresTestContainer`: статичный, один на JVM. Образ
   `postgres:16-alpine` прибит и совпадает с продовой версией: меняется одна — меняется и другая
-  (`project_docs/deployment_guide.md` §4.5).
+  (`project_docs/guides/deployment_guide.md` §4.5).
   Подключается `@Import(PostgresTestContainer.class)` рядом с `@SpringBootTest`; тестам без Spring
   доступен через `instance()`, и в `SharedSchemaMigrationTest` каждый метод работает в своей схеме.
 - Помечен `@TestConfiguration`, **а не `@Configuration`**: сервисы сканируют `az.millikart` целиком,
@@ -944,8 +954,9 @@ fallback-токен выключен. Ключ подписи — `test-only-jwt
 **Не покрыто:** идемпотентность возвратов на уровне хранилища — таблицы `refunds` и ключей
 идемпотентности нет (Р-12), 502 перекладывает сверку на человека. Фронтенд-тестов нет вовсе.
 
-Что покрывает каждый тестовый класс, — снимок в `project_docs/fix_plan.md` («Тесты: что покрывает
-каждый класс»). Правило: любое изменение backend-кода сопровождается зелёным `./gradlew test`.
+Что покрывал каждый тестовый класс на 12.09.2026, — снимок в архиве `project_docs/archive/fix_plan.md`
+(«Тесты: что покрывает каждый класс»), он не ведётся. Правило: любое изменение backend-кода
+сопровождается зелёным `./gradlew test`.
 
 ---
 
@@ -954,12 +965,15 @@ fallback-токен выключен. Ключ подписи — `test-only-jwt
 1. **Согласовывать изменения.** Перед правкой исходников или конфигов: описать, что и зачем
    меняется, какие файлы затрагиваются, — и дождаться явного подтверждения.
 2. **Обновлять документацию в том же изменении — по таблице §2, у каждой темы одно место.** Новое
-   правило или известное ограничение — сюда, в §10; новое решение — строка в `decisions.md`; закрытая
-   задача — запись в конец `fix_plan.md`; изменился эндпоинт — модульный документ и Postman-коллекция;
-   новая таблица, колонка или миграция — `application_description.md`; новая переменная, порт или
-   маршрут — `deployment_guide.md`; новое событие аудита — таблица `technical_handover.md` §4.4;
-   изменились экраны или правила заведения компаний, терминалов, пользователей — `admin_guide.md`.
-   Один и тот же факт в двух документах не записывать — во втором ставить ссылку.
+   правило или известное ограничение — сюда, в §10; новое решение — строка в `decisions.md`; новая
+   задача — строка в `plan.md`, сделанная — строка оттуда удаляется, а что сделано и почему — в
+   сообщении коммита (журнала нет, Р-105); изменился эндпоинт — модульный документ в `modules/` и
+   Postman-коллекция; новая таблица, колонка или миграция — `guides/application_description.md`; новая
+   переменная, порт или маршрут — `guides/deployment_guide.md`; новое событие аудита — таблица
+   `guides/technical_handover.md` §4.4; изменились экраны или правила заведения компаний, терминалов,
+   пользователей — `guides/admin_guide.md`. Документы описывают то, что есть сейчас: «раньше», «с такого-то
+   числа», «больше не» в них не пишутся. Один и тот же факт в двух документах не записывать — во втором
+   ставить ссылку.
 3. **Проверять тестами.** `./gradlew test` после любой правки backend (нужен Docker, §11).
 4. **Не расширять поверхность атаки.** Новый публичный путь — это правка
    `PublicEndpoints` и только её: список читают оба слоя, второй копии быть не должно.

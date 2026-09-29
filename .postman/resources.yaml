@@ -6,5 +6,6 @@ localResources:
   collections:
     - ../auth/Auth.postman_collection.json
     - ../directory/Directory.postman_collection.json
-    - ../pbl/NON-PSP Ecom.postman_collection.json
     - ../pbl/Pay-By-Link.postman_collection.json
+    - ../ecom/Ecom.postman_collection.json
+    - ../project_docs/external/NON-PSP Ecom.postman_collection.json

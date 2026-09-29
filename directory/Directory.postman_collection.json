@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "c3d4e5f6-a1b2-c3d4-e5f6-a1b2c3d4e5f6",
 		"name": "Directory Service",
-		"description": "A collection for the Directory Service microservice, managing companies, terminals, and tracking audit logs.",
+		"description": "Directory Service (port 8082): companies, terminals and the audit log. Contract: project_docs/modules/directory.md. Every request needs an access token: run Login from the Auth collection (auth/Auth.postman_collection.json) and put its token into the `authToken` variable here; it lives 15 minutes.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -25,7 +25,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\",\n  \"providerLogin\": \"MultiMerchantSys/merchant\",\n  \"providerPassword\": \"provider-password\"\n}",
+							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"provider-password\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -43,7 +43,7 @@
 								"companies"
 							]
 						},
-						"description": "Creates a new company. Access restricted to SYSTEM_ADMIN. providerLogin (the full login with its owner prefix) and providerPassword are required since 24.09.2026 (Р-93): every request to the acquirer goes with them. The password is stored encrypted and never returned; providerLogin is returned to SYSTEM_ADMIN only. A login already used by another company - 409. Since Р-94 the login must be MultiMerchantSys/<login>, active in the provider login snapshot (provider_logins, refreshed by ecom) with at least one active merchant; otherwise 400."
+						"description": "Creates a company (201), SYSTEM_ADMIN only. providerLogin (the full login with its owner prefix) and providerPassword are required (Р-93): every request to the acquirer goes with them. The login must be MultiMerchantSys/<login>, active in the provider login snapshot (provider_logins, refreshed by ecom) with at least one active merchant (Р-94) — pick one from Free Provider Logins; otherwise 400. A login already used by another company, deleted ones included — 409. An id already taken — 400. The password is stored encrypted and never returned; providerLogin is returned to SYSTEM_ADMIN only."
 					},
 					"response": []
 				},
@@ -84,7 +84,7 @@
 								}
 							]
 						},
-						"description": "Retrieves one page of companies (paginated since P2-1, 22.08.2026): the answer is a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by name, then id. Soft-deleted companies are excluded from both content and totalElements. SYSTEM_ADMIN and AUDITOR only."
+						"description": "Retrieves one page of companies (P2-1): a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by name, then id. Soft-deleted companies are excluded from both content and totalElements. SYSTEM_ADMIN and AUDITOR only; other roles — 403."
 					},
 					"response": []
 				},
@@ -135,7 +135,7 @@
 								"{{companyId}}"
 							]
 						},
-						"description": "Retrieves detailed information for a company. Accessible by SYSTEM_ADMIN or company members."
+						"description": "Retrieves a company. SYSTEM_ADMIN and AUDITOR: any company; other roles: their own company only (403 otherwise). An unknown or deleted company — 400 \"Company not found\"."
 					},
 					"response": []
 				},
@@ -155,7 +155,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\",\n  \"providerLogin\": \"MultiMerchantSys/merchant\",\n  \"providerPassword\": \"new-provider-password\"\n}",
+							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"new-provider-password\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -174,7 +174,7 @@
 								"{{companyId}}"
 							]
 						},
-						"description": "Updates company details. Access restricted to SYSTEM_ADMIN. Every field is optional; an empty providerPassword keeps the stored one. The audit record names a password change without the password. status is ACTIVE or INACTIVE only, exact match; anything else is 400 (25.09.2026): DELETED is set by DELETE alone."
+						"description": "Updates a company, SYSTEM_ADMIN only. Every field is optional; an empty value keeps the stored one, and the stored password cannot be read. A new providerLogin is checked against the provider login snapshot as on creation (400 / 409); the same login is not re-checked. status is ACTIVE or INACTIVE only, exact match, anything else is 400; DELETED is set by DELETE alone. INACTIVE stops nothing: to stop payments, block the company's terminals. The audit record names a password change without the password."
 					},
 					"response": []
 				},
@@ -200,7 +200,7 @@
 								"{{companyId}}"
 							]
 						},
-						"description": "Soft deletes a company. Access restricted to SYSTEM_ADMIN."
+						"description": "Soft delete (204), SYSTEM_ADMIN only: status becomes DELETED. The company's terminals and users are not touched, and its provider login stays taken."
 					},
 					"response": []
 				}
@@ -257,7 +257,7 @@
 								"terminals"
 							]
 						},
-						"description": "Creates a terminal from the provider directory, SYSTEM_ADMIN only since 24.09.2026 (Р-93): name, login and terminal number (terminalRid) come from the directory, a terminal has no password. The merchant must be linked to the company multimerchant login (Р-96) - pick one from Provider Terminals for a Company."
+						"description": "Creates a terminal (201) from the provider directory, SYSTEM_ADMIN only (Р-93): name, login (stored as TerminalSys/<login>) and terminal number (terminalRid) come from the directory row of merchantRid; a terminal has no password. The terminal id is issued by the database (Р-81) and saved to `terminalId`. The merchant must be active at the provider and linked to the company multimerchant login (Р-96) — pick one from Provider Terminals for a Company."
 					},
 					"response": []
 				},
@@ -298,7 +298,7 @@
 								}
 							]
 						},
-						"description": "Retrieves one page of terminals (paginated since P2-1, 22.08.2026): the answer is a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by name, then id. SYSTEM_ADMIN and AUDITOR see every terminal, company users only their own company's."
+						"description": "Retrieves one page of terminals (P2-1): a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by name, then id; BLOCKED terminals included. SYSTEM_ADMIN and AUDITOR see every terminal, company users only their own company's; a company user without a company — 403."
 					},
 					"response": []
 				},
@@ -324,7 +324,7 @@
 								"options"
 							]
 						},
-						"description": "Lightweight terminal feed for selectors and name lookups (decision R-45, 22.08.2026). Returns a bare array of {id, name, status} — no pagination, and no terminal credentials: login and password are absent from the DTO, not masked. BLOCKED terminals ARE included on purpose: the link form takes only ACTIVE ones from the answer, while the transaction screen needs every terminal to keep naming the terminal an old payment went through. Access rules are the same as GET /api/v1/terminals."
+						"description": "Lightweight terminal feed for selectors and labels (Р-45). Returns a bare array of {id, name, login, terminalRid, status}, ordered by name, then id, without pagination; a terminal has no password (Р-93). BLOCKED terminals are included on purpose: the link form takes only ACTIVE ones, while old payments keep the label of their terminal. Access rules are the same as List Terminals."
 					},
 					"response": []
 				},
@@ -356,7 +356,7 @@
 								}
 							]
 						},
-						"description": "Provider terminals the company may add (Р-96), SYSTEM_ADMIN only: active directory rows with a terminal number whose merchant is linked to the company multimerchant login and that no company has added yet."
+						"description": "Provider terminals the company may add (Р-96), SYSTEM_ADMIN only: active directory rows with a terminal number whose merchant is linked to the company multimerchant login and that no company has added yet. `rid` is the merchantRid for Create Terminal; `login` is shown as in the directory, without the TerminalSys/ prefix. companyId is required (400 otherwise)."
 					}
 				},
 				{
@@ -381,7 +381,7 @@
 								"{{terminalId}}"
 							]
 						},
-						"description": "Retrieves detailed information for a specific terminal."
+						"description": "Retrieves the terminal in `terminalId`. SYSTEM_ADMIN, AUDITOR, or any role of the terminal's company. An unknown terminal — 400 \"Terminal not found\"; another company's — 403."
 					},
 					"response": []
 				},
@@ -420,20 +420,33 @@
 								"{{terminalId}}"
 							]
 						},
-						"description": "Updates the terminal name, company or status. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93). A terminal moves only to a company whose multimerchant login has an active link with the terminal's provider merchant, as on creation (Р-96, Р-97); otherwise 400, and a terminal without a provider merchant cannot be moved at all."
+						"description": "Updates the terminal name, company or status: SYSTEM_ADMIN, or COMPANY_HEAD / COMPANY_MANAGER of the terminal's company (COMPANY_EMPLOYEE and AUDITOR — 403). Every field is optional. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93). Only SYSTEM_ADMIN moves a terminal to another company, and only to one whose multimerchant login has an active link with the terminal's provider merchant, as on creation (Р-96, Р-97); otherwise 400, and a terminal without a provider merchant cannot be moved at all. For status see Block Terminal."
 					},
 					"response": []
 				},
 				{
-					"name": "Delete Terminal",
+					"name": "Block Terminal",
 					"request": {
-						"method": "DELETE",
+						"method": "PATCH",
 						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
 							{
 								"key": "Authorization",
 								"value": "Bearer {{authToken}}"
 							}
 						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"BLOCKED\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
 						"url": {
 							"raw": "{{baseUrl}}/api/v1/terminals/{{terminalId}}",
 							"host": [
@@ -446,7 +459,7 @@
 								"{{terminalId}}"
 							]
 						},
-						"description": "Deletes a terminal."
+						"description": "Takes the terminal out of service. There is no DELETE (405): terminals are blocked, not deleted (Р-37). BLOCKED suspends the terminal's ACTIVE payment links (Р-39) and forbids new payments only — refunds, DMS captures and status checks keep working (Р-38); the block is not sent to MilliKart. Send \"ACTIVE\" to unblock: suspended links come back, those expired meanwhile become EXPIRED (Р-40). A manual status change sets status_source MANUAL, and the provider sync never lifts a manual block. A terminal blocked by the provider sync cannot be unblocked by hand — 403. Same access as Update Terminal."
 					},
 					"response": []
 				}
@@ -466,7 +479,7 @@
 							}
 						],
 						"url": {
-							"raw": "{{baseUrl}}/api/v1/audit-logs?entityType=COMPANY&entityId=comp-01",
+							"raw": "{{baseUrl}}/api/v1/audit-logs?entityType=COMPANY&entityId=comp-01&page=0&size=20",
 							"host": [
 								"{{baseUrl}}"
 							],
@@ -509,10 +522,18 @@
 									"value": "2026-08-24T23:59:59Z",
 									"disabled": true,
 									"description": "P3-1: верхняя граница createdAt — ISO-instant или дата (весь день по UTC)"
+								},
+								{
+									"key": "page",
+									"value": "0"
+								},
+								{
+									"key": "size",
+									"value": "20"
 								}
 							]
 						},
-						"description": "Retrieves audit log entries ('Who/When/What') with optional entity filters."
+						"description": "Audit log of all four services (P2-1, P3-1), newest first (createdAt DESC, then id DESC): a PagedResponse — {content, totalElements, totalPages, size, number}. SYSTEM_ADMIN and AUDITOR see every company; COMPANY_HEAD and COMPANY_MANAGER only records of their own company; other roles — 403. Filters are optional and independent: entityType, entityId, search (performedBy, action, entityId, details), outcome, from / to. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped. The event dictionary is in project_docs/guides/technical_handover.md §4.4."
 					},
 					"response": []
 				}
@@ -530,7 +551,7 @@
 			"key": "authToken",
 			"value": "",
 			"type": "string",
-			"description": "JWT from POST /api/v1/auth/login. The static fallback token is off by default and has no built-in value."
+			"description": "Access token from the Login request of the Auth collection (auth/Auth.postman_collection.json), valid 15 minutes. The static fallback token is off by default and has no built-in value."
 		},
 		{
 			"key": "companyId",
@@ -542,7 +563,7 @@
 			"key": "terminalId",
 			"value": "998877",
 			"type": "string",
-			"description": "Sample terminal ID."
+			"description": "Terminal number issued by the database; Create Terminal saves it here."
 		}
 	]
 }
