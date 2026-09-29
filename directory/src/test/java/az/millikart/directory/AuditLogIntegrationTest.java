@@ -43,6 +43,8 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 // Р-35: успех попадает в журнал только после коммита, откат не оставляет записи, отказ пишется
@@ -217,22 +219,28 @@ public class AuditLogIntegrationTest {
                 .isEmpty();
     }
 
-    // Тот же откат, но как в P2-8: транзакция падает на коммите, когда метод сервиса вместе с
-    // вызовом аудита уже вернулся. Простой REQUIRES_NEW внутри logAction записал бы это
-    // несостоявшееся создание.
+    // Тот же откат, но как в P2-8: транзакция падает на самом коммите, когда метод сервиса вместе с
+    // публикацией события уже вернулся. Запись журнала без ожидания коммита (REQUIRES_NEW внутри
+    // сервиса) описала бы несостоявшееся создание. Сбой коммита — синхронизацией, а не переполнением
+    // колонки: оно падает на flush ещё внутри сервиса, до публикации (Р-103).
     @Test
-    public void commitTimeFailure_afterAuditEventPublished_leavesNoAuditRecord() throws Exception {
-        // Проходит @NotBlank, но переполняет колонку varchar(255) на flush, то есть на коммите.
-        String overlongName = "X".repeat(300);
-        mockMvc.perform(post("/api/v1/companies")
-                        .header(HttpHeaders.AUTHORIZATION, adminToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                company("comp-long", overlongName))))
-                .andExpect(status().is5xxServerError());
+    public void commitTimeFailure_afterAuditEventPublished_leavesNoAuditRecord() {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
 
-        assertThat(companyRepository.existsById("comp-long")).isFalse();
-        assertThat(auditLogs.findAll()).isEmpty();
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            companyService.createCompany(company("comp-long", "Late Failure LLC"), adminPrincipal());
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void beforeCommit(boolean readOnly) {
+                    throw new IllegalStateException("commit refused after the audit event was published");
+                }
+            });
+        })).isInstanceOf(IllegalStateException.class);
+
+        assertThat(companyRepository.existsById("comp-long")).as("the commit failed").isFalse();
+        assertThat(auditLogs.findAll())
+                .as("the journal must not describe a creation that was never committed")
+                .isEmpty();
     }
 
     // 3. Отказ записывается, а операция остаётся отклонённой

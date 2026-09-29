@@ -17,7 +17,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -33,6 +32,7 @@ import az.millikart.pbl.provider.AcquiringClient;
 import az.millikart.pbl.provider.ProviderCredentials;
 import az.millikart.pbl.provider.StubAcquirerConfig;
 import az.millikart.pbl.repository.PaymentLinkRepository;
+import az.millikart.pbl.scheduler.PaymentLinkScheduler;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
 import ch.qos.logback.classic.Logger;
@@ -68,8 +68,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -89,6 +87,9 @@ class PaymentLinkIntegrationTest {
     private PaymentLinkRepository paymentLinkRepository;
 
     @Autowired
+    private PaymentLinkScheduler paymentLinkScheduler;
+
+    @Autowired
     private TransactionRepository transactionRepository;
 
     @Autowired
@@ -99,9 +100,6 @@ class PaymentLinkIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
-
-    @Autowired
-    private PlatformTransactionManager transactionManager;
 
     // Эквайер подменён моком, который по умолчанию делегирует StubAcquiringClient: поведение дубля
     // сохраняется, а тесты, которым нужен свой ответ, переопределяют один метод. Зарегистрирован
@@ -613,14 +611,20 @@ class PaymentLinkIntegrationTest {
         return update;
     }
 
+    // Плательщик уходит на страницу оплаты с номером и паролем заказа — адрес сравнивается целиком:
+    // проверка подстроки ловила бы то, что вернула заглушка, а не то, что собрал сервис.
     @Test
     void openPaymentLink_redirectsToProvider() throws Exception {
         UUID id = createLinkAndGetId(headToken);
 
         // Публичный эндпоинт, авторизация не нужна.
-        mockMvc.perform(get("/api/v1/payment-links/{id}/open", id))
+        String location = mockMvc.perform(get("/api/v1/payment-links/{id}/open", id))
                 .andExpect(status().isFound())
-                .andExpect(header().string("Location", containsString("rid=")));
+                .andReturn().getResponse().getHeader("Location");
+
+        Transaction attempt = transactionRepository.findAll().getFirst();
+        Assertions.assertEquals("https://gateway.txpg.example.com/pay?id=" + attempt.getProviderOrderId()
+                + "&password=" + attempt.getProviderPassword(), location);
     }
 
     // Р-103: circuit breaker к эквайеру открыт — вызов не ушёл, это 503 «попробуйте позже», а не 500
@@ -1503,10 +1507,9 @@ class PaymentLinkIntegrationTest {
         PaymentLink overdue = linkFixture(UsageType.SINGLE, null, Instant.now().minus(Duration.ofMinutes(1)));
         PaymentLink live = linkFixture(UsageType.SINGLE, null, Instant.now().plus(DEFAULT_TTL));
 
-        Integer expired = new TransactionTemplate(transactionManager)
-                .execute(status -> paymentLinkRepository.expireActiveLinksBefore(Instant.now()));
+        // Сам планировщик, а не его запрос: ловит и сломанный планировщик, и сломанный запрос.
+        paymentLinkScheduler.cleanupExpiredLinksAndSessions();
 
-        Assertions.assertEquals(1, expired);
         Assertions.assertEquals(PaymentLinkStatus.EXPIRED,
                 paymentLinkRepository.findById(overdue.getId()).orElseThrow().getStatus());
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE,

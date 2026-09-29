@@ -5,6 +5,7 @@ import az.millikart.common.testing.PostgresTestContainer;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -35,6 +36,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -229,6 +231,7 @@ class TransactionReconciliationIntegrationTest {
 
     @Test
     void reconcile_oneFailingTransaction_doesNotAbortBatch() {
+        // Сбой эквайера reconcileOne ловит сам; защиту самого прохода проверяет тест ниже.
         // Сначала самые старые, поэтому сломанная заведомо обрабатывается раньше здоровой.
         Transaction broken = agedTransaction("STUCK", TransactionStatus.PENDING, Duration.ofMinutes(30));
         Transaction healthy = agedTransaction("OK", TransactionStatus.PENDING, Duration.ofMinutes(10));
@@ -242,6 +245,24 @@ class TransactionReconciliationIntegrationTest {
 
         Assertions.assertEquals(TransactionStatus.PENDING, statusOf(broken));
         Assertions.assertEquals(TransactionStatus.SUCCESS, statusOf(healthy));
+    }
+
+    // Защита прохода в самом сервисе сверки: reconcileOne, бросивший исключение, не обрывает пакет, и
+    // следующая операция всё равно сверяется. Ловит снятый try/catch в цикле TransactionReconciliationService.
+    @Test
+    void reconcile_aTransactionWhoseReconciliationThrows_doesNotAbortTheBatch() {
+        Transaction first = agedTransaction("THROWS", TransactionStatus.PENDING, Duration.ofMinutes(30));
+        Transaction second = agedTransaction("NEXT", TransactionStatus.PENDING, Duration.ofMinutes(10));
+        PaymentLinkService failing = Mockito.mock(PaymentLinkService.class);
+        doThrow(new IllegalStateException("the row cannot be reconciled"))
+                .when(failing).reconcileOne(eq(first.getId()), any());
+        TransactionReconciliationService batch = new TransactionReconciliationService(
+                transactionRepository, failing, MIN_AGE, MAX_AGE, GIVE_UP_AGE, 50);
+
+        Assertions.assertEquals(2, batch.reconcilePendingTransactions());
+
+        verify(failing).reconcileOne(eq(first.getId()), any());
+        verify(failing).reconcileOne(eq(second.getId()), any());
     }
 
     // P1-8a: неизвестный или закрытый снаружи статус никогда не становится FAILED

@@ -101,7 +101,7 @@ class OpenLinkConcurrencyTest {
                     Thread.sleep(PROVIDER_DELAY_MILLIS);
                     long orderId = orderIds.incrementAndGet();
                     return new EcomCreateOrderResponse(new EcomCreateOrderResponse.Order(
-                            "https://gateway.txpg.example.com/pay?rid=" + orderId,
+                            "https://gateway.txpg.example.com/pay",
                             orderId,
                             "Preparing",
                             "password-" + orderId));

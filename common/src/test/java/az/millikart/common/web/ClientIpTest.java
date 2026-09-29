@@ -81,6 +81,9 @@ class ClientIpTest {
         assertEquals("127.0.0.1", resolveWithRealIp("not-an-address"));
         assertEquals("127.0.0.1", resolveWithRealIp("1.2.3.4.5"));
         assertEquals("127.0.0.1", resolveWithRealIp("203.0.113.7 evil"));
+        // Имя, которое резолвится, — тоже не адрес. Без looksLikeLiteral getByName сходил бы в DNS и
+        // вернул «localhost» адресом клиента; строки выше этого не ловят — они просто не резолвятся.
+        assertEquals("127.0.0.1", resolveWithRealIp("localhost"));
     }
 
     // Мусор в X-Real-IP не отключает запасной путь — X-Forwarded-For всё равно читается.

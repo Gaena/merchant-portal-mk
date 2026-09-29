@@ -398,7 +398,9 @@ public class AuditLogQueryTest {
                 INSERT INTO audit_logs (id, entity_type, entity_id, action, performed_by, company_id, outcome, created_at)
                 VALUES (?, 'TERMINAL', ?, 'CREATE', 'seeder@test', 'comp-01', 'SUCCESS', ?)
                 """,
-                java.util.UUID.randomUUID(), entityId, java.sql.Timestamp.from(createdAt));
+                java.util.UUID.randomUUID(), entityId,
+                // В UTC, как пишет Hibernate (AGENTS §11): Timestamp.from кодирует время в поясе JVM.
+                java.time.LocalDateTime.ofInstant(createdAt, java.time.ZoneOffset.UTC));
     }
 
     private JsonNode page(int page, int size) throws Exception {

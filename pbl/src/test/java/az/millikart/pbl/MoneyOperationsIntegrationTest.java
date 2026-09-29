@@ -620,6 +620,11 @@ class MoneyOperationsIntegrationTest {
 
         Assertions.assertEquals(Set.of("createEcomOrder", "getOrderStatus"), retried,
                 "@Retry must never sit on completeDms or refund — they are not idempotent (P0-7)");
+        // @Retry на классе или интерфейсе накрыл бы все методы, списание и возврат тоже.
+        Assertions.assertFalse(TxpgAcquiringClient.class.isAnnotationPresent(Retry.class),
+                "@Retry on the class would retry completeDms and refund as well (P0-7)");
+        Assertions.assertFalse(AcquiringClient.class.isAnnotationPresent(Retry.class),
+                "@Retry on the interface would retry completeDms and refund as well (P0-7)");
     }
 
     // --- замок ссылки (Р-85) ----------------------------------------------------------------

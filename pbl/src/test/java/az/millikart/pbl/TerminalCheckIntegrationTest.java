@@ -63,6 +63,10 @@ class TerminalCheckIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        // Общая H2: терминалы других классов держат ссылки и операции, без них deleteAll падает на FK.
+        jdbcTemplate.update("DELETE FROM transaction_refunds");
+        jdbcTemplate.update("DELETE FROM transactions");
+        jdbcTemplate.update("DELETE FROM payment_links");
         terminalRepository.deleteAll();
         CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "comp-01");
         terminalRepository.save(Terminal.builder()

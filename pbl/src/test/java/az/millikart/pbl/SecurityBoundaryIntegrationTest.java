@@ -3,6 +3,7 @@ package az.millikart.pbl;
 import az.millikart.common.security.CredentialCipher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -168,7 +169,8 @@ class SecurityBoundaryIntegrationTest {
 
         mockMvc.perform(get("/api/v1/payment-links/{id}/open", id))
                 .andExpect(status().isFound())
-                .andExpect(header().string("Location", containsString("rid=")));
+                // Адрес целиком сверяет PaymentLinkIntegrationTest; здесь — что публичный путь дошёл до HPP.
+                .andExpect(header().string("Location", startsWith("https://gateway.txpg.example.com/pay?id=")));
     }
 
     @Test

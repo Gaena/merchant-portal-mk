@@ -26,7 +26,8 @@ public class StubAcquiringClient implements AcquiringClient {
     public EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
                                                    UUID ridByMerchant, String hppRedirectUrl) {
         long orderId = (long) (Math.random() * 1000000000L);
-        String hppUrl = "https://gateway.txpg.example.com/pay?rid=" + orderId;
+        // Как в контракте (§5.1): адрес страницы оплаты без query — id и пароль добавляет сервис.
+        String hppUrl = "https://gateway.txpg.example.com/pay";
         log.info("[STUB PROVIDER] createEcomOrder for ridByMerchant: {}, amount: {}, generated orderId: {}", ridByMerchant, link.getAmount(), orderId);
         return new EcomCreateOrderResponse(
                 new EcomCreateOrderResponse.Order(hppUrl, orderId, "Preparing", "password123")
