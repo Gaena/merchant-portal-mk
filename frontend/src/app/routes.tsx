@@ -29,12 +29,8 @@ const PageLoader = () => (
 const page = (element: React.ReactNode) => <Suspense fallback={<PageLoader />}>{element}</Suspense>;
 
 /**
- * Роутер собирается один раз, на уровне модуля (`App.tsx`). Раньше он пересоздавался в `useMemo`
- * от состояния списка операций: каждая буква в поиске давала новый `createBrowserRouter`,
- * а вместе с ним — ещё один `popstate`-listener, который никто не снимал.
- *
- * Списка операций портала здесь нет (Р-65): операции показываются под платёжными ссылками
- * и на главной, карточка `/transactions/:id` грузит себя сама.
+ * Роутер создаётся один раз, на уровне модуля: не пересоздавать в `useMemo` от состояния — каждый
+ * `createBrowserRouter` оставляет свой `popstate`-listener. Списка операций портала нет (Р-65).
  */
 export const router = createBrowserRouter([
   {
@@ -48,7 +44,7 @@ export const router = createBrowserRouter([
   },
   {
     path: '/',
-    // Исключение при рендере любой вложенной страницы показывает страницу ошибки, а не белый экран.
+    // Исключение при рендере вложенной страницы — страница ошибки, а не белый экран.
     errorElement: <RouteErrorPage />,
     element: (
       <ProtectedRoute>
@@ -57,15 +53,13 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: page(<HomePage />) },
-      // Выписка провайдера из сервиса ecom (Р-65): свои запросы и своя карточка заказа по номеру у
-      // провайдера.
+      // Выписка сервиса ecom (Р-65); карточка заказа — по номеру у провайдера.
       { path: 'transactions/ecommerce', element: page(<EcommerceTransactionListPage />) },
       { path: 'transactions/ecommerce/:orderId', element: page(<EcommerceOrderDetailPage />) },
       { path: 'transactions/:id', element: page(<TransactionDetailPage />) },
       { path: 'pay-by-link', element: page(<PayByLinkPage />) },
       { path: 'pay-by-link/:id', element: page(<PayByLinkDetailPage />) },
-      // Ролевые guard'ы — UX, не безопасность: список ролей общий с сайдбаром (auth/routeAccess.ts),
-      // настоящая проверка прав на бэкенде.
+      // Ролевые guard'ы — UX, не безопасность; роли общие с сайдбаром (auth/routeAccess.ts).
       {
         path: 'companies',
         element: <RoleRoute allow={ROUTE_ACCESS['/companies']}>{page(<CompaniesPage />)}</RoleRoute>
@@ -80,8 +74,7 @@ export const router = createBrowserRouter([
         element: <RoleRoute allow={ROUTE_ACCESS['/audit-logs']}>{page(<AuditLogsPage />)}</RoleRoute>
       },
       { path: 'settings', element: page(<SettingsPage />) },
-      // Несуществующий путь для вошедшего — 404 внутри лейаута; для не вошедшего
-      // ProtectedRoute выше уже увёл на /login.
+      // 404 внутри лейаута; не вошедшего ProtectedRoute уже увёл на /login.
       { path: '*', element: <NotFoundPage /> }
     ]
   }

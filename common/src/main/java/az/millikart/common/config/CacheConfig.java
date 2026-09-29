@@ -8,18 +8,14 @@ import org.springframework.cache.caffeine.CaffeineCacheManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-// Не вешать @Cacheable на метод, внутри которого выполняется проверка доступа: ровно на этом была
-// построена дыра P0-3. Ключом был #id, а validateAccess стоял в теле метода — при попадании в кэш
-// тело не выполнялось, вместе с ним и проверка, и сотрудник чужой компании получал данные терминала
-// на все 15 минут TTL. Кэшировать можно лишь независящее от актора, проверку оставляя некэшируемой.
+// Не вешать @Cacheable на метод с проверкой доступа внутри: при попадании в кэш тело, а с ним и
+// проверка, не выполняется (P0-3). Кэшировать можно лишь не зависящее от актора.
 @Configuration
 @EnableCaching
 public class CacheConfig {
 
-    // Caffeine, TTL 15 минут, но сейчас ни один кэш не используется: terminals и companies
-    // обслуживали TerminalService.getTerminal и CompanyService.getCompany в directory, 17.08.2026
-    // аннотации сняты (P0-3, решение Р-9). Конфигурация оставлена намеренно — кандидат это pbl, где
-    // validateAccess ходит в findById на каждой операции; кэш directory жил в другом сервисе.
+    // Ни одного @Cacheable нет (P0-3, Р-9); бин оставлен намеренно — кандидат pbl, где validateAccess
+    // ходит в findById на каждой операции.
     @Bean
     public CacheManager cacheManager() {
         CaffeineCacheManager cacheManager = new CaffeineCacheManager("terminals", "companies");

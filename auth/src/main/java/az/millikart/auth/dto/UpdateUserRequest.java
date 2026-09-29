@@ -8,8 +8,8 @@ public record UpdateUserRequest(
         @ValidPassword
         String password,
         String status,
-        // Р-90: компания пользователя. null — не менять; пустая строка — снять компанию (только ролям
-        // вне компании: SYSTEM_ADMIN, AUDITOR). Перевести в другую компанию может только SYSTEM_ADMIN.
+        // null — не менять, пустая строка — снять (только ролям вне компании); менять может только
+        // SYSTEM_ADMIN (Р-90).
         String companyId
 ) {
 }

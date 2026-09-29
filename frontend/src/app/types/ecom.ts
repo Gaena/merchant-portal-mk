@@ -1,10 +1,7 @@
 /**
- * Выписка провайдера — ответы сервиса `ecom` (`/api/v1/ecom/transactions`, `project_docs/ecom.md` §2).
- *
- * Статусов восемь, а не шесть, как у операций портала: к словарю платёжных ссылок добавлены
- * `PARTIALLY_PAID` — частичная оплата (Р-78) — и `CANCELED` — отмена (Р-75, Р-77); как статус выводится
- * из статуса провайдера и сумм — `project_docs/ecom.md` §2.3 (Р-92). Источник — `EcomStatusResolver.EcomStatus`
- * на бэкенде; новое значение там — сюда, иначе `parseEcomStatus` вернёт `null` и статус покажется исходной строкой.
+ * Выписка сервиса `ecom` (`project_docs/modules/ecom.md` §2). К шести статусам операций добавлены
+ * `PARTIALLY_PAID` (Р-78) и `CANCELED` (Р-75, Р-77); как выводится статус — там же, §2.3 (Р-92).
+ * Источник — `EcomStatusResolver.EcomStatus`: новое значение там — сюда, иначе разбор вернёт `null`.
  */
 export const ECOM_STATUSES = [
   'PENDING',
@@ -19,7 +16,7 @@ export const ECOM_STATUSES = [
 
 export type EcomStatus = (typeof ECOM_STATUSES)[number];
 
-/** Разбор статуса заказа. Правила те же, что у `parseTransactionStatus`: строго и без подстановок. */
+/** Строго и без подстановок, как `parseTransactionStatus`. */
 export const parseEcomStatus = (raw: unknown): EcomStatus | null => {
   if (typeof raw !== 'string') {
     return null;
@@ -109,8 +106,8 @@ export interface EcomTerminal {
 }
 
 /**
- * Сводка главной (Р-91) — `GET /api/v1/ecom/dashboard/summary`: оплаты картой по всем мерчантам скоупа по
- * выписке провайдера. Заказы периода и деньги — те же, что во вкладке E-commerce; суммы — по валютам.
+ * Сводка главной (`GET /ecom/dashboard/summary`, Р-91): заказы периода и деньги — те же, что во
+ * вкладке E-commerce; суммы — по валютам.
  */
 export interface EcomDashboardTotals {
   currency: string | null;
@@ -139,10 +136,7 @@ export interface EcomDashboard {
   }[];
 }
 
-/**
- * Тип оплаты заказа — `EcomPaymentType` на бэкенде (Р-87): определяется по операциям заказа.
- * SMS — оплата одним сообщением, DMS — холд и списание.
- */
+/** `EcomPaymentType` (Р-87), по операциям заказа: SMS — одним сообщением, DMS — холд и списание. */
 export const ECOM_PAYMENT_TYPES = ['SMS', 'DMS'] as const;
 
 export type EcomPaymentType = (typeof ECOM_PAYMENT_TYPES)[number];

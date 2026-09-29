@@ -2,7 +2,6 @@ package az.millikart.ecom.service;
 
 import java.util.List;
 
-// Откуда берутся логины мультимерчантов провайдера со связями к мерчантам (Р-94).
 public interface ProviderLoginSource {
 
     // Все логины ownerkind = MultiMerchantSys. Контракт: полный список или исключение — частичный

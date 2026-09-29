@@ -1,13 +1,8 @@
 import type { PaymentMethod } from '../types/transaction';
 
 /**
- * Форматтеры сумм и дат для экранов. Файл назывался `mockData.ts` — в нём когда-то жили
- * выдуманные терминалы и подписи; от моков осталось одно имя, и оно снято.
- */
-
-/**
- * Сумма с валютой. Без валюты — просто число с двумя знаками: подставлять AZN нельзя (Р-48),
- * а `Intl.NumberFormat` с пустой валютой бросает `RangeError` и роняет страницу.
+ * Без валюты — просто число: подставлять AZN нельзя (Р-48), а `Intl.NumberFormat` с пустой валютой
+ * бросает `RangeError` и роняет страницу.
  */
 export function formatCurrency(amount: number | null | undefined, currency?: string | null): string {
   const value = typeof amount === 'number' && Number.isFinite(amount) ? amount : 0;

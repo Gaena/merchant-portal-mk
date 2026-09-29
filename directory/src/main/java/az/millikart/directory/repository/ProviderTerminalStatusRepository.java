@@ -15,18 +15,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
-/**
- * Читает `provider_terminals` — слепок терминалов провайдера, который держит модуль `ecom`.
- *
- * Тот же кросс-модульный приём, что и у `PaymentLinkStatusRepository`, и по той же причине:
- * брокера сообщений нет, а база у всех сервисов одна. Разница в направлении — сюда только
- * читают. Единственный писатель слепка — синхронизация в `ecom`, и второй JPA-маппинг чужой
- * таблицы здесь заводить нельзя: он молча разойдётся с ней.
- *
- * Таблицы может не быть вовсе: `ecom` разворачивается не везде, а справочник терминалов должен
- * работать и без него. Отсутствие таблицы означает «сверять не с чем» — сверка просто не идёт,
- * и ни один статус от этого не меняется.
- */
+// Слепок provider_terminals пишет только ecom, здесь его только читают. Своего JPA-маппинга чужой
+// таблицы не заводить: он молча разойдётся с ней. Таблицы ещё нет (ecom не стартовал) — сверять не
+// с чем, и ни один статус не меняется.
 @Repository
 public class ProviderTerminalStatusRepository {
 
@@ -47,13 +38,7 @@ public class ProviderTerminalStatusRepository {
         return !snapshotTableMissing();
     }
 
-    /**
-     * Активность терминалов провайдера: rid — активен ли он в последнем применённом слепке.
-     *
-     * Отсутствие rid в карте — это не «выключен»: строки может не быть, потому что синхронизация
-     * ещё ни разу не прошла или терминал не приходил никогда. Выключение фиксируется явным
-     * `active = false`, и только оно что-то меняет у нас.
-     */
+    // Нет rid в карте — «не знаем», а не «выключен»: у нас что-то меняет только явный active = false.
     @SuppressWarnings("unchecked")
     public Map<String, Boolean> activityByRid() {
         if (snapshotTableMissing()) {
@@ -72,14 +57,11 @@ public class ProviderTerminalStatusRepository {
         return activity;
     }
 
-    /** Строка слепка: то, что провайдер знает о своём терминале. Пароля у него мы не спрашиваем. */
     public record ProviderTerminalRow(String rid, String title, String login, boolean active, String terminalRid) {
 
         static final String TERMINAL_OWNER_PREFIX = "TerminalSys/";
 
-        // Логин для terminals — в составной форме OwnerKind/login («TerminalSys/Admin»), как его писали
-        // до Р-93, когда pbl ходил с ним к шлюзу; слепок хранит login.login без префикса (Р-83). К шлюзу
-        // с ним больше не ходят (Р-93): до новых селектов он нужен скоупу выписки и подписи терминала.
+        // В terminals логин лежит с префиксом владельца («TerminalSys/Admin»), слепок — без него (Р-83).
         public String gatewayLogin() {
             if (login == null || login.isBlank()) {
                 return null;
@@ -104,7 +86,7 @@ public class ProviderTerminalStatusRepository {
         return Optional.of(toRow(rows.getFirst()));
     }
 
-    // Весь слепок по rid — сверке, чтобы переносить в terminals смену логина и названия (Р-67).
+    // Сверке — переносить в terminals смену названия, логина и номера у провайдера (Р-67, Р-96).
     @SuppressWarnings("unchecked")
     public Map<String, ProviderTerminalRow> rowsByRid() {
         if (snapshotTableMissing()) {
@@ -142,7 +124,7 @@ public class ProviderTerminalStatusRepository {
             return false;
         }
         log.info("Table {} is absent from this database: nothing to reconcile terminal statuses "
-                + "against. Expected wherever ecom is not deployed.", TABLE);
+                + "against. Expected until ecom has started once.", TABLE);
         return true;
     }
 

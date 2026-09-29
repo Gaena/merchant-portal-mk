@@ -9,10 +9,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-// Три адреса окружения, ни у одного нет значения по умолчанию (P1-10): неверный адрес не роняет
-// сервис, а заставляет его врать — плательщик возвращается не на тот хост, боевые деньги уходят
-// на тестовый эквайер, а портал показывает «оплачено». Поэтому пустой или нечитаемый адрес — отказ
-// старта, а plain HTTP — только предупреждение (Р-17): HTTPS ставит эквайер, не мы.
+// Три адреса без дефолта (P1-10): неверный адрес не роняет сервис, а уводит плательщика и деньги не
+// туда. Поэтому пустой или нечитаемый адрес — отказ старта, plain HTTP — предупреждение (Р-17).
 @Component
 public class UrlConfigurationCheck {
 
@@ -24,8 +22,7 @@ public class UrlConfigurationCheck {
 
     private static final Set<String> ALLOWED_SCHEMES = Set.of("http", "https");
 
-    // Для этих хостов plain HTTP в pbl.base-url — локальный запуск, а не ошибка настройки.
-    // URI.getHost() отдаёт IPv6-литерал вместе со скобками — отсюда "[::1]".
+    // Plain HTTP на них — локальный запуск. URI.getHost() отдаёт IPv6 со скобками — отсюда "[::1]".
     private static final Set<String> LOCAL_HOSTS = Set.of("localhost", "127.0.0.1", "[::1]");
 
     private static final String FRAME =
@@ -41,7 +38,7 @@ public class UrlConfigurationCheck {
               as the address the payer is returned to after paying; the two provider addresses decide
               which acquirer receives the payments. A wrong value does not stop the service — it stops
               the payments — so an unset value stops the service instead.
-              See .env.example and project_docs/deployment_guide.md, section 8.3.""";
+              See .env.example and project_docs/guides/deployment_guide.md, section 8.3.""";
 
     public UrlConfigurationCheck(
             @Value("${pbl.base-url}") String baseUrl,
@@ -59,10 +56,8 @@ public class UrlConfigurationCheck {
         warnIfBaseUrlNotHttps(base);
     }
 
-    // Отказ старта на значении, у которого нет рабочего толкования; в тексте названа переменная
-    // окружения — её и правит оператор. Значение проверяется ровно таким, каким его получают
-    // потребители: @Value не тримит, OpenLinkService и TxpgAcquiringClient тоже. Не тримить и
-    // здесь — иначе пробел или CR из env-файла превратит каждый URL в https://host/%20/order.
+    // Не тримить: потребители (@Value, OpenLinkService, TxpgAcquiringClient) берут значение как есть, и
+    // пробел или CR из env-файла превратил бы каждый URL в https://host/%20/order.
     private static URI requireHttpUrl(String value, String variable, String property, String example) {
         if (value == null || value.isBlank()) {
             throw new IllegalStateException(
@@ -94,9 +89,8 @@ public class UrlConfigurationCheck {
                             + "Example of a correct value: " + example + "\n" + HOW_TO_FIX);
         }
         if (uri.getHost() == null) {
-            // java.net.URI спокойно разбирает "https://ВАШ_ДОМЕН/" и "https://my_host/", но хост из
-            // них не читает: это незаменённый плейсхолдер или подчёркивание, и «нужен хост»
-            // противоречило бы тому, что видит оператор.
+            // URI разбирает "https://ВАШ_ДОМЕН/" и "https://my_host/", но хост не читает: это плейсхолдер
+            // или подчёркивание, и «нужен хост» противоречило бы тому, что видит оператор.
             throw new IllegalStateException(
                     "The environment variable " + variable + " (property " + property + ") has a host part that is "
                             + "not a valid host name: got \"" + value + "\" (host part \"" + uri.getRawAuthority()
@@ -114,7 +108,6 @@ public class UrlConfigurationCheck {
         return uri;
     }
 
-    // Делает CR, LF и TAB видимыми в тексте ошибки; хвостовой пробел остаётся внутри кавычек.
     private static String visible(String value) {
         return value.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t");
     }
@@ -123,9 +116,8 @@ public class UrlConfigurationCheck {
         return "https".equalsIgnoreCase(uri.getScheme());
     }
 
-    // Plain HTTP к эквайеру — предупреждение, а не отказ (Р-17): HTTPS даёт стенд эквайера, и флага
-    // «разрешить небезопасно» нет намеренно — его выставили бы один раз и забыли. В тексте назван
-    // канал: по нему открытым текстом уходит Basic-авторизация с логином и паролём терминала.
+    // Предупреждение, а не отказ (Р-17): HTTPS даёт стенд эквайера. Флага «разрешить небезопасно» нет
+    // намеренно — его выставили бы один раз и забыли.
     private static void warnIfProviderNotHttps(URI uri, String variable, String role) {
         if (isHttps(uri)) {
             return;
@@ -145,14 +137,11 @@ public class UrlConfigurationCheck {
                 FRAME, variable, uri, role, variable, FRAME);
     }
 
-    // Публичный адрес по HTTP — тоже предупреждение, кроме локального запуска: на этот адрес
-    // эквайер вернёт плательщика после оплаты, и ссылка на платёж в редиректе видна по дороге.
     private static void warnIfBaseUrlNotHttps(URI uri) {
         if (isHttps(uri)) {
             return;
         }
         if (LOCAL_HOSTS.contains(uri.getHost().toLowerCase(Locale.ROOT))) {
-            // Локальный запуск: предупреждение на каждом старте разработчика — только шум.
             return;
         }
         log.warn("""
@@ -164,7 +153,7 @@ public class UrlConfigurationCheck {
                           payer to after paying (hppRedirectUrl). Over plain HTTP the payer's session and the
                           payment reference in the return redirect are readable on the way, and the acquirer
                           may refuse a non-HTTPS return address altogether. In production put the service behind
-                          HTTPS (project_docs/deployment_guide.md, section 12) and set {} to the https:// address.
+                          HTTPS (project_docs/guides/deployment_guide.md, section 12) and set {} to the https:// address.
                           Only http://localhost, http://127.0.0.1 and http://[::1] are exempt from this warning.
                         {}""",
                 FRAME, BASE_URL_VARIABLE, uri, BASE_URL_VARIABLE, FRAME);

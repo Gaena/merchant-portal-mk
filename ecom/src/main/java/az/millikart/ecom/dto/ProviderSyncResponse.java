@@ -3,8 +3,7 @@ package az.millikart.ecom.dto;
 import az.millikart.ecom.service.ProviderLoginSyncService;
 import az.millikart.ecom.service.ProviderTerminalSyncService;
 
-// Итог ручного обновления справочников провайдера. Верхние поля — слепок терминалов, как было до Р-94;
-// logins — слепок логинов мультимерчантов: одна кнопка обновляет оба.
+// Верхние поля — слепок терминалов, logins — слепок логинов мультимерчантов (Р-94).
 public record ProviderSyncResponse(boolean applied, int seen, int ambiguous, int disabled, String skippedBecause,
                                    ProviderLoginSyncService.SyncOutcome logins) {
 

@@ -33,9 +33,8 @@ public class Company {
     @Builder.Default
     private String status = "ACTIVE";
 
-    // Креды компании к провайдеру (Р-93): все запросы к шлюзу идут от её имени. Логин — целиком, с
-    // префиксом владельца («TerminalSys/…»), как его ввёл администратор; пароль — только шифротекст
-    // CredentialCipher. Пусто у компаний, заведённых до Р-93.
+    // Креды компании к провайдеру (Р-93). Логин — с префиксом «MultiMerchantSys/» (Р-94); пароль —
+    // только шифротекст CredentialCipher. Пусто у компаний, заведённых до Р-93.
     @Column(name = "provider_login")
     private String providerLogin;
 

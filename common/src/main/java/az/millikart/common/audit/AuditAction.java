@@ -2,10 +2,9 @@ package az.millikart.common.audit;
 
 import java.util.Set;
 
-// Словарь действий журнала, вторая половина AuditEntity (P3-2) — там же, почему константы, а не
-// enum. ACCESS в словаре нет намеренно: так pbl называл отказ, который directory писал как READ, и
-// поиск по одному не находил другого. Не возвращать его — новый вид отказа пишется тем действием,
-// в котором отказали. BLOCK/UNBLOCK — свои действия у каждой сущности со статусом, не текст в UPDATE.
+// Словарь действий журнала (P3-2); почему не enum — в AuditEntity. ACCESS нет намеренно: отказ
+// пишется тем действием, в котором отказали, иначе поиск по одному не находит другого.
+// BLOCK/UNBLOCK — свои действия, а не текст в UPDATE.
 public final class AuditAction {
 
     public static final String CREATE = "CREATE";

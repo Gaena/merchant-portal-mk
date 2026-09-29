@@ -2,15 +2,7 @@ package az.millikart.directory.dto;
 
 import az.millikart.directory.domain.TerminalStatus;
 
-// Р-45: лёгкий фид для GET /api/v1/terminals/options. status заполнен всегда, и эндпоинт отдаёт
-// заблокированные терминалы тоже: форме ссылки нужны только ACTIVE, а экрану транзакций — все,
-// иначе прошедшие через них платежи теряют имя.
-//
-// login здесь есть намеренно: мерчант опознаёт терминал по логину, а не по имени и не по числовому
-// id, поэтому логин — то, что подписывает терминал на всех экранах платежей. Доступ к фиду ровно
-// тот же, что к постраничному GET /api/v1/terminals, который логин отдаёт и так
-// (TerminalService.isGlobalReader + requireOwnCompany на обоих), — новой видимости это не даёт,
-// избавляет только от листания страниц ради одной подписи.
+// Для подписей и выпадающих списков (Р-45, Р-59); доступ тот же, что у GET /api/v1/terminals.
 public record TerminalOptionResponse(
         Integer id,
         String name,

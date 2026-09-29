@@ -4,9 +4,8 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-// Телефон клиента ссылки — только азербайджанский номер: +994 и 9 цифр (Р-96). Принимается как +994…,
-// 994… или 0… с пробелами, дефисами и скобками; хранится как +994XXXXXXXXX. Провайдер ждёт его
-// разобранным: {"cc": "994", "subscriber": "XXXXXXXXX"}.
+// Только азербайджанский номер (Р-96); хранится как +994XXXXXXXXX, провайдеру уходит разобранным:
+// {"cc": "994", "subscriber": "XXXXXXXXX"}.
 public final class CustomerPhone {
 
     public static final String COUNTRY_CODE = "994";
@@ -25,8 +24,7 @@ public final class CustomerPhone {
         return matcher.matches() ? Optional.of("+" + COUNTRY_CODE + matcher.group(1)) : Optional.empty();
     }
 
-    // Номер без кода страны для провайдера. У ссылок до Р-96 телефон — произвольная строка: не разобрался —
-    // пусто, и телефон провайдеру просто не уходит, а платёж идёт.
+    // У ссылок до Р-96 телефон — произвольная строка: не разобрался — пусто, и платёж идёт без телефона.
     public static Optional<String> subscriberOf(String stored) {
         return normalize(stored).map(phone -> phone.substring(1 + COUNTRY_CODE.length()));
     }

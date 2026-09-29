@@ -28,9 +28,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-// Единственный AcquiringClient. Стаб под флагом pbl.provider.stub убран (20.08.2026): флаг мог
-// выбрать не тот клиент или ни одного; локальный прогон идёт на стенд MilliKart через
-// PBL_PROVIDER_*. Второй реализации в main быть не должно — тестовый двойник живёт в тестах.
+// Единственная реализация AcquiringClient. Второй (стаба) в main не заводить: он ответил бы
+// «оплачено», не спросив эквайера. Тестовый двойник живёт в тестах (AGENTS.md §11).
 @Component
 public class TxpgAcquiringClient implements AcquiringClient {
 
@@ -43,9 +42,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
     private final String execTranPath;
     private final String getOrderPath;
 
-    // Дефолтов здесь нет намеренно: единственное место для них — application.yaml. У адресов их нет
-    // и там (P1-10) — сервис, не нашедший адрес, не должен стартовать; пути дефолтятся в yaml.
-    // Иначе выпавший из конфигурации ключ молча увёл бы клиента на другой хост или другой путь.
+    // Дефолтов в @Value не заводить: выпавший ключ молча увёл бы клиента на другой хост или путь.
+    // Пути дефолтятся только в application.yaml, у адресов дефолта нет нигде (P1-10).
     public TxpgAcquiringClient(
             RestClient restClient,
             @Value("${pbl.provider.api-base-url}") String apiBaseUrl,
@@ -61,8 +59,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
         this.getOrderPath = getOrderPath;
     }
 
-    // Ретраится намеренно, в отличие от денежных операций ниже: дубль заказа с нашим ridByMerchant
-    // остаётся неоплаченным и ничего не стоит — в отличие от дубля возврата или списания холда.
+    // @Retry здесь безопасен, в отличие от денежных операций: дубль заказа остаётся неоплаченным (P0-7).
     @Override
     @CircuitBreaker(name = "acquiring")
     @Retry(name = "acquiring")
@@ -91,7 +88,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 )
         );
 
-        // Успешное открытие описывает одна строка OpenLinkService; здесь — только на DEBUG.
+        // Открытие описывает одна INFO-строка OpenLinkService; здесь — только DEBUG.
         log.debug("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, TerminalRid: {}, RidByMerchant: {}, Type: {}, Amount: {} {}",
                 ProviderPayloads.urlForLog(url), credentials.login(), terminalRid, ridByMerchant, typeRid,
                 link.getAmount(), link.getCurrency());
@@ -114,7 +111,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
             log.debug("PROVIDER RESP BODY [createEcomOrder]: {}", response);
             return response;
         } catch (HttpStatusCodeException e) {
-            // 4xx — отказ шлюза, ожидаемый исход: WARN без стектрейса. 5xx — сбой шлюза.
+            // 4xx — ожидаемый отказ шлюза: WARN без стектрейса (Р-98). 5xx — сбой шлюза.
             if (e.getStatusCode().is4xxClientError()) {
                 log.warn("PROVIDER RESP [createEcomOrder] <- REJECTED. HTTP Status: {}, Error Body: {}", e.getStatusCode(), e.getResponseBodyAsString());
             } else {
@@ -127,17 +124,14 @@ public class TxpgAcquiringClient implements AcquiringClient {
         }
     }
 
-    // P0-7: намеренно без @Retry. Списание холда не идемпотентно — на таймауте чтения capture мог
-    // уже пройти, и повтор спишет с держателя карты дважды. Circuit breaker остаётся: он только
-    // отказывает в новых вызовах, но никогда не пересылает уже отправленный.
+    // Без @Retry (P0-7): на таймауте capture мог уже пройти, и повтор спишет дважды. Circuit breaker
+    // безопасен: он отказывает в новых вызовах, но не пересылает отправленный.
     @Override
     @CircuitBreaker(name = "acquiring")
     @SuppressWarnings("unchecked")
     public MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount) {
-        // Р-25: пароль заказа уходит в query-строке, поэтому URL нельзя логировать иначе как через
-        // ProviderPayloads.urlForLog (P0-9). По контракту пароль в адресе нужен только для
-        // GET /order/{id}; для exec-tran его добавили мы, но убирать нельзя без прогона на стенде —
-        // это денежный путь (AGENTS.md §10).
+        // Пароль заказа — в query (Р-25): URL в лог только через ProviderPayloads.urlForLog (P0-9).
+        // Контракт требует его только у GET /order/{id}; из exec-tran не убирать без прогона на стенде.
         String url = UriComponentsBuilder.fromUriString(apiBaseUrl)
                 .path(execTranPath)
                 .queryParam("password", password)
@@ -146,8 +140,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
 
         Map<String, Object> tran = new HashMap<>();
         tran.put("phase", "Clearing");
-        // P0-8: раньше amount здесь терялся, эквайер списывал весь холд, а API изображал удавшийся
-        // частичный capture. MilliKart подтвердили, что phase "Clearing" принимает amount.
+        // Без amount эквайер спишет весь холд (P0-8); phase Clearing его принимает — подтвердил MilliKart.
         tran.put("amount", formatAmount(amount));
         Map<String, Object> body = new HashMap<>();
         body.put("tran", tran);
@@ -176,8 +169,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
         }
     }
 
-    // P0-7: намеренно без @Retry, по той же причине, что completeDms. Повторённый возврат — худший
-    // случай: мерчант записывает один возврат, а эквайер выплачивает до трёх.
+    // Без @Retry (P0-7): повтор после таймаута — двойной возврат.
     @Override
     @CircuitBreaker(name = "acquiring")
     @SuppressWarnings("unchecked")
@@ -233,7 +225,7 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 .buildAndExpand(providerOrderId)
                 .toUriString();
 
-        // Статус опрашивается сверкой каждые 2 минуты: запрос и тело — только на DEBUG.
+        // Сверка опрашивает статус каждые 2 минуты: запрос и тело — только DEBUG.
         log.debug("PROVIDER REQ [getOrderStatus] -> GET URL: {}, ProviderOrderId: {}, Login: {}",
                 ProviderPayloads.urlForLog(url), providerOrderId, credentials.login());
 
@@ -248,17 +240,15 @@ public class TxpgAcquiringClient implements AcquiringClient {
             Map<String, Object> order = body != null && body.containsKey("order")
                     ? (Map<String, Object>) body.get("order")
                     : body;
-            // P0-9: при orderDetailLevel=2 объект order несёт пароль заказа (§5.8.3) — в лог он
-            // идёт без этого ключа. Логируется после проверки errorCode, чтобы отказ не
-            // объявлялся сначала как SUCCESS.
+            // P0-9: при orderDetailLevel=2 в order лежит пароль заказа (§5.8.3) — в лог только без него.
+            // Лог после проверки errorCode: иначе отказ сначала объявится как SUCCESS.
             log.debug("PROVIDER RESP [getOrderStatus] <- SUCCESS for ProviderOrderId: {}, Response: {}",
                     providerOrderId, ProviderPayloads.withoutSecrets(order));
             return order;
         } catch (BusinessException e) {
             throw e;
         } catch (HttpStatusCodeException e) {
-            // Денег проверка статуса не двигает, а @Retry повторяет её: стектрейс на каждую попытку —
-            // шум. Что делать с отказом, решает вызывающий.
+            // Без стектрейса: @Retry повторяет запрос, и стектрейс на каждую попытку — шум (Р-98).
             log.warn("PROVIDER RESP [getOrderStatus] <- FAILED for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
                     providerOrderId, e.getStatusCode(), e.getResponseBodyAsString());
             throw acquirerError(e);
@@ -268,8 +258,8 @@ public class TxpgAcquiringClient implements AcquiringClient {
         }
     }
 
-    // Данные клиента для 3DS (Р-96): только у одноразовой ссылки — у многоразовой клиента нет — и только
-    // заполненные поля. Телефон, который не разбирается как азербайджанский (ссылки до Р-96), не уходит.
+    // Клиент для 3DS (Р-96): только у одноразовой ссылки и только заполненные поля. Телефон, который
+    // не разбирается как азербайджанский (ссылки до Р-96), не уходит.
     private static EcomCreateOrderRequest.TdsPresetAreq tdsPresetAreqOf(PaymentLink link) {
         if (link.getUsageType() != UsageType.SINGLE) {
             return null;
@@ -289,17 +279,16 @@ public class TxpgAcquiringClient implements AcquiringClient {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    // Код ошибки, которым провайдер отвечает на неверный логин или пароль — с Р-93 это креды компании.
+    // Ответ провайдера и на неверный логин, и на неверный пароль компании (Р-93).
     private static final String INVALID_LOGIN = "InvalidLogin";
 
-    // Сумма пробного заказа. Не списывается никогда: заказ остаётся неоплаченным и уходит в
-    // Expired. Одна манатка, а не копейка — чтобы проверка не упёрлась в минимальную сумму.
+    // Не списывается: пробный заказ остаётся неоплаченным и уходит в Expired. Манат, а не копейка —
+    // чтобы проверка не упёрлась в минимальную сумму.
     private static final BigDecimal CHECK_AMOUNT = new BigDecimal("1.00");
 
-    // Кнопка «Тест»: пробный заказ с кредами компании терминала (Р-93). Без @Retry и @CircuitBreaker:
-    // повтор множит пробные заказы, а общий с платёжным путём breaker закрыл бы приём платежей всем.
-    // Исход (Р-103): OK — только заведённый заказ; 5xx с пустым телом и нет ответа — недоступен; любой
-    // другой ответ — заказ не создан, InvalidLogin в теле — неверные креды, в 2xx и в 4xx/5xx одинаково.
+    // Кнопка «Тест» (Р-70, Р-93). Без @Retry и @CircuitBreaker: повтор множит пробные заказы, а общий
+    // с платежами breaker закрыл бы приём платежей всем. Исходы — TerminalCheckResult (Р-103);
+    // InvalidLogin в теле читается одинаково в 2xx и в 4xx/5xx.
     @Override
     public TerminalCheckResult checkOrderCreation(ProviderCredentials credentials, String terminalRid) {
         String login = credentials.login();
@@ -373,7 +362,6 @@ public class TxpgAcquiringClient implements AcquiringClient {
         return notCreated(login, httpStatus, body);
     }
 
-    // Ответ без кода ошибки и без заведённого заказа: провайдер доступен, но заказа нет.
     private TerminalCheckResult notCreated(String login, Integer httpStatus, Map<String, Object> body) {
         Object message = body == null ? null : body.get("message");
         String description = message != null ? String.valueOf(message)
@@ -398,34 +386,31 @@ public class TxpgAcquiringClient implements AcquiringClient {
         }
     }
 
-    // Сумма уходит строкой — так в примере Refund у эквайера. toPlainString, а не toString: у
-    // BigDecimal из JSON бывает такой scale, что toString даёт "1E+3", и шлюз прочтёт что угодно,
-    // кроме 1000.00. RoundingMode.UNNECESSARY — намеренно: за спиной мерчанта ничего не должно
-    // округлиться; суммы с тремя знаками отсекает PaymentLinkService — это сломанный инвариант.
+    // Строкой, как в примере Refund эквайера. toPlainString: toString при некоторых scale даёт "1E+3".
+    // UNNECESSARY намеренно — молча не округлять: три знака отсекает PaymentLinkService, здесь они — баг.
     private static String formatAmount(BigDecimal amount) {
         return amount.setScale(2, RoundingMode.UNNECESSARY).toPlainString();
     }
 
-    // P1-8b: «нет errorCode» — ещё не «прошло». Подтверждение по контракту — tran.match.ridByPmo
-    // (§5.5-5.7), его же читает проверка успеха у эквайера (§5.8.8). Без него исход не отказ,
-    // а неизвестность (Р-23): PaymentOutcomeUnknownException (502), а не BusinessException (400).
-    // Разбор защитный намеренно: кривая форма даёт «не подтверждено», а не ClassCastException.
+    // Успех подтверждает только tran.match.ridByPmo (§5.5-5.7, P1-8b), а не отсутствие errorCode. Без
+    // него исход неизвестен (Р-23): 502, а не 400. Разбор защитный: кривая форма даёт «не подтверждено»,
+    // а не ClassCastException.
     private MoneyOperationResult requireConfirmation(String action, String providerOrderId, Map<String, Object> response) {
         Map<String, Object> tran = asMap(response != null ? response.get("tran") : null);
         Map<String, Object> match = asMap(tran != null ? tran.get("match") : null);
-        // Что считается идентификатором, решает одно правило на пакет: ProviderPayloads.scalarText.
+        // Только ProviderPayloads.scalarText — второй разбор не заводить (AGENTS.md §10).
         String ridByPmo = ProviderPayloads.scalarText(match != null ? match.get("ridByPmo") : null);
 
         if (ridByPmo == null) {
-            // Тело целиком в лог намеренно (Р-23): если реальный шлюз ответит не по §5.5-5.7,
-            // возвраты встанут, и одной строки должно хватить, чтобы увидеть, чем он отличается.
+            // Тело целиком намеренно (Р-23): если шлюз ответит не по §5.5-5.7, возвраты встанут, и по
+            // одной строке должно быть видно, чем ответ отличается.
             log.error("PROVIDER RESP [{}] <- NO CONFIRMATION for ProviderOrderId: {}. "
                             + "The response carries no tran.match.ridByPmo. Full body: {}",
                     action, providerOrderId, ProviderPayloads.withoutSecrets(response));
             throw new PaymentOutcomeUnknownException(
                     "Acquirer accepted the " + action + " but did not confirm it: the response has no "
                             + "tran.match.ridByPmo, so the operation may or may not have executed. "
-                            + "Expected shape — see project_docs/TXPG-client-side-integration.md §5.5-5.7.");
+                            + "Expected shape — see project_docs/external/TXPG-client-side-integration.md §5.5-5.7.");
         }
 
         String approvalCode = ProviderPayloads.scalarText(tran.get("approvalCode"));
@@ -448,19 +433,16 @@ public class TxpgAcquiringClient implements AcquiringClient {
         return value instanceof Map<?, ?> map ? (Map<String, Object>) map : null;
     }
 
-    // Делит провал денежной операции на «шлюз отказал» (ничего не двинулось, повтор безопасен) и
-    // «мы не знаем» (могло уже пройти). Отказ — только errorCode внутри 200 и 4xx; всё прочее,
-    // включая 5xx и таймаут чтения, — неизвестность. По умолчанию «неизвестно» намеренно: раньше
-    // всё схлопывалось в BusinessException, мерчант принимал неизвестность за отказ и повторял.
+    // Отказ шлюза (повтор безопасен) — только errorCode в 200 и 4xx; всё прочее, включая 5xx и таймаут,
+    // — неизвестность. Дефолт «неизвестно» намеренно: неизвестность, принятая за отказ, повторяют,
+    // и возврат становится двойным (AGENTS.md §7).
     private RuntimeException classifyMoneyOperationFailure(String action, String providerOrderId, Exception e) {
         if (e instanceof BusinessException businessException) {
-            // Из checkAndThrowIfErrorCode: 200 с errorCode. Шлюз прочитал запрос и отказал —
-            // значит, точно не выполнил.
+            // 200 с errorCode (checkAndThrowIfErrorCode): шлюз отказал, операция точно не выполнена.
             return businessException;
         }
         if (e instanceof PaymentOutcomeUnknownException unconfirmed) {
-            // Из requireConfirmation: 200 без tran.match.ridByPmo. Уже нужный тип с нужным
-            // текстом — обёртка похоронила бы оба под «failed without a verdict».
+            // 200 без ridByPmo (requireConfirmation): тип и текст уже нужные — не оборачивать.
             return unconfirmed;
         }
         if (e instanceof HttpStatusCodeException httpError) {
@@ -470,16 +452,15 @@ public class TxpgAcquiringClient implements AcquiringClient {
                         action, providerOrderId, httpError.getStatusCode(), httpError.getResponseBodyAsString());
                 return new AcquirerDeclinedException("Acquirer error: " + desc);
             }
-            // 5xx: шлюз принял запрос и упал уже где-то за ним. Стектрейс с причиной напечатает
-            // GlobalExceptionHandler под маркером PAYMENT_OUTCOME_UNKNOWN — здесь второй не нужен.
+            // 5xx: шлюз принял запрос и упал за ним. Без стектрейса — его напечатает GlobalExceptionHandler
+            // под маркером PAYMENT_OUTCOME_UNKNOWN.
             log.error("PROVIDER RESP [{}] <- OUTCOME UNKNOWN for ProviderOrderId: {}. HTTP Status: {}, Error Body: {}",
                     action, providerOrderId, httpError.getStatusCode(), httpError.getResponseBodyAsString());
             return new PaymentOutcomeUnknownException(
                     "Acquirer did not confirm the " + action + " (HTTP " + httpError.getStatusCode() + "): " + desc, httpError);
         }
         if (e instanceof ResourceAccessException) {
-            // Таймаут чтения или обрыв: истёкшие 10s ничего не говорят о том, выполнил ли TXPG
-            // операцию до того, как мы перестали слушать.
+            // Таймаут или обрыв: выполнил ли TXPG операцию до того, как мы перестали слушать, неизвестно.
             log.error("PROVIDER REQ [{}] <- OUTCOME UNKNOWN for ProviderOrderId: {}. No response from the acquirer: {}",
                     action, providerOrderId, e.getMessage());
             return new PaymentOutcomeUnknownException(

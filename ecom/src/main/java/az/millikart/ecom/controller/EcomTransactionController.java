@@ -17,9 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-// Вкладка E-commerce — выписка провайдера (Р-65). Адреса свои, не общие с платёжными ссылками:
-// другой источник, другие поля и другой SLA. Период обязателен в выписке и итогах — без него это
-// полный скан операционной базы шлюза. Контракт — project_docs/ecom.md §2.
+// Выписка провайдера (Р-65), контракт — project_docs/modules/ecom.md §2.
 @RestController
 @RequestMapping("/api/v1/ecom/transactions")
 public class EcomTransactionController {
@@ -62,7 +60,6 @@ public class EcomTransactionController {
         return service.terminals(principal);
     }
 
-    // Карточка заказа с историей. Литеральные /stats и /terminals Spring сопоставляет раньше шаблона.
     @GetMapping("/{orderId}")
     public EcomTransactionResponse order(@PathVariable String orderId,
                                          @AuthenticationPrincipal UserPrincipal principal) {

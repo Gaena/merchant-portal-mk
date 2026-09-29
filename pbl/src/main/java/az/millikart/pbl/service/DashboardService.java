@@ -44,8 +44,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-// Сводка главной страницы (P3-7). Всё, что здесь происходит после запросов, — сложение уже
-// сгруппированных базой чисел и добивка пустых корзин. Сырых строк транзакций сервис не видит.
+// Статистика оплат по ссылкам — вкладка «Статистика» страницы Pay by Link (P3-7, Р-91).
+// После запросов здесь только сложение сгруппированных базой чисел и добивка пустых корзин.
 @Service
 public class DashboardService {
 
@@ -53,20 +53,17 @@ public class DashboardService {
 
     private static final int DEFAULT_WINDOW_DAYS = 7;
 
-    // Потолок окна. Превышение — отказ, а не зажим: молча отдать окно, которого не просили,
-    // значит снова показать цифру не за тот период и назвать её настоящей.
+    // Превышение — отказ, а не зажим: иначе цифра не за тот период выдаётся за настоящую.
     private static final int MAX_WINDOW_DAYS = 92;
 
     private static final int TOP_TERMINALS = 5;
 
-    // Копейки в ответе всегда двузначны. Колонки денег — numeric(19,2), больше двух знаков в них
-    // не бывает, поэтому округления здесь нет — есть выравнивание: H2 возвращает SUM со scale 1,
-    // PostgreSQL — с 2, и без этого клиент видел бы то «100.0», то «100.00» в зависимости от СУБД.
+    // Выравнивание, а не округление: колонки numeric(19,2), но SUM у H2 приходит со scale 1, у
+    // PostgreSQL — 2, и клиент видел бы то «100.0», то «100.00».
     private static final int MONEY_SCALE = 2;
 
-    // Терминала с таким id не бывает. Связывается вместо списка, когда отбора по терминалам нет
-    // (глобальный читатель): условие :unscoped = TRUE до него не доходит, но параметр обязан быть
-    // связан, а пустой список — невалидный SQL IN ().
+    // Несуществующий терминал для глобального читателя: до него :unscoped = TRUE не доходит, но
+    // параметр обязан быть связан, а IN () — невалидный SQL.
     private static final List<Integer> NO_TERMINAL_FILTER = List.of(Integer.MIN_VALUE);
 
     private final DashboardRepository dashboardRepository;
@@ -87,8 +84,7 @@ public class DashboardService {
         String rawRole = UserPrincipal.getRawRole(principal);
         String companyId = UserPrincipal.getCompanyId(principal);
 
-        // Правила доступа — те же, что у списка транзакций, и берутся из его же наборов:
-        // сводка показывает те же строки, иначе она стала бы обходом.
+        // Наборы ролей — из PaymentLinkService: свои правила сделали бы сводку обходом.
         if (role == null || !PaymentLinkService.READ_ROLES.contains(role)) {
             log.warn("Access denied. Role {} is not authorized to read the dashboard.", rawRole);
             throw new InvalidStateException("Access denied: role " + rawRole + " is not authorized for this action");
@@ -102,8 +98,7 @@ public class DashboardService {
         List<Integer> terminalIds = NO_TERMINAL_FILTER;
         if (!unscoped) {
             if (companyId == null || companyId.isBlank()) {
-                // Ровно как listTransactions: пустой результат, а не отказ. У пользователя без
-                // компании нет своих денег, но и запрещать ему смотреть не на что.
+                // Как listTransactions: без компании — пустой результат, а не отказ.
                 log.warn("Missing companyId claim for non-admin user; empty dashboard");
                 return emptySummary(resolvedFrom, resolvedTo);
             }
@@ -144,10 +139,8 @@ public class DashboardService {
                 linkTotals(links));
     }
 
-    // ─── окно ────────────────────────────────────────────────────────────────
-
-    // Семь календарных суток, включая сегодняшние, а не «сейчас минус 168 часов»: на графике
-    // должно быть семь целых столбиков, а не шесть с половиной и обрезок.
+    // Семь календарных суток, включая сегодня, а не «сейчас минус 168 часов»: на графике — семь
+    // целых столбиков, без обрезка.
     private Instant defaultFrom(Instant to) {
         return to.atZone(zone).toLocalDate()
                 .minusDays(DEFAULT_WINDOW_DAYS - 1L)
@@ -155,16 +148,9 @@ public class DashboardService {
                 .toInstant();
     }
 
-    // Раскладывает часовые корзины базы по суткам и часам **пояса отчёта**.
-    //
-    // Сутки и час берутся из MIN(createdAt) корзины, а не из SQL: соглашение о хранении времени
-    // у PostgreSQL и у H2 тестов разное (см. заголовок DashboardRepository), и любое приведение
-    // средствами SQL верно на одном движке и неверно на другом. Момент же читается одинаково.
-    //
-    // Условие корректности: корзина не должна пересекать полночь пояса отчёта. База режет строки
-    // по часам своего пояса, а границы часов совпадают у любых двух поясов со смещением, кратным
-    // часу, — это верно для всех поясов, где работает портал. У пояса с получасовым смещением
-    // (Индия, Иран) корзина на стыке суток разъехалась бы; такой пояс здесь не настраивают.
+    // Сутки и час корзины — в поясе отчёта из MIN(createdAt), а не в SQL (см. DashboardRepository).
+    // Верно, пока часовая корзина не пересекает полночь пояса отчёта: так у всех поясов со смещением,
+    // кратным часу. Пояс с получасовым смещением (Индия, Иран) здесь не настраивать.
     private void foldBuckets(List<Object[]> buckets,
                              Map<String, Accumulator> perCurrency,
                              Map<TransactionStatus, Long> perStatus,
@@ -185,9 +171,8 @@ public class DashboardService {
         }
     }
 
-    // Р-89: возвраты окна — в сутки и валюту **возврата**. В счётчики операций и статусов они не
-    // входят: возврат — не новая операция, а движение денег по старой. Валюта, в которой были только
-    // возвраты, получает свою строку итогов с отрицательной выручкой — так и было.
+    // Возвраты — в сутки и валюту возврата (Р-89), в счётчики операций и статусов не входят: возврат —
+    // движение денег по старой операции. Валюта с одними возвратами — строка с отрицательной выручкой.
     private void foldRefunds(List<Object[]> refunds,
                              Map<String, Accumulator> perCurrency,
                              Map<DayKey, Accumulator> perDay) {
@@ -210,8 +195,6 @@ public class DashboardService {
         }
     }
 
-    // ─── свёртка ─────────────────────────────────────────────────────────────
-
     private List<CurrencyTotals> totals(Map<String, Accumulator> perCurrency) {
         return perCurrency.entrySet().stream()
                 .map(entry -> {
@@ -226,7 +209,7 @@ public class DashboardService {
                 .toList();
     }
 
-    // Все шесть статусов, включая нулевые: отсутствующая доля читается как «такого не бывает».
+    // Все статусы, включая нулевые: отсутствующая доля читается как «такого не бывает».
     private List<StatusCount> statusBreakdown(Map<TransactionStatus, Long> perStatus) {
         List<StatusCount> result = new ArrayList<>();
         for (TransactionStatus status : TransactionStatus.values()) {
@@ -264,8 +247,8 @@ public class DashboardService {
         return result;
     }
 
-    // Топ пять внутри каждой валюты: «первые пять по сумме» поверх разных валют было бы
-    // сравнением манатов с евро. Выручка терминала — оплаты окна минус возвраты окна (Р-89).
+    // Топ — внутри каждой валюты, иначе сравнивались бы манаты с евро. Выручка терминала — оплаты
+    // окна минус возвраты окна (Р-89).
     private List<TerminalTotal> topTerminals(List<Object[]> rows, List<Object[]> refunds) {
         Map<TerminalKey, Accumulator> perTerminal = new LinkedHashMap<>();
         for (Object[] row : rows) {
@@ -296,8 +279,7 @@ public class DashboardService {
                     });
         }
 
-        // Логин и имя добираются одним запросом по готовому топу, не построчно. Терминала может
-        // уже не быть — тогда подписи нет, и выдумывать её («TRM-…», «Default Terminal») нельзя.
+        // Одним запросом по готовому топу, не построчно. Нет терминала — нет подписи, не выдумывать (Р-48).
         Map<Integer, Terminal> terminals = terminalRepository.findAllById(needed).stream()
                 .filter(terminal -> terminal.getId() != null)
                 .collect(Collectors.toMap(Terminal::getId, terminal -> terminal, (first, second) -> first));
@@ -343,8 +325,7 @@ public class DashboardService {
         return new PaymentLinkTotals(total, types, usages, statuses);
     }
 
-    // Нули, а не 403 и не пустое тело: экран должен нарисоваться и честно показать, что операций
-    // нет. Форма ответа та же, что у непустой сводки.
+    // Нули в форме непустой сводки, а не 403 и не пустое тело: экран рисуется и показывает, что операций нет.
     private DashboardSummaryResponse emptySummary(Instant from, Instant to) {
         return new DashboardSummaryResponse(
                 new Window(from, to, zone.getId()),
@@ -356,8 +337,6 @@ public class DashboardService {
                 linkTotals(List.of()));
     }
 
-    // ─── чтение строк группировки ────────────────────────────────────────────
-
     private static BigDecimal money(BigDecimal value) {
         return value.setScale(MONEY_SCALE, RoundingMode.HALF_UP);
     }
@@ -366,14 +345,13 @@ public class DashboardService {
         return ((Number) value).longValue();
     }
 
-    // sum() по группе без строк не бывает — группа существует только со строками; null здесь
-    // означал бы, что запрос изменили, и ноль честнее падения.
+    // null от SUM по непустой группе значит, что запрос изменили; ноль честнее падения.
     private static BigDecimal asAmount(Object value) {
         return value == null ? BigDecimal.ZERO : (BigDecimal) value;
     }
 
-    // MIN(createdAt) читается тем же преобразованием, что и любое чтение колонки, поэтому
-    // момент возвращается верным независимо от того, в каком поясе Hibernate его положил.
+    // MIN(createdAt) читается тем же преобразованием, что и колонка: момент верен при любом поясе,
+    // в котором Hibernate его положил.
     private static Instant asInstant(Object value) {
         if (value instanceof Instant instant) {
             return instant;
@@ -391,9 +369,8 @@ public class DashboardService {
     private record TerminalKey(Integer terminalId, String currency) {
     }
 
-    // Накопитель одной корзины. Оплаты складываются только по PAID_STATUSES: суммы у FAILED
-    // база тоже посчитала, но платежом они не были. Возвраты приходят отдельно, по своему времени
-    // (Р-89); refundedCount — платежи окна, которые сейчас возвращены, это про платежи, а не про деньги.
+    // Оплаты — только по PAID_STATUSES: суммы FAILED база тоже посчитала. Возвраты — отдельно, по своему
+    // времени (Р-89); refundedCount — платежи окна, возвращённые сейчас, а не деньги.
     private static final class Accumulator {
         private long transactionCount;
         private long paidCount;

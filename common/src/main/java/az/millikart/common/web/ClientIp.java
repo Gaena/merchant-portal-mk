@@ -5,25 +5,23 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Set;
 
-// Единственное место, которое решает, каков адрес клиента. X-Forwarded-For и X-Real-IP напрямую
-// не читать нигде: это обычные заголовки, их пишет кто угодно, а значение становится ключом
-// лимитера входа и строкой в журнале аудита — так и сломалось в P2-10 (брали X-Forwarded-For[0]).
-// Пустой список доверенных прокси означает «заголовкам не верить» — см. TrustedProxies.
+// Единственное место, решающее адрес клиента. X-Forwarded-For и X-Real-IP напрямую не читать: их
+// пишет кто угодно, а значение — ключ лимитера входа и строка журнала (P2-10). Пустой список
+// доверенных прокси — заголовкам не верить.
 public final class ClientIp {
 
     private static final String X_REAL_IP = "X-Real-IP";
     private static final String X_FORWARDED_FOR = "X-Forwarded-For";
 
-    // Самый длинный текстовый IPv6 — 45 символов; длиннее адресом быть не может. Значение идёт в
-    // ключ кэша LoginRateLimiter, и 4 КБ заголовка не должны его раздувать.
+    // Самый длинный текстовый IPv6 — 45 символов. Значение — ключ кэша LoginRateLimiter, длинный
+    // заголовок не должен его раздувать.
     private static final int MAX_TEXT_LENGTH = 45;
 
     private ClientIp() {
     }
 
-    // Пир не в списке доверенных — заголовки игнорируются целиком, ответ — адрес пира. Иначе
-    // X-Real-IP (nginx перезаписывает его сам, клиент на него не влияет), иначе ПОСЛЕДНИЙ элемент
-    // X-Forwarded-For: его дописывает наш прокси, всё перед ним прислал клиент. Не первый.
+    // Пир не доверенный — заголовки игнорируются. Иначе X-Real-IP (его перезаписывает nginx), иначе
+    // последний элемент X-Forwarded-For: его дописывает наш прокси, всё перед ним прислал клиент.
     public static String resolve(HttpServletRequest request, Set<String> trustedProxies) {
         String peer = request.getRemoteAddr();
         if (!isTrusted(peer, trustedProxies)) {
@@ -89,10 +87,8 @@ public final class ClientIp {
         }
     }
 
-    // Сторож, не пускающий getByName к резолверу: строка из цифр и точек идёт только путём
-    // IPv4-литерала, с двоеточием — только IPv6, оба падают на мусоре без обращения к DNS.
-    // Пропустишь что-то ещё (хоть "a.b") — подделанный заголовок превратит каждую попытку входа
-    // в DNS-запрос.
+    // Не пускает getByName к DNS: только цифры с точками (IPv4) или с двоеточием (IPv6). Пропустишь
+    // что-то ещё (хоть "a.b") — подделанный заголовок сделает каждую попытку входа DNS-запросом.
     private static boolean looksLikeLiteral(String value) {
         boolean ipv6 = value.indexOf(':') >= 0;
         for (int i = 0; i < value.length(); i++) {

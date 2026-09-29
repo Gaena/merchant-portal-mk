@@ -34,10 +34,8 @@ public class AuditLogController {
     // Потолок страницы: таблица только растёт, размер без предела вытянет её в heap одним запросом.
     private static final int MAX_PAGE_SIZE = 200;
 
-    // Каждый параметр приводится, а не отвергается: PageRequest.of бросает на page < 0 и size < 1,
-    // а IllegalArgumentException из опечатки в query-параметре возвращается клиенту как 500.
-    // Дефолты page/size совпадают со списком транзакций в pbl. Фильтры независимы и необязательны:
-    // entityType в одиночку работает с P3-1 (D.1).
+    // Параметры приводятся, а не отвергаются: PageRequest.of бросает на page < 0 и size < 1, и клиент
+    // получил бы 500.
     @GetMapping
     public PagedResponse<AuditLogResponse> list(
             @RequestParam(value = "entityType", required = false) String entityType,
@@ -58,8 +56,7 @@ public class AuditLogController {
                 pageable, principal);
     }
 
-    // Обрезается и поднимается в верхний регистр; значение, которого AuditOutcome не знает,
-    // схлопывается в «нет фильтра», а не в 400.
+    // Незнакомое значение — «нет фильтра», а не 400.
     private static AuditOutcome parseOutcome(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
@@ -71,9 +68,7 @@ public class AuditLogController {
         }
     }
 
-    // Принимает ISO-8601 instant (2026-08-24T10:15:30Z) или голую ISO-дату (2026-08-24); голая дата
-    // значит целые UTC-сутки: начало для from, последняя наносекунда для to. Всё прочее —
-    // «нет фильтра», не 400.
+    // Голая дата — целые UTC-сутки; нераспознанное — «нет фильтра», а не 400.
     private static Instant parseInstant(String raw, boolean endOfDay) {
         if (raw == null || raw.isBlank()) {
             return null;
@@ -82,7 +77,6 @@ public class AuditLogController {
         try {
             return Instant.parse(cleaned);
         } catch (DateTimeParseException notAnInstant) {
-            // дальше — попытка разобрать как голую дату
         }
         try {
             LocalDate day = LocalDate.parse(cleaned);

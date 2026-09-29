@@ -42,7 +42,7 @@ public class CompanyService {
     private static final String STATUS_ACTIVE = "ACTIVE";
     private static final String STATUS_INACTIVE = "INACTIVE";
 
-    // Маркер мягкого удаления: такая компания невидима на всех путях чтения.
+    // Мягкое удаление: чтение и список компаний отдают её как несуществующую.
     static final String STATUS_DELETED = "DELETED";
 
     // Логин компании к провайдеру — только мультимерчант (Р-94): Basic-логин MultiMerchantSys/<login>.
@@ -75,7 +75,7 @@ public class CompanyService {
         log.info("Request to create company: id={}, name={}", request.id(), request.name());
 
         if (actorRole != Role.SYSTEM_ADMIN) {
-            // Подшивается под компанию актора, не названную в запросе (AuditLogService.logDenied).
+            // Отказ пишется с компанией актора, а не цели (Р-104).
             auditLogService.logDenied(AuditEntity.COMPANY, request.id(), AuditAction.CREATE, actorUsername,
                     UserPrincipal.getCompanyId(principal),
                     "Denied: role " + UserPrincipal.getRawRole(principal)
@@ -102,7 +102,6 @@ public class CompanyService {
         // Даты ставит Hibernate при flush; без него ответ ушёл бы с пустыми датами (Р-103).
         company = companyRepository.saveAndFlush(company);
 
-        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
                 AuditEntity.COMPANY,
                 company.getId(),
@@ -115,10 +114,8 @@ public class CompanyService {
         return mapToResponse(company, actorRole);
     }
 
-    // Страница компаний (P2-1) с поиском по name и id (P3-1). Страницы, фильтр мягкого удаления,
-    // поиск и порядок — работа базы, не памяти. Сортировка name + id: имена компаний не уникальны,
-    // а без уникального довеска база вправе упорядочить одинаковые имена по-разному между двумя
-    // запросами страниц, и компания попадёт то на обе соседние страницы, то ни на одну.
+    // Сортировка кончается id: имена не уникальны, и без него компания попадала бы то на обе соседние
+    // страницы, то ни на одну (P2-1). Фильтр удалённых и поиск — в запросе, не в памяти (P3-1).
     @Transactional(readOnly = true)
     public PagedResponse<CompanyResponse> listCompanies(Pageable pageable, UserPrincipal principal,
                                                         String search) {
@@ -141,9 +138,8 @@ public class CompanyService {
                 .collect(Collectors.toList()));
     }
 
-    // Логины для формы компании (Р-95): годные к проверке (requireActiveMultiMerchantLogin) и не занятые
-    // ни одной компанией. Только SYSTEM_ADMIN — это карта мультимерчантов провайдера. Список — удобство:
-    // между его загрузкой и сохранением логин могут занять или выключить, поэтому проверка при сохранении остаётся.
+    // Список для формы — удобство: логин могут занять или выключить до сохранения, поэтому проверка
+    // при сохранении остаётся (Р-95).
     @Transactional(readOnly = true)
     public List<ProviderLoginOption> listFreeProviderLogins(UserPrincipal principal) {
         if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
@@ -226,7 +222,6 @@ public class CompanyService {
         company.setUpdatedBy(actorUsername);
         company = companyRepository.saveAndFlush(company);
 
-        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
                 AuditEntity.COMPANY,
                 company.getId(),
@@ -236,8 +231,8 @@ public class CompanyService {
                 changes.toString()
         ));
 
-        // Смена статуса — отдельное событие, как у пользователей и терминалов (P3-2): ревизор ищет
-        // блокировки по действию, а не вычитывая прозу каждого UPDATE.
+        // Смена статуса — отдельная запись BLOCK/UNBLOCK: ревизор ищет блокировки по действию, а не
+        // в тексте UPDATE (P3-2).
         if (request.status() != null && !request.status().isBlank()
                 && !request.status().equals(previousStatus)) {
             boolean reactivated = STATUS_ACTIVE.equals(request.status());
@@ -274,7 +269,6 @@ public class CompanyService {
         company.setUpdatedBy(actorUsername);
         companyRepository.save(company);
 
-        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
                 AuditEntity.COMPANY,
                 company.getId(),
@@ -310,8 +304,7 @@ public class CompanyService {
         }
     }
 
-    // Логин проверяется по слепку ecom только при сохранении — создании или смене логина (Р-94); уже
-    // сохранённые логины слепок не трогает. Нет слепка — отказ: проверить логин не по чему.
+    // Только при сохранении — заведении или смене логина: уже сохранённые логины слепок не трогает (Р-94).
     private void requireActiveMultiMerchantLogin(String providerLogin) {
         if (!providerLogin.startsWith(MULTI_MERCHANT_PREFIX) || providerLogin.length() == MULTI_MERCHANT_PREFIX.length()) {
             throw new BusinessException("Provider login must be a multimerchant login: " + MULTI_MERCHANT_PREFIX + "<login>");

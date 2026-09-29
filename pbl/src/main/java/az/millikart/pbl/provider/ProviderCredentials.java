@@ -1,7 +1,6 @@
 package az.millikart.pbl.provider;
 
-// Креды компании к провайдеру, уже расшифрованные (Р-93). Логин — целиком, как ввёл администратор;
-// пароль не печатается нигде — toString маскирует его.
+// Расшифрованные креды компании к провайдеру (Р-93). Пароль не печатается нигде — toString его маскирует.
 public record ProviderCredentials(String login, String password) {
 
     @Override

@@ -15,9 +15,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 
-// Строка журнала аудита, общая для трёх сервисов (Р-41). Таблица только на дозапись (Р-42): потому
-// здесь нет сеттеров — прочитанную запись нельзя изменить и сохранить поверх, — а у
-// AuditLogRepository нет ничего, кроме save. Собирать записи только через AuditLogService.
+// Строка журнала, общая для всех сервисов (Р-41). Только дозапись (Р-42): сеттеров нет, у
+// AuditLogRepository только save. Собирать записи — только через AuditLogService.
 @Entity
 @Table(name = "audit_logs")
 @Getter

@@ -25,8 +25,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-// Читающая половина журнала осталась в directory, когда пишущая уехала в common (Р-41):
-// пишут все сервисы, показывает только этот.
+// Журнал пишут все сервисы через common, читает только этот (Р-41).
 @Service
 public class AuditLogQueryService {
 
@@ -39,10 +38,8 @@ public class AuditLogQueryService {
         this.auditLogService = auditLogService;
     }
 
-    // Фильтрация и страницы — в базе: журнал append-only и неограничен, загрузка его в память была
-    // P2-2. entityType сравнивается точным равенством по значению в верхнем регистре (все писатели
-    // хранят константы AuditEntity): «улучшение» до IgnoreCase убьёт индекс idx_audit_logs_entity.
-    // Фильтры независимы и необязательны (до P3-1 entityType без entityId игнорировался, D.1).
+    // Фильтры и страницы — в базе: журнал неограничен (P2-2). entityType — точное равенство в верхнем
+    // регистре (писатели хранят константы AuditEntity): IgnoreCase убьёт индекс idx_audit_logs_entity.
     @Transactional(readOnly = true)
     public PagedResponse<AuditLogResponse> listAuditLogs(String entityType, String entityId,
                                                          String search, AuditOutcome outcome,
@@ -73,9 +70,8 @@ public class AuditLogQueryService {
             throw new InvalidStateException("Access denied");
         }
 
-        // D.3: createdAt DESC + id DESC — уникальный довесок обязателен, иначе записи с равным
-        // временем прыгают между страницами (P3-1). D.4: idx_audit_logs_created намеренно оставлен
-        // по одному created_at; пересматривать только по реально замеренному медленному запросу.
+        // id обязателен: без него записи с равным временем прыгают между страницами (P3-1). Индекс
+        // idx_audit_logs_created намеренно только по created_at: менять лишь по замеру медленного запроса.
         Pageable newestFirst = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
                 Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
 
@@ -87,10 +83,8 @@ public class AuditLogQueryService {
         return PagedResponse.of(page, page.getContent().stream().map(AuditLogQueryService::mapToResponse).toList());
     }
 
-    // Необязательные фильтры собраны Specification'ами: отсутствующий фильтр вообще не попадает
-    // в SQL — потому это не один JPQL с проверками :param IS NULL (на связывании типизированных
-    // null'ов запросы к PostgreSQL и ломаются). Каждый LIKE идёт по шаблону из
-    // SearchTerms.toLikePattern, escape обязан совпадать с SearchTerms.LIKE_ESCAPE.
+    // Specification, а не JPQL с :param IS NULL: на связывании типизированных null запросы к PostgreSQL
+    // ломаются, а так отсутствующий фильтр вообще не попадает в SQL.
     private static Specification<AuditLog> filter(String companyId, String entityType,
                                                   String entityId, String searchPattern,
                                                   AuditOutcome outcome, Instant from, Instant to) {

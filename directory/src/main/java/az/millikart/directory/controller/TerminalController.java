@@ -42,12 +42,9 @@ public class TerminalController {
         return terminalService.createTerminal(request, principal);
     }
 
-    // Потолок, общий для всех постраничных списков проекта — см. AuditLogController.
     private static final int MAX_PAGE_SIZE = 200;
 
-    // Значения зажимаются, а не передаются как есть: PageRequest.of бросает на page < 0 и size < 1,
-    // и это уходит клиенту как 500 со стектрейсом в логе. search (P3-1) приводится так же: пусто —
-    // «нет поиска», слишком длинное обрезается.
+    // Приводятся, а не отвергаются: PageRequest.of бросает на page < 0 и size < 1, и клиент получил бы 500.
     @GetMapping
     public PagedResponse<TerminalResponse> list(
             @RequestParam(defaultValue = "0") int page,
@@ -60,17 +57,11 @@ public class TerminalController {
         return terminalService.listTerminals(pageable, principal, SearchTerms.normalize(search));
     }
 
-    // Р-45: фид для селекторов — id, name, login, status, без страниц.
-    // Заблокированные терминалы в ответе есть, фильтрует потребитель — см.
-    // TerminalService.listTerminalOptions. Маппинг стоит до /{id}: Spring сначала матчит
-    // литеральный путь, и options не попадёт в Integer-переменную пути.
     @GetMapping("/options")
     public List<TerminalOptionResponse> options(@AuthenticationPrincipal UserPrincipal principal) {
         return terminalService.listTerminalOptions(principal);
     }
 
-    // Терминалы провайдера для формы заведения терминала компании (Р-96). Литеральный путь Spring
-    // сопоставляет раньше /{id}.
     @GetMapping("/provider-terminals")
     public List<ProviderTerminalOption> providerTerminals(@RequestParam(required = false) String companyId,
                                                           @AuthenticationPrincipal UserPrincipal principal) {
@@ -83,9 +74,7 @@ public class TerminalController {
         return terminalService.getTerminal(id, principal);
     }
 
-    // Через status в теле терминал выводится из эксплуатации и возвращается обратно (Р-37).
-    // DELETE нет: на терминал, через который прошёл платёж, ссылаются платёжные ссылки.
-    // Отдельных /block и /unblock тоже нет: это одно поле одного ресурса.
+    // Блокировка — полем status; DELETE нет: на терминал ссылаются платёжные ссылки (Р-37).
     @PatchMapping("/{id}")
     public TerminalResponse update(@PathVariable Integer id,
                                   @Valid @RequestBody UpdateTerminalRequest request,

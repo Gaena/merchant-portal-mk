@@ -11,9 +11,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-// Терминал провайдера, каким его видела последняя синхронизация (Р-66, Р-79). Ключ — rid мерчанта:
-// у провайдера один терминал — один мерчант. active гасится после нескольких пропаданий подряд, а
-// не первым: один оборванный опрос не должен выключать терминалы, под которыми идут платежи.
+// Ключ — rid мерчанта, одна строка на мерчанта (Р-79). active гасится после нескольких пропаданий
+// подряд: один оборванный опрос не должен выключать терминалы, под которыми идут платежи (Р-66).
 @Entity
 @Table(name = "provider_terminals")
 @Getter
@@ -41,7 +40,6 @@ public class ProviderTerminal {
     @Builder.Default
     private boolean active = true;
 
-    // Сколько опросов подряд терминал не приходил; обнуляется, как только он вернулся.
     @Column(name = "missing_runs", nullable = false)
     @Builder.Default
     private int missingRuns = 0;

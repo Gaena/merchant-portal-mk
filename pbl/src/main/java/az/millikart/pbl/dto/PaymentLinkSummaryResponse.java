@@ -10,9 +10,7 @@ import java.util.UUID;
 public record PaymentLinkSummaryResponse(
         UUID id,
         PaymentLinkStatus status,
-        // Эквайринговый терминал ссылки — то же поле и то же имя, что в PaymentLinkResponse.
-        // Берётся из самой строки ссылки, никакого похода в справочник: подпись терминала
-        // (его логин) портал разрешает по этому номеру своим лёгким фидом терминалов.
+        // Только номер: подпись терминала фронтенд берёт из /terminals/options.
         Integer terminal,
         BigDecimal amount,
         String currency,
@@ -24,9 +22,7 @@ public record PaymentLinkSummaryResponse(
         UsageType usageType,
         Integer maxPayments,
         Instant expiresAt,
-        // Время последней оплаты (P2-15) или null; то же значение и то же имя, что в
-        // PaymentLinkResponse. На страницу заполняется одним группирующим запросом на всю страницу,
-        // а не выборкой на строку (PaymentLinkService.list).
+        // Как в PaymentLinkResponse; на страницу — один запрос, а не запрос на строку (P2-15).
         Instant lastPaidAt,
         Instant createdAt
 ) {

@@ -8,10 +8,9 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
-// Пишущая половина журнала, одна на три сервиса (Р-41). Успех: сервис публикует AuditEvent, и
-// AuditLogWriter пишет его после коммита — действия, которого не было, в журнале не будет. Отказ и
-// неизвестный исход пишутся здесь, в своей транзакции: их транзакция откатится (Р-35). Внутри
-// HTTP-запроса запись ждёт его конца (AuditOutbox), чтобы не брать второе соединение из пула.
+// Пишущая половина журнала, одна на все сервисы (Р-41). Успех пишет AuditLogWriter после коммита;
+// отказ и неизвестный исход — здесь, в своей транзакции: их транзакция откатится (Р-35). Внутри
+// HTTP-запроса запись ждёт его конца (AuditOutbox, Р-85).
 @Service
 public class AuditLogService {
 
@@ -31,9 +30,8 @@ public class AuditLogService {
 
     private final AuditLogRepository auditLogRepository;
 
-    // Шаблоном, а не @Transactional(REQUIRES_NEW): аннотацию применяет прокси, а в directory вызов
-    // идёт из listAuditLogs — метода того же класса, мимо прокси. С аннотацией запись об отказе в
-    // чтении журнала молча уходила в readOnly-транзакцию листинга и пропадала с её откатом.
+    // Шаблоном, а не @Transactional(REQUIRES_NEW): запись идёт и внутренним вызовом, и отложенно из
+    // AuditOutbox — мимо прокси, где аннотация не действует.
     private final TransactionTemplate ownTransaction;
 
     public AuditLogService(AuditLogRepository auditLogRepository,
@@ -43,8 +41,8 @@ public class AuditLogService {
         this.ownTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    // Исключения намеренно не ловятся: их репортит AuditLogWriter, а операция к этому моменту
-    // уже закоммичена, и ломаться нечему. Отложенную до конца запроса запись репортит она сама.
+    // Исключения не ловятся: их репортит AuditLogWriter, операция уже закоммичена. Отложенную запись
+    // репортит writeReporting.
     public void recordSuccess(AuditEvent event) {
         warnIfOutsideDictionary(event.entityType(), event.action());
         AuditLog record = AuditLog.builder()
@@ -63,10 +61,8 @@ public class AuditLogService {
         ownTransaction.executeWithoutResult(status -> auditLogRepository.save(record));
     }
 
-    // Вызывать прямо перед throw. companyId — компания АКТОРА, никогда не названная в запросе:
-    // журнал режется по этой колонке, иначе любой аутентифицированный пишет произвольный текст в
-    // обзор аудита чужой компании (что пытались сделать — в entityId и details). Секрета в details
-    // быть не может: пишут места, где пароль или токен в области видимости, а журнал читают чужие.
+    // Звать прямо перед throw. companyId — компания актора, не названная в запросе: иначе любой пишет
+    // текст в журнал чужой компании. Паролей и токенов в details не класть: журнал читают другие.
     public void logDenied(String entityType, String entityId, String action,
                           String performedBy, String companyId, String details) {
         warnIfOutsideDictionary(entityType, action);
@@ -86,10 +82,8 @@ public class AuditLogService {
         }
     }
 
-    // Операция, исход которой не подтвердил эквайер (PaymentOutcomeUnknownException в pbl): деньги
-    // могли уйти, локального следа не осталось. Пишется синхронно — транзакция сейчас откатится, и
-    // это единственное свидетельство, что операцию вообще пытались провести. outcome = UNRESOLVED,
-    // а не SUCCESS: эту запись разбирают руками.
+    // Исход не подтвердил эквайер (PaymentOutcomeUnknownException): деньги могли уйти, а транзакция
+    // операции откатится, и эта запись — единственный след попытки. UNRESOLVED — разбирают руками.
     public void logUnresolved(String entityType, String entityId, String action,
                               String performedBy, String companyId, String details) {
         warnIfOutsideDictionary(entityType, action);
@@ -109,7 +103,7 @@ public class AuditLogService {
         }
     }
 
-    // Запись в своей транзакции; ошибка не пробрасывается, а уходит в лог с маркером.
+    // Ошибку записи не пробрасывать: журнал не роняет операцию.
     private void writeReporting(AuditLog record, String what) {
         try {
             ownTransaction.executeWithoutResult(status -> auditLogRepository.save(record));
@@ -120,8 +114,7 @@ public class AuditLogService {
         }
     }
 
-    // Warn, а не исключение: аудит не имеет права уронить бизнес-операцию из-за опечатки в названии
-    // события, а отказ записать потерял бы её целиком. Предупреждение — всё принуждение словаря.
+    // Warn, а не исключение: опечатка в названии события не должна ронять операцию и терять запись.
     private static void warnIfOutsideDictionary(String entityType, String action) {
         if (!AuditEntity.isKnown(entityType)) {
             log.warn("{}: entityType '{}' is not in AuditEntity; the record is written as is",
@@ -133,8 +126,7 @@ public class AuditLogService {
         }
     }
 
-    // Строки приходят из тел запросов и форм входа, длину им никто не ограничивает: вставка не
-    // должна падать на ней и превращать отказ в 500.
+    // Длину строк из запросов никто не ограничивает: вставка не должна падать и превращать отказ в 500.
     private static String clip(String value, int max) {
         return value != null && value.length() > max ? value.substring(0, max) : value;
     }

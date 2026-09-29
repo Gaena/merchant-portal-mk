@@ -16,17 +16,14 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.stereotype.Component;
 
-// Пишет отказы, случившиеся до контроллера. Их два, и клиент не должен их различать: JwtAuthFilter
-// отвергает запрос с негодным токеном, Spring Security — запрос к пути, требующему аутентификации;
-// без этого второй вернул бы HTML-страницу контейнера или пустое тело. ObjectMapper берётся
-// приложения намеренно: иначе timestamp отрендерится сырым epoch, а не как в остальных ответах.
+// Отказы до контроллера — одной формой ErrorResponse и от JwtAuthFilter, и от Spring Security (иначе
+// HTML контейнера или пустое тело). ObjectMapper — приложения: иначе timestamp уйдёт сырым epoch.
 @Component
 public class SecurityErrorResponder implements AuthenticationEntryPoint, AccessDeniedHandler {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityErrorResponder.class);
 
-    // Намеренно тот же текст, что JwtAuthFilter шлёт при отсутствии заголовка: какой из двух слоёв
-    // отказал — наша деталь реализации, а не сведения для вызывающего.
+    // Тот же текст, что у JwtAuthFilter: какой слой отказал — не сведения для вызывающего.
     static final String MISSING_CREDENTIALS_MESSAGE = "Missing or invalid Authorization header";
 
     private final ObjectMapper objectMapper;
@@ -43,9 +40,7 @@ public class SecurityErrorResponder implements AuthenticationEntryPoint, AccessD
         writeUnauthorized(request, response, MISSING_CREDENTIALS_MESSAGE);
     }
 
-    // Аутентифицирован, но не допущен: 403, а не 401 — вызывающий уже доказал, кто он. 401
-    // отправил бы легитимного пользователя логиниться заново там, где повторный вход ничего не
-    // исправит. 403 как «доступ запрещён» читается по всему проекту (см. InvalidStateException).
+    // Аутентифицирован, но не допущен — 403, а не 401: повторный вход ничего не исправит.
     @Override
     public void handle(HttpServletRequest request,
                        HttpServletResponse response,
@@ -54,7 +49,7 @@ public class SecurityErrorResponder implements AuthenticationEntryPoint, AccessD
         write(request, response, HttpStatus.FORBIDDEN, "Access denied");
     }
 
-    // Вызывается из JwtAuthFilter, чтобы его 401 имел ровно ту же форму тела, что и наши.
+    // Для JwtAuthFilter: его 401 — той же формы.
     public void writeUnauthorized(HttpServletRequest request,
                                   HttpServletResponse response,
                                   String message) throws IOException {

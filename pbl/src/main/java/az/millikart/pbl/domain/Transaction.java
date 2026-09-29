@@ -42,19 +42,8 @@ public class Transaction {
     @JoinColumn(name = "link_id", nullable = false)
     private PaymentLink link;
 
-    /**
-     * Reference id **платежа**, который задаём мы как мерчант, — словарь провайдера:
-     *
-     *   merchantRid   — reference id мерчанта, его задаёт провайдер (у нас он в терминалах);
-     *   ridByMerchant — reference id платежа, его задаёт мерчант.
-     *
-     * Уходит провайдеру полем `ridByMerchant` при заведении заказа и служит ключом страницы
-     * возврата плательщика. Случайный UUID на каждую попытку оплаты, поэтому not null: платежа,
-     * который мы завели без него, не бывает. Пустым он приходит только из базы провайдера, где
-     * заказ заводили не мы, — это про `ecom`.
-     *
-     * Колонка называлась `merchant_rid` и обещала совсем другой идентификатор (009).
-     */
+    // Номер платежа у мерчанта — наш случайный UUID на каждую попытку; уходит провайдеру при заведении
+    // заказа и служит ключом страницы возврата. Не путать с merchantRid — мерчантом у провайдера (Р-69).
     @Column(name = "rid_by_merchant", nullable = false)
     private UUID ridByMerchant;
 
@@ -71,10 +60,8 @@ public class Transaction {
     @Builder.Default
     private BigDecimal refundedAmount = BigDecimal.ZERO;
 
-    // Сколько реально списано с карты: частичное списание делает это меньше amount, а amount
-    // остаётся авторизованной суммой — записью о том, сколько держали. @Builder.Default намеренно
-    // нет: null значит «списания не было» — нормальное состояние любого SMS-платежа, и потолок
-    // возврата читает его именно так (PaymentLinkService.refundableBase).
+    // Списано с карты; amount остаётся авторизованной суммой (P0-8). @Builder.Default не ставить:
+    // null значит «списания не было», и так его читает потолок возврата (refundableBase).
     @Column(name = "captured_amount")
     private BigDecimal capturedAmount;
 

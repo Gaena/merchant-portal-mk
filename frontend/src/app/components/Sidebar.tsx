@@ -59,8 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { user } = useAuth();
   const { tObj } = useLanguage();
 
-  // Пункт меню не показывается, если маршрут недоступен роли. Список ролей — тот же, что у
-  // RoleRoute в routes.tsx (auth/routeAccess.ts): это UX, а не безопасность — права проверяет бэкенд.
+  // Роли — общие с RoleRoute (auth/routeAccess.ts); это UX, а не безопасность.
   const visible = (path: string) => canAccessPath(user?.role, path);
 
   const navItems: NavItem[] = [
@@ -85,9 +84,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       : item)
     .filter(item => item.children ? item.children.length > 0 : (!item.path || visible(item.path)));
 
-  // Раскрытые группы — по ключу, не по подписи: ключ 'Transaction List' не совпадал ни с одной
-  // локализованной подписью, и группа операций всегда стартовала свёрнутой, а смена языка её
-  // схлопывала.
   const [expandedItems, setExpandedItems] = useState<string[]>(['transactions']);
 
   const handleNavigate = (path: string) => {
@@ -126,7 +122,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           if (hasChildren) {
             return (
               <React.Fragment key={item.key}>
-                {/* Parent Item */}
                 <ListItem disablePadding sx={{ px: isMini ? 1 : 2, mb: 0.5 }}>
                   {isMini ? (
                     <Tooltip title={item.label} placement="right">
@@ -187,7 +182,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
                 </ListItem>
 
-                {/* Children Items */}
                 {!isMini && (
                   <Collapse in={isExpanded} timeout="auto" unmountOnExit>
                     <List component="div" disablePadding>
@@ -231,7 +225,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             );
           }
 
-          // Regular item without children
           const content = (
             <ListItem key={item.path} disablePadding sx={{ px: isMini ? 1 : 2, mb: 0.5 }}>
               <ListItemButton
@@ -276,7 +269,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Divider />
           <Box sx={{ p: 2 }}>
             <Typography variant="caption" color="text.secondary">
-              {/* Версия — из package.json при сборке (vite.config.ts), не зашитая строка. */}
+              {/* Версия — из package.json при сборке (vite.config.ts). */}
               v{__APP_VERSION__}
             </Typography>
           </Box>
@@ -287,13 +280,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      {/* Mobile drawer */}
       <Drawer
         variant="temporary"
         open={mobileOpen}
         onClose={onMobileClose}
         ModalProps={{
-          keepMounted: true, // Better mobile performance
+          keepMounted: true,
         }}
         sx={{
           display: { xs: 'block', md: 'none' },
@@ -307,7 +299,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {getDrawerContent(false)}
       </Drawer>
 
-      {/* Desktop drawer */}
       <Drawer
         variant="permanent"
         sx={{

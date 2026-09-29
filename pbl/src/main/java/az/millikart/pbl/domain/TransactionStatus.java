@@ -12,10 +12,9 @@ public enum TransactionStatus {
     PARTIALLY_REFUNDED,
     REFUNDED;
 
-    // Платёж состоялся: деньги ушли с карты. Единственный ответ на «пользовались ли ссылкой» —
-    // счётчик, lastPaidAt, слоты, запрет понижать maxPayments. Возвращённый платёж тоже состоялся
-    // (Р-49): сузишь набор до SUCCESS — возврат освободит слот, и ссылка с лимитом 3 соберёт 4.
-    // AUTHORIZED вне набора намеренно: холд — не взятые деньги, слот он занимает по P1-6.
+    // Единственный ответ на «платёж состоялся»: счётчик, lastPaidAt, слоты, maxPayments (Р-49). Не
+    // сужать до SUCCESS: возврат освободит слот, и ссылка с лимитом 3 соберёт 4. AUTHORIZED вне набора
+    // намеренно — холд не взятые деньги, слот он занимает по P1-6.
     public static final Set<TransactionStatus> PAID_STATUSES =
             Collections.unmodifiableSet(EnumSet.of(SUCCESS, REFUNDED, PARTIALLY_REFUNDED));
 }

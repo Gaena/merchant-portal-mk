@@ -5,8 +5,8 @@ import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-// Креды компании к провайдеру из общей таблицы companies (Р-93). Её пишет directory, pbl только читает —
-// поэтому запрос, а не сущность: схему companies pbl не владеет.
+// Креды компании из общей таблицы companies (Р-93): строки пишет directory, pbl только читает —
+// поэтому запрос, а не сущность.
 @Repository
 public class CompanyCredentialsRepository {
 

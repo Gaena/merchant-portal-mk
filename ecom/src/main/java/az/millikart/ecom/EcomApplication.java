@@ -6,9 +6,8 @@ import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-// Отдельный сервис, а не контроллер в pbl: чужая операционная база TXPG, только чтение, чужой SLA —
-// в одном процессе с платёжными ссылками их судьба зависела бы от доступности чужого Oracle (Р-65).
-// Оба скана объявлены явно: без этого журнал аудита из az.millikart.common.audit не нашёлся бы.
+// Отдельный сервис: в одном процессе с платёжными ссылками их судьба зависела бы от чужого Oracle
+// (Р-65). Сканы JPA заданы явно, иначе журнал аудита из common не найдётся (AGENTS.md §10).
 @SpringBootApplication(scanBasePackages = "az.millikart")
 @EntityScan(basePackages = {"az.millikart.ecom", "az.millikart.common.audit"})
 @EnableJpaRepositories(basePackages = {"az.millikart.ecom", "az.millikart.common.audit"})

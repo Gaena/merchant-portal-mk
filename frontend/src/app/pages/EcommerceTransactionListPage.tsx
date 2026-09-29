@@ -76,9 +76,8 @@ const defaultPeriod = (): { from: Date; to: Date } => {
   return { from, to };
 };
 
-// Фильтры выписки. На экране — черновик, в запрос уходит только применённая копия (Р-88): каждый запрос
-// страницы и итогов — проход по периоду на боевой базе провайдера, и отмена в браузере его там не
-// останавливает. Перебор фильтров по одному полю складывал бы такие запросы в очередь.
+// На экране — черновик, в запрос уходит только применённая копия (Р-88): каждый запрос — проход по
+// периоду на боевой базе провайдера, и отмена в браузере его там не останавливает.
 type Filters = {
   dateFrom: Date | null;
   dateTo: Date | null;
@@ -115,10 +114,8 @@ const serverMessage = (err: unknown): string | null =>
   axios.isAxiosError(err) && typeof err.response?.data?.message === 'string' ? err.response.data.message : null;
 
 /**
- * Вкладка E-commerce — выписка провайдера из сервиса `ecom` (Р-65, `project_docs/ecom.md` §2).
- *
- * Всё считает сервер: период и фильтры уходят в запрос по «Применить» (Р-88), итоги — отдельным `/stats`
- * по всему периоду, а не по загруженным строкам. Страница курсорная, поэтому «показать ещё», а не номера страниц:
+ * Выписка провайдера из сервиса `ecom` (Р-65, `project_docs/modules/ecom.md` §2). Всё считает сервер: итоги —
+ * отдельным `/stats` по всему периоду, а не по загруженным строкам. Страница курсорная, «показать ещё»:
  * общего числа строк у выписки нет намеренно.
  */
 export const EcommerceTransactionListPage: React.FC = () => {
@@ -170,8 +167,8 @@ export const EcommerceTransactionListPage: React.FC = () => {
         }
   ), [applied]);
 
-  // Итоги зависят от периода, терминалов и типа оплаты. Сумма, поиск и статус на них не влияют:
-  // итоги и так разложены по статусам (ecom.md §2.5), поэтому их смена итоги не перезапрашивает.
+  // Итоги зависят только от периода, терминалов и типа оплаты (`modules/ecom.md` §2.5): смена суммы,
+  // поиска и статуса их не перезапрашивает.
   const { dateFrom: appliedFrom, dateTo: appliedTo, merchantRids: appliedRids, paymentType: appliedType } = applied;
   const statsQuery = useMemo(() => (
     !appliedFrom || !appliedTo
@@ -302,7 +299,6 @@ export const EcommerceTransactionListPage: React.FC = () => {
         </Typography>
       </Box>
 
-      {/* Фильтры — черновик: в запрос уходят по «Применить» или Enter (Р-88), на экране ничего не отсеивается. */}
       <Paper
         component="form"
         onSubmit={(e: React.FormEvent) => {
@@ -444,7 +440,6 @@ export const EcommerceTransactionListPage: React.FC = () => {
         </Box>
       </Paper>
 
-      {/* Итоги периода: считает сервер по всем заказам периода, суммы — по валютам. */}
       {stats && (
         <Paper elevation={0} sx={{ p: 3, mb: 3, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={4} sx={{ mb: 2 }}>
@@ -469,7 +464,7 @@ export const EcommerceTransactionListPage: React.FC = () => {
               </Stack>
             ))}
           </Stack>
-          {/* Разбивка по статусам — только цифры: фильтр статуса стоит в форме выше. */}
+          {/* Разбивка по статусам — цифры, не кнопки: фильтр статуса — в форме. */}
           <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 3, rowGap: 1 }}>
             {ECOM_STATUSES.filter(value => stats.statusCounts[value] > 0).map(value => (
               <Box key={value} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

@@ -15,9 +15,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-// PCI DSS 8.2.6 (Р-101): учётка без активности дольше max-idle блокируется — статус BLOCKED, сессии
-// гаснут, в журнале BLOCK от system. Вернуть её — обычная разблокировка, она же сбрасывает отсчёт.
-// Администратор не исключение: единственного заблокированного возвращают в базе (deployment_guide §20.3).
+// PCI DSS 8.2.6 (Р-101): учётка без активности дольше max-idle блокируется. Администратор не
+// исключение: единственного заблокированного возвращают в базе (project_docs/guides/deployment_guide.md §20.3).
 @Service
 public class InactiveAccountService {
 
@@ -52,7 +51,6 @@ public class InactiveAccountService {
             Instant lastActivity = user.getLastActivityAt();
             user.setStatus(STATUS_BLOCKED);
             refreshTokenService.revokeAllForUser(user.getId(), now);
-            // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
             eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(), AuditAction.BLOCK,
                     SYSTEM_ACTOR, user.getCompanyId(),
                     "Account " + user.getUsername() + " blocked: no activity for more than " + maxIdle.toDays()

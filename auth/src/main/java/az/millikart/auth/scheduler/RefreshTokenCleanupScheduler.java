@@ -7,9 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-// Только cron-триггер для RefreshTokenService.deleteExpired: своей логики не держит (та же форма,
-// что у TransactionReconciliationScheduler в pbl), поэтому уборка тестируется без ожидания
-// расписания. В тестовом профиле выключается через auth.refresh.cleanup-enabled.
+// Только cron-триггер: логика — в RefreshTokenService.deleteExpired, тесты зовут её без расписания.
 @Component
 @ConditionalOnProperty(name = "auth.refresh.cleanup-enabled", havingValue = "true", matchIfMissing = true)
 public class RefreshTokenCleanupScheduler {

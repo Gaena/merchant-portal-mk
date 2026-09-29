@@ -4,29 +4,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-// Причина отказа эквайера из списка order.custAttrs (§5.8.7). Порядок здесь свой, не контрактный
-// (Р-24): человекочитаемое описание предпочтительнее голого кода, поэтому DeclineDescription,
-// затем PmoDeclineDescription и только потом PmoResultCode. Разбор защитный: любая неожиданная
-// форма даёт Optional.empty(), а не исключение.
+// Причина отказа из order.custAttrs (§5.8.7). Порядок свой (Р-24): описание важнее голого кода.
+// Разбор защитный: неожиданная форма даёт Optional.empty(), а не исключение.
 public final class ProviderDeclineReason {
 
-    // §5.8.7: описание отказа на стороне e-commerce модуля; по контракту может отсутствовать.
+    // §5.8.7: отказ e-commerce модуля.
     static final String DECLINE_DESCRIPTION = "DeclineDescription";
 
-    // §5.8.7: описание и код отказа на стороне ядра ПЦ; оба могут отсутствовать.
+    // §5.8.7: описание и код отказа ядра ПЦ.
     static final String PMO_DECLINE_DESCRIPTION = "PmoDeclineDescription";
 
     static final String PMO_RESULT_CODE = "PmoResultCode";
 
-    // §5.8.3: этот PmoResultCode несёт и УСПЕШНЫЙ заказ, поэтому он пропускается — иначе «Approved»
-    // оказался бы в поле «причина отказа».
+    // §5.8.3: его несёт и успешный заказ — в «причину отказа» не пускать.
     static final String PMO_RESULT_CODE_APPROVED = "Approved";
 
     private ProviderDeclineReason() {
     }
 
-    // orderDetails — объект order из ответа getOrderStatus, может быть null. Пусто, если
-    // причины нет или payload не читается.
     public static Optional<String> extract(Map<String, Object> orderDetails) {
         if (orderDetails == null) {
             return Optional.empty();
@@ -47,7 +42,6 @@ public final class ProviderDeclineReason {
                 .filter(code -> !PMO_RESULT_CODE_APPROVED.equals(code));
     }
 
-    // Первый непустой valAsStr атрибута с нужным rid; всё нечитаемое пропускается.
     private static Optional<String> valueOf(List<?> attrs, String rid) {
         for (Object element : attrs) {
             if (!(element instanceof Map<?, ?> attr)) {

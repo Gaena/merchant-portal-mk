@@ -4,9 +4,7 @@ import lombok.Getter;
 
 import java.time.Duration;
 
-// Отказ из-за слишком частых обращений — HTTP 429 с заголовком Retry-After. Сообщение намеренно
-// неинформативно: говорит, что попытка отклонена, но не сколько попыток осталось и каков порог.
-// Единственное число, законно нужное клиенту, несёт getRetryAfter() — когда пробовать снова.
+// HTTP 429 с Retry-After. Сообщение без счётчиков и порогов намеренно: клиенту нужно только retryAfter.
 @Getter
 public class TooManyRequestsException extends RuntimeException {
 

@@ -11,8 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-// Сводка главной страницы (Р-91) — по выписке провайдера, по всем терминалам скоупа. Префикс /api/v1/ecom,
-// поэтому прокси Vite и nginx уже ведут его в этот сервис. Период обязателен и ограничен, как у выписки.
+// Сводка главной (Р-91): под префиксом /api/v1/ecom, который прокси Vite и nginx уже ведут в этот сервис.
 @RestController
 @RequestMapping("/api/v1/ecom/dashboard")
 public class EcomDashboardController {

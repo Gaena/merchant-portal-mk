@@ -4,8 +4,7 @@ import az.millikart.common.validation.ValidPassword;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
-// Смена пароля владельцем: вход по текущему паролю и новый пароль одним запросом, без сессии — ею
-// заканчивается обязательная смена при первом входе (PCI DSS 8.3.5, Р-100).
+// Смена пароля без сессии: ею кончается обязательная смена при первом входе (Р-100).
 public record ChangePasswordRequest(
         @NotBlank(message = "Username is required")
         @Email(message = "Username must be a valid email address")

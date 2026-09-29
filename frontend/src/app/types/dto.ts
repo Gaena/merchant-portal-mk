@@ -2,15 +2,12 @@ export interface CompanyDto {
   id: string;
   name: string;
   status?: 'ACTIVE' | 'INACTIVE' | 'DISABLED';
-  /**
-   * Логин компании к провайдеру (Р-93) — приходит только SYSTEM_ADMIN, остальным `null`. Пароля в
-   * ответе нет вовсе: его можно только заменить.
-   */
+  /** Только у SYSTEM_ADMIN, остальным `null`; пароля в ответе нет вовсе (Р-93). */
   providerLogin?: string | null;
   createdAt?: string;
 }
 
-/** Статусы терминала бэкенда (`TerminalStatus`). Терминалы не удаляются, а блокируются (P2-8). */
+/** `TerminalStatus` бэкенда; терминалы не удаляются, а блокируются (P2-8). */
 export const TERMINAL_STATUSES = ['ACTIVE', 'BLOCKED'] as const;
 
 export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];
@@ -19,45 +16,34 @@ export interface TerminalDto {
   id: number;
   name: string;
   login: string;
-  /** Номер терминала у провайдера (`terminal.rid`, Р-96) — основная подпись; нет у заведённых до Р-96. */
+  /** Номер у провайдера (`terminal.rid`, Р-96) — основная подпись; у заведённых до Р-96 пуст. */
   terminalRid?: string | null;
   companyId: string;
-  /** Бэкенд присылает всегда; поле необязательное только ради ответов, снятых до P2-8. */
+  /** Бэкенд присылает всегда; необязательное намеренно — без поля терминал не прячется (`isTerminalActive`). */
   status?: TerminalStatus;
   createdAt?: string;
 }
 
-/**
- * Ответ `GET /api/v1/terminals/options` — лёгкий фид для селекторов, фильтров и подписей
- * терминала на экранах платежей. `login` есть намеренно — см. `TerminalOptionResponse` на бэкенде.
- */
+/** Лёгкий `GET /terminals/options` для селекторов и подписей; `login` в нём намеренно (`TerminalOptionResponse`). */
 export interface TerminalOptionDto {
   id: number;
   name: string;
-  /**
-   * Логин эквайринга — основной параметр терминала: мерчант знает терминал по нему, а не по
-   * имени, которое придумывает сам, и не по внутреннему номеру. Подписывает терминал везде,
-   * где тот показан, — см. `utils/terminals.ts`.
-   */
+  /** Подпись терминала, когда нет `terminalRid` (`utils/terminals.ts`). */
   login: string;
-  /** Номер терминала у провайдера (Р-96) — подписывает терминал раньше логина. */
+  /** Номер у провайдера (Р-96) — в подписи раньше логина. */
   terminalRid?: string | null;
-  /** Бэкенд присылает всегда; поле необязательное только ради ответов, снятых до P2-8. */
+  /** Бэкенд присылает всегда; необязательное намеренно — без поля терминал не прячется (`isTerminalActive`). */
   status?: TerminalStatus;
 }
 
-/**
- * Терминал доступен для новых платежей. Скрывает только явно заблокированный: отсутствие поля —
- * это ответ старого бэкенда, и по нему нельзя прятать все терминалы разом, иначе форма создания
- * ссылки останется пустой без единой причины на экране.
- */
+// Только явно заблокированный: без поля `status` (старый бэкенд) форма ссылки осталась бы пустой
+// без единой причины на экране.
 export const isTerminalActive = (terminal: Pick<TerminalDto, 'status'>): boolean =>
   terminal.status !== 'BLOCKED';
 
 /**
- * Терминал провайдера для формы заведения терминала компании (`GET /api/v1/terminals/provider-terminals`,
- * Р-96): только мерчанты логина компании, ещё не заведённые у нас. `rid` — код мерчанта (`merchantRid`),
- * `terminalRid` — номер терминала у провайдера.
+ * `GET /terminals/provider-terminals` (Р-96): мерчанты логина компании, ещё не заведённые у нас.
+ * `rid` — код мерчанта (`merchantRid`), `terminalRid` — номер терминала у провайдера.
  */
 export interface ProviderTerminalOption {
   rid: string;
@@ -66,16 +52,13 @@ export interface ProviderTerminalOption {
   terminalRid: string;
 }
 
-/**
- * Свободный логин мультимерчанта для формы компании (`GET /api/v1/companies/provider-logins`, Р-95):
- * `login` — целиком, с префиксом; `merchants` — названия его активных мерчантов.
- */
+/** `GET /companies/provider-logins` (Р-95): `login` — с префиксом; `merchants` — его активные мерчанты. */
 export interface ProviderLoginOption {
   login: string;
   merchants: string[];
 }
 
-/** Итог обновления слепка логинов мультимерчантов провайдера (Р-94). */
+/** Итог обновления слепка логинов мультимерчантов (Р-94). */
 export interface ProviderLoginSyncOutcome {
   applied: boolean;
   logins: number;
@@ -83,10 +66,7 @@ export interface ProviderLoginSyncOutcome {
   skippedBecause: string | null;
 }
 
-/**
- * Итог ручного обновления справочников (`POST /api/v1/ecom/provider-terminals/sync`): верхние поля —
- * терминалы, `logins` — логины мультимерчантов; одна кнопка обновляет оба (Р-94).
- */
+/** `POST /ecom/provider-terminals/sync`: верхние поля — терминалы, `logins` — логины (Р-94). */
 export interface ProviderTerminalSyncOutcome {
   applied: boolean;
   seen: number;
@@ -122,9 +102,8 @@ export interface AuditLogDto {
 }
 
 /**
- * Сводка главной страницы (`GET /api/v1/dashboard/summary`, P3-7). Считает база; денег без
- * валюты здесь нет ни в одном поле — колонки currency у транзакций не существует, она на ссылке,
- * и общий итог поверх нескольких валют был бы числом, которого не существует.
+ * Статистика оплат по ссылкам (`GET /dashboard/summary`, Р-91). Денег без валюты нет ни в одном
+ * поле: валюта — на ссылке, общий итог поверх валют был бы несуществующим числом.
  */
 export interface DashboardSummary {
   window: { from: string; to: string; zone: string };
@@ -157,11 +136,11 @@ export interface DashboardCurrencyTotals {
 export interface DashboardTerminalTotal {
   currency: string;
   terminalId: number;
-  /** Номер терминала у провайдера (Р-96) — основная подпись; `null` у терминалов без номера. */
+  /** Номер у провайдера (Р-96) — основная подпись. */
   terminalRid?: string | null;
-  /** Логин из таблицы терминалов — подпись, когда номера нет; `null`, если терминала уже нет. */
+  /** Подпись, когда номера нет; `null`, если терминала уже нет. */
   terminalLogin: string | null;
-  /** Имя из таблицы терминалов; `null`, если терминала уже нет — выдумывать его нельзя. */
+  /** `null`, если терминала уже нет, — не выдумывать. */
   terminalName: string | null;
   netAmount: string;
   transactionCount: number;

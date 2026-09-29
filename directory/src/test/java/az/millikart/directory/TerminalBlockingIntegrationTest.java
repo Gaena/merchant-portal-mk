@@ -359,15 +359,9 @@ public class TerminalBlockingIntegrationTest {
                 .andExpect(jsonPath("$.name", is("Renamed Terminal")));
     }
 
-    /**
-     * Момент времени так, как его пишет приложение.
-     *
-     * Колонка `expires_at` объявлена как `timestamp` без зоны, и Hibernate кладёт в неё `Instant`
-     * в UTC. `java.sql.Timestamp.from(...)`, который стоял здесь раньше, драйвер переводит в
-     * **локальную зону JVM**: на машине в Баку срок «час назад» ложился в базу как «через три
-     * часа», разблокировка считала ссылку живой и возвращала её в ACTIVE вместо EXPIRED.
-     * На H2 расхождение не проявлялось — поймалось сразу после переезда на PostgreSQL.
-     */
+    // Как пишет приложение: expires_at — timestamp без зоны, Hibernate кладёт Instant в UTC.
+    // Timestamp.from драйвер переводит в зону JVM: в Баку «час назад» ложился как «через три часа»,
+    // и разблокировка возвращала просроченную ссылку в ACTIVE. На H2 не видно.
     private static LocalDateTime utc(Instant instant) {
         return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }

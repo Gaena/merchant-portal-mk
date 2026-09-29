@@ -21,17 +21,12 @@ export type { UserProfile } from '../auth/session';
 
 interface AuthContextType {
   user: UserProfile | null;
-  /** Есть access-токен в памяти (и профиль). Срок токена здесь не считается: протухший
-   *  токен ловит интерсептор по 401 и молча обновляет — см. `api/client.ts`. */
+  /** Срок токена здесь не считается: протухший ловит интерсептор по 401 (`api/client.ts`). */
   isAuthenticated: boolean;
-  /**
-   * Бросает `AuthError('UNKNOWN_ROLE')`, если сервер вернул нераспознанную роль, и
-   * `AuthError('PASSWORD_CHANGE_REQUIRED')`, если пароль задан не владельцем (Р-100) — вход не состоялся.
-   */
+  /** Вход не состоялся — `AuthError` с `UNKNOWN_ROLE` или `PASSWORD_CHANGE_REQUIRED` (Р-100). */
   login: (email: string, password: string) => Promise<void>;
-  /** Смена пароля по текущему и вход с новым — `POST /api/v1/auth/change-password` (Р-100). */
+  /** Смена пароля по текущему и вход с новым (Р-100). */
   changePassword: (email: string, currentPassword: string, newPassword: string) => Promise<void>;
-  /** Гасит refresh-токен на сервере (ошибку запроса игнорирует, но логирует) и чистит состояние. */
   logout: () => Promise<void>;
 }
 
@@ -43,16 +38,12 @@ const RestoringSession = () => (
   </Box>
 );
 
-/**
- * Провайдер авторизации. Состояние живёт в `auth/session.ts` (access-токен — в памяти,
- * refresh — в localStorage); здесь только React-обвязка и три операции: восстановление
- * сессии при загрузке, вход, выход.
- */
+// Состояние живёт в `auth/session.ts`; здесь только React-обвязка.
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const user = useSyncExternalStore(subscribe, getUser);
 
-  // Восстановление сессии: refresh-токен есть, access-токена в памяти нет (перезагрузка вкладки).
-  // Пока идёт /refresh — показываем загрузку, а не мигаем формой логина.
+  // Перезагрузка вкладки: refresh-токен есть, access-токена нет. Пока идёт /refresh — загрузка,
+  // а не мигание формы входа.
   const [restoring, setRestoring] = useState<boolean>(() => getUser() === null && getRefreshToken() !== null);
 
   useEffect(() => {
@@ -60,8 +51,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     let active = true;
-    // Вкладку открыли после простоя (PCI DSS 8.2.8, Р-99): сессию не восстанавливаем, а гасим и на
-    // сервере. Отметки нет вовсе — тоже простой: когда было последнее действие, неизвестно.
+    // Вкладку открыли после простоя (Р-99): сессию не восстанавливаем, а гасим и на сервере.
     if (isIdleExpired(Date.now())) {
       const staleToken = getRefreshToken();
       markEndedByIdle();
@@ -72,8 +62,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     refreshSession()
       .catch((error: unknown) => {
-        // Отказ (401, плохая роль) уже сбросил сессию; сетевая ошибка оставила refresh-токен —
-        // следующая перезагрузка попробует снова. В обоих случаях показываем вход.
+        // Отказ уже сбросил сессию, сетевая ошибка оставила refresh-токен до следующей перезагрузки.
         console.warn('[auth] session restore failed:', describeError(error));
       })
       .finally(() => {
@@ -87,12 +76,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [restoring]);
 
   const startSession = useCallback((response: { data: LoginResponse }, email: string) => {
-    // Если в хранилище остался прежний refresh-токен (восстановление не удалось из-за сети,
-    // и пользователь вошёл заново) — новый вход его перезапишет; гасим на сервере вдогонку,
-    // чтобы не оставлять живую цепочку без хозяина.
+    // Прежний refresh-токен (восстановление упало из-за сети) новый вход перезапишет — гасим его
+    // на сервере, чтобы не оставлять живую цепочку без хозяина.
     const previous = getRefreshToken();
     try {
-      // Роль — только через parseRole; нераспознанная роль → AuthError, сессия не создаётся.
       applyLoginResponse(response.data, email);
     } catch (error) {
       // Сервер уже выпустил пару токенов для отклонённого входа — refresh-токен гасим.
@@ -108,7 +95,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = useCallback(async (email: string, password: string) => {
     const response = await apiClient.post<LoginResponse>('/api/v1/auth/login', { username: email, password });
-    // Пароль задал не владелец: токенов в ответе нет, сессии не будет до смены (PCI DSS 8.3.5, Р-100).
+    // Пароль задал не владелец: токенов нет, сессии не будет до смены (Р-100).
     if (response.data?.passwordChangeRequired === true) {
       throw new AuthError('PASSWORD_CHANGE_REQUIRED', 'The password must be changed before a session starts');
     }
@@ -139,7 +126,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const value = useMemo<AuthContextType>(() => ({
     user,
-    // Токен и профиль ставятся и сбрасываются вместе (session.ts), но источник истины — токен.
     isAuthenticated,
     login,
     changePassword,

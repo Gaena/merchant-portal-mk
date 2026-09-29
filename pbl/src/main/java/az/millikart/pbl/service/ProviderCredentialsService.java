@@ -9,9 +9,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-// Все запросы к провайдеру идут от имени компании терминала, а не терминала (Р-93). Компания без
-// кредов — отказ до обращения к провайдеру: иначе провайдер ответил бы InvalidLogin, и отказ выглядел
-// бы как его сбой.
+// Запросы к провайдеру — от имени компании терминала, не терминала (Р-93). Нет кредов — отказ до
+// провайдера: его InvalidLogin выглядел бы сбоем провайдера.
 @Service
 public class ProviderCredentialsService {
 
@@ -43,8 +42,8 @@ public class ProviderCredentialsService {
         return new ProviderCredentials(stored.login(), cipher.decrypt(stored.encryptedPassword()));
     }
 
-    // Номер терминала у провайдера, с которым создаётся заказ (Р-96). Нет — отказ до провайдера: заказ без
-    // терминала он не примет, а терминал без номера — заведённый до Р-96 без справочника.
+    // Без номера терминала провайдер заказ не примет — отказ до него (Р-96). Номера нет у терминалов,
+    // заведённых до Р-96 без справочника.
     public String terminalRidOf(Terminal terminal) {
         String terminalRid = terminal.getTerminalRid();
         if (terminalRid == null || terminalRid.isBlank()) {

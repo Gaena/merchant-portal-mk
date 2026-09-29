@@ -78,8 +78,7 @@ public class TerminalService {
         this.eventPublisher = eventPublisher;
     }
 
-    // Заводит только SYSTEM_ADMIN и только выбором из справочника провайдера (Р-80, Р-93): справочник —
-    // карта всех мерчантов провайдера, а ручного логина больше нет. Правка — по TERMINAL_WRITE_ROLES.
+    // Заводит только SYSTEM_ADMIN и только выбором из справочника провайдера (Р-80, Р-93).
     @Transactional
     public TerminalResponse createTerminal(CreateTerminalRequest request, UserPrincipal principal) {
         String actorUsername = UserPrincipal.getUsername(principal);
@@ -102,13 +101,13 @@ public class TerminalService {
                 .filter(found -> !CompanyService.STATUS_DELETED.equals(found.getStatus()))
                 .orElseThrow(() -> new BusinessException("Company with ID '" + request.companyId() + "' not found"));
 
-        // Один терминал провайдера — одна наша компания. Иначе две компании смотрели бы
-        // в одну выписку, и каждая видела бы платежи другой.
+        // Один терминал провайдера — одна наша компания: общий мерчант двух логинов достаётся
+        // первой заведшей (Р-67, Р-96).
         terminalRepository.findByMerchantRid(merchantRid).ifPresent(existing -> {
             throw new BusinessException("Provider terminal " + merchantRid
                     + " is already linked to terminal " + existing.getId());
         });
-        // Название и логин — провайдера: он их хозяин, и введённые руками однажды разойдутся с ним.
+        // Название и логин — только от провайдера: введённые руками разойдутся с ним (Р-67).
         ProviderTerminalStatusRepository.ProviderTerminalRow row = providerTerminals
                 .findByRid(merchantRid)
                 .orElseThrow(() -> new BusinessException(
@@ -141,7 +140,6 @@ public class TerminalService {
 
         terminal = terminalRepository.saveAndFlush(terminal);
 
-        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
                 AuditEntity.TERMINAL,
                 terminal.getId().toString(),
@@ -154,10 +152,8 @@ public class TerminalService {
         return mapToResponse(terminal);
     }
 
-    // Страница терминалов (P2-1) с поиском по name, login, id, companyId и имени компании (P3-1).
-    // Сортировка name + id: без уникального довеска записи с равным именем прыгают между
-    // страницами. Скоуп компании — условие запроса, поиск его не обходит: чужой терминал по имени
-    // не находится.
+    // Сортировка кончается id: иначе терминалы с равным именем прыгают между страницами (P2-1).
+    // Скоуп компании — условие того же запроса: поиск чужой терминал не находит (P3-1).
     @Transactional(readOnly = true)
     public PagedResponse<TerminalResponse> listTerminals(Pageable pageable, UserPrincipal principal,
                                                          String search) {
@@ -173,12 +169,8 @@ public class TerminalService {
                 .collect(Collectors.toList()));
     }
 
-    // Р-45: лёгкий фид для селекторов — id, name, login, status, без страниц. Заблокированные
-    // терминалы отдаются намеренно, фильтрует потребитель: форме ссылки нужны только ACTIVE (бэкенд
-    // всё равно откажет по заблокированному, P2-8), а экрану транзакций — все, иначе старый платёж
-    // теряет имя своего терминала. Фильтр на сервере обслужил бы первого и сломал второго.
-    // Про логин в ответе — см. комментарий у TerminalOptionResponse: ворота те же, что у полного
-    // списка, который логин отдаёт и так, а пароль сюда не попадает.
+    // Заблокированные отдаются намеренно, фильтрует потребитель (Р-45): форме ссылки нужны ACTIVE,
+    // экранам платежей — все, иначе старый платёж теряет подпись терминала.
     @Transactional(readOnly = true)
     public List<TerminalOptionResponse> listTerminalOptions(UserPrincipal principal) {
         List<Terminal> terminals = isGlobalReader(principal)
@@ -190,8 +182,7 @@ public class TerminalService {
                 .collect(Collectors.toList());
     }
 
-    // Терминалы провайдера для формы заведения (Р-96): мерчанты логина компании, активные в справочнике, с
-    // номером терминала и ещё не заведённые у нас. Только SYSTEM_ADMIN — он и заводит терминалы.
+    // Варианты для формы заведения терминала (Р-96).
     @Transactional(readOnly = true)
     public List<ProviderTerminalOption> listProviderTerminals(String companyId, UserPrincipal principal) {
         if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
@@ -216,8 +207,8 @@ public class TerminalService {
                 .toList();
     }
 
-    // Мерчанты, чьи терминалы компания вправе завести (Р-96): активные связи её логина мультимерчанта в
-    // слепке. Иначе компания ходила бы к провайдеру своими кредами за чужого мерчанта.
+    // Только мерчанты логина компании: иначе она ходила бы к провайдеру своими кредами за чужого
+    // мерчанта (Р-96).
     private Set<String> merchantsOfCompanyLogin(Company company) {
         String providerLogin = company.getProviderLogin();
         if (providerLogin == null || !providerLogin.startsWith(CompanyService.MULTI_MERCHANT_PREFIX)) {
@@ -247,7 +238,6 @@ public class TerminalService {
         throw new InvalidStateException("Access denied");
     }
 
-    // Читатель без компании получает отказ, а не null.
     private String requireOwnCompany(UserPrincipal principal) {
         String actorCompanyId = UserPrincipal.getCompanyId(principal);
         if (actorCompanyId == null) {
@@ -291,8 +281,8 @@ public class TerminalService {
                     "move terminal " + id + " to company " + request.companyId());
             Company target = companyRepository.findById(request.companyId())
                     .orElseThrow(() -> new BusinessException("Company with ID '" + request.companyId() + "' not found"));
-            // Как при заведении (Р-96): иначе ссылки ушли бы к провайдеру с кредами компании, чей логин
-            // этого мерчанта не знает, а выписка его платежей осталась бы у прежней (Р-97).
+            // Как при заведении: иначе ссылки ушли бы к провайдеру с кредами компании, чей логин
+            // этого мерчанта не знает, а выписка его платежей осталась бы у прежней (Р-96, Р-97).
             if (!target.getId().equals(terminal.getCompanyId())
                     && (terminal.getMerchantRid() == null || !merchantsOfCompanyLogin(target).contains(terminal.getMerchantRid()))) {
                 throw new BusinessException("Terminal " + id + " cannot be moved to company " + target.getId()
@@ -302,15 +292,12 @@ public class TerminalService {
             terminal.setCompanyId(request.companyId());
         }
 
-        // Последним и отдельно: единственное поле, чья правка выходит за строку терминала.
-        // Установка того же статуса — не изменение и не должна трогать ни одной ссылки, иначе
-        // PATCH, возвращающий объект целиком, переприостанавливает ссылки на каждом сохранении.
+        // Статус — последним: только его правка трогает ссылки. Тот же статус — не изменение, иначе
+        // PATCH с объектом целиком переприостанавливал бы ссылки на каждом сохранении.
         String statusChange = null;
         if (request.status() != null && request.status() != terminal.getStatus()) {
-            // Терминал, выключенный синхронизацией, человек включить не может: у провайдера он
-            // снят с обслуживания, платёж через него всё равно не пройдёт, а включение здесь
-            // подняло бы его ссылки и отправило плательщиков в отказ. Вернёт его та же
-            // синхронизация, когда провайдер вернёт терминал себе.
+            // Выключенный синхронизацией включает только она (Р-66): у провайдера он снят с
+            // обслуживания, и включение подняло бы ссылки, по которым платёж всё равно не пройдёт.
             if (request.status() == TerminalStatus.ACTIVE
                     && terminal.getStatus() == TerminalStatus.BLOCKED
                     && terminal.getStatusSource() == TerminalStatusSource.PROVIDER) {
@@ -322,7 +309,7 @@ public class TerminalService {
                         + "and will be unblocked automatically once the provider brings it back");
             }
             statusChange = applyStatusChange(terminal, request.status());
-            // Статус поставил человек — и это решение синхронизация впредь не трогает.
+            // Ручную блокировку сверка не снимает (Р-66).
             terminal.setStatusSource(TerminalStatusSource.MANUAL);
             changes.append(statusChange).append(". ");
         }
@@ -330,7 +317,6 @@ public class TerminalService {
         terminal.setUpdatedBy(actorUsername);
         terminal = terminalRepository.saveAndFlush(terminal);
 
-        // Пишется AuditLogWriter после коммита этой транзакции (Р-35).
         eventPublisher.publishEvent(AuditEvent.of(
                 AuditEntity.TERMINAL,
                 terminal.getId().toString(),
@@ -340,8 +326,8 @@ public class TerminalService {
                 changes.toString()
         ));
 
-        // Блокировка и разблокировка — отдельные действия BLOCK/UNBLOCK: это единственный след
-        // массовой правки чужих платёжных ссылок, и число затронутых обязано быть в записи.
+        // Отдельная запись BLOCK/UNBLOCK — единственный след массовой правки платёжных ссылок,
+        // число затронутых обязано быть в ней.
         if (statusChange != null) {
             eventPublisher.publishEvent(AuditEvent.of(
                     AuditEntity.TERMINAL,
@@ -356,9 +342,8 @@ public class TerminalService {
         return mapToResponse(terminal);
     }
 
-    // Р-39, Р-40: смена ACTIVE/BLOCKED тянет платёжные ссылки в этой же транзакции —
-    // заблокированного терминала с оплачиваемыми ссылками не должно быть ни мгновения, а сбой на
-    // ссылках обязан откатить и саму блокировку. Возвращает описание с числами — оно идёт в журнал.
+    // Ссылки меняются в той же транзакции: сбой на них откатывает и блокировку, а заблокированного
+    // терминала с оплачиваемыми ссылками не бывает ни мгновения (Р-39, Р-40).
     private String applyStatusChange(Terminal terminal, TerminalStatus target) {
         Integer terminalId = terminal.getId();
         terminal.setStatus(target);
@@ -369,8 +354,7 @@ public class TerminalService {
             return "Blocked terminal " + terminalId + ", suspended " + suspended + " links";
         }
 
-        // Разблокировка делит приостановленные надвое: срок ещё впереди — в ACTIVE, истёк за время
-        // блокировки — в EXPIRED, а не в ACTIVE (Р-40).
+        // Истёкшие за время блокировки — в EXPIRED, а не в ACTIVE (Р-40).
         Instant now = Instant.now();
         int resumed = paymentLinkStatusRepository.resumeSuspendedLinks(terminalId, now);
         int expired = paymentLinkStatusRepository.expireSuspendedLinks(terminalId, now);
@@ -387,7 +371,7 @@ public class TerminalService {
         if (targetCompanyId != null && targetCompanyId.equals(actorCompanyId)) {
             return;
         }
-        // Подшивается под компанию актора, а не названную в запросе (AuditLogService.logDenied).
+        // Отказ пишется с компанией актора, а не цели (Р-104).
         auditLogService.logDenied(AuditEntity.TERMINAL, entityId, AuditAction.READ,
                 UserPrincipal.getUsername(principal), actorCompanyId,
                 "Denied: role " + UserPrincipal.getRawRole(principal) + " of company " + actorCompanyId
@@ -399,8 +383,8 @@ public class TerminalService {
                                               String entityId, String action, String attempt) {
         Role actorRole = UserPrincipal.getRole(principal);
         String actorCompanyId = UserPrincipal.getCompanyId(principal);
-        // Роль проверяется до companyId (P1-15): совпадение компании прав на запись не даёт, иначе
-        // COMPANY_EMPLOYEE и любая нераспознанная роль правят терминалы своей компании.
+        // Роль проверяется до companyId: иначе COMPANY_EMPLOYEE и нераспознанная роль правили бы
+        // терминалы своей компании (P1-15).
         boolean allowed;
         if (actorRole == Role.AUDITOR || actorRole == null || !TERMINAL_WRITE_ROLES.contains(actorRole)) {
             allowed = false;

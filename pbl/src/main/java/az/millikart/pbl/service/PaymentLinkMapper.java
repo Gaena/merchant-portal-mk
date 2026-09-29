@@ -25,9 +25,7 @@ public class PaymentLinkMapper {
                 .toString();
     }
 
-    // lastPaidAt и оба счётчика приходят готовыми: лишний запрос на вызов может позволить себе
-    // только одиночный эндпоинт, список считает всю страницу разом (P2-15). Чем считать — решает
-    // сервис: использования по PAID_STATUSES, возвраты по возвращённой паре (P2-16).
+    // Счётчики и lastPaidAt считает сервис (P2-16): маппер в базу не ходит, иначе список — N+1 (P2-15).
     public PaymentLinkResponse toResponse(PaymentLink link, int currentPaymentsCount,
                                           int refundedPaymentsCount, Instant lastPaidAt) {
         CustomerDto customer = null;
@@ -57,8 +55,6 @@ public class PaymentLinkMapper {
         );
     }
 
-    // lastPaidAt передаётся, а не ищется: вызывающий разрешает всю страницу одним группирующим
-    // запросом, и этот маппер в таблицу транзакций не ходит вовсе (P2-15).
     public PaymentLinkSummaryResponse toSummary(PaymentLink link, Instant lastPaidAt) {
         return new PaymentLinkSummaryResponse(
                 link.getId(),

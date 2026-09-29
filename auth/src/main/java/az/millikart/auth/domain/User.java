@@ -63,8 +63,8 @@ public class User {
     @Builder.Default
     private boolean passwordChangeRequired = false;
 
-    // Последняя активность учётки — вход, создание, разблокировка; от неё считаются 90 дней до
-    // автоблокировки (PCI DSS 8.2.6, Р-101). Не «последний вход»: у заведённых до Р-101 это момент миграции.
+    // Активность — вход, refresh, создание, разблокировка; от неё 90 дней до автоблокировки (Р-101).
+    // Не «последний вход»: у заведённых до Р-101 это момент миграции.
     @Column(name = "last_activity_at", nullable = false)
     @Builder.Default
     private Instant lastActivityAt = Instant.now();

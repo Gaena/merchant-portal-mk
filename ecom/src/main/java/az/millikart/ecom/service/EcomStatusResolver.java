@@ -2,13 +2,13 @@ package az.millikart.ecom.service;
 
 import java.math.BigDecimal;
 
-// Статус заказа на вкладке — по статусу заказа у провайдера, а по деньгам одобренных операций — только
-// у DMS со списаниями и там, где статус провайдера ничего не говорит (Р-92). Правило — ecom.md §2.3.
+// Статус — по статусу провайдера, по деньгам — только у DMS со списаниями и там, где статус провайдера
+// ничего не говорит (Р-92, project_docs/modules/ecom.md §2.3).
 public final class EcomStatusResolver {
 
-    // Значения платёжных ссылок плюс два своих: PARTIALLY_PAID — списано меньше суммы заказа, у
-    // провайдера PartPaid (Р-78); CANCELED — одобрено, но ничего не списано (Р-75, Р-77). У ссылок
-    // их нет: частичной оплаты портал не делает, Void не умеет (AGENTS.md §10).
+    // Статусы операций pbl плюс два своих: PARTIALLY_PAID — списано меньше суммы заказа (Р-78), CANCELED —
+    // одобрено, но ничего не списано (Р-75, Р-77). В pbl их нет: частичной оплаты портал не делает, Void
+    // не умеет (AGENTS.md §10).
     public enum EcomStatus {
         PENDING,
         AUTHORIZED,
@@ -39,9 +39,8 @@ public final class EcomStatusResolver {
         return dms && moneyMoved ? byMoney : byProvider;
     }
 
-    // Словарь — контракт §5.8.8 и выгрузка стенда 14.09.2026; Declined и Failed — как в pbl
-    // (ProviderOrderStatus). Сверка точная и регистрозависимая: незнакомая форма — null, а не отказ (Р-20).
-    // Closed — не результат, а закрытие заказа: результат несёт предыдущий статус.
+    // Словарь — контракт §5.8.8, выгрузка стенда и pbl (ProviderOrderStatus). Сверка точная: незнакомая
+    // форма — null, а не отказ (Р-20). Closed — закрытие заказа, результат несёт предыдущий статус.
     public static EcomStatus byProviderStatus(String status, String prevStatus, boolean refundApproved) {
         if (CLOSED_ORDER.equals(status)) {
             // Closed после Authorized — провайдер сам снял холд, который не списали.

@@ -35,10 +35,7 @@ import { useDebounced } from '../hooks/useDebounced';
 
 import type { AuditLogDto } from '../types/dto';
 
-/**
- * Цвет результата: отказ — ошибка, неподтверждённая эквайером операция — предупреждение (P3-2:
- * такая запись не имеет права выглядеть обычным успехом), успех — зелёный.
- */
+// Неподтверждённая эквайером операция не должна выглядеть обычным успехом (P3-2).
 const outcomeColor = (outcome?: string): 'success' | 'error' | 'warning' | 'default' => {
   switch (outcome) {
     case 'SUCCESS': return 'success';
@@ -50,7 +47,6 @@ const outcomeColor = (outcome?: string): 'success' | 'error' | 'warning' | 'defa
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Одна строка карточки: подпись слева, значение справа; на узком экране — одно под другим.
 const DetailRow: React.FC<{ label: string; mono?: boolean; children: React.ReactNode }> = ({ label, mono, children }) => (
   <Box
     sx={{
@@ -74,8 +70,7 @@ export const AuditLogsPage: React.FC = () => {
   const { tObj } = useLanguage();
   const navigate = useNavigate();
   const [auditLogsList, setAuditLogsList] = useState<AuditLogDto[]>([]);
-  // Карточка записи. Всё, что в ней показано, уже пришло строкой списка, поэтому отдельного
-  // запроса нет: окно лишь показывает запись целиком — детали в таблице бывают длинными.
+  // Карточка показывает строку списка целиком (детали в таблице длинные); отдельного запроса нет.
   const [selectedLog, setSelectedLog] = useState<AuditLogDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -83,12 +78,9 @@ export const AuditLogsPage: React.FC = () => {
   const [outcomeFilter, setOutcomeFilter] = useState('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  // Поиск и фильтры — серверные (P3-1): журнал больше не обрезается первыми 200 записями,
-  // клиентская фильтрация видела бы только загруженную страницу. 300 мс задержки на ввод.
+  // Поиск и фильтры — серверные: клиентский фильтр видел бы только загруженную страницу (P3-1).
   const debouncedSearch = useDebounced(searchQuery, 300);
 
-  // Пагинация как на остальных страницах (P3-1): раньше её не было вовсе, страница тянула
-  // size=200 и за двухсотой записью журнал молча заканчивался.
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [totalElements, setTotalElements] = useState(0);
@@ -99,8 +91,7 @@ export const AuditLogsPage: React.FC = () => {
     UNRESOLVED: tObj.auditLogs.outcomeUnresolved,
   };
 
-  // Переход к объекту записи — только там, где у объекта есть своя карточка: операция и
-  // платёжная ссылка (их entityId — UUID). У терминалов, компаний и пользователей карточек нет.
+  // Своя карточка есть только у операции и платёжной ссылки (entityId — UUID).
   const selectedTarget = (() => {
     const entityId = selectedLog?.entityId;
     if (!entityId || !UUID_PATTERN.test(entityId)) return null;
@@ -129,7 +120,6 @@ export const AuditLogsPage: React.FC = () => {
         setTotalElements(res.data?.totalElements ?? 0);
       })
       .catch(err => {
-        // Гонка ответов: устаревший запрос отменён эффектом ниже, его исход не трогает экран.
         if (axios.isCancel(err)) return;
         setAuditLogsList([]);
         setTotalElements(0);
@@ -151,7 +141,6 @@ export const AuditLogsPage: React.FC = () => {
 
   return (
     <Box>
-      {/* Header */}
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -167,7 +156,6 @@ export const AuditLogsPage: React.FC = () => {
         </Button>
       </Box>
 
-      {/* Filters Bar */}
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         <TextField
           size="small"
@@ -195,8 +183,7 @@ export const AuditLogsPage: React.FC = () => {
           <MenuItem value="COMPANY">{tObj.companies.title}</MenuItem>
           <MenuItem value="TERMINAL">{tObj.terminals.title}</MenuItem>
           <MenuItem value="USER">{tObj.users.title}</MenuItem>
-          {/* AUTH — входы, блокировки после неудач, лимит по IP, кража refresh-токена: то, ради
-              чего аудитор открывает эту страницу. AUDIT_LOG — отказы в чтении самого журнала. */}
+          {/* AUTH — входы, блокировки, лимит по IP, кража refresh-токена; AUDIT_LOG — отказы в чтении журнала. */}
           <MenuItem value="AUTH">{tObj.auditLogs.entityAuth}</MenuItem>
           <MenuItem value="PAYMENT_LINK">{tObj.payByLink.title}</MenuItem>
           <MenuItem value="TRANSACTION">{tObj.transactions.title}</MenuItem>
@@ -235,7 +222,6 @@ export const AuditLogsPage: React.FC = () => {
         />
       </Paper>
 
-      {/* Logs Table */}
       <TableContainer component={Paper} variant="outlined">
         {loading ? (
           <Box sx={{ p: 6, textAlign: 'center' }}>
@@ -277,8 +263,6 @@ export const AuditLogsPage: React.FC = () => {
                     <Chip label={log.action} size="small" color="info" variant="outlined" />
                   </TableCell>
                   <TableCell>
-                    {/* Отказ не имеет права выглядеть как успех — до P3-1 колонки не было, и на
-                        экране DENIED был неотличим от обычной записи. */}
                     <Chip
                       label={outcomeLabels[log.outcome as string] || log.outcome || '—'}
                       size="small"

@@ -23,9 +23,8 @@ public class JwtProvider {
     // HS256 подписывает 256-битным дайджестом: ключ короче не добавляет стойкости.
     private static final int MIN_SECRET_BYTES = 32;
 
-    // SHA-256 ключа подписи, утёкшего в git-историю этого репозитория (есть с коммита f6a7a7d,
-    // коммит «Secret removed» его не вычистил). Хранится дайджестом, а не литералом, чтобы
-    // удаление ключа из исходников не положило его обратно.
+    // SHA-256 ключа подписи, утёкшего в git-историю (P0-5). Дайджестом, а не литералом: иначе ключ
+    // снова лежит в исходниках.
     private static final String COMPROMISED_SECRET_SHA256 =
             "d29195138e093fd14e29672b4e8dce022359291148322fa3aa93c48a08ed5409";
 
@@ -33,14 +32,13 @@ public class JwtProvider {
             How to fix:
               1. Generate a key:  openssl rand -base64 48
               2. Export it before starting the service:  export JWT_SECRET='<generated value>'
-              3. Use the SAME value for all three services (auth, directory, pbl) — tokens issued by
-                 auth are verified by directory and pbl, and a mismatch rejects every request as 401.
+              3. Use the SAME value for all four services (auth, directory, pbl, ecom) — tokens issued
+                 by auth are verified by the others, and a mismatch rejects every request as 401.
             The key is read from the JWT_SECRET environment variable (property pbl.security.jwt.secret).
             Never commit it: put it in the environment only, see .env.example.""";
 
     private final Key signingKey;
-    // Выставлено наружу, чтобы expiresIn в ответе логина выводился из того же значения, которым
-    // подписан токен, а не из константы, которая разъедется с конфигурацией.
+    // Наружу — чтобы expiresIn ответа входа шёл из того же значения, что и подпись.
     @Getter
     private final long expirationMs;
 
@@ -52,10 +50,8 @@ public class JwtProvider {
         this.expirationMs = expirationMs;
     }
 
-    // Сервис намеренно не стартует без JWT_SECRET и значения по умолчанию не имеет (P0-5): дефолт
-    // означал бы, что подпись подделает любой, у кого есть исходники. Слабый или публичный ключ —
-    // это молча принимаемые поддельные токены с ролью SYSTEM_ADMIN, поэтому единственный
-    // безопасный исход — падение старта с инструкцией оператору. Сам секрет никуда не логируется.
+    // Без ключа, на коротком или утёкшем ключе сервис не стартует (P0-5): слабый ключ — это поддельные
+    // токены SYSTEM_ADMIN. Дефолт не заводить, секрет не логировать.
     private static void validateSecret(String secret) {
         if (secret == null || secret.isBlank()) {
             throw new IllegalStateException(
@@ -80,7 +76,6 @@ public class JwtProvider {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException e) {
-            // SHA-256 обязателен по спецификации JDK; если его нет — сломана сама платформа.
             throw new IllegalStateException("SHA-256 is not available in this JVM", e);
         }
     }

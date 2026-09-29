@@ -26,8 +26,6 @@ import { useLanguage } from '../context/LanguageContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Language } from '../i18n/translations';
 
-// ─── Header component ─────────────────────────────────────────────────────────
-
 interface HeaderProps {
   onMenuClick: () => void;
   onDesktopDrawerToggle: () => void;
@@ -38,18 +36,14 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
   const { user, logout } = useAuth();
   const { language, setLanguage, tObj } = useLanguage();
 
-  // Имени пользователя бэкенд в ответе логина не отдаёт (эндпоинта профиля нет) — показываем
-  // честный email. Роль без запасного значения: если её нет, сессии нет (session.ts отказывает
-  // во входе), поэтому здесь она всегда есть.
+  // Имени бэкенд не отдаёт (эндпоинта `/me` нет) — показывается email.
   const displayEmail = user?.email || '—';
   const avatarLetter = (user?.email || '?').charAt(0).toUpperCase();
   const displayRole = user?.role ?? '—';
 
-  // Account menu
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
 
-  // Language menu
   const [langAnchor, setLangAnchor] = useState<null | HTMLElement>(null);
 
   const langLabels: Record<Language, { label: string; flag: string }> = {
@@ -61,11 +55,9 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
   return (
     <AppBar position="fixed" elevation={2} sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
       <Toolbar>
-        {/* Mobile menu toggle */}
         <IconButton color="inherit" edge="start" onClick={onMenuClick} sx={{ mr: 2, display: { md: 'none' } }}>
           <MenuIcon />
         </IconButton>
-        {/* Desktop drawer toggle */}
         <IconButton color="inherit" edge="start" onClick={onDesktopDrawerToggle} sx={{ mr: 2, display: { xs: 'none', md: 'block' } }}>
           <MenuIcon />
         </IconButton>
@@ -78,7 +70,6 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
         <Box sx={{ flexGrow: 1 }} />
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          {/* Quick Language Selector */}
           <Tooltip title={tObj.header.language}>
             <Button
               color="inherit"
@@ -90,7 +81,6 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
             </Button>
           </Tooltip>
 
-          {/* Account avatar */}
           <Tooltip title={tObj.header.profile}>
             <IconButton sx={{ ml: 0.5 }} onClick={e => setAccountAnchor(e.currentTarget)}>
               <Avatar sx={{ width: 36, height: 36, bgcolor: 'secondary.main', fontWeight: 700 }}>{avatarLetter}</Avatar>
@@ -99,7 +89,6 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
         </Box>
       </Toolbar>
 
-      {/* ── Language Menu ──────────────────────────────────────────────────── */}
       <Menu
         anchorEl={langAnchor}
         open={Boolean(langAnchor)}
@@ -130,7 +119,6 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
         ))}
       </Menu>
 
-      {/* ── Account Menu ───────────────────────────────────────────────────── */}
       <Menu
         anchorEl={accountAnchor}
         open={Boolean(accountAnchor)}
@@ -154,8 +142,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
         </MenuItem>
       </Menu>
 
-      {/* Выход — через общее окно подтверждения (P3-5b): фокус на безопасной кнопке, Enter по
-          инерции не выходит из системы. */}
+      {/* Выход — через подтверждение (P3-5b): Enter по инерции не выходит из системы. */}
       <ConfirmDialog
         open={logoutDialogOpen}
         maxWidth="xs"
@@ -166,8 +153,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
         confirmIcon={<LogoutIcon />}
         onConfirm={() => {
           setLogoutDialogOpen(false);
-          // logout сбрасывает сессию сразу (ProtectedRoute уведёт на /login сам) и вдогонку
-          // гасит refresh-токен на сервере; ошибку сети он логирует и не пробрасывает.
+          // logout гасит сессию сразу и не бросает; refresh-токен на сервере гасится вдогонку.
           void logout();
           navigate('/login', { replace: true });
         }}

@@ -3,16 +3,12 @@ import { isRouteErrorResponse, useRouteError } from 'react-router';
 import { StatusPage } from '../components/StatusPage';
 import { useLanguage } from '../context/LanguageContext';
 
-/**
- * `errorElement` корневых маршрутов: исключение при рендере или загрузке страницы (в том числе
- * упавший `lazy()`-чанк после деплоя) показывает эту страницу вместо белого экрана.
- */
+/** `errorElement` корневых маршрутов: сбой рендера или загрузки чанка — эта страница, а не белый экран. */
 export const RouteErrorPage: React.FC = () => {
   const error = useRouteError();
   const { tObj } = useLanguage();
 
   if (isRouteErrorResponse(error)) {
-    // Ошибка самого роутера (например, 404 без catch-all) — со статусом.
     const isNotFound = error.status === 404;
     return (
       <StatusPage
@@ -24,8 +20,8 @@ export const RouteErrorPage: React.FC = () => {
     );
   }
 
-  // Упавший `lazy()`-чанк — это старая вкладка после деплоя: адрес чанка пользователю ни к чему,
-  // а «на главную» без перезагрузки привёл бы к той же ошибке. Перезагружаем страницу целиком.
+  // Упавший `lazy()`-чанк — старая вкладка после деплоя: переход без перезагрузки упадёт снова,
+  // поэтому «на главную» перезагружает страницу, а адрес чанка не показывается.
   const chunkFailed = error instanceof Error && /dynamically imported module|Loading chunk|Importing a module script failed/i.test(error.message);
   const detail = error instanceof Error && !chunkFailed ? error.message : undefined;
   console.error('[router] unhandled error', error);

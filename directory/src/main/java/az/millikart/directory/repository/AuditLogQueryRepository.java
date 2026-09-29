@@ -5,9 +5,7 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.repository.Repository;
 
-// Только чтение: пустой маркер Repository плюс JpaSpecificationExecutor, чьи методы все читающие.
-// JpaRepository добавлять нельзя — журнал не должен уметь править себя (Р-42). Пишет журнал
-// AuditLogRepository из common; предикаты этой стороны собраны в AuditLogQueryService#filter.
+// Только чтение: JpaRepository не добавлять — журнал не должен уметь править себя (Р-42).
 @org.springframework.stereotype.Repository
 public interface AuditLogQueryRepository
         extends Repository<AuditLog, UUID>, JpaSpecificationExecutor<AuditLog> {

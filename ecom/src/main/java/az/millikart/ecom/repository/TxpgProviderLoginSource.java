@@ -9,9 +9,8 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-// Логины мультимерчантов провайдера — по его SQL от 24.09.2026, урезанному до нужного проверке (Р-94):
-// login → login2merchant → merchant. Терминал, psp и pmo у MultiMerchantSys пусты и не читаются.
-// left join и статусы без фильтра — намеренно: отказ обязан отличать «логина нет» от «выключен».
+// По SQL провайдера, урезанному до нужного проверке (Р-94). left join и статусы без фильтра —
+// намеренно: отказ обязан отличать «логина нет» от «выключен».
 @Repository
 public class TxpgProviderLoginSource implements ProviderLoginSource {
 

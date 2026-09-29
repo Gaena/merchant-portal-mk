@@ -8,16 +8,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/**
- * Сверяет статусы терминалов со слепком провайдера.
- *
- * Идёт следом за синхронизацией в `ecom` и с тем же периодом: слепок обновляется там, решение
- * о наших терминалах принимается здесь, где смена статуса уже умеет приостанавливать и
- * восстанавливать платёжные ссылки и писать в журнал.
- *
- * Выключается флагом целиком — там, где `ecom` не развёрнут, сверять не с чем, и задача только
- * зря будит базу. Впрочем, и без флага она безвредна: пустой слепок ничего не меняет.
- */
+// Слепок обновляет синхронизация ecom с тем же периодом, а решение о наших терминалах — здесь: смена
+// статуса в directory умеет приостанавливать ссылки и писать в журнал.
 @Component
 @ConditionalOnProperty(name = "directory.terminal-reconciliation.enabled",
         havingValue = "true", matchIfMissing = true)
@@ -36,8 +28,6 @@ public class TerminalStatusReconciliationScheduler {
         try (var ignored = SchedulerRun.start("terminal-reconcile")) {
             service.reconcile();
         } catch (RuntimeException e) {
-            // Необработанное исключение остановило бы расписание целиком, и следующего прохода
-            // не случилось бы никогда.
             log.error("Terminal status reconciliation failed: {}", e.getMessage(), e);
         }
     }

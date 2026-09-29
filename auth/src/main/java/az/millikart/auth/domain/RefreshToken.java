@@ -13,10 +13,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-// Один refresh-токен одной сессии входа (P1-12). В строке нет самого токена — только его SHA-256:
-// единственный экземпляр у клиента, сервер токен узнаёт, но воспроизвести не может, поэтому дамп
-// таблицы не даёт ни одной живой сессии. Токены одного входа образуют семейство (familyId), и отзыв
-// ставится на всё семейство сразу, а не на отдельный токен.
+// Refresh-токен (P1-12). В строке только SHA-256 токена: дамп таблицы не даёт ни одной живой
+// сессии. Токены одного входа — семейство (familyId), отзыв ставится на всё семейство.
 @Entity
 @Table(name = "refresh_tokens")
 @Getter
@@ -34,7 +32,6 @@ public class RefreshToken {
     @Column(name = "user_id", nullable = false, updatable = false)
     private UUID userId;
 
-    // SHA-256 токена, hex — 64 символа. Уникален: это и есть ключ поиска.
     @Column(name = "token_hash", nullable = false, unique = true, length = 64, updatable = false)
     private String tokenHash;
 
@@ -47,11 +44,10 @@ public class RefreshToken {
     @Column(name = "expires_at", nullable = false, updatable = false)
     private Instant expiresAt;
 
-    // Когда для токена выпущен наследник. От этого момента отсчитывается грейс ротации.
+    // Выпуск наследника; от него отсчитывается грейс ротации.
     @Column(name = "rotated_at")
     private Instant rotatedAt;
 
-    // Явный отзыв: logout, блокировка или удаление пользователя, обнаружен повтор.
     @Column(name = "revoked_at")
     private Instant revokedAt;
 

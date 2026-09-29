@@ -15,9 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
-// Читает provider_logins — слепок логинов мультимерчантов провайдера, который держит ecom (Р-94).
-// Тот же приём, что у ProviderTerminalStatusRepository: база одна, писатель слепка один — ecom, и
-// второго JPA-маппинга чужой таблицы здесь быть не должно.
+// Слепок provider_logins пишет только ecom, здесь его только читают (Р-94). Своего JPA-маппинга
+// чужой таблицы не заводить: он молча разойдётся с ней.
 @Repository
 public class ProviderLoginSnapshotRepository {
 
@@ -38,7 +37,6 @@ public class ProviderLoginSnapshotRepository {
     public record LoginLink(String loginStatus, String linkStatus, String merchantRid) {
     }
 
-    // Слепок снят хотя бы раз: таблица есть и не пуста. Где ecom не развёрнут, её нет вовсе.
     public boolean synchronised() {
         if (tableMissing()) {
             return false;
@@ -49,8 +47,7 @@ public class ProviderLoginSnapshotRepository {
         return rows.longValue() > 0;
     }
 
-    // Логин, который пройдёт проверку компании: сам Active и с активными связями; merchants — названия
-    // мерчантов этих связей, чтобы администратор узнал мерчанта не по логину (Р-95).
+    // Логин, который пройдёт проверку компании; merchants — названия мерчантов для формы (Р-95).
     public record EligibleLogin(String login, List<String> merchants) {
     }
 

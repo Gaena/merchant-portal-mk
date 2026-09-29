@@ -19,10 +19,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-// Сводка главной из потока строк периода (Р-91). Правило потока то же, что у EcomStatsAccumulator: строки
-// одного заказа идут подряд (поток сортируется по o.id), иначе заказ посчитается дважды. Деньги и статус
-// заказа — EcomOrderAssembler.money, как у страницы выписки и её итогов, поэтому цифры главной сходятся с
-// вкладкой E-commerce за тот же период.
+// Строки одного заказа идут подряд (поток сортируется по o.id), иначе заказ посчитается дважды. Деньги и
+// статус — EcomOrderAssembler.money: так цифры главной сходятся с вкладкой E-commerce (Р-91).
 final class EcomDashboardAccumulator implements Consumer<TxpgStatementRow> {
 
     static final int TOP_TERMINALS = 5;

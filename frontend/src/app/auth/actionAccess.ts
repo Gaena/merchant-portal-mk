@@ -1,19 +1,7 @@
 /**
- * Роли, которым бэкенд принимает **действие**, — в дополнение к `routeAccess.ts`, где лежат
- * маршруты. Кнопка видна ровно тогда, когда сервер её примет (Р-62): предлагать действие и
- * отвечать на него 403 хуже, чем не предлагать.
- *
- * ⚠ Это UX, а не безопасность: настоящая проверка — на бэкенде. Наборы повторяют константы
- * сервисов и меняются вместе с ними:
- *
- * - `TERMINAL_CREATE_ROLES` — `directory` `TerminalService.createTerminal`: заводит только
- *   администратор, выбором из справочника провайдера (Р-93);
- * - `TERMINAL_WRITE_ROLES` — `directory` `TerminalService.TERMINAL_WRITE_ROLES`
- *   (правка, блокировка терминала);
- * - `LINK_WRITE_ROLES` — `pbl` `PaymentLinkService.LINK_WRITE_ROLES`
- *   (создание и отмена ссылки, списание DMS-холда);
- * - `REFUND_ROLES` — `pbl` `PaymentLinkService.REFUND_ROLES` (возврат: на уровень выше
- *   сотрудника, потому что двигает деньги обратно).
+ * Роли действий: кнопка видна ровно тогда, когда бэкенд её примет (Р-62). Это UX, а не безопасность.
+ * Наборы — зеркало `TerminalService` (`createTerminal`, `TERMINAL_WRITE_ROLES`) и `PaymentLinkService`
+ * (`LINK_WRITE_ROLES`, `REFUND_ROLES`) и меняются вместе с ними.
  */
 import type { Role } from '../types/role';
 

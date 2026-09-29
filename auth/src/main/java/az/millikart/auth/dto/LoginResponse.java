@@ -1,9 +1,7 @@
 package az.millikart.auth.dto;
 
-// Ответ и входа, и refresh. expiresIn и refreshExpiresIn — секунды, выведенные из
-// pbl.security.jwt.expiration-ms и auth.refresh.ttl, не константы. refreshToken одноразовый: каждый
-// refresh выдаёт новый и отставляет предъявленный. passwordChangeRequired — пароль верен, но задан не
-// владельцем: токенов нет, сессию даёт только /change-password (PCI DSS 8.3.5, Р-100).
+// Ответ входа и refresh; сроки — в секундах. refreshToken одноразовый. passwordChangeRequired —
+// пароль задан не владельцем: токенов нет, сессию даёт только /change-password (Р-100).
 public record LoginResponse(
         String token,
         long expiresIn,

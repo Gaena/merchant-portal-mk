@@ -38,7 +38,6 @@ export interface TranslationDictionary {
     overview: string;
     create: string;
     update: string;
-    /** Общий отказ загрузки экрана или его части. */
     loadFailed: string;
     /** Периоды панелей: главной и статистики по ссылкам (Р-89, Р-91). */
     periods: { today: string; days7: string; days30: string; days90: string };
@@ -62,16 +61,15 @@ export interface TranslationDictionary {
     noNotifications: string;
     profile: string;
     logout: string;
-    /** Вопрос окна выхода: подтверждение — общее `ConfirmDialog`. */
     logoutQuestion: string;
     language: string;
     adminBadge: string;
   };
   home: {
     title: string;
-    /** Р-91: главная — оплаты картой по всем терминалам компании по выписке провайдера. */
+    /** Главная — оплаты картой по мерчантам логина компании из выписки провайдера (Р-91, Р-97). */
     subtitle: string;
-    /** То же для SYSTEM_ADMIN и AUDITOR: по всем терминалам портала. */
+    /** То же для SYSTEM_ADMIN и AUDITOR — по мерчантам всех компаний (Р-97). */
     subtitleAll: string;
     openStatement: string;
     period: string;
@@ -145,7 +143,6 @@ export interface TranslationDictionary {
   payByLink: {
     title: string;
     subtitle: string;
-    /** Вкладки страницы: список ссылок и статистика оплат по ним. */
     tabs: {
       links: string;
       stats: string;
@@ -181,7 +178,6 @@ export interface TranslationDictionary {
     keepLink: string;
     linkCancelledSuccess: string;
     linkCancelFailed: string;
-    /** Форма и окно создания: раньше тексты были зашиты по-английски и по-русски вперемешку. */
     noActiveTerminals: string;
     customerNotSpecified: string;
     empty: string;
@@ -210,11 +206,7 @@ export interface TranslationDictionary {
     expiry: { h1: string; h24: string; h72: string; d7: string; d30: string };
     /** Подпись в списке вместо срока — только у завершённой ссылки (P2-15, Р-47). */
     paid: string;
-    /**
-     * Подписи четырёх статусов из `utils/payByLinkData.ts`. `Record<LinkStatus, string>`
-     * держит их в связке со словарём бэкенда: новый статус — и `tsc` потребует подпись
-     * во всех трёх языках, лишний ключ он не пропустит (P2-13, зеркало `transactions.statuses`).
-     */
+    /** `Record<LinkStatus, string>`: новый статус — и `tsc` потребует подпись на трёх языках (P2-13). */
     statuses: Record<LinkStatus, string>;
     table: {
       linkId: string;
@@ -256,9 +248,8 @@ export interface TranslationDictionary {
       sentVia: string;
       terminal: string;
       /**
-       * Подпись к `refundedPaymentsCount` рядом с «использовано N из M» (P2-16, Р-50):
-       * «…, из них возвращено: 1». Показывается только когда возвраты были — возврат
-       * не отменяет использование (Р-49), поэтому это отдельная цифра, а не минус из счётчика.
+       * `refundedPaymentsCount` рядом с «использовано N из M» (Р-50), только когда возвраты были:
+       * возврат использование не отменяет (Р-49) — отдельная цифра, а не минус из счётчика.
        */
       refundedOfUsed: string;
     };
@@ -279,18 +270,10 @@ export interface TranslationDictionary {
       terminal: string;
       clearFilters: string;
     };
-    /**
-     * Подписи шести статусов из `types/transaction.ts`. `Record<TransactionStatus, string>`
-     * держит их в связке со словарём бэкенда: новый статус — и `tsc` потребует подпись
-     * во всех трёх языках, лишний ключ он не пропустит.
-     */
+    /** `Record<TransactionStatus, string>`: новый статус — и `tsc` потребует подпись на трёх языках. */
     statuses: Record<TransactionStatus, string>;
     columns: {
-      /**
-       * Идентификаторы, которые мерчант знает по своей стороне: номер заказа у провайдера
-       * и RID платежа. Идут первыми во всех таблицах операций — внутренний `id` для мерчанта
-       * ничего не значит и стоит последним, служебной колонкой.
-       */
+      /** Номер заказа у провайдера и RID платежа идут первыми, внутренний `id` — последним (Р-58). */
       providerOrderId: string;
       ridByMerchant: string;
       id: string;
@@ -301,10 +284,7 @@ export interface TranslationDictionary {
       rrn: string;
       method: string;
       terminal: string;
-      /**
-       * Подпись колонки терминала. Основной его параметр — логин: имя мерчант придумывает сам,
-       * а числовой id внутренний. Короткая форма `terminals.login`, годная для шапки таблицы.
-       */
+      /** Подпись поля терминала на карточке операции; сама подпись — `utils/terminals.ts`. */
       terminalLogin: string;
       actions: string;
     };
@@ -315,20 +295,13 @@ export interface TranslationDictionary {
       refundTitle: string;
       refundAmount: string;
       confirmRefund: string;
-      /**
-       * Списание холда (P3-5a). Общие с окном «Finalize» на карточке ссылки: там тот же
-       * `POST /transactions/{id}/complete`, поэтому текст один, а не две копии в словаре.
-       */
+      /** Списание холда (P3-5a); общие с окном «Finalize» карточки ссылки — там тот же `/complete`. */
       completeAction: string;
       completeTitle: string;
       captureExplains: string;
       captureAmount: string;
       confirmCapture: string;
-      /**
-       * Возврат (P3-5a). Кнопка, диалог и журнал аудита теперь говорят «возврат»: бэкенд
-       * зовёт `POST /transactions/{id}/refund` и пишет `REFUND`, а окно раньше спрашивало
-       * про отмену транзакции и возврат не упоминало.
-       */
+      /** Возврат (P3-5a): окно говорит «возврат», как бэкенд (`/refund`, `REFUND` в журнале). */
       refundQuestion: string;
       keepTransaction: string;
       customerInfo: string;
@@ -336,34 +309,27 @@ export interface TranslationDictionary {
       technicalInfo: string;
       approvalCode: string;
       /**
-       * Тексты неподтверждённого исхода денежной операции (502 от бэкенда). Отдельные от
-       * обычного отказа намеренно: при отказе деньги не двигались и повтор безопасен, здесь
-       * операция могла уже пройти — см. `utils/moneyOperationError.ts`.
+       * Неподтверждённый исход (502) — отдельно от отказа: после отказа повтор безопасен, здесь
+       * операция могла уже пройти (`utils/moneyOperationError.ts`).
        */
       unresolvedTitle: string;
       unresolvedHint: string;
-      /** Кнопка, спрашивающая эквайера о судьбе операции. Единственный верный следующий шаг. */
+      /** Спросить эквайера о судьбе операции — единственный верный следующий шаг. */
       checkStatusAction: string;
       statusChecked: string;
-      /**
-       * Перечитали, а операция не изменилась: исход по-прежнему не подтверждён, повтор закрыт.
-       * Снять запрет может только перечитывание, которое показало движение денег.
-       */
+      /** Перечитанная операция не изменилась: повтор закрыт, снимает запрет только движение денег. */
       statusStillUnresolved: string;
-      /** Сама проверка статуса не удалась. Это не исход денежной операции — запрет не трогает. */
+      /** Сбой самой проверки — не исход денежной операции, запрет не трогает. */
       checkStatusFailed: string;
-      /** Остаток к возврату у частично возвращённой операции: вернуть можно только его. */
+      /** Вернуть можно только остаток. */
       refundableLeft: string;
-      /**
-       * Подписи событий на шкале истории. Денежные события называют действие, а не состояние
-       * после него: «возврат» понятнее, чем «частично возвращена», когда рядом стоит сумма.
-       */
+      /** Денежные события называют действие, а не состояние: рядом с суммой «возврат» понятнее. */
       eventCreated: string;
       eventCaptured: string;
       eventRefunded: string;
-      /** Ответ не принёс ни одного события. Пустая шкала без слов читается как поломка. */
+      /** Пустая шкала без слов читается как поломка. */
       historyEmpty: string;
-      /** Заголовок блока с ProviderOrderId и MerchantRid — он открывает карточку операции. */
+      /** Блок `providerOrderId` и `ridByMerchant` — первый на карточке операции (Р-58). */
       identifiers: string;
       providerOrderId: string;
       ridByMerchant: string;
@@ -371,9 +337,8 @@ export interface TranslationDictionary {
     };
   };
   /**
-   * Вкладка E-commerce — выписка провайдера из сервиса `ecom` (`project_docs/ecom.md` §2). Свой
-   * словарь, а не `transactions`: статусов восемь (Р-75, Р-78), период обязателен и ограничен,
-   * страница курсорная, а операции заказа приходят вместе с ним.
+   * Выписка сервиса `ecom` (`project_docs/modules/ecom.md` §2). Свой словарь, а не `transactions`:
+   * статусов восемь (Р-75, Р-78), период обязателен, страница курсорная, операции — внутри заказа.
    */
   ecommerce: {
     title: string;
@@ -464,8 +429,8 @@ export interface TranslationDictionary {
     editDialogTitle: string;
     name: string;
     /**
-     * Выбор терминала провайдера при заведении (Р-67, Р-79): название и логин приходят из справочника,
-     * пароля у терминала нет (Р-93). Справочник видит и терминалы заводит только SYSTEM_ADMIN (`ecom.md` §3).
+     * Выбор терминала провайдера при заведении (Р-67, Р-79): название и логин — из справочника, пароля
+     * у терминала нет (Р-93). Видит и заводит только SYSTEM_ADMIN (`project_docs/modules/ecom.md` §3).
      */
     providerTerminal: string;
     providerTerminalHint: string;
@@ -503,7 +468,6 @@ export interface TranslationDictionary {
     searchPlaceholder: string;
     /** Пояснение к выбору компании в формах; виден только тем, кто выбирает (SYSTEM_ADMIN). */
     companyHint: string;
-    /** Итоги и отказы действий на странице — раньше были зашиты по-английски и по-русски вперемешку. */
     formIncomplete: string;
     created: string;
     createFailed: string;
@@ -639,7 +603,6 @@ export interface TranslationDictionary {
   };
   auth: {
     unknownRole: string;
-    /** Форма входа. Раньше была зашита по-английски целиком, а под ней стояла ложная надпись о 2FA. */
     subtitle: string;
     emailLabel: string;
     passwordLabel: string;
@@ -673,21 +636,14 @@ export interface TranslationDictionary {
   };
 }
 
-/**
- * Подпись статуса для интерфейса. Неизвестный статус (`parseTransactionStatus` вернул `null`)
- * показывается как есть — исходным значением из ответа, без подстановки чего-либо знакомого.
- */
+/** Статус вне словаря — исходным значением из ответа, ничего знакомого не подставлять. */
 export const statusLabel = (
   dict: TranslationDictionary,
   status: TransactionStatus | null | undefined,
   raw?: string
 ): string => (status ? dict.transactions.statuses[status] : raw || '—');
 
-/**
- * Подпись статуса платёжной ссылки. Правило то же, что у `statusLabel`: статус вне словаря
- * бэкенда (`parseLinkStatus` вернул `null`) показывается исходным значением из ответа,
- * без подстановки чего-либо знакомого.
- */
+/** Правило то же, что у `statusLabel`. */
 export const linkStatusLabel = (
   dict: TranslationDictionary,
   status: LinkStatus | null | undefined,
@@ -757,7 +713,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     home: {
       title: 'Merchant Dashboard',
       subtitle: 'Card payments across all of the company\'s terminals, from the provider\'s statement, for orders created in the period.',
-      subtitleAll: 'Card payments across all terminals of the portal, from the provider\'s statement, for orders created in the period.',
+      subtitleAll: 'Card payments of all companies of the portal, from the provider\'s statement, for orders created in the period.',
       openStatement: 'Open E-commerce statement',
       period: 'Period',
       loadFailed: 'Could not load the dashboard summary.',
@@ -1191,7 +1147,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       status: 'Status',
       searchPlaceholder: 'Search users by name, login or email...',
       deleteTitle: 'Delete user?',
-      deleteQuestion: 'The account stops working immediately: every session of this user is ended and sign-in is refused. The record stays in the database, hidden from the lists.',
+      deleteQuestion: 'The account stops working: sign-in is refused at once, and the user\'s open sessions end within 15 minutes. The record stays in the database, hidden from the lists.',
       deleteIrreversible: 'This cannot be undone from the portal: a deleted user cannot be restored or edited here.',
       roles: {
         systemAdmin: 'System Administrator',
@@ -1208,7 +1164,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editConfirmTitle: 'Save changes to user',
       editConfirmQuestion: 'The following will change. Role, company and status decide what this person can see and do — check the list before confirming.',
       editNothingChanged: 'Nothing changed — no request was sent.',
-      editSessionsHint: 'A new role or company takes effect when the user\'s session next refreshes, within 15 minutes. Blocking ends the sessions at once.',
+      editSessionsHint: 'A new role or company takes effect when the user\'s session next refreshes, within 15 minutes. Blocking refuses sign-in at once; open sessions end within 15 minutes.',
       noCompany: 'No company',
       companyRequired: 'A company role needs a company: choose one.',
       newPassword: 'New password (optional)',
@@ -1339,7 +1295,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     home: {
       title: 'Merchant Paneli',
       subtitle: 'Şirkətin bütün terminalları üzrə kartla ödənişlər — provayderin çıxarışına görə, dövrdə yaradılmış sifarişlər üzrə.',
-      subtitleAll: 'Portalın bütün terminalları üzrə kartla ödənişlər — provayderin çıxarışına görə, dövrdə yaradılmış sifarişlər üzrə.',
+      subtitleAll: 'Portalın bütün şirkətləri üzrə kartla ödənişlər — provayderin çıxarışına görə, dövrdə yaradılmış sifarişlər üzrə.',
       openStatement: 'E-commerce çıxarışını aç',
       period: 'Dövr',
       loadFailed: 'İcmalı yükləmək mümkün olmadı.',
@@ -1773,7 +1729,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       status: 'Status',
       searchPlaceholder: 'Ad, login və ya e-poçt üzrə axtarış...',
       deleteTitle: 'İstifadəçi silinsin?',
-      deleteQuestion: 'Hesab dərhal işləməyi dayandırır: istifadəçinin bütün sessiyaları bağlanır, girişə icazə verilmir. Qeyd bazada qalır, siyahılardan gizlədilir.',
+      deleteQuestion: 'Hesab işləməyi dayandırır: giriş dərhal rədd edilir, istifadəçinin açıq sessiyaları 15 dəqiqə ərzində bağlanır. Qeyd bazada qalır, siyahılardan gizlədilir.',
       deleteIrreversible: 'Bunu portaldan geri qaytarmaq mümkün deyil: silinmiş istifadəçini burada nə bərpa etmək, nə də redaktə etmək olar.',
       roles: {
         systemAdmin: 'Sistem Administratoru',
@@ -1790,7 +1746,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editConfirmTitle: 'İstifadəçidəki dəyişiklikləri saxla',
       editConfirmQuestion: 'Aşağıdakılar dəyişəcək. Rol, şirkət və status bu şəxsin nəyi görə və edə biləcəyini müəyyən edir — təsdiqləməzdən əvvəl siyahını yoxlayın.',
       editNothingChanged: 'Heç nə dəyişməyib — sorğu göndərilmədi.',
-      editSessionsHint: 'Yeni rol və ya şirkət istifadəçinin sessiyası növbəti dəfə yeniləndikdə, 15 dəqiqə ərzində qüvvəyə minir. Bloklama sessiyaları dərhal bitirir.',
+      editSessionsHint: 'Yeni rol və ya şirkət istifadəçinin sessiyası növbəti dəfə yeniləndikdə, 15 dəqiqə ərzində qüvvəyə minir. Bloklama girişi dərhal dayandırır, açıq sessiyalar 15 dəqiqə ərzində bağlanır.',
       noCompany: 'Şirkətsiz',
       companyRequired: 'Şirkət rolu üçün şirkət seçin.',
       newPassword: 'Yeni parol (istəyə bağlı)',
@@ -1921,7 +1877,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     home: {
       title: 'Панель мерчанта',
       subtitle: 'Оплаты картой по всем терминалам компании — по выписке провайдера, по заказам, созданным за период.',
-      subtitleAll: 'Оплаты картой по всем терминалам портала — по выписке провайдера, по заказам, созданным за период.',
+      subtitleAll: 'Оплаты картой всех компаний портала — по выписке провайдера, по заказам, созданным за период.',
       openStatement: 'Открыть выписку E-commerce',
       period: 'Период',
       loadFailed: 'Не удалось загрузить сводку.',
@@ -2355,7 +2311,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       status: 'Статус',
       searchPlaceholder: 'Поиск по имени, логину или email...',
       deleteTitle: 'Удалить пользователя?',
-      deleteQuestion: 'Учётная запись перестанет работать сразу: все сессии пользователя завершатся, вход будет отклонён. Запись останется в базе, скрытая из списков.',
+      deleteQuestion: 'Учётная запись перестанет работать: вход будет отклонён сразу, открытые сессии пользователя завершатся в течение 15 минут. Запись останется в базе, скрытая из списков.',
       deleteIrreversible: 'Отменить это из портала нельзя: удалённого пользователя здесь не восстановить и не отредактировать.',
       roles: {
         systemAdmin: 'Системный администратор',
@@ -2372,7 +2328,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editConfirmTitle: 'Сохранить изменения пользователя',
       editConfirmQuestion: 'Изменится следующее. Роль, компания и статус решают, что этот человек видит и может делать, — проверьте список перед подтверждением.',
       editNothingChanged: 'Ничего не изменилось — запрос не отправлен.',
-      editSessionsHint: 'Новая роль или компания вступит в силу при следующем обновлении сессии пользователя, в течение 15 минут. Блокировка завершает сессии сразу.',
+      editSessionsHint: 'Новая роль или компания вступит в силу при следующем обновлении сессии пользователя, в течение 15 минут. Блокировка сразу закрывает вход, открытые сессии завершатся в течение 15 минут.',
       noCompany: 'Без компании',
       companyRequired: 'Для роли компании выберите компанию.',
       newPassword: 'Новый пароль (необязательно)',

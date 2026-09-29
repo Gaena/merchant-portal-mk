@@ -7,8 +7,7 @@ import java.math.BigDecimal;
 public record EcomCreateOrderRequest(
         @JsonProperty("order") Order order
 ) {
-    // tdsPresetAreq — данные клиента для 3DS по запросу провайдера от 24.09.2026 (Р-96): только у
-    // одноразовой ссылки и только заполненные; нет ни одного — блока в запросе нет вовсе.
+    // tdsPresetAreq — клиент для 3DS (Р-96): только у одноразовой ссылки; пустой блок не отправляется.
     public record Order(
             @JsonProperty("typeRid") String typeRid,
             @JsonProperty("ridByMerchant") String ridByMerchant,
@@ -40,7 +39,6 @@ public record EcomCreateOrderRequest(
         }
     }
 
-    // Телефон так, как его ждёт провайдер: код страны отдельно от номера.
     public record Phone(
             @JsonProperty("subscriber") String subscriber,
             @JsonProperty("cc") String cc

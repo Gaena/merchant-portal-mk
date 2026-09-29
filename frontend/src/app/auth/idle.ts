@@ -2,20 +2,16 @@ import { useEffect } from 'react';
 import { describeError, refreshSession } from '../api/client';
 import { getLastTokenAt, isIdleExpired, KEEP_ALIVE_AFTER_MS, markActivity } from './session';
 
-/**
- * Что считается действием пользователя. Запросы к API — нет: фоновая загрузка страницы не должна
- * продлевать простой.
- */
+// Запросы к API действием не считаются: фоновая загрузка страницы не должна продлевать простой.
 const ACTIVITY_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'scroll'] as const;
-/** Отмечать чаще незачем: граница простоя — 15 минут. */
+// Чаще незачем: граница простоя — 15 минут.
 const ACTIVITY_THROTTLE_MS = 15 * 1000;
 const IDLE_CHECK_INTERVAL_MS = 30 * 1000;
 
 /**
- * Выход по простою (PCI DSS 8.2.8, Р-99). Пока пользователь работает, действие отмечается в общей для
- * вкладок отметке, а refresh-токен обновляется, если пара старше `KEEP_ALIVE_AFTER_MS`: иначе сервер
- * (20 минут без обновления) погасил бы сессию человеку, который читает страницу без запросов к API.
- * Раз в `IDLE_CHECK_INTERVAL_MS` и при возврате на вкладку (после сна ноутбука тоже) — проверка простоя.
+ * Выход по простою (PCI DSS 8.2.8, Р-99). Пока пользователь работает, пара обновляется, если старше
+ * `KEEP_ALIVE_AFTER_MS`: иначе сервер (20 минут без обновления) погасил бы сессию читающему страницу.
+ * Простой проверяется по таймеру и при возврате на вкладку, в том числе после сна ноутбука.
  */
 export const useIdleLogout = (active: boolean, onIdle: () => void): void => {
   useEffect(() => {

@@ -12,10 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
-// Пишет в payment_links — таблицу модуля pbl: осознанный кросс-модульный долг, брокера сообщений
-// нет (Р-39, AGENTS.md §10). PaymentLink не мапится как entity: второй JPA-маппинг чужой таблицы
-// молча разойдётся с ней. Каждый метод — один UPDATE в транзакции вызывающего вместе со сменой
-// статуса: заблокированного терминала с оплачиваемыми ссылками не должно быть ни мгновения.
+// Пишет в payment_links модуля pbl — осознанный долг (Р-39, AGENTS.md §10). Не entity: второй
+// JPA-маппинг чужой таблицы молча разойдётся с ней.
 @Repository
 public class PaymentLinkStatusRepository {
 
@@ -37,9 +35,8 @@ public class PaymentLinkStatusRepository {
         this.dataSource = dataSource;
     }
 
-    // Р-39: приостанавливаются только ACTIVE. EXPIRED, COMPLETED и CANCELED — факты о прошлом
-    // ссылки, их не трогать: иначе разблокировке придётся гадать, чем каждая из них была.
-    // Возвращает число приостановленных ссылок — оно уходит в запись журнала.
+    // Только ACTIVE: остальные статусы — факты о прошлом ссылки, иначе разблокировка не узнает,
+    // чем она была (Р-39).
     public int suspendActiveLinks(Integer terminalId) {
         if (linksTableMissing()) {
             return 0;
@@ -53,9 +50,7 @@ public class PaymentLinkStatusRepository {
                 .executeUpdate();
     }
 
-    // Разблокировка (Р-40), часть первая: в ACTIVE возвращаются только ссылки, чей срок ещё
-    // впереди. NULL в expires_at — «без срока» (ссылки старше P1-9), платёжный путь считает такие
-    // живыми, поэтому они возвращаются тоже. Возвращает число восстановленных ссылок.
+    // NULL в expires_at — ссылка без срока (старше P1-9): платёжный путь считает её живой (Р-40).
     public int resumeSuspendedLinks(Integer terminalId, Instant now) {
         if (linksTableMissing()) {
             return 0;
@@ -71,9 +66,8 @@ public class PaymentLinkStatusRepository {
                 .executeUpdate();
     }
 
-    // Разблокировка (Р-40), часть вторая: истёкшие за время блокировки уходят в EXPIRED, а не
-    // в ACTIVE — иначе ссылка числится оплачиваемой и отказывает каждому плательщику, пока её
-    // не догонит планировщик. Возвращает число просроченных ссылок.
+    // Не в ACTIVE: такая ссылка отказывала бы каждому плательщику, пока её не догонит
+    // планировщик (Р-40).
     public int expireSuspendedLinks(Integer terminalId, Instant now) {
         if (linksTableMissing()) {
             return 0;
@@ -89,10 +83,8 @@ public class PaymentLinkStatusRepository {
                 .executeUpdate();
     }
 
-    // Таблицы payment_links нет ровно там, где pbl ни разу не мигрировал: ссылок тогда нет вовсе,
-    // и блокировка обязана пройти, иначе админ получит 500 при первом развёртывании, где directory
-    // поднялся первым (та же проблема порядка старта, что и P1-2). Проверка на каждый вызов:
-    // кэш «отсутствует» протухнет ровно в момент выката pbl, а блокировка — редкое действие.
+    // Таблицы нет, пока pbl ни разу не мигрировал: ссылок нет, и блокировка обязана пройти, а не
+    // дать 500 (P1-2). Проверка на каждый вызов: кэш «нет таблицы» протух бы при выкате pbl.
     private boolean linksTableMissing() {
         try (Connection connection = dataSource.getConnection()) {
             if (tableExists(connection, TABLE) || tableExists(connection, TABLE.toUpperCase(Locale.ROOT))) {

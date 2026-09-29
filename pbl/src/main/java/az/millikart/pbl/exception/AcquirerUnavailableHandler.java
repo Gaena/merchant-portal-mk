@@ -13,9 +13,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-// Circuit breaker к эквайеру открыт: вызов не ушёл вовсе, денег не двигал — 503, а не 500 «сбой у нас»
-// (Р-103). Resilience4j есть только в pbl, поэтому обработчик здесь, а не в common, и стоит впереди
-// GlobalExceptionHandler: иначе его handleUnexpected перехватил бы исключение первым.
+// Открытый breaker: вызов не ушёл и денег не двигал — 503, а не 500 (Р-103). Здесь, а не в common:
+// Resilience4j есть только в pbl. Впереди GlobalExceptionHandler — иначе исключение заберёт handleUnexpected.
 @RestControllerAdvice
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class AcquirerUnavailableHandler {

@@ -33,8 +33,7 @@ public class AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
-    // Маркер мониторинга: ротированный refresh-токен предъявлен снова вне грейса. Это не ошибка
-    // клиента — прежний держатель уже сходил по нему дальше, значит копия есть у кого-то ещё.
+    // Маркер мониторинга: ротированный refresh-токен предъявлен вне грейса — копия есть у кого-то ещё.
     static final String REFRESH_TOKEN_REUSE_MARKER = "REFRESH_TOKEN_REUSE";
 
     // Один текст на любой отказ: клиент не должен узнать, ПОЧЕМУ токен отвергнут.
@@ -42,22 +41,17 @@ public class AuthService {
 
     private static final String STATUS_ACTIVE = "ACTIVE";
 
-    // Один ответ и на «нет такого пользователя», и на «неверный пароль». Разные тексты или разные
-    // коды — оракул перечисления аккаунтов: почта мерчанта не секрет, а вот у кого здесь есть
-    // учётная запись — секрет.
+    // Один ответ на «нет пользователя» и «неверный пароль»: иначе эндпоинт перечисляет аккаунты.
     private static final String INVALID_CREDENTIALS = "Invalid username or password";
 
-    // Говорится только тому, кто уже доказал пароль, — потому можно конкретно.
+    // Говорится только тому, кто доказал пароль, — поэтому конкретно.
     private static final String ACCOUNT_LOCKED_PREFIX = "Account is locked due to multiple failed login attempts. ";
 
-    // Намеренно не называет статус: «заблокирован» и «удалён» — разные сведения о человеке, и нужны
-    // они администратору, а не вызывающему.
+    // Статус не называется намеренно: «заблокирован» или «удалён» — сведения для администратора.
     private static final String ACCOUNT_NOT_ACTIVE = "Account is not active. Please contact your administrator.";
 
-    // Настоящий BCrypt-хэш случайной строки, которой никто не знает, — на случай несуществующего
-    // логина. Его работа — сжечь те же ~80 мс, что matches тратит на настоящем аккаунте: без него
-    // неизвестный логин отвечает на порядок быстрее известного, и одинаковый текст ошибки не значит
-    // ничего — всё расскажут часы. Ничему не соответствует; не «чинить», сделав выводимым.
+    // BCrypt-хэш строки, которой никто не знает: на несуществующем логине matches тратит те же ~80 мс,
+    // иначе неизвестный логин выдают часы. Ничему не соответствует — не делать выводимым.
     private static final String ABSENT_USER_PASSWORD_HASH =
             "$2a$10$RvlUdzsjEzQg7hkn6vKLe.CjBwtkZ2GCIsbWtBM96m2q/jjEDRjlG";
 
@@ -103,8 +97,8 @@ public class AuthService {
         return startSession(user, now);
     }
 
-    // Смена пароля владельцем без сессии: тот же вход по текущему паролю — с лимитом, локаутом и
-    // проверкой статуса, — затем новый пароль и сессия. Ею кончается обязательная смена (Р-100).
+    // Смена пароля без сессии: вход по текущему паролю (лимит, локаут, статус), затем новый пароль и
+    // сессия (Р-100).
     @Transactional(noRollbackFor = BusinessException.class)
     public LoginResponse changePassword(ChangePasswordRequest request, String clientIp) {
         Instant now = Instant.now();
@@ -115,7 +109,6 @@ public class AuthService {
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         user.setPasswordChangeRequired(false);
         userRepository.save(user);
-        // Прочие сессии этого пользователя жили со старым паролем — им конец.
         int revoked = refreshTokenService.revokeAllForUser(user.getId(), now);
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(), AuditAction.PASSWORD_CHANGE,
                 user.getUsername(), user.getCompanyId(), "Password changed by its owner at sign-in"));
@@ -123,12 +116,10 @@ public class AuthService {
         return startSession(user, now);
     }
 
-    // Порядок проверок и есть свойство безопасности: лимит по адресу до базы и до BCrypt, затем
-    // поиск пользователя (неизвестный — сравнение с хэшем-заглушкой), затем пароль. Неизвестный
-    // логин и неверный пароль отвечают ОДИНАКОВО — это и мешает эндпоинту перечислить мерчантов.
-    // Остаточная утечка (верный пароль к заблокированному аккаунту отличим) принята — AGENTS.md §10.
+    // Порядок проверок — свойство безопасности: лимит адреса до базы и BCrypt, затем пользователь
+    // (неизвестный — сравнение с хэшем-заглушкой), затем пароль. Неизвестный логин и неверный пароль
+    // отвечают одинаково; остаточная утечка принята (AGENTS.md §10).
     private User authenticate(String username, String password, String clientIp, Instant now) {
-        // Ничего из этого не трогает базу и хэшер — в том и смысл.
         rateLimiter.checkAllowed(clientIp);
 
         String cleanEmail = username != null ? username.trim().toLowerCase() : "";
@@ -138,8 +129,8 @@ public class AuthService {
         if (user == null) {
             passwordEncoder.matches(password, ABSENT_USER_PASSWORD_HASH);
             recordAddressFailure(clientIp, cleanEmail);
-            // Категория отказа, но никогда не введённый пароль. cleanEmail — недоверенный ввод: его
-            // режет по ширине колонки AuditLogService, и он нигде не интерпретируется.
+            // В журнал — категория отказа, не пароль; cleanEmail — недоверенный ввод, его обрезает
+            // AuditLogService.
             auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, null,
                     "Login refused: no such account");
             log.warn("Login failed: username {} not found", cleanEmail);
@@ -148,7 +139,7 @@ public class AuthService {
 
         boolean lockedOut = user.getLockoutUntil() != null && user.getLockoutUntil().isAfter(now);
         if (!lockedOut && user.getLockoutUntil() != null) {
-            // Локаут истёк: забываем его сейчас, чтобы попытка ниже считалась с нуля.
+            // Локаут истёк: попытка ниже считается с нуля.
             log.info("Account lockout expired for username {}. Resetting lockout state.", cleanEmail);
             user.setLockoutUntil(null);
             user.setFailedLoginAttempts(0);
@@ -161,7 +152,7 @@ public class AuthService {
             throw new BusinessException(INVALID_CREDENTIALS);
         }
 
-        // Пароль верен, поэтому следующие два ответа идут владельцу аккаунта и могут быть точными.
+        // Пароль верен: ответы ниже идут владельцу аккаунта и могут быть точными.
         if (lockedOut) {
             log.warn("Login blocked: account {} is locked until {}", cleanEmail, user.getLockoutUntil());
             auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
@@ -175,7 +166,6 @@ public class AuthService {
             throw new BusinessException(ACCOUNT_NOT_ACTIVE);
         }
 
-        // Успех обнуляет счётчик аккаунта и счётчик адреса.
         if ((user.getFailedLoginAttempts() != null && user.getFailedLoginAttempts() > 0) || user.getLockoutUntil() != null) {
             user.setFailedLoginAttempts(0);
             user.setLockoutUntil(null);
@@ -189,11 +179,10 @@ public class AuthService {
         // Вход — активность учётки: отсчёт 90 дней до автоблокировки начинается заново (Р-101).
         user.setLastActivityAt(now);
         userRepository.save(user);
-        // Вход начинает новое семейство ротации; все последующие refresh остаются внутри него.
+        // Вход начинает новое семейство ротации.
         LoginResponse response = issuePair(user, UUID.randomUUID(), now);
-        // PCI-DSS 10.2 требует успехи не меньше отказов — вторжение выглядит как успешный вход не
-        // оттуда. entityId — логин, как у всех AUTH-записей (P3-2): успех и отказы одного аккаунта
-        // обязаны отвечать одному фильтру, а отказ UUID не знает.
+        // Успех пишется наравне с отказами (PCI DSS 10.2). entityId — логин, как у всех AUTH-записей:
+        // успех и отказы одного аккаунта находит один фильтр (P3-2).
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.AUTH, user.getUsername(), AuditAction.LOGIN,
                 user.getUsername(), user.getCompanyId(), "Login successful, role " + user.getRole()));
         log.info("Login successful for user ID: {}, role: {}, companyId: {}",
@@ -201,9 +190,8 @@ public class AuthService {
         return response;
     }
 
-    // Неверный пароль считается против адреса всегда, против аккаунта — только пока тот не в
-    // локауте: иначе Р-28 перестанет быть верным буквально (тридцать минут от шестой неудачи, а не
-    // от последней попытки кого угодно), и чужой аккаунт держит заблокированным любой стучащий.
+    // Неудача считается против адреса всегда, против аккаунта — только вне локаута: иначе любой
+    // стучащий держит чужой аккаунт заблокированным, а 30 минут идут не от шестой неудачи (Р-28).
     private void registerFailedAttempt(User user, String cleanEmail, String clientIp, boolean lockedOut, Instant now) {
         recordAddressFailure(clientIp, cleanEmail);
 
@@ -229,9 +217,8 @@ public class AuthService {
         userRepository.save(user);
     }
 
-    // Запись в журнал — один раз за окно, а не на каждую отбитую попытку: остальные отбивает
-    // checkAllowed до всего этого, и строка на каждую сделала бы журнал тем самым усилителем,
-    // ради предотвращения которого лимитер и стоит. entityId — логин, адрес уже в client_ip.
+    // Журнал — один раз за окно, а не на каждую отбитую попытку: иначе защита стала бы усилителем
+    // нагрузки. entityId — логин, адрес уже в client_ip.
     private void recordAddressFailure(String clientIp, String cleanEmail) {
         if (rateLimiter.recordFailure(clientIp)) {
             auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.RATE_LIMIT, cleanEmail, null,
@@ -239,15 +226,14 @@ public class AuthService {
         }
     }
 
-    // Округление вверх, чтобы никогда не читалось как «попробуйте прямо сейчас».
+    // Округление вверх: никогда не «попробуйте прямо сейчас».
     private static String tryAgainIn(Instant lockoutUntil, Instant now) {
         long minutes = Math.max(1, (Duration.between(now, lockoutUntil).getSeconds() + 59) / 60);
         return "Please try again in " + minutes + (minutes == 1 ? " minute." : " minutes.");
     }
 
-    // Ротация refresh-токена. Любой отказ — один и тот же 401 с одним текстом. Порядок проверок
-    // важен: обнаружение повтора и проверка статуса пользователя отзывают семейство побочным
-    // эффектом, и этот отзыв обязан пережить следующий за ним 401 — отсюда noRollbackFor.
+    // Любой отказ — один 401 с одним текстом. Повтор токена и неактивный пользователь отзывают
+    // семейство, и отзыв обязан пережить 401 — отсюда noRollbackFor.
     @Transactional(noRollbackFor = UnauthorizedException.class)
     public LoginResponse refresh(RefreshRequest request) {
         Instant now = Instant.now();
@@ -263,10 +249,8 @@ public class AuthService {
             throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
         }
 
-        // Отзыв ставится только на всё семейство, поэтому отозванный токен = мёртвое семейство.
-        // Проверка стоит ДО грейса намеренно: ротированный предшественник, воспроизведённый внутри
-        // грейса после выхода, не должен воскрешать сессию. Тревогу мёртвое семейство всё ещё
-        // должно поднять — иначе мониторинг ослепнет оттого, что пользователь успел выйти.
+        // Отозванный токен = мёртвое семейство. Проверка до грейса: предшественник, предъявленный в
+        // грейсе после выхода, не воскрешает сессию. Повтор вне грейса и здесь поднимает тревогу.
         if (stored.isRevoked()) {
             if (stored.isRotated() && isBeyondGrace(stored, now)) {
                 log.error("{}: rotated refresh token of user {} reused {} after rotation, family {} already revoked at {}",
@@ -279,16 +263,14 @@ public class AuthService {
             throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
         }
 
-        // Уже ротирован: внутри грейса это гонка двух вкладок с одним токеном, и второй обслуживают
-        // как первый. Вне грейса — повторное использование отставленного токена: его держатель
-        // получил токен не от нас в этой сессии, и семейство гасится целиком.
+        // Ротированный токен в грейсе — гонка двух вкладок, второй обслуживается как первый; вне
+        // грейса — повтор украденного токена, семейство гасится целиком.
         if (stored.isRotated()) {
             Duration sinceRotation = Duration.between(stored.getRotatedAt(), now);
             if (isBeyondGrace(stored, now)) {
                 int revoked = refreshTokenService.revokeFamily(stored.getFamilyId(), now);
-                // Пишется синхронно: это единственное событие аутентификации со смыслом «кража», и
-                // оно не должно зависеть от транзакции, которая кончается 401. Ни части токена в
-                // записи нет — id семейства наш, токен не наш. Под логином, как все AUTH-записи.
+                // Синхронно: запись о краже не должна зависеть от транзакции, которая кончится 401.
+                // Токена в записи нет — только id семейства.
                 String login = loginOf(stored.getUserId());
                 auditLogService.logDenied(AuditEntity.AUTH, login, AuditAction.TOKEN_REUSE,
                         login, null,
@@ -304,9 +286,8 @@ public class AuthService {
                     sinceRotation, stored.getUserId());
         }
 
-        // Закрывает дыру «заблокированный работает ещё сутки»: refresh не-ACTIVE пользователя
-        // отказывается и уносит семейство. UserService гасит токены и сам при блокировке — это
-        // подстраховка на случай, если тот путь обойдут.
+        // Подстраховка: блокировка в UserService гасит токены сама, но refresh не-ACTIVE пользователя
+        // тоже уносит семейство.
         User user = userRepository.findById(stored.getUserId()).orElse(null);
         if (user == null || !STATUS_ACTIVE.equals(user.getStatus())) {
             refreshTokenService.revokeFamily(stored.getFamilyId(), now);
@@ -314,8 +295,8 @@ public class AuthService {
                     stored.getUserId(), user == null ? "missing" : user.getStatus(), stored.getFamilyId());
             throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
         }
-        // Пароль сбросил администратор: сессия, начатая со старым, не продлевается (Р-100). Сброс гасит
-        // токены и сам — это подстраховка.
+        // Пароль сбросил администратор: сессия со старым не продлевается (Р-100). Подстраховка — сброс
+        // гасит токены сам.
         if (user.isPasswordChangeRequired()) {
             refreshTokenService.revokeFamily(stored.getFamilyId(), now);
             log.warn("Refresh refused: user {} must change the password; family {} revoked",
@@ -323,10 +304,8 @@ public class AuthService {
             throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
         }
 
-        // Отставка — условный UPDATE (markRotatedIfLive), а не save прочитанной сущности: он берёт
-        // блокировку строки и не меняет ничего, если семейство успели отозвать, — иначе мы записали
-        // бы поверх свой устаревший revoked_at = NULL и выдали наследника мёртвого семейства.
-        // rotated_at хранит время ПЕРВОЙ ротации: повтор внутри грейса не двигает окно вперёд.
+        // Условный UPDATE, а не save прочитанной сущности: save затёр бы параллельный отзыв и выдал
+        // наследника мёртвого семейства. rotated_at — время первой ротации: повтор в грейсе окно не двигает.
         if (!refreshTokenService.markRotated(stored.getId(), now)) {
             log.warn("Refresh refused: token of user {} was revoked while the refresh was in flight (family {})",
                     stored.getUserId(), stored.getFamilyId());
@@ -342,9 +321,8 @@ public class AuthService {
         return response;
     }
 
-    // Гасит всё семейство, а не предъявленный токен. Всегда 204 — неизвестный токен отвечает как
-    // живой, иначе эндпоинт станет оракулом существования токенов. Access-токен живёт до своего
-    // срока: его проверяют по подписи, чёрного списка нет намеренно (P1-13).
+    // Гасит всё семейство. Неизвестный токен отвечает как живой, иначе эндпоинт — оракул
+    // существования токенов. Access-токен живёт до срока: чёрного списка нет намеренно (P1-13).
     @Transactional
     public void logout(LogoutRequest request) {
         Instant now = Instant.now();
@@ -352,10 +330,8 @@ public class AuthService {
                 stored -> {
                     int revoked = refreshTokenService.revokeFamily(stored.getFamilyId(), now);
                     log.info("Logout: user {} family {} — {} token(s) revoked", stored.getUserId(), stored.getFamilyId(), revoked);
-                    // Пишем, только если этот вызов действительно закончил сессию (revoked > 0):
-                    // 204 на что угодно — маскировка, а маскировка не имеет права оставлять следы,
-                    // иначе журнал наполнит LOGOUT-мусором любой прохожий. Событием, а не
-                    // синхронно: запись должна появиться, только если отзыв закоммитился (P3-2).
+                    // Только если вызов закончил сессию: иначе журнал наполнит LOGOUT-мусором любой
+                    // прохожий. Событием — запись появится, только если отзыв закоммитился (P3-2).
                     if (revoked > 0) {
                         User user = userRepository.findById(stored.getUserId()).orElse(null);
                         String login = user != null ? user.getUsername() : stored.getUserId().toString();
@@ -367,7 +343,7 @@ public class AuthService {
                 () -> log.info("Logout with unknown or absent refresh token — nothing to revoke"));
     }
 
-    // Логин по id пользователя: у AUTH-записей в entityId всегда логин (P3-2).
+    // У AUTH-записей entityId — логин (P3-2).
     private String loginOf(UUID userId) {
         return userRepository.findById(userId).map(User::getUsername).orElse(userId.toString());
     }

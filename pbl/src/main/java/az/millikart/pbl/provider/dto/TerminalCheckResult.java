@@ -1,9 +1,8 @@
 package az.millikart.pbl.provider.dto;
 
-// Исход кнопки «Тест» (Р-93, Р-103), у каждого свой следующий шаг администратора: OK — провайдер завёл
-// пробный заказ; INVALID_CREDENTIALS — InvalidLogin, неверные креды компании; REJECTED — провайдер ответил,
-// но заказ не создал, текст от него; UNREACHABLE — нет ответа или 5xx с пустым телом: о терминале это не
-// говорит ничего, и выдать такой исход за «пароль неверный» нельзя.
+// Исход кнопки «Тест» (Р-103): OK — заказ заведён; INVALID_CREDENTIALS — InvalidLogin, неверные креды
+// компании; REJECTED — ответ без заказа; UNREACHABLE — нет ответа или 5xx с пустым телом: о терминале
+// это не говорит ничего, за «неверный пароль» его не выдавать.
 public record TerminalCheckResult(Outcome outcome, String providerErrorCode, String providerMessage) {
 
     public enum Outcome {

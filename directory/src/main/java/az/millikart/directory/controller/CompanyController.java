@@ -42,12 +42,9 @@ public class CompanyController {
         return companyService.createCompany(request, principal);
     }
 
-    // Потолок, общий для всех постраничных списков проекта — см. AuditLogController.
     private static final int MAX_PAGE_SIZE = 200;
 
-    // Значения зажимаются, а не передаются как есть: PageRequest.of бросает на page < 0 и size < 1,
-    // и это уходит клиенту как 500 со стектрейсом в логе. search (P3-1) приводится так же: пусто —
-    // «нет поиска», слишком длинное обрезается.
+    // Приводятся, а не отвергаются: PageRequest.of бросает на page < 0 и size < 1, и клиент получил бы 500.
     @GetMapping
     public PagedResponse<CompanyResponse> list(
             @RequestParam(defaultValue = "0") int page,
@@ -60,8 +57,7 @@ public class CompanyController {
         return companyService.listCompanies(pageable, principal, SearchTerms.normalize(search));
     }
 
-    // Свободные логины мультимерчантов для формы компании (Р-95). Литеральный путь Spring сопоставляет
-    // раньше, чем /{id}, поэтому код компании provider-logins сюда не попадёт.
+    // Литеральный путь сильнее /{id}: компанию с кодом provider-logins через GET /{id} не прочесть (Р-95).
     @GetMapping("/provider-logins")
     public List<ProviderLoginOption> providerLogins(@AuthenticationPrincipal UserPrincipal principal) {
         return companyService.listFreeProviderLogins(principal);

@@ -3,8 +3,6 @@ package az.millikart.ecom.service;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataAccessResourceFailureException;
 
-// Причина несостоявшегося опроса справочника — для лога и для ответа администратору на кнопку. Раньше
-// любая ошибка называлась «gateway unavailable», и отсутствующая таблица шлюза выглядела обрывом связи.
 final class ProviderSyncFailure {
 
     private ProviderSyncFailure() {

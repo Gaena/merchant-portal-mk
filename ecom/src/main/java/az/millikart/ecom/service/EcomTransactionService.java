@@ -31,9 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-// Выписка по эквайринговым платежам мерчанта. Скоуп собирается здесь и только здесь: репозиторий
-// получает готовый список мерчантов (Р-97) и подставляет его в каждый запрос. Пустой список —
-// пустая выписка без похода в шлюз, а не чужие платежи (AGENTS.md §10).
+// Пустой скоуп — пустая выписка без похода в шлюз, а не чужие платежи (Р-97, AGENTS.md §10).
 @Service
 public class EcomTransactionService {
 
@@ -89,7 +87,6 @@ public class EcomTransactionService {
     }
 
     private CursorPage<EcomTransactionResponse> plainPage(EcomTransactionFilter filter, Long before, int pageSize) {
-        // Лишний номер запрошен ради одного вопроса: есть ли что-то дальше.
         List<Long> orderIds = repository.findOrderIds(filter, before, pageSize + 1);
         boolean hasMore = orderIds.size() > pageSize;
         List<Long> pageIds = hasMore ? orderIds.subList(0, pageSize) : orderIds;
@@ -102,12 +99,9 @@ public class EcomTransactionService {
         return new CursorPage<>(orders, nextCursor);
     }
 
-    // Р-87. Статус считается в Java по операциям заказа (Р-75…Р-78), в базе шлюза его нет, а второго
-    // набора этих правил в SQL быть не должно. Поэтому номера заказов читаются пачками по
-    // max-page-size, заказы собираются и отбираются по статусу, пока не наберётся страница. Просмотр
-    // ограничен status-scan-limit: дальше страница уходит короче размера — возможно, пустой — но с
-    // курсором, и «показать ещё» продолжает с последнего просмотренного заказа, а не с последнего
-    // отданного. Курсор null — просмотрен весь период.
+    // Статус считается в Java по операциям заказа, второго набора правил в SQL не заводить (Р-87).
+    // Просмотр ограничен status-scan-limit: страница бывает короче размера или пустой, но с курсором
+    // последнего просмотренного заказа. Курсор null — просмотрен весь период.
     private CursorPage<EcomTransactionResponse> pageOfStatus(EcomTransactionFilter filter, Long before,
                                                              int pageSize, EcomStatus wanted) {
         int limit = Math.max(properties.getStatusScanLimit(), pageSize);
@@ -150,7 +144,7 @@ public class EcomTransactionService {
         }
     }
 
-    // Итоги — по периоду, терминалам и типу оплаты. Статуса здесь нет: итоги и так разложены по статусам.
+    // Фильтра статуса нет: итоги и так разложены по статусам.
     public EcomStatsResponse stats(Instant dateFrom, Instant dateTo, List<String> merchantRids,
                                    String paymentType, UserPrincipal principal) {
         EcomPaymentType type = parsePaymentType(paymentType);
@@ -170,9 +164,8 @@ public class EcomTransactionService {
         return result;
     }
 
-    // Р-91: сводка главной — по всем мерчантам скоупа (у SYSTEM_ADMIN и AUDITOR — всех наших компаний), по тем же
-    // заказам периода и тем же правилам денег, что итоги выписки. Один проход по строкам периода: главная
-    // открывается чаще выписки, и второго запроса к боевой базе шлюза на неё быть не должно.
+    // Те же заказы и правила денег, что в итогах выписки, одним проходом: главная открывается чаще
+    // выписки, и второго запроса к боевой базе шлюза на неё быть не должно (Р-91).
     public EcomDashboardResponse dashboard(Instant dateFrom, Instant dateTo, UserPrincipal principal) {
         EcomScope scoped = scope.scopeFor(principal);
         requireWindow(dateFrom, dateTo);
@@ -214,9 +207,8 @@ public class EcomTransactionService {
                 topTerminals);
     }
 
-    // Источник фильтра — мерчанты скоупа из нашей базы, без похода в шлюз: у провайдера терминал и мерчант
-    // одно. Подпись — из слепка терминалов; мерчант без терминала в нём остаётся в списке с названием из
-    // слепка логинов: иначе по нему нельзя было бы отфильтровать собственные платежи.
+    // Без похода в шлюз. Мерчант без строки в слепке терминалов остаётся с названием из слепка логинов:
+    // иначе свои платежи по нему не отфильтровать.
     public List<EcomTerminalResponse> terminals(UserPrincipal principal) {
         List<String> rids = scope.scopeFor(principal).merchantRids();
         if (rids.isEmpty()) {
@@ -263,9 +255,7 @@ public class EcomTransactionService {
         return (System.nanoTime() - startedNanos) / 1_000_000;
     }
 
-    // Фильтр сужает скоуп и никогда его не расширяет: мерчант вне скоупа из запроса просто выпадает.
-    // Без фильтра — весь скоуп. Пустой итог — пустая выписка без похода в шлюз: скоупа нет или в
-    // фильтре ни одного своего мерчанта.
+    // Фильтр только сужает скоуп: мерчант вне скоупа из запроса выпадает (Р-97).
     private static List<String> narrow(List<String> scopeRids, List<String> requested) {
         if (requested == null || requested.isEmpty()) {
             return scopeRids;

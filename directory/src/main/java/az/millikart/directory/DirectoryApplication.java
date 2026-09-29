@@ -6,13 +6,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
-// scanBasePackages = "az.millikart" находит компоненты common, но не переносит пакеты сканирования
-// JPA-сущностей и репозиториев: те по умолчанию берутся от пакета этого класса. Журнал живёт
-// в az.millikart.common.audit (P2-14), потому оба скана заданы явно — и оба обязаны называть
-// собственный пакет сервиса тоже: явный список заменяет умолчание, иначе свои сущности пропадут.
+// scanBasePackages не расширяет сканы JPA, поэтому они заданы явно (P2-14, AGENTS.md §10). Свой
+// пакет в них обязателен: явный список заменяет умолчание.
 @SpringBootApplication(scanBasePackages = "az.millikart")
-// Расписание нужно ровно одной задаче — сверке статусов терминалов с провайдером
-// (TerminalStatusReconciliationScheduler).
 @EnableScheduling
 @EntityScan(basePackages = {"az.millikart.directory", "az.millikart.common.audit"})
 @EnableJpaRepositories(basePackages = {"az.millikart.directory", "az.millikart.common.audit"})

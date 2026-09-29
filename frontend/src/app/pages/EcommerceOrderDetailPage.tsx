@@ -54,10 +54,8 @@ const Field: React.FC<{ label: string; mono?: boolean; children: React.ReactNode
 );
 
 /**
- * Карточка заказа из выписки провайдера: заказ по номеру у провайдера и вся его история операций
- * (`GET /api/v1/ecom/transactions/{orderId}`, `project_docs/ecom.md` §2.7). Своя карточка, а не
- * `/transactions/:id`: там операция портала по нашему UUID, с возвратом и списанием холда; здесь чужой
- * заказ только на чтение, и кнопок, двигающих деньги, у него нет и быть не может.
+ * Заказ из выписки провайдера со всей историей операций (`project_docs/modules/ecom.md` §2.7).
+ * Своя карточка, а не `/transactions/:id`: чужой заказ только читается, кнопок, двигающих деньги, нет.
  */
 export const EcommerceOrderDetailPage: React.FC = () => {
   const { orderId = '' } = useParams();
@@ -80,7 +78,7 @@ export const EcommerceOrderDetailPage: React.FC = () => {
       .catch(err => {
         if (axios.isCancel(err)) return;
         setOrder(null);
-        // 404 — заказа нет, он чужой или не завершён: для экрана это одно и то же (ecom.md §2.7).
+        // 404 — заказа нет, он чужой или не завершён: для экрана это одно и то же.
         setState(axios.isAxiosError(err) && err.response?.status === 404 ? 'notFound' : 'failed');
       });
     fetchEcomTerminals(controller.signal).then(setTerminals).catch(() => setTerminals([]));

@@ -36,10 +36,9 @@ public class OpenLinkService {
 
     private static final Logger log = LoggerFactory.getLogger(OpenLinkService.class);
 
-    // Слот использования ссылки занимают все состоявшиеся платежи (возврат слот НЕ освобождает,
-    // Р-49) плюс AUTHORIZED по своему отдельному основанию (P1-6): холд станет платежом, как только
-    // мерчант его спишет. Выводится из PAID_STATUSES, а не перечисляется заново, — иначе наборы
-    // разъедутся, и одноразовую ссылку с живым холдом снова можно будет открыть.
+    // Слот занимают PAID_STATUSES (возврат слот НЕ освобождает, Р-49) и AUTHORIZED — будущий платёж
+    // (P1-6). Выводится из PAID_STATUSES, а не перечисляется заново: разъедутся наборы — одноразовую
+    // ссылку с живым холдом откроют повторно.
     private static final Set<TransactionStatus> SLOT_OCCUPYING_STATUSES;
 
     static {
@@ -48,12 +47,11 @@ public class OpenLinkService {
         SLOT_OCCUPYING_STATUSES = Collections.unmodifiableSet(statuses);
     }
 
-    // Прошлая попытка, которую переоткрытие сверяет с эквайером. Гасить её вслепую нельзя: заказ у
-    // эквайера живёт ещё ~10 минут (Р-71), а FAILED никто не опрашивает — оплата бы потерялась.
+    // Прошлую попытку сверять с эквайером, не гасить вслепую: заказ у него живёт ещё ~10 минут (Р-71),
+    // а FAILED никто не опрашивает — оплата потеряется.
     private static final List<TransactionStatus> UNSETTLED_ATTEMPT_STATUSES = List.of(TransactionStatus.PENDING);
 
-    // Отдельный отказ для ссылки, занятой холдом: «использована» и «ждёт списания» — разные
-    // ситуации для мерчанта, и один текст на оба их скрывал.
+    // У ссылки, занятой холдом, свой текст отказа: «использована» и «ждёт списания» — разные ситуации.
     private static final String HOLD_BLOCKED_MESSAGE = "Payment link has an authorized payment awaiting capture";
 
     private final AcquiringClient acquiringClient;
@@ -80,26 +78,22 @@ public class OpenLinkService {
         this.baseUrl = baseUrl;
     }
 
-    // Одна транзакция, и она начинается с блокировки строки ссылки (P1-5). Раньше проверка и вставка
-    // жили в разных транзакциях с HTTP-вызовом между ними: два одновременных открытия одноразовой
-    // ссылки оба проходили проверку «ещё не оплачена», и ссылку можно было оплатить дважды. Размены
-    // (блокировка держится на время похода к эквайеру; заказ у эквайера при сбое коммита) — §10.
+    // Одна транзакция от блокировки строки ссылки до записи попытки (P1-5): иначе два одновременных
+    // открытия одноразовой ссылки оба пройдут проверку, и её оплатят дважды. Цена — блокировка на время
+    // похода к эквайеру (AGENTS §10) и заказ у эквайера без нашей строки при сбое коммита.
     @Transactional
     public String openAndBuildRedirect(UUID id, String clientIp, String userAgent) {
-        // Прочитано до запроса блокировки: всё, что создано позже этого момента, появилось, пока
-        // запрос стоял в очереди за другим открытием той же ссылки (проверка дубля ниже).
+        // До блокировки: попытка, созданная позже, — от одновременного открытия той же ссылки (ниже).
         Instant openedAt = Instant.now();
 
         PaymentLink link = lockLinkOrThrow(id);
 
-        // Терминал читается здесь — под блокировкой ссылки и до любой записи, а не там, где нужны
-        // его учётные данные (P2-8). Прочитаешь до блокировки — блокировка терминала, случившаяся в
-        // этот момент, останется невидимой, и платёж начнётся на снятом с обслуживания терминале.
-        // Статус SUSPENDED самой ссылки проверяется тут же: блокировка ставит оба.
+        // Терминал — только после блокировки ссылки (P2-8): прочитанный раньше не увидит блокировку
+        // терминала, закоммиченную в этот момент, и платёж начнётся на заблокированном. SUSPENDED
+        // ссылки — здесь же: блокировка терминала ставит оба.
         Terminal terminal = loadTerminalOrThrow(link.getTerminalId(), id);
         if (terminal.isBlocked() || link.getStatus() == PaymentLinkStatus.SUSPENDED) {
-            // Тот же отказ, что для любой недоступной ссылки, без упоминания терминала: какой
-            // терминал мерчант снял с обслуживания — не дело плательщика.
+            // Отказ как у любой недоступной ссылки: про терминал плательщику знать незачем.
             log.warn("Refusing to open link {}: terminal {} is {}, link is {}",
                     id, terminal.getId(), terminal.getStatus(), link.getStatus());
             throw new InvalidStateException("Payment link is not available for payment");
@@ -113,9 +107,8 @@ public class OpenLinkService {
 
         if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(Instant.now())) {
             log.info("Payment link {} has expired, changing status to EXPIRED", id);
-            // Эта запись и COMPLETED ниже откатываются следующим за ними отказом — транзакция одна.
-            // Долговременные переходы ACTIVE → EXPIRED / COMPLETED делают PaymentLinkScheduler и
-            // платёжный путь, а не эта ветка.
+            // Эта запись и COMPLETED ниже откатываются следующим отказом. Надолго EXPIRED и COMPLETED
+            // ставят PaymentLinkScheduler и платёжный путь.
             link.setStatus(PaymentLinkStatus.EXPIRED);
             paymentLinkRepository.save(link);
             throw new InvalidStateException("Payment link has expired");
@@ -125,16 +118,14 @@ public class OpenLinkService {
             throw new InvalidStateException("Payment link has expired");
         }
 
-        // Прошлая PENDING-попытка сверяется с эквайером до подсчёта слотов: оплаченная по старой
-        // странице обязана занять слот, а не погаснуть. Неоплаченная остаётся PENDING — её закроет
-        // сверка, когда заказ у эквайера истечёт.
+        // Прошлая PENDING — к эквайеру до подсчёта слотов: оплаченная по старой странице занимает слот.
+        // Неоплаченная остаётся PENDING до сверки.
         Optional<Transaction> previousAttempt = transactionRepository
                 .findFirstByLinkIdAndStatusInOrderByCreatedAtDesc(id, UNSETTLED_ATTEMPT_STATUSES);
         if (previousAttempt.isPresent()) {
             Transaction attempt = previousAttempt.get();
-            // Создана после начала этого запроса, то есть пока он ждал блокировку: это второй клик
-            // по той же ссылке, а не брошенная сессия. Ещё один заказ оставил бы плательщику два
-            // живых заказа на одной ссылке.
+            // Создана после начала запроса — второй одновременный клик, а не брошенная сессия: ещё один
+            // заказ дал бы плательщику два живых заказа на одной ссылке.
             if (attempt.getCreatedAt() != null && attempt.getCreatedAt().isAfter(openedAt)) {
                 log.warn("Refusing a duplicate open of link {}: attempt {} was registered while this request waited for the link lock",
                         id, attempt.getId());
@@ -199,8 +190,7 @@ public class OpenLinkService {
                 .status(TransactionStatus.PENDING)
                 .clientIp(clientIp)
                 .userAgent(userAgent)
-                // P0-9: пароля заказа здесь нет. Он живёт в своей колонке (providerPassword выше),
-                // откуда его и читают последующие вызовы; JSON-колонка — след для разбора споров.
+                // Пароля заказа здесь нет и не класть: он только в provider_password (P0-9).
                 .providerResponse(Map.of(
                         "hppUrl", response.order().hppUrl(),
                         "id", response.order().id(),
@@ -212,8 +202,8 @@ public class OpenLinkService {
         log.info("Link {} opened: attempt {}, provider order {}, terminal {}, user agent: {}",
                 id, transaction.getId(), response.order().id(), terminal.getId(), userAgent);
 
-        // Пароль остаётся в редиректе плательщика — он и открывает платёжную страницу (§5.3). Отсюда
-        // и дальше этот адрес не логировать: контроллер пишет его через ProviderPayloads.urlForLog.
+        // Пароль нужен плательщику для платёжной страницы (§5.3). Адрес не логировать — только через
+        // ProviderPayloads.urlForLog, как в контроллере.
         return response.order().hppUrl() + "?id=" + response.order().id() + "&password=" + response.order().password();
     }
 
@@ -245,8 +235,7 @@ public class OpenLinkService {
         }
     }
 
-    // Блокировка строки здесь и сериализует одновременные открытия одной ссылки: всё, что делает
-    // вызывающий дальше, идёт без второго открытия той же ссылки.
+    // Сериализует открытия ссылки: второе одновременное получает 409 сразу (NOWAIT, Р-85).
     private PaymentLink lockLinkOrThrow(UUID id) {
         return paymentLinkRepository.findWithLockById(id)
                 .orElseThrow(() -> {

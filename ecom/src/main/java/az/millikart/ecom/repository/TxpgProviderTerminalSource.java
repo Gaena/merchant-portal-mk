@@ -9,10 +9,9 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-// Справочник терминалов провайдера — по SQL провайдера от 14.09.2026 (Р-79): e-commerce терминалы
-// процессинга 70 (TID на PBY), у которых активны и логин, и терминал. Выключенный у провайдера
-// пропадает из выгрузки, и через три опроса гаснет наш терминал со ссылками (Р-66). Только логины
-// TerminalSys и с terminal.rid — по запросу провайдера от 24.09.2026 (Р-96).
+// Справочник терминалов провайдера (Р-79, Р-96): терминалы с активным логином TerminalSys и активным
+// терминалом, terminalpmo — только соединение, без фильтра. Выключенный у провайдера пропадает из
+// выгрузки, и через три опроса гаснет наш терминал со ссылками (Р-66).
 @Repository
 public class TxpgProviderTerminalSource implements ProviderTerminalSource {
 
@@ -25,9 +24,8 @@ public class TxpgProviderTerminalSource implements ProviderTerminalSource {
         this.properties = properties;
     }
 
-    // Ключ — merchant.rid: по нему выписка находит заказы, и у провайдера один терминал — один мерчант
-    // (Р-67). Название — мерчанта, как в выписке. Без фильтра ownerkind логины TerminalUser того же
-    // терминала делали мерчанта неоднозначным, и он не обновлялся никогда (Р-96).
+    // Ключ — merchant.rid: по нему выписка находит заказы (Р-79); название — мерчанта, как в выписке.
+    // Только TerminalSys: логин TerminalUser того же терминала сделал бы мерчанта неоднозначным (Р-96).
     @Override
     public List<ProviderTerminalRow> fetchActive() {
         String sql = """

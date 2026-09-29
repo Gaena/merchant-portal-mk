@@ -48,12 +48,9 @@ import {
 const RECENT_LIMIT = 10;
 
 /**
- * Панель мерчанта (Р-91): оплаты картой по всем терминалам компании — по выписке провайдера (`ecom`), а у
- * SYSTEM_ADMIN и AUDITOR — по всем терминалам портала. Заказы периода и деньги те же, что во вкладке
- * E-commerce: период — по дате создания заказа. Статистика оплат по платёжным ссылкам — во вкладке Pay by Link.
- *
- * Каждое открытие страницы — проход по периоду на боевой базе шлюза (сводка) и страница выписки (последние
- * заказы); период по умолчанию — 7 дней, потолок — 92.
+ * Главная (Р-91): оплаты картой по мерчантам логина компании из выписки `ecom`, у SYSTEM_ADMIN и AUDITOR —
+ * по мерчантам всех компаний (Р-97). Цифры совпадают с вкладкой E-commerce за тот же период.
+ * Каждое открытие — проход по периоду на боевой базе шлюза.
  */
 export const HomePage: React.FC = () => {
   const navigate = useNavigate();
@@ -87,7 +84,7 @@ export const HomePage: React.FC = () => {
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-    // Последние заказы — первая страница выписки за тот же период, порядок серверный (новые сверху).
+    // Последние заказы — первая страница выписки за период; порядок серверный, новые сверху.
     fetchEcomPage({
       dateFrom: from, dateTo: to, merchantRids: [], minAmount: '', maxAmount: '', query: '', status: null, paymentType: null,
     }, null, RECENT_LIMIT, controller.signal)
@@ -170,7 +167,6 @@ export const HomePage: React.FC = () => {
 
       {summary && (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, 1fr)' }, gap: 3, mb: 4 }}>
-          {/* Статусы заказов — восемь статусов выписки с теми же цветами и подписями. */}
           <Panel title={`${t.charts.statuses} · ${statusTotal}`} hint={t.charts.statusesHint}>
             <Stack spacing={1}>
               {ECOM_STATUSES.map(status => (
@@ -221,7 +217,6 @@ export const HomePage: React.FC = () => {
         </Box>
       )}
 
-      {/* Последние заказы выписки за период. */}
       <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
         <Typography variant="h6" sx={{ fontWeight: 600, mb: 3 }}>{t.recentOrders.title}</Typography>
         {recent.length === 0 ? (

@@ -15,9 +15,8 @@ import az.millikart.pbl.provider.dto.TerminalCheckResult;
 import az.millikart.pbl.repository.TerminalRepository;
 import org.springframework.stereotype.Service;
 
-// Кнопка «Тест» у заведённого терминала: можно ли создать на нём платёж — пробный заказ у провайдера с
-// кредами компании терминала (Р-70, Р-93). Только SYSTEM_ADMIN: проверка отвечает на вопрос «подходит ли
-// ключ», перебирать ключи чужим ролям незачем. Каждая проверка — в журнале: пробный заказ — внешний след.
+// Кнопка «Тест»: настоящий пробный заказ у провайдера с кредами компании терминала (Р-70, Р-93). Только
+// SYSTEM_ADMIN — перебирать ключи другим ролям незачем. Каждая проверка — в журнал: заказ оставляет след.
 @Service
 public class TerminalCheckService {
 

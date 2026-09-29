@@ -59,32 +59,19 @@ import type {
   ProviderTerminalSyncOutcome,
 } from '../types/dto';
 
-// Подпись терминала на этой странице — тем же правилом, что везде (utils/terminals.ts): номер терминала у
-// провайдера (Р-96), у заведённых до него — логин.
+// Подпись — правилом `utils/terminals.ts`: номер терминала у провайдера (Р-96), у заведённых до него — логин.
 const terminalDtoLabel = (terminal: TerminalDto): string =>
   terminalLabel({ terminalRid: terminal.terminalRid, terminalLogin: terminal.login });
 
 export const TerminalsPage: React.FC = () => {
   const { tObj } = useLanguage();
   const { user } = useAuth();
-  /**
-   * Справочник провайдера и кнопку «Тест» видит только системный администратор, и заводит терминалы
-   * тоже только он — выбором из справочника (Р-80, Р-93). Пароля у терминала нет: к провайдеру ходят
-   * с кредами компании.
-   */
+  // Справочник провайдера и «Тест» — только администратору; заводит терминалы тоже он (Р-80, Р-93).
   const isAdmin = user?.role === 'SYSTEM_ADMIN';
   const canCreate = canCreateTerminals(user?.role);
-  /**
-   * Править и блокировать терминалы могут SYSTEM_ADMIN, COMPANY_HEAD и COMPANY_MANAGER
-   * (`TerminalService.TERMINAL_WRITE_ROLES`); AUDITOR и COMPANY_EMPLOYEE только смотрят. Кнопки,
-   * которым сервер откажет, не показываются (Р-62).
-   */
+  // Кнопки, которым сервер откажет, не показываются (Р-62): роли — `TerminalService.TERMINAL_WRITE_ROLES`.
   const canWrite = canWriteTerminals(user?.role);
-  /**
-   * Компанию выбирает только SYSTEM_ADMIN. Остальные работают в своей, и она известна из токена;
-   * список всех компаний им недоступен (`GET /companies` — 403), так что раньше у руководителя
-   * и менеджера селект оставался пустым, а форма отказывала «заполните все поля».
-   */
+  // Компанию выбирает только SYSTEM_ADMIN; остальным список компаний — 403, их компания — из токена.
   const choosesCompany = user?.role === 'SYSTEM_ADMIN';
   const ownCompanyId = user?.companyId ?? '';
 
@@ -109,42 +96,31 @@ export const TerminalsPage: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  /**
-   * Итог последней проверки по каждому терминалу. Хранится до перезагрузки списка: на новой странице
-   * те же строки — уже другие терминалы.
-   */
   const [checks, setChecks] = useState<Record<number, TerminalCheckResponse>>({});
   const [checking, setChecking] = useState<number | null>(null);
-  // Справочник терминалов провайдера для формы заведения (Р-67, Р-79). Его видит только SYSTEM_ADMIN,
-  // он же и заводит терминалы (Р-93).
+  // Справочник терминалов провайдера для формы заведения (Р-67, Р-79).
   const [providerTerminals, setProviderTerminals] = useState<ProviderTerminalOption[]>([]);
   const [providerState, setProviderState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [selectedProvider, setSelectedProvider] = useState<ProviderTerminalOption | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<ProviderTerminalSyncOutcome | null>(null);
-  // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
-  // чтобы не слать запрос на каждую букву.
+  // Поиск — серверный: клиентский фильтр видел бы только текущую страницу (P3-1).
   const debouncedSearch = useDebounced(searchQuery, 300);
-  // Терминал, который собираются заблокировать, и число ссылок, которые при этом приостановятся.
-  // `affectedLinks === null` — счёт ещё идёт или не удался; в диалоге это так и написано.
-  // Разблокировка спрашивает наравне с блокировкой: она тоже трогает чужие ссылки, просто
-  // в другую сторону, и «случайно нажал» здесь стоит столько же.
+  // `affectedLinks === null` — счёт ещё идёт или не удался. Разблокировка спрашивает наравне
+  // с блокировкой: она тоже трогает чужие ссылки.
   const [statusChange, setStatusChange] = useState<
     { terminal: TerminalDto; nextStatus: TerminalStatus; affectedLinks: number | null } | null>(null);
-  // Правка уходит на сервер только после отдельного подтверждения со списком изменений:
-  // форма правки меняет название и **компанию-владельца** — цена промаха разная.
+  // Правка — только после подтверждения со списком изменений: форма меняет и компанию-владельца.
   const [editConfirm, setEditConfirm] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Страница берётся с сервера (P2-1): `/api/v1/terminals` отвечает `PagedResponse`.
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [totalElements, setTotalElements] = useState(0);
 
   const fetchTerminals = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
-    // Итоги проверок не переживают перезагрузку списка: на новой странице те же строки — уже другие
-    // терминалы, и оставить итог на экране значило бы подписать им чужую проверку.
+    // Итоги «Теста» сбрасываются: на новой странице те же строки — уже другие терминалы.
     setChecks({});
     try {
       const params: Record<string, unknown> = { page, size: rowsPerPage };
@@ -154,7 +130,6 @@ export const TerminalsPage: React.FC = () => {
       setTerminals(list);
       setTotalElements(res.data?.totalElements ?? list.length);
     } catch (err) {
-      // Гонка ответов: устаревший запрос отменён эффектом ниже, его исход не трогает экран.
       if (axios.isCancel(err)) return;
       setTerminals([]);
       setTotalElements(0);
@@ -166,8 +141,7 @@ export const TerminalsPage: React.FC = () => {
   const fetchCompanies = useCallback(async () => {
     try {
       if (choosesCompany || user?.role === 'AUDITOR') {
-        // Компании нужны для выпадающего списка и подписей, поэтому берём их одной страницей
-        // по потолку (200 — тот же лимит, что у журнала аудита).
+        // Компании нужны для списка и подписей — одной страницей по потолку размера на сервере (200).
         const res = await apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 } });
         const list = Array.isArray(res.data) ? res.data : (res.data?.content || []);
         setCompanies(Array.isArray(list) ? list : []);
@@ -183,7 +157,6 @@ export const TerminalsPage: React.FC = () => {
     }
   }, [choosesCompany, ownCompanyId, user?.role]);
 
-  // Компания по умолчанию для форм: администратору — первая из списка, остальным — своя.
   const defaultCompanyId = () => (choosesCompany ? (companies[0]?.id ?? '') : ownCompanyId);
 
   // Отмена предыдущего запроса при каждом изменении параметров: без неё ответ на «ив» может
@@ -198,8 +171,8 @@ export const TerminalsPage: React.FC = () => {
     fetchCompanies();
   }, [fetchCompanies]);
 
-  // Терминалы для заведения — только мерчанты логина выбранной компании, ещё не заведённые у нас (Р-96).
-  // Список зависит от компании, поэтому перечитывается при её смене.
+  // Только мерчанты логина выбранной компании, ещё не заведённые у нас (Р-96); перечитывается при
+  // смене компании.
   const loadProviderTerminals = async (companyId: string) => {
     setSelectedProvider(null);
     if (!companyId) {
@@ -220,8 +193,7 @@ export const TerminalsPage: React.FC = () => {
     }
   };
 
-  // Обновить справочник прямо сейчас, не дожидаясь расписания: нужен, когда терминал только что
-  // завели у провайдера или плановое обновление ещё не проходило.
+  // Обновление справочника вне расписания — для терминала, только что заведённого у провайдера.
   const handleSyncDirectory = async () => {
     setSyncing(true);
     setSyncResult(null);
@@ -249,8 +221,7 @@ export const TerminalsPage: React.FC = () => {
   const handleOpenEdit = (term: TerminalDto) => {
     setError('');
     setEditingTerminalId(term.id);
-    // Компания — та, что у терминала. Подставлять первую из списка нельзя: так правка одного
-    // названия молча перевешивала терминал на другую компанию.
+    // Компания — та, что у терминала: первая из списка молча перевесила бы его при правке названия.
     setForm({
       name: term.name || '',
       companyId: term.companyId || ''
@@ -258,8 +229,7 @@ export const TerminalsPage: React.FC = () => {
     setEditOpen(true);
   };
 
-  // Заводит только администратор выбором из справочника: название и логин сервер берёт оттуда по
-  // merchantRid, пароля у терминала нет (TerminalService.createTerminal, Р-93).
+  // Название и логин сервер берёт из справочника по merchantRid; пароля у терминала нет (Р-93).
   const handleCreate = async () => {
     if (creating) return;
     if (!selectedProvider || !form.companyId) {
@@ -273,8 +243,7 @@ export const TerminalsPage: React.FC = () => {
         companyId: form.companyId,
         merchantRid: selectedProvider.rid,
       });
-      // Не дописываем строку в массив: список постраничный и отсортирован сервером по имени —
-      // новый терминал может принадлежать другой странице.
+      // Перечитываем, а не дописываем: новый терминал может оказаться на другой странице.
       fetchTerminals();
       setCreateOpen(false);
       setForm({ name: '', companyId: defaultCompanyId() });
@@ -286,11 +255,8 @@ export const TerminalsPage: React.FC = () => {
     }
   };
 
-  /**
-   * «Тест» у терминала: пробный заказ с кредами компании (Р-93). Результат — всегда один из четырёх
-   * исходов, даже при неверных кредах или недоступном провайдере; сбоем здесь считается только отказ самого портала (например,
-   * нехватка прав), и он идёт в общую строку ошибки.
-   */
+  // «Тест» — пробный заказ с кредами компании (Р-93): исход всегда один из четырёх, даже при неверных
+  // кредах или недоступном провайдере; ошибка — только отказ самого портала.
   const runCheck = async (terminalId: number) => {
     setChecking(terminalId);
     setPageError('');
@@ -304,8 +270,7 @@ export const TerminalsPage: React.FC = () => {
     }
   };
 
-  // Терминал в заголовках окон подписан логином, как везде (Р-59): номер терминала на экране не
-  // показывается — его выдаёт база и знать его пользователю незачем (Р-81).
+  // В заголовках окон — та же подпись; внутренний номер терминала не показывается (Р-81).
   const editingTerminal = terminals.find(t => t.id === editingTerminalId);
   const editingLogin = editingTerminal ? terminalDtoLabel(editingTerminal) : '';
 
@@ -316,9 +281,7 @@ export const TerminalsPage: React.FC = () => {
     setError('');
     setEditBusy(true);
     try {
-      // Только то, что изменилось. PATCH с прежними значениями бэкенд всё равно записывает в
-      // журнал аудита («Name changed from X to X») — лишняя строка там, где окно подтверждения
-      // показало один пункт.
+      // Только изменившееся: PATCH с прежними значениями пишет в журнал «Name changed from X to X».
       const payload: Record<string, string> = {};
       if (form.name.trim() !== (original.name || '')) payload.name = form.name.trim();
       if (form.companyId !== (original.companyId || '')) payload.companyId = form.companyId;
@@ -336,12 +299,8 @@ export const TerminalsPage: React.FC = () => {
     }
   };
 
-  /**
-   * Смена статуса терминала трогает чужие платёжные ссылки, поэтому спрашиваем — и вместе с
-   * вопросом показываем, скольких ссылок это коснётся. Число берём у `pbl` (`totalElements`
-   * пагинированного ответа), без отдельной ручки в бэкенде: перед блокировкой считаем активные
-   * ссылки (их приостановят), перед разблокировкой — приостановленные (их вернут в работу).
-   */
+  // Окно называет, скольких ссылок коснётся смена статуса: `totalElements` из `pbl` — активных перед
+  // блокировкой, приостановленных перед разблокировкой.
   const handleAskStatus = async (terminal: TerminalDto, nextStatus: TerminalStatus) => {
     setStatusChange({ terminal, nextStatus, affectedLinks: null });
     // Число дописывается в окно, только если оно всё ещё открыто про тот же терминал: ответ,
@@ -362,11 +321,7 @@ export const TerminalsPage: React.FC = () => {
     }
   };
 
-  /**
-   * Что именно изменится, если сохранить форму правки. Пустой список означает, что менять
-   * нечего, и тогда запрос не уходит вовсе: PATCH, который ничего не меняет, всё равно оставит
-   * запись в журнале аудита.
-   */
+  // Пустой список — PATCH не уходит: даже пустой он оставил бы запись в журнале аудита.
   const pendingEditChanges = (): string[] => {
     const original = terminals.find(t => t.id === editingTerminalId);
     if (!original) return [];
@@ -402,7 +357,6 @@ export const TerminalsPage: React.FC = () => {
     try {
       const res = await apiClient.patch(`/api/v1/terminals/${terminal.id}`, { status });
       setTerminals(prev => prev.map(t => (t.id === terminal.id ? res.data : t)));
-      // Терминал в сообщении — логином, как везде (Р-59); номер пользователю ни к чему (Р-81).
       setSnackbar(`${terminalDtoLabel(terminal)}: ${status === 'BLOCKED' ? tObj.terminals.blockedNotice : tObj.terminals.unblockedNotice}`);
     } catch (err: any) {
       setPageError(err.response?.data?.message || tObj.terminals.statusChangeFailed);
@@ -419,7 +373,6 @@ export const TerminalsPage: React.FC = () => {
 
   return (
     <Box>
-      {/* Header */}
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -452,7 +405,6 @@ export const TerminalsPage: React.FC = () => {
         </Alert>
       )}
 
-      {/* Search Bar */}
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider' }}>
         <TextField
           size="small"
@@ -470,7 +422,6 @@ export const TerminalsPage: React.FC = () => {
         />
       </Paper>
 
-      {/* Table */}
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
         <TableContainer>
           <Table>
@@ -489,8 +440,6 @@ export const TerminalsPage: React.FC = () => {
                 const active = isTerminalActive(term);
                 return (
                 <TableRow key={term.id} hover sx={active ? undefined : { opacity: 0.6 }}>
-                  {/* Логин впереди: по нему мерчант терминал и опознаёт, имя он придумывает
-                      сам, а номер — внутренний. */}
                   <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: active ? 'primary.main' : 'text.disabled' }}>
                     {terminalDtoLabel(term)}
                   </TableCell>
@@ -518,8 +467,6 @@ export const TerminalsPage: React.FC = () => {
                   </TableCell>
                   <TableCell align="center">
                     <Stack direction="row" spacing={0.5} justifyContent="center" alignItems="center">
-                      {/* «Тест» — только администратору: проверка отвечает на вопрос, подходят ли
-                          креды компании, и перебирать ключи другим ролям незачем. */}
                       {isAdmin && (
                         <Tooltip title={checks[term.id]
                           ? `${checkLabel(checks[term.id].outcome)}${checks[term.id].message ? ` — ${checks[term.id].message}` : ''}`
@@ -587,7 +534,6 @@ export const TerminalsPage: React.FC = () => {
         />
       </Paper>
 
-      {/* Block confirmation: says what it will do, and to how many links */}
       <ConfirmDialog
         open={statusChange !== null}
         maxWidth="xs"
@@ -611,7 +557,6 @@ export const TerminalsPage: React.FC = () => {
         </Alert>
       </ConfirmDialog>
 
-      {/* Create Terminal Dialog */}
       <Dialog open={createOpen} onClose={() => { if (!creating) setCreateOpen(false); }} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.createDialogTitle}</DialogTitle>
         <DialogContent>
@@ -639,9 +584,7 @@ export const TerminalsPage: React.FC = () => {
             )}
 
             <Box>
-              {/* Название и логин — от провайдера (Р-67): выбирается строка справочника, пароля
-                  у терминала нет (Р-93). Один терминал провайдера — одна компания: занятый
-                  сервер отклонит с объяснением. */}
+              {/* Один терминал провайдера — одна компания: занятый сервер отклонит с объяснением. */}
               <Autocomplete
                 options={providerTerminals}
                 value={selectedProvider}
@@ -712,14 +655,12 @@ export const TerminalsPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Edit Terminal Dialog */}
       <Dialog open={editOpen} onClose={() => { if (!editBusy) setEditOpen(false); }} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.terminals.editDialogTitle} {editingLogin}</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{error}</Alert>}
           <Stack spacing={2.5} sx={{ mt: 1 }}>
-            {/* Перевесить терминал на другую компанию может только SYSTEM_ADMIN: остальным сервер
-                откажет, поэтому им селект не показывается. */}
+            {/* Перенос в другую компанию — только SYSTEM_ADMIN, остальным сервер откажет. */}
             {choosesCompany && (
               <TextField
                 select
@@ -751,7 +692,6 @@ export const TerminalsPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Confirm Edit Dialog */}
       <ConfirmDialog
         open={editConfirm !== null}
         title={<>{tObj.terminals.editConfirmTitle} {editingLogin}</>}
@@ -762,8 +702,6 @@ export const TerminalsPage: React.FC = () => {
         onConfirm={handleUpdate}
         onCancel={() => setEditConfirm(null)}
       >
-        {/* Построчно, что именно изменится: подтверждать «правку терминала» вслепую
-            значит подтверждать не глядя — в форме рядом лежат название и компания. */}
         <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
           <Stack spacing={1}>
             {(editConfirm ?? []).map(change => (

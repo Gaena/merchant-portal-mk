@@ -6,9 +6,8 @@ import java.util.List;
 import java.util.Objects;
 import org.springframework.stereotype.Repository;
 
-// Логины мультимерчанта компаний (Р-93) — скоуп выписки (Р-97). Таблица чужая (auth и directory),
-// поэтому нативный запрос, а не сущность: сущность проверялась бы на старте, а порядок старта сервисов
-// значения не имеет (P1-2). Пользователь с токеном значит, что auth стартовал и companies уже есть.
+// companies — чужая таблица: нативный запрос, а не сущность, иначе старт ecom зависел бы от неё
+// (Р-97). Пользователь с токеном значит, что auth стартовал и таблица есть.
 @Repository
 public class CompanyLoginRepository {
 

@@ -37,9 +37,6 @@ public class TransactionController {
         return paymentLinkService.refund(transactionId, request, principal);
     }
 
-    // P3-7. Порядок с /{identifier}/status не спорит: у того два сегмента после базы, у этого
-    // один. UUID в сигнатуре — сам по себе фильтр: «summary» или любое другое слово сюда не
-    // попадёт, а вернёт 400 разбора пути, не чужую транзакцию.
     @GetMapping("/{id}")
     public TransactionResponse get(@PathVariable UUID id,
                                    @AuthenticationPrincipal UserPrincipal principal) {
@@ -52,11 +49,7 @@ public class TransactionController {
         return paymentLinkService.checkAndStatusUpdate(identifier, principal);
     }
 
-    // P3-7: порядок был не задан вовсе — база отдавала строки как ей удобно, и «последние
-    // операции» на любом экране были просто какими-то операциями. Довесок по id обязателен по
-    // той же причине, что и у трёх справочников (P2-1): у двух платежей одна миллисекунда
-    // createdAt бывает, и без уникального довеска строка попадёт то на обе соседние страницы,
-    // то ни на одну.
+    // id — уникальный хвост сортировки: без него строки переезжают между страницами (P2-1).
     @GetMapping
     public PagedResponse<TransactionResponse> list(
             @RequestParam(defaultValue = "0") int page,

@@ -9,8 +9,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-// Только cron-триггер для InactiveAccountService (та же форма, что у RefreshTokenCleanupScheduler).
-// В тестовом профиле выключается через auth.inactivity.enabled — тесты зовут сервис напрямую.
+// Только cron-триггер: логика — в InactiveAccountService, тесты зовут её без расписания.
 @Component
 @ConditionalOnProperty(name = "auth.inactivity.enabled", havingValue = "true", matchIfMissing = true)
 public class InactiveAccountScheduler {
@@ -28,7 +27,6 @@ public class InactiveAccountScheduler {
         try (var ignored = SchedulerRun.start("inactive-accounts")) {
             service.blockInactive(Instant.now());
         } catch (RuntimeException e) {
-            // Необработанное исключение остановило бы расписание целиком.
             log.error("Blocking of inactive accounts failed: {}", e.getMessage(), e);
         }
     }

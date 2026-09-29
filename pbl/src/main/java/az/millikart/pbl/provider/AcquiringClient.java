@@ -14,24 +14,15 @@ public interface AcquiringClient {
     EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
                                             UUID ridByMerchant, String hppRedirectUrl);
 
-    // Обе денежные операции возвращают результат, только если эквайер подтвердил её через
-    // tran.match.ridByPmo; принятый, но неподтверждённый ответ — PaymentOutcomeUnknownException,
-    // но никогда не результат (P1-8b).
+    // Денежные операции возвращают результат, только если в ответе есть tran.match.ridByPmo; без него —
+    // PaymentOutcomeUnknownException (P1-8b).
     MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
 
     MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
 
     Map<String, Object> getOrderStatus(String providerOrderId, String password, ProviderCredentials credentials);
 
-    /**
-     * Проверяет, можно ли создать платёж: пробный заказ с кредами компании терминала (Р-93).
-     *
-     * Единственный вызов у провайдера, который проверяет разом и логин с паролем, и то, что
-     * оплаты разрешены, — это заведение заказа. Запрос статуса проверяет только первое.
-     * Пробный заказ остаётся у провайдера неоплаченным и через десять минут уходит в Expired;
-     * в выписку такие не попадают, и на такую нагрузку провайдер дал согласие.
-     *
-     * Никогда не бросает: любой исход — это результат, который надо показать администратору.
-     */
+    // Пробный заказ: только он проверяет разом креды и право принимать оплаты (Р-70, Р-93). Никогда
+    // не бросает — любой исход показывается администратору.
     TerminalCheckResult checkOrderCreation(ProviderCredentials credentials, String terminalRid);
 }

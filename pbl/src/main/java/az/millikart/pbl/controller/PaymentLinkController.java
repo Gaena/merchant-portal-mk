@@ -62,7 +62,7 @@ public class PaymentLinkController {
             @RequestParam(required = false) Integer terminal,
             @RequestParam(required = false) PaymentLinkStatus status,
             @AuthenticationPrincipal UserPrincipal principal) {
-        // Новые сверху, id — уникальный хвост: без порядка строки переезжают между страницами (AGENTS.md §10).
+        // id — уникальный хвост сортировки: без него строки переезжают между страницами (AGENTS.md §10).
         Pageable pageable = PageRequest.of(page, size,
                 Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
         return paymentLinkService.list(terminal, status, pageable, principal);

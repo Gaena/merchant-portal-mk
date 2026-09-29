@@ -9,9 +9,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-// Кнопка «Тест» у заведённого терминала (Р-70, Р-93). Живёт в pbl, а не рядом с терминалами в directory:
-// проверка — пробный заказ у провайдера, а ходить к провайдеру умеет только pbl; отсюда и свой префикс.
-// Ответ — всегда 200 с одним из четырёх исходов: это результат проверки, а не сбой запроса.
+// Кнопка «Тест» (Р-70, Р-93) — в pbl, потому что к провайдеру ходит только pbl. Исход проверки —
+// 200 с одним из четырёх исходов, а не код ошибки: это результат, а не сбой запроса.
 @RestController
 @RequestMapping("/api/v1/acquiring/terminal-checks")
 public class TerminalCheckController {

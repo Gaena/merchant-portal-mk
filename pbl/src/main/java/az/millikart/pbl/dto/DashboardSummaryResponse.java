@@ -5,10 +5,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
-// Сводка главной страницы (P3-7). Считает база, фронтенд только рисует.
-// Денег без валюты здесь нет ни в одном поле: колонки currency у transactions не существует,
-// она на payment_links, и туда попадает любой трёхбуквенный код — сводный итог поверх нескольких
-// валют был бы числом, которого не существует.
+// Статистика оплат по ссылкам (P3-7, Р-91). Деньги — всегда с валютой: сводный итог поверх валют
+// был бы числом, которого не существует.
 public record DashboardSummaryResponse(
         Window window,
         List<CurrencyTotals> totals,
@@ -19,8 +17,7 @@ public record DashboardSummaryResponse(
         PaymentLinkTotals paymentLinks
 ) {
 
-    // zone возвращается, чтобы подпись «время бакинское» на экране бралась из ответа, а не
-    // выдумывалась фронтендом: сутки и часы режет сервер, ему и объясняться.
+    // zone — чтобы подпись пояса на экране бралась из ответа: сутки и часы режет сервер.
     public record Window(Instant from, Instant to, String zone) {
     }
 
@@ -40,8 +37,7 @@ public record DashboardSummaryResponse(
     ) {
     }
 
-    // Все шесть значений TransactionStatus, включая нулевые: пропущенная доля читается как
-    // «такого не бывает», а не как «за окно не случилось».
+    // Все значения TransactionStatus, включая нулевые: пропуск читался бы как «не бывает», а не «не было».
     public record StatusCount(String status, long count) {
     }
 

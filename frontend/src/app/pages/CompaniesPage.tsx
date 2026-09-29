@@ -47,16 +47,14 @@ import type { CompanyDto, ProviderLoginOption, ProviderTerminalSyncOutcome } fro
 
 type CompanyStatus = 'ACTIVE' | 'INACTIVE';
 
-// Статус без значения список показывает активным — так же его читают и список, и форма правки.
+// Статус без значения — активный: так его читают и список, и форма правки.
 const statusOf = (company: CompanyDto): CompanyStatus =>
   (company.status === 'ACTIVE' || !company.status ? 'ACTIVE' : 'INACTIVE');
 
 export const CompaniesPage: React.FC = () => {
   const { user } = useAuth();
   const { tObj } = useLanguage();
-  // Кто видит страницу — решает RoleRoute (auth/routeAccess.ts: SYSTEM_ADMIN и AUDITOR по матрице
-  // AGENTS.md §6). Здесь isAdmin только прячет запись: POST/PATCH/DELETE /companies — только SYSTEM_ADMIN,
-  // и бэкенд это проверяет сам; UI лишь не показывает кнопки, которые вернут 403.
+  // isAdmin только прячет кнопки, которые вернут 403: права проверяет бэкенд, страницу — RoleRoute.
   const isAdmin = user?.role === 'SYSTEM_ADMIN';
 
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
@@ -65,33 +63,29 @@ export const CompaniesPage: React.FC = () => {
   const [form, setForm] = useState({ id: '', name: '', providerLogin: '', providerPassword: '' });
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState('');
-  // Удаление не выполняется по клику: сначала окно подтверждения. Оно к тому же необратимо из портала —
-  // updateCompany на удалённой отвечает «Company not found», воскресить её через API нечем.
+  // Удаление необратимо из портала: удалённую компанию API не находит, вернуть её нечем.
   const [pendingDelete, setPendingDelete] = useState<CompanyDto | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
-  // Правка компании — название, креды к провайдеру (Р-93) и статус в одной форме, затем подтверждение со
-  // списком изменений. Пароль в форме пуст: прочитать его нельзя, только заменить.
+  // Пароль в форме правки пуст: прочитать его нельзя, только заменить (Р-93).
   const [editCompany, setEditCompany] = useState<CompanyDto | null>(null);
   const [editForm, setEditForm] = useState<{ name: string; providerLogin: string; providerPassword: string; status: CompanyStatus }>(
     { name: '', providerLogin: '', providerPassword: '', status: 'ACTIVE' });
   const [editError, setEditError] = useState('');
   const [editConfirm, setEditConfirm] = useState<string[] | null>(null);
   const [editBusy, setEditBusy] = useState(false);
-  // Логин компании бэкенд сверяет со справочником логинов мультимерчантов (Р-94). Логин, только что
-  // заведённый у провайдера, попадёт туда с расписанием — или сразу по этой кнопке.
+  // Логин сверяется со справочником (Р-94); новый логин провайдера попадёт туда по расписанию
+  // или сразу по кнопке синхронизации.
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<ProviderTerminalSyncOutcome | null>(null);
   const [syncError, setSyncError] = useState('');
-  // Логин не вводится, а выбирается из свободных логинов справочника (Р-95): в списке только то, что
-  // пройдёт проверку при сохранении. Проверка на сервере остаётся — логин могут занять или выключить.
+  // Логин выбирается из свободных логинов справочника (Р-95); серверная проверка остаётся —
+  // логин могут занять или выключить.
   const [loginOptions, setLoginOptions] = useState<ProviderLoginOption[]>([]);
   const [loginOptionsState, setLoginOptionsState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [searchQuery, setSearchQuery] = useState('');
-  // Поиск — серверный (P3-1): клиентский фильтр видел только текущую страницу. 300 мс задержки,
-  // чтобы не слать запрос на каждую букву.
+  // Поиск — серверный: клиентский фильтр видел бы только текущую страницу (P3-1).
   const debouncedSearch = useDebounced(searchQuery, 300);
 
-  // Страница берётся с сервера (P2-1): `/api/v1/companies` отвечает `PagedResponse`.
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [totalElements, setTotalElements] = useState(0);
@@ -106,7 +100,6 @@ export const CompaniesPage: React.FC = () => {
       setCompanies(list);
       setTotalElements(res.data?.totalElements ?? list.length);
     } catch (err) {
-      // Гонка ответов: устаревший запрос отменён эффектом ниже, его исход не трогает экран.
       if (axios.isCancel(err)) return;
       setCompanies([]);
       setTotalElements(0);
@@ -123,8 +116,7 @@ export const CompaniesPage: React.FC = () => {
     return () => controller.abort();
   }, [fetchCompanies]);
 
-  // Логин и пароль к провайдеру обязательны (Р-93): логин — целиком, с префиксом владельца, как его
-  // выдал провайдер; сами ничего не подставляем.
+  // Креды к провайдеру обязательны (Р-93).
   const handleCreate = async () => {
     if (!form.id.trim() || !form.name.trim() || !form.providerLogin.trim() || !form.providerPassword.trim()) {
       setError(tObj.companies.formIncomplete);
@@ -138,8 +130,7 @@ export const CompaniesPage: React.FC = () => {
         providerLogin: form.providerLogin.trim(),
         providerPassword: form.providerPassword.trim(),
       });
-      // Не дописываем строку в массив: список постраничный и отсортирован сервером по имени —
-      // новая компания может принадлежать другой странице.
+      // Перечитываем, а не дописываем: новая компания может оказаться на другой странице.
       fetchCompanies();
       setCreateOpen(false);
       setForm({ id: '', name: '', providerLogin: '', providerPassword: '' });
@@ -194,8 +185,7 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
-  // Выбор логина — в обеих формах: заведение и правка компании. current — логин, уже стоящий у
-  // компании: он занят ею самой, поэтому в списке свободных его нет, а остаться на нём должно быть можно.
+  // current — логин самой компании: среди свободных его нет, но остаться на нём можно.
   const loginPicker = (value: string, onChange: (login: string) => void, current?: string | null) => {
     const options = current && !loginOptions.some(option => option.login === current)
       ? [{ login: current, merchants: [] }, ...loginOptions]
@@ -231,7 +221,6 @@ export const CompaniesPage: React.FC = () => {
     );
   };
 
-  // Кнопка и её итог — в обеих формах, где выбирают логин: заведение и правка компании.
   const directorySync = (
     <Box>
       <Button size="small" startIcon={<SyncIcon />} disabled={syncing} onClick={syncProviderDirectory}>
@@ -248,7 +237,7 @@ export const CompaniesPage: React.FC = () => {
     </Box>
   );
 
-  // Что изменится, если сохранить: только изменившиеся поля. Пустой пароль бэкенд читает как «не менять».
+  // Только изменившиеся поля; пустой пароль бэкенд читает как «не менять».
   const editPayload = (): Record<string, string> => {
     if (!editCompany) return {};
     const payload: Record<string, string> = {};
@@ -263,7 +252,6 @@ export const CompaniesPage: React.FC = () => {
 
   const statusLabel = (status: CompanyStatus) => (status === 'ACTIVE' ? tObj.common.active : tObj.common.inactive);
 
-  // Список для окна подтверждения — по тем же полям, что уйдут в PATCH.
   const editChanges = (payload: Record<string, string>): string[] => {
     if (!editCompany) return [];
     const changes: string[] = [];
@@ -278,8 +266,7 @@ export const CompaniesPage: React.FC = () => {
     return changes;
   };
 
-  // Название обязательно; логин нельзя стереть у компании, у которой он есть. Без изменений запрос не
-  // уходит: PATCH без изменений всё равно оставил бы запись в журнале аудита.
+  // Без изменений PATCH не уходит: он всё равно оставил бы запись в журнале аудита.
   const askEdit = () => {
     if (!editCompany) return;
     if (!editForm.name.trim() || (!editForm.providerLogin.trim() && editCompany.providerLogin)) {
@@ -326,8 +313,7 @@ export const CompaniesPage: React.FC = () => {
     }
   };
 
-  // Единственное место, откуда удаление уходит на сервер. Кнопка заблокирована на время
-  // запроса: второй клик по «Удалить» иначе ушёл бы вторым DELETE.
+  // Единственный путь DELETE на сервер; confirmBusy не пускает второй клик вторым запросом.
   const runDelete = async () => {
     if (!pendingDelete || confirmBusy) return;
     setConfirmBusy(true);
@@ -341,7 +327,6 @@ export const CompaniesPage: React.FC = () => {
 
   return (
     <Box>
-      {/* Header */}
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -369,7 +354,6 @@ export const CompaniesPage: React.FC = () => {
         </Alert>
       )}
 
-      {/* Search Bar */}
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider' }}>
         <TextField
           size="small"
@@ -387,7 +371,6 @@ export const CompaniesPage: React.FC = () => {
         />
       </Paper>
 
-      {/* Table */}
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
         <TableContainer>
           <Table>
@@ -466,7 +449,6 @@ export const CompaniesPage: React.FC = () => {
         />
       </Paper>
 
-      {/* Create Dialog */}
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.companies.createDialogTitle}</DialogTitle>
         <DialogContent>
@@ -505,7 +487,6 @@ export const CompaniesPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Edit company Dialog */}
       <Dialog open={editCompany !== null} onClose={() => { if (!editBusy) setEditCompany(null); }} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>{tObj.companies.editCompany}: {editCompany?.id}</DialogTitle>
         <DialogContent>
@@ -549,8 +530,6 @@ export const CompaniesPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Confirm edit: построчно, что изменится, и для какой компании; предупреждения — только к тому,
-          что меняется. */}
       <ConfirmDialog
         open={editConfirm !== null}
         title={tObj.companies.editConfirmTitle}
@@ -578,7 +557,6 @@ export const CompaniesPage: React.FC = () => {
         {editPending.status !== undefined && <Alert severity="info" sx={{ mt: 2 }}>{tObj.companies.statusWarning}</Alert>}
       </ConfirmDialog>
 
-      {/* Confirm delete */}
       <ConfirmDialog
         open={pendingDelete !== null}
         title={tObj.companies.deleteTitle}
@@ -589,8 +567,6 @@ export const CompaniesPage: React.FC = () => {
         onConfirm={runDelete}
         onCancel={() => setPendingDelete(null)}
       >
-        {/* Что именно сейчас удаляется — прямо в окне: подтверждать «компанию» вслепую
-            значит подтверждать не глядя. */}
         {pendingDelete && (
           <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
             <Typography variant="body2" sx={{ fontWeight: 700 }}>{pendingDelete.name}</Typography>

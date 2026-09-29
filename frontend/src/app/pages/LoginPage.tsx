@@ -26,11 +26,7 @@ import {
 
 import { useLanguage } from '../context/LanguageContext';
 
-/**
- * Форма входа. Здесь нет ни «Forgot password», ни двухфакторной проверки: бэкенд ни того, ни
- * другого не умеет, а надпись «Secured with 2-Factor Authentication» над недостижимым OTP-окном
- * была утверждением о защите, которой нет (Р-48 — выдуманного на экранах не бывает).
- */
+// Без «Forgot password» и 2FA: бэкенд их не умеет, а выдуманного на экранах не бывает (Р-48).
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -68,7 +64,6 @@ export const LoginPage: React.FC = () => {
     setIsLoading(true);
     try {
       await login(email.trim(), password);
-      // Туда, откуда увели на вход (ProtectedRoute кладёт адрес в state), иначе на главную.
       // replace: «назад» не должен возвращать на форму входа.
       navigate(returnPathFrom(location.state), { replace: true });
     } catch (err: unknown) {
@@ -78,8 +73,7 @@ export const LoginPage: React.FC = () => {
         return;
       }
       if (err instanceof AuthError) {
-        // Сервер ответил 200, но сессию из ответа собрать нельзя — вход отклонён на клиенте
-        // (fail-closed). Оба случая — свои тексты, а не отладочная строка из session.ts.
+        // 200, но сессию из ответа не собрать — вход отклонён на клиенте (fail-closed).
         setError(err.code === 'UNKNOWN_ROLE' ? tObj.auth.unknownRole : tObj.auth.malformedResponse);
         return;
       }
@@ -155,7 +149,6 @@ export const LoginPage: React.FC = () => {
           borderRadius: 3
         }}
       >
-        {/* Header */}
         <Box sx={{ textAlign: 'center', mb: 4 }}>
           <Box
             sx={{
@@ -243,7 +236,7 @@ export const LoginPage: React.FC = () => {
           </form>
         )}
 
-        {/* noValidate: подсказки браузера для type="email" шли на языке браузера и раньше наших. */}
+        {/* noValidate: подсказки браузера для type="email" идут на его языке и раньше наших. */}
         {mode === 'signIn' && (
         <form onSubmit={handleLogin} noValidate>
           <Stack spacing={3}>
@@ -314,7 +307,6 @@ export const LoginPage: React.FC = () => {
   );
 };
 
-/** Текст отказа сервера, если он его прислал: `message` из `ErrorResponse`, иначе `error`. */
 const serverMessageOf = (err: unknown): string | null => {
   const message = axios.isAxiosError(err) ? (err.response?.data?.message || err.response?.data?.error) : undefined;
   return typeof message === 'string' && message ? message : null;

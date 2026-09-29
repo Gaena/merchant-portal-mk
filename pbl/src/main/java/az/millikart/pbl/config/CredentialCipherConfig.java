@@ -5,8 +5,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-// Шифр паролей компаний к провайдеру (Р-93). Бин объявлен здесь, а не в common: ключ нужен только
-// directory и pbl, и сервис без ключа не стартует (CredentialCipher, MissingSecretFailureAnalyzer).
+// Шифр паролей компаний к провайдеру (Р-93). Бин здесь, а не в common: без ключа сервис не стартует,
+// а ключ есть только у directory и pbl.
 @Configuration
 public class CredentialCipherConfig {
 

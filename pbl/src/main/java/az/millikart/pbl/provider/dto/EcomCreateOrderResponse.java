@@ -11,9 +11,8 @@ public record EcomCreateOrderResponse(
             @JsonProperty("status") String status,
             @JsonProperty("password") String password
     ) {
-        // P0-9: сгенерированный toString рекорда печатает все компоненты, включая пароль заказа,
-        // и любой log.debug("... {}", response) вывел бы его дословно. Поэтому маска стоит здесь,
-        // на типе, а не на каждом вызове; null остаётся видимым — заказ без пароля стоит заметить.
+        // P0-9: маска пароля — на типе, а не на вызовах: сгенерированный toString вывел бы его в любой
+        // лог. null остаётся видимым — заказ без пароля стоит заметить.
         @Override
         public String toString() {
             return "Order[hppUrl=" + hppUrl + ", id=" + id + ", status=" + status

@@ -4,8 +4,8 @@ import az.millikart.common.security.TraceIdFilter;
 import java.util.UUID;
 import org.slf4j.MDC;
 
-// Свой traceId у каждого прогона планировщика: без него все прогоны писались под одним «system», и строки
-// одного прохода было не собрать. Открывать первой строкой @Scheduled-метода в try-with-resources.
+// Свой traceId у каждого прогона планировщика — по нему собираются строки одного прохода. Открывать
+// первой строкой @Scheduled-метода в try-with-resources.
 public final class SchedulerRun {
 
     private SchedulerRun() {

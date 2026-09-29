@@ -17,8 +17,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-// Справочник терминалов провайдера для формы заведения нашего, только SYSTEM_ADMIN. Отдаётся слепок
-// из нашей базы, а не живой запрос к шлюзу: форма не должна ждать чужую базу и падать вместе с ней.
+// Слепок из нашей базы, а не живой запрос к шлюзу: экран не должен падать вместе с чужой базой.
+// Форма заведения терминала берёт список у directory (Р-96).
 @RestController
 @RequestMapping("/api/v1/ecom/provider-terminals")
 public class ProviderTerminalController {
@@ -35,7 +35,6 @@ public class ProviderTerminalController {
         this.loginSyncService = loginSyncService;
     }
 
-    // По умолчанию только активные: заводить терминал поверх снятого у провайдера незачем.
     // includeInactive — для разбора, куда делся знакомый администратору терминал.
     @GetMapping
     public List<ProviderTerminalResponse> list(
@@ -59,8 +58,7 @@ public class ProviderTerminalController {
         return ProviderSyncResponse.of(syncService.sync(), loginSyncService.sync());
     }
 
-    // Список терминалов провайдера — это карта его мерчантов целиком, включая чужих. Видеть её
-    // вправе только системный администратор; мерчанту она не нужна даже для своей компании.
+    // Карта всех мерчантов провайдера, включая чужих, — только SYSTEM_ADMIN.
     private void requireSystemAdmin(UserPrincipal principal) {
         if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
             throw new InvalidStateException("Access denied");

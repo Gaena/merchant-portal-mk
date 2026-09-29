@@ -7,23 +7,20 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-// Маскированная карта, RRN и approvalCode из order-payload эквайера — то, чем мерчант сверяет
-// платёж с выпиской (§5.8.3-5.8.6). Ни одного из трёх нет на верхнем уровне order, где их искал
-// прежний код (P1-16). Ничего здесь не бросает: это путь чтения карточки транзакции, он не вправе
-// падать из-за формы чужого payload. Выбор записи покупки — см. purchaseRecord.
+// Карта, RRN и approvalCode из order эквайера (§5.8.3-5.8.6): на верхнем уровне order их нет (P1-16).
+// Ничего здесь не бросает: карточка транзакции не вправе падать из-за формы чужого payload.
 public final class ProviderOrderDetails {
 
     private static final Logger log = LoggerFactory.getLogger(ProviderOrderDetails.class);
 
-    // Любой из трёх фактов может быть null: payload бывает старше платежа, платёж мог упасть до
-    // ввода карты, эквайер мог просто не прислать поле.
+    // Любое поле бывает null: payload старше платежа, платёж упал до ввода карты, эквайер не прислал поле.
     public record TransactionFacts(String maskedCard, String rrn, String approvalCode) {
 
         static final TransactionFacts EMPTY = new TransactionFacts(null, null, null);
     }
 
-    // §5.8.8: описания записей order.trans[]. Void ищется подстрокой — в контракте слово
-    // встречается один раз (Purchase - Void), но отмена чего угодно не является покупкой.
+    // §5.8.8: описания записей order.trans[]. Void — подстрокой: в контракте есть «Purchase - Void»,
+    // а отмена чего угодно — не покупка.
     static final String DESCRIPTION_PURCHASE = "Purchase";
 
     static final String DESCRIPTION_REFUND = "Refund";
@@ -33,8 +30,7 @@ public final class ProviderOrderDetails {
     private ProviderOrderDetails() {
     }
 
-    // orderPayload — объект order из ответа getOrderStatus (он же лежит в provider_response), может
-    // быть null. Результат сам никогда не null и не бросает.
+    // orderPayload — order из getOrderStatus или provider_response, бывает null; результат — никогда.
     public static TransactionFacts read(Map<String, Object> orderPayload) {
         if (orderPayload == null) {
             return TransactionFacts.EMPTY;
@@ -43,8 +39,7 @@ public final class ProviderOrderDetails {
 
         Map<String, Object> record = purchaseRecord(orderPayload);
         if (record == null) {
-            // Под isDebugEnabled: это выполняется на каждую строку списка транзакций, а копии,
-            // которые делает forLog, стоит делать только если их кто-то прочтёт.
+            // isDebugEnabled: вызов идёт на каждую строку списка, а копии forLog нужны, только если их прочтут.
             if (log.isDebugEnabled()) {
                 log.debug("Order payload carries no usable card operation record (order id {}): trans={}, lastTran={}",
                         orderPayload.get("id"), forLog(orderPayload.get("trans")), forLog(orderPayload.get("lastTran")));
@@ -57,9 +52,8 @@ public final class ProviderOrderDetails {
                 ProviderPayloads.scalarText(record.get("approvalCode")));
     }
 
-    // Closed ← Authorized без списаний: холд снял банк (Р-75, стенд — заказ 175700). Списание узнаётся
-    // по положительному clearAmount операции (§5.8.8), у авторизации он 0. Нет списка, пустой список
-    // или нечитаемая сумма — «не доказано», и заказ остаётся на ручной разбор.
+    // Closed после Authorized без списаний — холд снял банк (Р-75). Списание — положительный clearAmount
+    // (§5.8.8), у авторизации он 0. Нет списка, пустой или нечитаемая сумма — «не доказано», ручной разбор.
     public static boolean isReleasedAuthorization(Map<String, Object> orderPayload) {
         if (orderPayload == null
                 || !"Closed".equals(ProviderPayloads.scalarText(orderPayload.get("status")))
@@ -96,9 +90,8 @@ public final class ProviderOrderDetails {
         return srcToken != null ? ProviderPayloads.scalarText(srcToken.get("displayName")) : null;
     }
 
-    // Запись, с которой читаются rrn и approvalCode: покупка из order.trans[] (§5.8.5-5.8.6), иначе
-    // lastTran, иначе null. Мерчанту нужны идентификаторы именно покупки — той операции, которую
-    // показывает выписка плательщика.
+    // Покупка из order.trans[] (§5.8.5-5.8.6), иначе lastTran: мерчанту нужны rrn и approvalCode именно
+    // покупки — операции из выписки плательщика.
     private static Map<String, Object> purchaseRecord(Map<String, Object> orderPayload) {
         List<Map<String, Object>> candidates = new ArrayList<>();
         if (orderPayload.get("trans") instanceof List<?> trans) {
@@ -119,22 +112,20 @@ public final class ProviderOrderDetails {
         return lastTran != null && isPurchaseCandidate(lastTran) ? lastTran : null;
     }
 
-    // Кандидат: не реверсал, не возврат, не отмена.
     private static boolean isPurchaseCandidate(Map<String, Object> record) {
         if (isTrue(record.get("isReversal"))) {
             return false;
         }
         String description = ProviderPayloads.scalarText(record.get("description"));
         if (description == null) {
-            // Совсем без description — случай DMS, который контракт не описывает. Оставляем.
+            // Без description бывает DMS, которого нет в контракте, — остаётся кандидатом.
             return true;
         }
         return !DESCRIPTION_REFUND.equals(description) && !description.contains(DESCRIPTION_VOID_MARKER);
     }
 
-    // description=Purchase — предпочтение, а не строгий фильтр, намеренно: DMS (Order_DMS) контракт
-    // не описывает вовсе (AGENTS.md §10), и какой description несут авторизация и клиринг —
-    // неизвестно. Строгий фильтр оставил бы каждый DMS-платёж без RRN.
+    // Purchase — предпочтение, а не фильтр: description записей DMS неизвестен (AGENTS.md §10), и строгий
+    // фильтр оставил бы каждый DMS-платёж без RRN.
     private static List<Map<String, Object>> preferPurchase(List<Map<String, Object>> candidates) {
         List<Map<String, Object>> purchases = new ArrayList<>();
         for (Map<String, Object> record : candidates) {
@@ -145,10 +136,9 @@ public final class ProviderOrderDetails {
         return purchases.isEmpty() ? candidates : purchases;
     }
 
-    // Самая ранняя по regTime. Строки вида "2023-03-14 10:30:39" сравниваются как текст намеренно —
-    // не «чинить» это через LocalDateTime.parse: неожиданный формат тогда бросит посреди отрисовки
-    // карточки транзакции, а сравнение строк на странном значении — всего лишь неверный выбор.
-    // Запись с regTime бьёт запись без него; среди безымянных остаётся первая по порядку списка.
+    // regTime ("2023-03-14 10:30:39") сравнивается строкой — не парсить (P1-16): неожиданный формат
+    // бросит посреди карточки, а строка на нём даст лишь неверный выбор. Запись с regTime бьёт запись
+    // без него; среди остальных — первая по списку.
     private static Map<String, Object> earliest(List<Map<String, Object>> records) {
         Map<String, Object> best = null;
         String bestTime = null;
@@ -167,8 +157,7 @@ public final class ProviderOrderDetails {
         return best;
     }
 
-    // По контракту isReversal — JSON-boolean, но шлюз, написавший строку "true", имеет в виду
-    // реверсал. Всё прочее — отсутствие, false, число, структура — «не реверсал».
+    // По контракту boolean, но строка "true" — тоже реверсал; всё прочее — нет.
     private static boolean isTrue(Object value) {
         return Boolean.TRUE.equals(value) || (value instanceof String s && s.trim().equalsIgnoreCase("true"));
     }
@@ -178,9 +167,8 @@ public final class ProviderOrderDetails {
         return value instanceof Map<?, ?> map ? (Map<String, Object>) map : null;
     }
 
-    // Payload эквайера попадает в лог только через ProviderPayloads.withoutSecrets (P0-9). trans[]
-    // и lastTran по контракту пароля не несут (§5.8.3), но правило есть правило, а цена — одна
-    // копия map на DEBUG-пути, который и так заканчивается «ничего не нашли».
+    // Payload в лог — только через withoutSecrets (P0-9), даже trans[] и lastTran, где пароля по
+    // контракту нет (§5.8.3).
     private static Object forLog(Object value) {
         if (value instanceof Map<?, ?>) {
             return ProviderPayloads.withoutSecrets(asMap(value));

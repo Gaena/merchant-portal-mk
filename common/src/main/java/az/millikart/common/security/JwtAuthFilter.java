@@ -37,9 +37,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                           @Value("${pbl.security.api-token:}") String fallbackApiToken,
                           @Value("${pbl.security.api-token-enabled:false}") boolean fallbackApiTokenEnabled,
                           @Value("${springdoc.api-docs.enabled:false}") boolean swaggerEnabled) {
-        // Статический токен аутентифицирует как SYSTEM_ADMIN без пароля, поэтому встроенного
-        // значения у него быть не должно: известный дефолт — это бэкдор. Включён без значения —
-        // ошибка конфигурации: флаг поднят, проверка мертва. Поэтому падаем на старте.
+        // Статический токен даёт SYSTEM_ADMIN без пароля: дефолта нет (известный дефолт — бэкдор), а
+        // включённый флаг без значения роняет старт.
         if (fallbackApiTokenEnabled && (fallbackApiToken == null || fallbackApiToken.isBlank())) {
             throw new IllegalStateException(
                     "pbl.security.api-token-enabled is true but pbl.security.api-token is empty. "
@@ -117,8 +116,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Claim остаётся здесь сырой строкой намеренно: разбирает её UserPrincipal, а
-        // нераспознанное значение должно дойти до сервисов как «нет роли», а не быть отвергнуто.
+        // Роль — сырой строкой намеренно: разбирает её UserPrincipal, нераспознанная доходит до
+        // сервисов как «нет роли».
         String finalRole = role != null ? role : Role.COMPANY_EMPLOYEE.name();
         String finalUsername = username != null ? username : "system";
 
@@ -141,10 +140,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
     }
 
-    // Публичных путей здесь нет — они в PublicEndpoints, общем с SecurityConfig. Прежняя версия
-    // решала по префиксу и пропускала всё, что вне /api/v1/, — так и остались открыты actuator и
-    // swagger. Springdoc — единственный условный случай: его пути существуют лишь при
-    // springdoc.api-docs.enabled, и SecurityConfig разрешает их по тому же флагу.
+    // Публичные пути — только PublicEndpoints, общий с SecurityConfig (P1-1); springdoc — по тому же
+    // флагу, что и там.
     private boolean requiresAuthentication(String path) {
         if (PublicEndpoints.isPublic(path)) {
             return false;
