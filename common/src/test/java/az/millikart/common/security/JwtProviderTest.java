@@ -6,8 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Date;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -103,5 +106,47 @@ class JwtProviderTest {
         String token = issuer.generateToken("user-1", "admin@example.com", "SYSTEM_ADMIN", null);
 
         assertThrows(io.jsonwebtoken.security.SignatureException.class, () -> other.validateAndGetClaims(token));
+    }
+
+    // Токен без подписи (alg=none) собирает кто угодно — с любой ролью и компанией. Ловит разбор через
+    // parse/parseClaimsJwt вместо parseClaimsJws: такой разбор принял бы неподписанный токен.
+    @Test
+    void validate_unsignedToken_throws() {
+        JwtProvider provider = new JwtProvider(VALID_SECRET, EXPIRATION_MS);
+        String unsigned = Jwts.builder()
+                .setSubject("attacker@example.com")
+                .claim("userId", "attacker")
+                .claim("role", "SYSTEM_ADMIN")
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_MS))
+                .compact();
+
+        assertThrows(JwtException.class, () -> provider.validateAndGetClaims(unsigned));
+    }
+
+    // Та же атака на настоящем токене: заголовок заменён на alg=none, подпись срезана, роль повышена.
+    @Test
+    void validate_realTokenStrippedToAlgNone_throws() {
+        JwtProvider provider = new JwtProvider(VALID_SECRET, EXPIRATION_MS);
+        String[] parts = provider.generateToken("user-1", "head@comp01.com", "COMPANY_HEAD", "comp-01").split("\\.");
+        Base64.Encoder url = Base64.getUrlEncoder().withoutPadding();
+        String header = url.encodeToString("{\"alg\":\"none\"}".getBytes(StandardCharsets.UTF_8));
+        String payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8)
+                .replace("COMPANY_HEAD", "SYSTEM_ADMIN");
+        String forged = header + "." + url.encodeToString(payload.getBytes(StandardCharsets.UTF_8)) + ".";
+
+        assertThrows(JwtException.class, () -> provider.validateAndGetClaims(forged));
+    }
+
+    // Срок жизни — ровно настроенный. В коде умолчание 24 часа, 15 минут дают только yaml сервисов
+    // (ProductionConfigurationTest), поэтому здесь проверяется, что настройка доходит до токена.
+    @Test
+    void generatedToken_livesExactlyTheConfiguredTime() {
+        JwtProvider provider = new JwtProvider(VALID_SECRET, 900_000L);
+
+        Claims claims = provider.validateAndGetClaims(
+                provider.generateToken("user-1", "head@comp01.com", "COMPANY_HEAD", "comp-01"));
+
+        assertEquals(900_000L, claims.getExpiration().getTime() - claims.getIssuedAt().getTime());
     }
 }
