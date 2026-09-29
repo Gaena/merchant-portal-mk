@@ -864,6 +864,45 @@ public class DirectoryIntegrationTest {
                 .satisfies(record -> assertThat(record.getDetails()).doesNotContain("CompanyId changed"));
     }
 
+    // Р-108: журнал пишет только настоящие изменения. Ловит «Name changed from 'X' to 'X'» у терминала и
+    // компании и «Status changed from 'X' to 'X'» у компании: PATCH, повторяющий текущие значения, — не событие.
+    @Test
+    public void aPatchRepeatingCurrentValues_isNotAnEvent_andOnlyRealChangesAreRecorded() throws Exception {
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Other Shop", "comp-02", adminToken);
+        String terminalName = terminalRepository.findById(terminalId).orElseThrow().getName();
+        auditLogRepository.deleteAll();
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateTerminalRequest(terminalName, "comp-02", TerminalStatus.ACTIVE))))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/v1/companies/comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateCompanyRequest("Other LLC", "ACTIVE", null, null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name", is("Other LLC")));
+        assertThat(auditLogRepository.findAll()).isEmpty();
+
+        mockMvc.perform(patch("/api/v1/companies/comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateCompanyRequest("Other LLC", "INACTIVE", null, null))))
+                .andExpect(status().isOk());
+        List<AuditLog> companyUpdates = auditLogRepository.findAll().stream()
+                .filter(record -> "UPDATE".equals(record.getAction()))
+                .toList();
+        assertThat(companyUpdates).singleElement().satisfies(record -> {
+            assertThat(record.getDetails()).contains("Status changed from 'ACTIVE' to 'INACTIVE'");
+            assertThat(record.getDetails()).doesNotContain("Name changed");
+        });
+    }
+
     // Фикстуры
 
     private void assertCompanyRefused(String providerLogin, String reason) throws Exception {

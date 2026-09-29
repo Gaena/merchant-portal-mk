@@ -198,11 +198,11 @@ public class CompanyService {
 
         StringBuilder changes = new StringBuilder();
         String previousStatus = company.getStatus();
-        if (request.name() != null && !request.name().isBlank()) {
+        if (request.name() != null && !request.name().isBlank() && !request.name().equals(company.getName())) {
             changes.append("Name changed from '").append(company.getName()).append("' to '").append(request.name()).append("'. ");
             company.setName(request.name());
         }
-        if (request.status() != null && !request.status().isBlank()) {
+        if (request.status() != null && !request.status().isBlank() && !request.status().equals(previousStatus)) {
             changes.append("Status changed from '").append(company.getStatus()).append("' to '").append(request.status()).append("'. ");
             company.setStatus(request.status());
         }
@@ -217,6 +217,11 @@ public class CompanyService {
         if (request.providerPassword() != null && !request.providerPassword().isBlank()) {
             changes.append("Provider password changed. ");
             company.setProviderPassword(credentialCipher.encrypt(request.providerPassword()));
+        }
+
+        // PATCH без настоящих изменений — не событие: ни записи в журнале, ни updated_by (Р-108).
+        if (changes.isEmpty()) {
+            return mapToResponse(company, actorRole);
         }
 
         company.setUpdatedBy(actorUsername);

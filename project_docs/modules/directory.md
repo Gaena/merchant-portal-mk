@@ -119,7 +119,8 @@
 
     *Журнал*: `COMPANY` / `UPDATE` с перечнем изменений — `Name changed from 'X' to 'Y'.`, `Status changed
     from …`, `Provider login changed from 'X' to 'Y'.`, `Provider password changed.` (без значения пароля);
-    смена статуса пишет ещё `BLOCK`/`UNBLOCK`.
+    смена статуса пишет ещё `BLOCK`/`UNBLOCK`. В перечень попадают только поля, значение которых изменилось;
+    PATCH без изменений отвечает `200` и не пишет ничего, `updatedAt` не меняется (Р-108).
 -   `DELETE /api/v1/companies/{id}` — мягкое удаление: `status = DELETED`.  
     *Доступ*: Только `SYSTEM_ADMIN`.  
     *Ответ `204`*. Терминалы и пользователи компании не трогаются, её логин к провайдеру остаётся занятым.
@@ -229,7 +230,8 @@
 
     *Журнал*: `TERMINAL` / `UPDATE` с перечнем изменений (`Name changed from 'X' to 'Y'.`, `CompanyId changed
     from 'X' to 'Y'.`, смена статуса); смена статуса — ещё `BLOCK` `Blocked terminal <id>, suspended N links`
-    или `UNBLOCK` `Unblocked terminal <id>, resumed N links, expired M links`.
+    или `UNBLOCK` `Unblocked terminal <id>, resumed N links, expired M links`. В перечень попадают только
+    изменившиеся поля; PATCH без изменений отвечает `200` и не пишет ничего, `updatedAt` не меняется (Р-108).
 -   `DELETE /api/v1/terminals/{id}` — нет: `405` (§3). Терминалы не удаляются, а блокируются (Р-37): на них
     ссылаются платёжные ссылки.
 

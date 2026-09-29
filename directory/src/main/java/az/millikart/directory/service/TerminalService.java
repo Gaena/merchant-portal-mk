@@ -274,7 +274,7 @@ public class TerminalService {
                 "update terminal " + id + " of company " + terminal.getCompanyId());
 
         StringBuilder changes = new StringBuilder();
-        if (request.name() != null && !request.name().isBlank()) {
+        if (request.name() != null && !request.name().isBlank() && !request.name().equals(terminal.getName())) {
             changes.append("Name changed from '").append(terminal.getName()).append("' to '").append(request.name()).append("'. ");
             terminal.setName(request.name());
         }
@@ -316,6 +316,11 @@ public class TerminalService {
             // Ручную блокировку сверка не снимает (Р-66).
             terminal.setStatusSource(TerminalStatusSource.MANUAL);
             changes.append(statusChange).append(". ");
+        }
+
+        // PATCH без настоящих изменений — не событие: ни записи в журнале, ни updated_by (Р-108).
+        if (changes.isEmpty()) {
+            return mapToResponse(terminal);
         }
 
         terminal.setUpdatedBy(actorUsername);

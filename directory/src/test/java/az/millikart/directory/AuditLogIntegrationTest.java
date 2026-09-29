@@ -189,7 +189,7 @@ public class AuditLogIntegrationTest {
         assertThat(auditLogs.findAll()).extracting(AuditLog::getAction)
                 .containsExactlyInAnyOrder("UPDATE", "UNBLOCK");
 
-        // Повтор уже установленного статуса — не блокировка, выдумывать событие нельзя.
+        // Повтор уже установленного статуса — не блокировка и вообще не событие (Р-108): ни BLOCK, ни UPDATE.
         auditLogs.deleteAll();
         mockMvc.perform(patch("/api/v1/companies/comp-01")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
@@ -197,7 +197,7 @@ public class AuditLogIntegrationTest {
                         .content(objectMapper.writeValueAsString(
                                 new UpdateCompanyRequest(null, "ACTIVE", null, null))))
                 .andExpect(status().isOk());
-        assertThat(auditLogs.findAll()).extracting(AuditLog::getAction).containsExactly("UPDATE");
+        assertThat(auditLogs.findAll()).isEmpty();
     }
 
     // 2. Откатанная операция не оставляет записи — ядро Р-35
