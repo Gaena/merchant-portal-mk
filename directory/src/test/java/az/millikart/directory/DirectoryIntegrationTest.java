@@ -903,6 +903,84 @@ public class DirectoryIntegrationTest {
         });
     }
 
+    // Руководитель чужой компании не читает, не блокирует, не переименовывает и не переносит терминал —
+    // даже к себе. Ловит сравнение компаний в validateWriteAccessToCompany и validateReadAccessToCompany,
+    // пропускающее чужую: блокировка остановила бы чужие платежи, перенос увёл бы чужую выручку.
+    @Test
+    public void headOfAnotherCompany_cannotReadBlockRenameOrMoveATerminal() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Main Shop", "comp-01", adminToken);
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-02",
+                terminalRepository.findById(terminalId).orElseThrow().getMerchantRid());
+
+        mockMvc.perform(get("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany2))
+                .andExpect(status().isForbidden());
+        for (UpdateTerminalRequest attempt : List.of(
+                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED),
+                new UpdateTerminalRequest("Hijacked", null, null),
+                new UpdateTerminalRequest(null, "comp-02", null))) {
+            mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                            .header(HttpHeaders.AUTHORIZATION, headTokenCompany2)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(attempt)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.message", is("Access denied")));
+        }
+
+        Terminal after = terminalRepository.findById(terminalId).orElseThrow();
+        assertThat(after.getStatus()).isEqualTo(TerminalStatus.ACTIVE);
+        assertThat(after.getName()).isEqualTo("Main Shop");
+        assertThat(after.getCompanyId()).isEqualTo("comp-01");
+    }
+
+    // Свой терминал руководитель в чужую компанию не переносит, даже если мерчант связан с её логином:
+    // права на цель проверяются отдельно. Ловит проверку только исходной компании терминала.
+    @Test
+    public void head_cannotMoveOwnTerminalIntoAnotherCompany() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Main Shop", "comp-01", adminToken);
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-02",
+                terminalRepository.findById(terminalId).orElseThrow().getMerchantRid());
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message", is("Access denied")));
+
+        assertThat(terminalRepository.findById(terminalId).orElseThrow().getCompanyId()).isEqualTo("comp-01");
+    }
+
+    // Компанию правит и удаляет только администратор — даже свою и даже руководитель: иначе руководитель
+    // сменил бы логин к провайдеру (Р-93) или удалил компанию. Ловит проверку роли, открытую для своей компании.
+    @Test
+    public void onlyAdmin_editsOrDeletesACompany_evenItsOwn() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+
+        for (String actor : List.of(headTokenCompany1, managerTokenCompany1, employeeTokenCompany1,
+                auditorToken, unknownRoleToken)) {
+            mockMvc.perform(patch("/api/v1/companies/comp-01")
+                            .header(HttpHeaders.AUTHORIZATION, actor)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(
+                                    new UpdateCompanyRequest("Renamed LLC", "INACTIVE", null, null))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.message", is("Access denied: Only SYSTEM_ADMIN can update companies")));
+            mockMvc.perform(delete("/api/v1/companies/comp-01")
+                            .header(HttpHeaders.AUTHORIZATION, actor))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.message", is("Access denied: Only SYSTEM_ADMIN can delete companies")));
+        }
+
+        var company = companyRepository.findById("comp-01").orElseThrow();
+        assertThat(company.getName()).isEqualTo("MilliKart LLC");
+        assertThat(company.getStatus()).isEqualTo("ACTIVE");
+    }
+
     // Фикстуры
 
     private void assertCompanyRefused(String providerLogin, String reason) throws Exception {

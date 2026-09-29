@@ -558,6 +558,43 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.maxPayments", is(2)));
     }
 
+    // Руководитель чужой компании не правит и не отменяет ссылку: отмена обрывала бы чужие продажи, правка
+    // суммы меняла бы то, что платит чужой клиент. Ловит validateAccess в update, пропускающий чужой терминал.
+    @Test
+    void headOfAnotherCompany_cannotEditOrCancelALink() throws Exception {
+        UUID id = createLinkAndGetId(headToken);
+
+        for (ObjectNode attempt : List.of(amountUpdate("1.00"), statusUpdate("CANCELED"))) {
+            mockMvc.perform(authed(patch("/api/v1/payment-links/{id}", id), foreignToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(attempt)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.message", is("Access denied to terminal: " + TERMINAL_ID)));
+        }
+
+        PaymentLink after = paymentLinkRepository.findById(id).orElseThrow();
+        Assertions.assertEquals(PaymentLinkStatus.ACTIVE, after.getStatus());
+        Assertions.assertEquals(0, new BigDecimal("1500.50").compareTo(after.getAmount()));
+    }
+
+    // Холд чужой компании не списывается: отказ до опроса эквайера и до клиринга. Ловит validateAccess в
+    // completeDms, поставленный после похода к эквайеру или пропускающий чужой терминал.
+    @Test
+    void headOfAnotherCompany_cannotCaptureAHold() throws Exception {
+        Transaction hold = createTransaction(TERMINAL_ID, "TX-FOREIGN-CAPTURE", TransactionStatus.AUTHORIZED);
+
+        mockMvc.perform(authed(post("/api/v1/transactions/{id}/complete", hold.getId()), foreignToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\": 100.00}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message", is("Access denied to terminal: " + TERMINAL_ID)));
+
+        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
+        Assertions.assertEquals(TransactionStatus.AUTHORIZED,
+                transactionRepository.findById(hold.getId()).orElseThrow().getStatus());
+    }
+
     private ResultActions patchLink(UUID id, ObjectNode body) throws Exception {
         return mockMvc.perform(authed(patch("/api/v1/payment-links/{id}", id), headToken)
                 .contentType(MediaType.APPLICATION_JSON)
