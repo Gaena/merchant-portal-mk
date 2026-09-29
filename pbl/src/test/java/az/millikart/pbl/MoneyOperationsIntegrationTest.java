@@ -43,12 +43,17 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.resilience4j.retry.annotation.Retry;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -111,6 +116,9 @@ class MoneyOperationsIntegrationTest {
 
     @Autowired
     private TransactionRefundRepository transactionRefundRepository;
+
+    @Autowired
+    private DataSource dataSource;
 
     @MockBean
     private AcquiringClient acquiringClient;
@@ -614,6 +622,142 @@ class MoneyOperationsIntegrationTest {
                 "@Retry must never sit on completeDms or refund — they are not idempotent (P0-7)");
     }
 
+    // --- замок ссылки (Р-85) ----------------------------------------------------------------
+
+    // Ловит удаление findWithLockById из lockLinkAndLoadTransaction: без замка два возврата проходят
+    // потолок на одном снимке, а два списания уходят в шлюз. Замок держит отдельное соединение — как
+    // чужая операция или открытие ссылки. Занятая ссылка — сразу 409, до эквайера запрос не доходит.
+    @Test
+    void moneyOperationsOnALockedLink_are409_andNeverReachTheAcquirer() throws Exception {
+        Transaction settled = transaction("LOCKED-REFUND", TransactionStatus.SUCCESS);
+        Transaction held = transaction("LOCKED-CAPTURE", TransactionStatus.AUTHORIZED);
+        when(acquiringClient.refund(anyString(), anyString(), any(), any())).thenReturn(confirmed("REF"));
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any())).thenReturn(confirmed("CAP"));
+
+        try (Connection other = dataSource.getConnection()) {
+            other.setAutoCommit(false);
+            lockLink(other, settled);
+            lockLink(other, held);
+
+            mockMvc.perform(refund(settled, new BigDecimal("40.00")))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.message", is("The resource is being changed by another request, please retry")));
+            mockMvc.perform(capture(held, AMOUNT))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.message", is("The resource is being changed by another request, please retry")));
+
+            verify(acquiringClient, never()).refund(anyString(), anyString(), any(), any());
+            verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
+            Transaction notRefunded = reload(settled);
+            Assertions.assertEquals(TransactionStatus.SUCCESS, notRefunded.getStatus());
+            Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(notRefunded.getRefundedAmount()));
+            Transaction notCaptured = reload(held);
+            Assertions.assertEquals(TransactionStatus.AUTHORIZED, notCaptured.getStatus());
+            Assertions.assertNull(notCaptured.getCapturedAmount());
+            other.rollback();
+        }
+
+        // Замок снят — те же запросы проходят: 409 был из-за замка, а не из-за данных.
+        mockMvc.perform(refund(settled, new BigDecimal("40.00"))).andExpect(status().isOk());
+        mockMvc.perform(capture(held, AMOUNT)).andExpect(status().isOk());
+    }
+
+    // --- охранные условия денежных операций -------------------------------------------------
+
+    // Потолок считает уже возвращённое: списано 100, возвращено 60 — ещё 50 не проходит, 40 проходит и
+    // закрывает операцию. Ловит сравнение суммы возврата с базой без учёта refundedAmount.
+    @Test
+    void refund_ceilingCountsWhatWasAlreadyRefunded() throws Exception {
+        Transaction partly = dmsTransaction("PARTLY-BACK", TransactionStatus.PARTIALLY_REFUNDED, AMOUNT, AMOUNT);
+        jdbcTemplate.update("UPDATE transactions SET refunded_amount = 60.00 WHERE id = ?", partly.getId());
+        when(acquiringClient.refund(anyString(), anyString(), any(), any())).thenReturn(confirmed("REST"));
+
+        mockMvc.perform(refund(partly, new BigDecimal("50.00")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Refund amount exceeds the captured amount of the transaction")));
+        verify(acquiringClient, never()).refund(anyString(), anyString(), any(), any());
+        Assertions.assertEquals(0, new BigDecimal("60.00").compareTo(reload(partly).getRefundedAmount()));
+
+        mockMvc.perform(refund(partly, new BigDecimal("40.00")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("REFUNDED")));
+        Assertions.assertEquals(0, AMOUNT.compareTo(reload(partly).getRefundedAmount()));
+    }
+
+    // Возврат — только из SUCCESS и PARTIALLY_REFUNDED: холд и неоплаченный платёж ещё не деньги, у
+    // неуспешного и полностью возвращённого возвращать нечего. Ловит ослабление проверки статуса.
+    @Test
+    void refund_fromAnUnsettledOrClosedTransaction_isRefusedBeforeTheAcquirer() throws Exception {
+        for (TransactionStatus from : List.of(TransactionStatus.AUTHORIZED, TransactionStatus.PENDING,
+                TransactionStatus.FAILED, TransactionStatus.REFUNDED)) {
+            Transaction tx = transaction("NO-REFUND-" + from, from);
+            mockMvc.perform(refund(tx, new BigDecimal("10.00")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", is("Only successful or partially refunded transactions can be refunded")));
+            Assertions.assertEquals(from, statusOf(tx));
+        }
+        verify(acquiringClient, never()).refund(anyString(), anyString(), any(), any());
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
+    }
+
+    // Списание — только из AUTHORIZED и PENDING (SUCCESS — в completeDms_alreadyCaptured_returns400):
+    // у возвращённого и неуспешного списывать нечего. Ловит ослабление проверки: ни опроса, ни клиринга.
+    @Test
+    void completeDms_fromARefundedOrFailedTransaction_isRefusedBeforeTheAcquirer() throws Exception {
+        for (TransactionStatus from : List.of(TransactionStatus.PARTIALLY_REFUNDED, TransactionStatus.REFUNDED,
+                TransactionStatus.FAILED)) {
+            Transaction tx = transaction("NO-CAPTURE-" + from, from);
+            mockMvc.perform(capture(tx, AMOUNT))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", is("Transaction is in status " + from
+                            + ". Only PENDING or AUTHORIZED transactions can be completed.")));
+            Assertions.assertEquals(from, statusOf(tx));
+        }
+        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
+    }
+
+    // После списания ссылка пересчитывает использования (P2-16): одноразовая закрывается сразу,
+    // многоразовая — на последнем слоте. Ловит потерю пересчёта: оплаченная ссылка осталась бы ACTIVE.
+    @Test
+    void completeDms_countsTheLinkUsage_andClosesTheLinkWhenFull() throws Exception {
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any())).thenReturn(confirmed("CAP"));
+
+        Transaction single = transaction("SINGLE-USE", TransactionStatus.AUTHORIZED);
+        mockMvc.perform(capture(single, AMOUNT)).andExpect(status().isOk());
+        Assertions.assertEquals(PaymentLinkStatus.COMPLETED, linkOf(single).getStatus());
+        Assertions.assertEquals(1, linkOf(single).getCurrentPaymentsCount());
+
+        PaymentLink multi = multiUseLink("MULTI-USE", 2);
+        Transaction first = holdOn(multi, "MULTI-1");
+        Transaction second = holdOn(multi, "MULTI-2");
+        mockMvc.perform(capture(first, AMOUNT)).andExpect(status().isOk());
+        Assertions.assertEquals(PaymentLinkStatus.ACTIVE, linkOf(first).getStatus());
+        Assertions.assertEquals(1, linkOf(first).getCurrentPaymentsCount());
+        mockMvc.perform(capture(second, AMOUNT)).andExpect(status().isOk());
+        Assertions.assertEquals(PaymentLinkStatus.COMPLETED, linkOf(second).getStatus());
+        Assertions.assertEquals(2, linkOf(second).getCurrentPaymentsCount());
+    }
+
+    // P0-9: пароль в ответе эквайера не попадает в provider_response — ни после списания, ни после
+    // возврата. По контракту в ответе exec-tran пароля нет; тест сторожит withoutSecrets, если он появится.
+    @Test
+    void acquirerPasswordInAMoneyOperationResponse_isNotStored() throws Exception {
+        Transaction held = dmsTransaction("SECRET", TransactionStatus.AUTHORIZED, AMOUNT, null);
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any()))
+                .thenReturn(withPassword(confirmed("CAP")));
+        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
+                .thenReturn(withPassword(confirmed("REF")));
+
+        mockMvc.perform(capture(held, AMOUNT)).andExpect(status().isOk());
+        mockMvc.perform(refund(held, new BigDecimal("10.00"))).andExpect(status().isOk());
+
+        Map<String, Object> stored = reload(held).getProviderResponse();
+        Assertions.assertFalse(stored.containsKey("password"), "stored payload: " + stored);
+        Assertions.assertFalse(objectMapper.writeValueAsString(stored).contains("leaked-secret"),
+                "the acquirer's password must not be stored anywhere in the payload: " + stored);
+    }
+
     // --- фикстуры ---------------------------------------------------------------------------
 
     // --- история операции -----------------------------------------------------------------
@@ -783,6 +927,53 @@ class MoneyOperationsIntegrationTest {
             return List.of();
         }
         return (List<Map<String, Object>>) refunds;
+    }
+
+    // Держит строку ссылки под FOR UPDATE в чужой транзакции, пока соединение не откатят.
+    private void lockLink(Connection connection, Transaction tx) throws SQLException {
+        try (PreparedStatement lock = connection.prepareStatement(
+                "SELECT id FROM payment_links WHERE id = ? FOR UPDATE")) {
+            lock.setObject(1, tx.getLink().getId());
+            lock.executeQuery().close();
+        }
+    }
+
+    private PaymentLink multiUseLink(String key, int maxPayments) {
+        return paymentLinkRepository.save(PaymentLink.builder()
+                .providerReference("RID-" + key)
+                .merchantOrderId(key)
+                .terminalId(TERMINAL_ID)
+                .amount(AMOUNT)
+                .currency("AZN")
+                .description("Fixture for " + key)
+                .paymentType(PaymentType.DMS)
+                .usageType(UsageType.MULTIPLE)
+                .maxPayments(maxPayments)
+                .currentPaymentsCount(0)
+                .status(PaymentLinkStatus.ACTIVE)
+                .build());
+    }
+
+    private Transaction holdOn(PaymentLink link, String key) {
+        return transactionRepository.save(Transaction.builder()
+                .link(link)
+                .ridByMerchant(UUID.randomUUID())
+                .providerOrderId("ORD-" + key)
+                .providerPassword("provider-password")
+                .amount(AMOUNT)
+                .refundedAmount(BigDecimal.ZERO)
+                .status(TransactionStatus.AUTHORIZED)
+                .build());
+    }
+
+    private static MoneyOperationResult withPassword(MoneyOperationResult result) {
+        Map<String, Object> raw = new HashMap<>(result.raw());
+        raw.put("password", "leaked-secret");
+        return new MoneyOperationResult(result.approvalCode(), result.tranActionId(), result.ridByPmo(), raw);
+    }
+
+    private PaymentLink linkOf(Transaction tx) {
+        return paymentLinkRepository.findById(tx.getLink().getId()).orElseThrow();
     }
 
     private Transaction reload(Transaction tx) {

@@ -147,6 +147,23 @@ class TransactionReconciliationIntegrationTest {
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE, linkStatusOf(tx));
     }
 
+    // По max-age гасится только старое: Preparing моложе суток — заказ ещё можно оплатить, строка
+    // остаётся PENDING. Ловит сравнение возраста с min-age вместо max-age: сверка гасила бы живые оплаты.
+    @Test
+    void reconcile_pendingYoungerThanMaxAge_providerSaysPreparing_staysPending() {
+        Transaction tx = agedTransaction("STILL-OPEN", TransactionStatus.PENDING, MAX_AGE.minusHours(1));
+        providerAnswers("Preparing");
+
+        Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
+
+        Assertions.assertEquals(TransactionStatus.PENDING, statusOf(tx));
+        Map<String, Object> providerResponse = reload(tx).getProviderResponse();
+        Assertions.assertTrue(providerResponse == null
+                        || !"ABANDONED_TIMEOUT".equals(providerResponse.get("reconciliationOutcome")),
+                "a young unpaid order must not be timed out: " + providerResponse);
+        Assertions.assertEquals(PaymentLinkStatus.ACTIVE, linkStatusOf(tx));
+    }
+
     // Несущий тест P1-3: недоступный шлюз нельзя читать как «платёж не прошёл». Иначе суточная
     // авария разом провалила бы транзакции, которые на самом деле оплачены.
     @Test
