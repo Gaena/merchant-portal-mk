@@ -104,7 +104,7 @@ public class UserService {
         }
 
         if (request.companyId() != null && !request.companyId().isBlank()) {
-            if (!companyRepository.existsById(request.companyId())) {
+            if (!liveCompanyExists(request.companyId())) {
                 log.warn("User creation failed: companyId {} not found", request.companyId());
                 throw new BusinessException("Company not found");
             }
@@ -248,7 +248,7 @@ public class UserService {
                                     + " attempted to move user " + id + " to company " + requestedCompanyId);
                     throw new InvalidStateException("Cannot move a user to another company");
                 }
-                if (requestedCompanyId != null && !companyRepository.existsById(requestedCompanyId)) {
+                if (requestedCompanyId != null && !liveCompanyExists(requestedCompanyId)) {
                     throw new BusinessException("Company not found");
                 }
                 changes.add("companyId " + user.getCompanyId() + " -> " + requestedCompanyId);
@@ -330,6 +330,11 @@ public class UserService {
 
         int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
         log.info("User {} deleted: {} refresh token(s) revoked", user.getId(), revoked);
+    }
+
+    // Удалённая компания — как несуществующая: в неё не заводят и не переводят (Р-107).
+    private boolean liveCompanyExists(String companyId) {
+        return companyRepository.existsByIdAndStatusNot(companyId, STATUS_DELETED);
     }
 
     private void validateCreatePermission(CreateUserRequest request, UserPrincipal principal) {

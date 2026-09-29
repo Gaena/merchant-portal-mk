@@ -180,7 +180,7 @@
     без префикса. Только активные строки справочника с номером терминала, чей мерчант связан активной связью с
     логином компании, и которые ещё не заведены ни в одной компании. У компании без логина мультимерчанта и
     при пустом справочнике — пустой список.  
-    *Отказы*: `400 companyId is required`; `400 Company with ID '<id>' not found`.
+    *Отказы*: `400 companyId is required`; `400 Company with ID '<id>' not found` — компании нет или она удалена.
 -   `GET /api/v1/terminals` — Список терминалов (постранично).  
     *Доступ*: `SYSTEM_ADMIN` и `AUDITOR` — все; `COMPANY_HEAD`/`COMPANY_MANAGER`/`COMPANY_EMPLOYEE` — только
     своей компании. Отказы с записью `TERMINAL` / `LIST` / `DENIED`: роль компании без `companyId` — `403 Access
@@ -223,7 +223,7 @@
     | `400` | `Terminal not found` | нет такого терминала | — |
     | `403` | `Access denied: AUDITOR is read-only` / `Access denied` | аудитор / роль без права записи или чужой терминал | `TERMINAL` / `UPDATE` / `DENIED` |
     | `403` | `Access denied` | не администратор переносит терминал в другую компанию | `TERMINAL` / `UPDATE` / `DENIED` |
-    | `400` | `Company with ID '<id>' not found` | целевой компании нет | — |
+    | `400` | `Company with ID '<id>' not found` | целевой компании нет или она удалена | — |
     | `400` | `Terminal <id> cannot be moved to company <id>: its provider merchant is not linked to the multimerchant login of that company` | мерчант не связан с логином целевой компании или у терминала нет `merchant_rid` | — |
     | `403` | `Terminal <id> is out of service at the provider and will be unblocked automatically once the provider brings it back` | ручное включение терминала, выключенного сверкой (`status_source = PROVIDER`, Р-66) | `TERMINAL` / `UNBLOCK` / `DENIED` |
 

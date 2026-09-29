@@ -241,7 +241,7 @@ Refresh и отзыв одной цепочки могут идти одновр
         | `403` | `Access denied` | прочие роли | — |
         | `400` | `Username already exists` | логин занят, в том числе удалённой учёткой | — |
         | `400` | `Role <ROLE> requires a company` | роль компании без `companyId` (Р-103) | — |
-        | `400` | `Company not found` | компании нет в `companies` | — |
+        | `400` | `Company not found` | компании нет или она удалена | — |
 
     -   *Журнал*: `USER` / `CREATE` `Created user <логин> with role <роль> in company <id>`.
 2.  **Список пользователей** (`GET /api/v1/users`) — постранично (P2-1).
@@ -318,7 +318,7 @@ Refresh и отзыв одной цепочки могут идти одновр
         | `400` | `The new password must differ from the last 4 passwords` | свой пароль повторяет один из четырёх последних | — |
         | `403` | `Cannot assign this role` | руководитель выдаёт роль не из `COMPANY_MANAGER`, `COMPANY_EMPLOYEE` | `USER` / `UPDATE` / `DENIED` |
         | `403` | `Cannot move a user to another company` | не админ меняет `companyId` | `USER` / `UPDATE` / `DENIED` |
-        | `400` | `Company not found` | админ переводит в несуществующую компанию | — |
+        | `400` | `Company not found` | админ переводит в несуществующую или удалённую компанию | — |
         | `400` | `Role <ROLE> requires a company` | итог — роль компании без компании | — |
 
     -   *Журнал*: одна запись `UPDATE` с перечнем изменений (`role A -> B`, `companyId A -> B`, `status …`,

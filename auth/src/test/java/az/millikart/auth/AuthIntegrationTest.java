@@ -419,6 +419,31 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$.status", is("BLOCKED")));
     }
 
+    // Удалённая компания — как несуществующая (Р-107): строка в companies осталась, но ни завести в неё
+    // пользователя, ни перевести его туда нельзя.
+    @Test
+    public void aDeletedCompany_takesNoNewOrMovedUsers() throws Exception {
+        companyRepository.save(Company.builder().id("comp-gone").name("Gone LLC").status("DELETED").build());
+        UUID userId = createUser("mover@comp01.com", "COMPANY_EMPLOYEE", "comp-01");
+
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateUserRequest(
+                                "newcomer@gone.com", USER_PASSWORD, "Newcomer", "COMPANY_EMPLOYEE", "comp-gone"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Company not found")));
+        Assertions.assertTrue(userRepository.findByUsername("newcomer@gone.com").isEmpty());
+
+        mockMvc.perform(patch("/api/v1/users/" + userId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, null, "comp-gone"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Company not found")));
+        Assertions.assertEquals("comp-01", userRepository.findById(userId).orElseThrow().getCompanyId());
+    }
+
     // Пользователь, уже сменивший выданный пароль (Р-100): тесты здесь о правах, а не о первом входе.
     private UUID createUser(String username, String role, String companyId) throws Exception {
         String body = mockMvc.perform(post("/api/v1/users")

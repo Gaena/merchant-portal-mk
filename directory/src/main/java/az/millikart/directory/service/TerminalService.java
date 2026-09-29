@@ -96,10 +96,7 @@ public class TerminalService {
             throw new InvalidStateException("Access denied");
         }
 
-        // Удалённая компания — как несуществующая: список компаний её уже не показывает (Р-103).
-        Company company = companyRepository.findById(request.companyId())
-                .filter(found -> !CompanyService.STATUS_DELETED.equals(found.getStatus()))
-                .orElseThrow(() -> new BusinessException("Company with ID '" + request.companyId() + "' not found"));
+        Company company = liveCompany(request.companyId());
 
         // Один терминал провайдера — одна наша компания: общий мерчант двух логинов достаётся
         // первой заведшей (Р-67, Р-96).
@@ -194,8 +191,7 @@ public class TerminalService {
         if (companyId == null || companyId.isBlank()) {
             throw new BusinessException("companyId is required");
         }
-        Company company = companyRepository.findById(companyId)
-                .orElseThrow(() -> new BusinessException("Company with ID '" + companyId + "' not found"));
+        Company company = liveCompany(companyId);
         Set<String> merchants = merchantsOfCompanyLogin(company);
         Set<String> linked = new HashSet<>(terminalRepository.findAllMerchantRids());
         return providerTerminals.rowsByRid().values().stream()
@@ -205,6 +201,13 @@ public class TerminalService {
                         row.title() != null ? row.title() : "").thenComparing(ProviderTerminalStatusRepository.ProviderTerminalRow::rid))
                 .map(row -> new ProviderTerminalOption(row.rid(), row.title(), row.login(), row.terminalRid()))
                 .toList();
+    }
+
+    // Удалённая компания — как несуществующая: список компаний её не показывает (Р-103, Р-107).
+    private Company liveCompany(String companyId) {
+        return companyRepository.findById(companyId)
+                .filter(found -> !CompanyService.STATUS_DELETED.equals(found.getStatus()))
+                .orElseThrow(() -> new BusinessException("Company with ID '" + companyId + "' not found"));
     }
 
     // Только мерчанты логина компании: иначе она ходила бы к провайдеру своими кредами за чужого
@@ -279,8 +282,7 @@ public class TerminalService {
             validateWriteAccessToCompany(request.companyId(), principal,
                     String.valueOf(id), AuditAction.UPDATE,
                     "move terminal " + id + " to company " + request.companyId());
-            Company target = companyRepository.findById(request.companyId())
-                    .orElseThrow(() -> new BusinessException("Company with ID '" + request.companyId() + "' not found"));
+            Company target = liveCompany(request.companyId());
             // Как при заведении: иначе ссылки ушли бы к провайдеру с кредами компании, чей логин
             // этого мерчанта не знает, а выписка его платежей осталась бы у прежней (Р-96, Р-97).
             if (!target.getId().equals(terminal.getCompanyId())

@@ -808,6 +808,33 @@ public class DirectoryIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    // Удалённая компания — как несуществующая и здесь, как при заведении (Р-107): ни терминал в неё не
+    // переносится, ни её справочник не открывается, хотя мерчант с её логином по-прежнему связан.
+    @Test
+    public void aDeletedCompany_isNeitherAMoveTargetNorAProviderDirectory() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Main Shop", "comp-01", adminToken);
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-02",
+                terminalRepository.findById(terminalId).orElseThrow().getMerchantRid());
+        mockMvc.perform(delete("/api/v1/companies/comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Company with ID 'comp-02' not found")));
+        assertThat(terminalRepository.findById(terminalId).orElseThrow().getCompanyId()).isEqualTo("comp-01");
+
+        mockMvc.perform(get("/api/v1/terminals/provider-terminals").param("companyId", "comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Company with ID 'comp-02' not found")));
+    }
+
     // Фикстуры
 
     private void assertCompanyRefused(String providerLogin, String reason) throws Exception {
