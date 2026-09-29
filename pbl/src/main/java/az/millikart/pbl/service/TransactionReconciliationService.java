@@ -84,7 +84,8 @@ public class TransactionReconciliationService {
         return transactionRepository.countByStatusAndCreatedAtBefore(TransactionStatus.PENDING, createdAfter);
     }
 
-    // Даже холостой проход говорит, сколько строк автоматика бросила: их разбирают руками.
+    // Даже холостой проход говорит, сколько строк автоматика бросила: их разбирают руками. Повтор на
+    // каждом проходе — намеренное напоминание, исключение из Р-98 (Р-106).
     private void logGivenUp(Instant createdAfter) {
         long givenUp = countGivenUp(createdAfter);
         if (givenUp > 0) {
