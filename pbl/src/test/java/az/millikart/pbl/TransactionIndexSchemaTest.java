@@ -72,6 +72,26 @@ public class TransactionIndexSchemaTest {
         assertThat(columnsByIndex.get("idx_transaction_refunds_transaction")).containsExactly("transaction_id");
     }
 
+    // Публичная страница возврата ищет по rid_by_merchant: без индекса — полный просмотр transactions на
+    // каждый анонимный заход. Уникальный: поиск ждёт ровно одну строку (013).
+    @Test
+    public void ridByMerchantIndex_existsAndIsUnique() throws Exception {
+        Map<String, List<String>> uniqueIndexes = new HashMap<>();
+        try (Connection connection = dataSource.getConnection();
+             ResultSet indexInfo = connection.getMetaData().getIndexInfo(null, null, "transactions", true, false)) {
+            while (indexInfo.next()) {
+                String indexName = indexInfo.getString("INDEX_NAME");
+                String columnName = indexInfo.getString("COLUMN_NAME");
+                if (indexName != null && columnName != null) {
+                    uniqueIndexes.computeIfAbsent(indexName.toLowerCase(Locale.ROOT), k -> new ArrayList<>())
+                            .add(columnName.toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+
+        assertThat(uniqueIndexes.get("idx_transactions_rid_by_merchant")).containsExactly("rid_by_merchant");
+    }
+
     // JDBC отдаёт строки по имени индекса и порядковой позиции, поэтому списки колонок идут в порядке
     // определения индекса. Имя таблицы — в нижнем регистре: так PostgreSQL складывает неэкранированные имена.
     private void readIndexes(String table, Map<String, List<String>> columnsByIndex,

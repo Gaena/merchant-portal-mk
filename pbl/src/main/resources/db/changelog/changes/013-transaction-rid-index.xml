@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Публичная страница возврата плательщика (/redirect/{tx}) и её опрос ищут транзакцию по
+      rid_by_merchant: без индекса каждый анонимный заход — полный просмотр transactions. Уникальный:
+      значение выдаёт OpenLinkService (случайный UUID), поиск ждёт ровно одну строку. NULL у старых строк
+      уникальности не мешают. Преконтроль — как у остальных индексов pbl (002).
+    -->
+    <changeSet id="13-pbl-index-transactions-rid-by-merchant" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="transactions" indexName="idx_transactions_rid_by_merchant"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="transactions" indexName="idx_transactions_rid_by_merchant" unique="true">
+            <column name="rid_by_merchant"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>
