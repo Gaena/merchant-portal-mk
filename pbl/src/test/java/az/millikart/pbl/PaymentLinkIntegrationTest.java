@@ -62,6 +62,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -1499,6 +1500,22 @@ class PaymentLinkIntegrationTest {
                 paymentLinkRepository.findById(overdue.getId()).orElseThrow().getStatus());
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE,
                 paymentLinkRepository.findById(live.getId()).orElseThrow().getStatus());
+    }
+
+    // Истечение поднимает версию: ссылка, прочитанная до него, при сохранении получает конфликт, а не
+    // возвращает себе ACTIVE, пока её не догонит следующий проход.
+    @Test
+    void aLinkReadBeforeItExpired_cannotBeSavedBackAsActive() {
+        PaymentLink overdue = linkFixture(UsageType.SINGLE, null, Instant.now().minus(Duration.ofMinutes(1)));
+        PaymentLink stale = paymentLinkRepository.findById(overdue.getId()).orElseThrow();
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                new PaymentLinkScheduler(paymentLinkRepository).cleanupExpiredLinksAndSessions());
+
+        stale.setDescription("Edited from a copy read before the expiry");
+        Assertions.assertThrows(OptimisticLockingFailureException.class, () -> paymentLinkRepository.save(stale));
+        Assertions.assertEquals(PaymentLinkStatus.EXPIRED,
+                paymentLinkRepository.findById(overdue.getId()).orElseThrow().getStatus());
     }
 
     // Контексты тестов живут весь прогон: задача по расписанию сработала бы посреди чужого теста. Новый

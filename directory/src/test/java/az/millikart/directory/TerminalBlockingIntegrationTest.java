@@ -269,6 +269,30 @@ public class TerminalBlockingIntegrationTest {
         assertThat(auditRecord("UNBLOCK").getDetails()).contains("resumed 2 links", "expired 0 links");
     }
 
+    // Каждый перевод ссылки поднимает её версию (@Version в pbl): иначе pbl, прочитавший ссылку до блокировки
+    // или разблокировки, сохранил бы её целиком и вернул прежний статус — ACTIVE на заблокированном
+    // терминале или SUSPENDED на разблокированном.
+    @Test
+    public void everyStatusMoveOfALink_bumpsItsVersion() throws Exception {
+        UUID stillGood = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID ranOut = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID untouched = seedLink(otherTerminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+
+        block(terminal);
+        assertThat(versionOf(stillGood)).isEqualTo(1L);
+        assertThat(versionOf(ranOut)).isEqualTo(1L);
+        jdbcTemplate.update("UPDATE payment_links SET expires_at = ? WHERE id = ?",
+                utc(Instant.now().minus(1, ChronoUnit.HOURS)), ranOut);
+
+        unblock(terminal);
+
+        assertThat(statusOf(stillGood)).isEqualTo("ACTIVE");
+        assertThat(versionOf(stillGood)).isEqualTo(2L);
+        assertThat(statusOf(ranOut)).isEqualTo("EXPIRED");
+        assertThat(versionOf(ranOut)).isEqualTo(2L);
+        assertThat(versionOf(untouched)).as("a link that did not move keeps its version").isZero();
+    }
+
     // 10. Блокировка — запись, и требует прав на запись
 
     @Test
@@ -333,6 +357,10 @@ public class TerminalBlockingIntegrationTest {
                 expiresAt != null ? utc(expiresAt) : null,
                 utc(Instant.now()));
         return id;
+    }
+
+    private Long versionOf(UUID linkId) {
+        return jdbcTemplate.queryForObject("SELECT version FROM payment_links WHERE id = ?", Long.class, linkId);
     }
 
     private String statusOf(UUID linkId) {

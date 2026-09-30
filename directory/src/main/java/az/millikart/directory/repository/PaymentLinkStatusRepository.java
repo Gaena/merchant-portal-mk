@@ -13,7 +13,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
 // Пишет в payment_links модуля pbl — осознанный долг (Р-39, AGENTS.md §10). Не entity: второй
-// JPA-маппинг чужой таблицы молча разойдётся с ней.
+// JPA-маппинг чужой таблицы молча разойдётся с ней. Каждый UPDATE поднимает version (@Version в pbl): иначе
+// pbl, прочитавший ссылку раньше, сохранил бы её целиком и вернул прежний статус.
 @Repository
 public class PaymentLinkStatusRepository {
 
@@ -25,6 +26,9 @@ public class PaymentLinkStatusRepository {
     private static final String EXPIRED = "EXPIRED";
 
     private static final String TABLE = "payment_links";
+
+    // NULL у строк, вставленных мимо Hibernate: NULL + 1 остался бы NULL.
+    private static final String BUMP_VERSION = "version = COALESCE(version, 0) + 1 ";
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -42,7 +46,7 @@ public class PaymentLinkStatusRepository {
             return 0;
         }
         return entityManager.createNativeQuery(
-                        "UPDATE payment_links SET status = :suspended "
+                        "UPDATE payment_links SET status = :suspended, " + BUMP_VERSION
                                 + "WHERE terminal_id = :terminalId AND status = :active")
                 .setParameter("suspended", SUSPENDED)
                 .setParameter("terminalId", terminalId)
@@ -56,7 +60,7 @@ public class PaymentLinkStatusRepository {
             return 0;
         }
         return entityManager.createNativeQuery(
-                        "UPDATE payment_links SET status = :active "
+                        "UPDATE payment_links SET status = :active, " + BUMP_VERSION
                                 + "WHERE terminal_id = :terminalId AND status = :suspended "
                                 + "AND (expires_at IS NULL OR expires_at > :now)")
                 .setParameter("active", ACTIVE)
@@ -73,7 +77,7 @@ public class PaymentLinkStatusRepository {
             return 0;
         }
         return entityManager.createNativeQuery(
-                        "UPDATE payment_links SET status = :expired "
+                        "UPDATE payment_links SET status = :expired, " + BUMP_VERSION
                                 + "WHERE terminal_id = :terminalId AND status = :suspended "
                                 + "AND expires_at IS NOT NULL AND expires_at <= :now")
                 .setParameter("expired", EXPIRED)

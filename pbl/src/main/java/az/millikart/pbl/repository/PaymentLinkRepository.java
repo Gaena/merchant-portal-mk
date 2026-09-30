@@ -39,7 +39,10 @@ public interface PaymentLinkRepository extends JpaRepository<PaymentLink, UUID> 
                              @Param("status") PaymentLinkStatus status,
                              Pageable pageable);
 
+    // Версия поднимается: запись, прочитанная до истечения, получит конфликт, а не вернёт ACTIVE.
     @Modifying
-    @Query("UPDATE PaymentLink pl SET pl.status = az.millikart.pbl.domain.PaymentLinkStatus.EXPIRED WHERE pl.status = az.millikart.pbl.domain.PaymentLinkStatus.ACTIVE AND pl.expiresAt IS NOT NULL AND pl.expiresAt < :now")
+    @Query("UPDATE PaymentLink pl SET pl.status = az.millikart.pbl.domain.PaymentLinkStatus.EXPIRED, "
+            + "pl.version = COALESCE(pl.version, 0) + 1 "
+            + "WHERE pl.status = az.millikart.pbl.domain.PaymentLinkStatus.ACTIVE AND pl.expiresAt IS NOT NULL AND pl.expiresAt < :now")
     int expireActiveLinksBefore(@Param("now") java.time.Instant now);
 }
