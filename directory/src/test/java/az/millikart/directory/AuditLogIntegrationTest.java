@@ -4,6 +4,7 @@ import static az.millikart.directory.DirectoryTestFixtures.company;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -295,18 +296,13 @@ public class AuditLogIntegrationTest {
     }
 
     // Строки записи об отказе контролирует вызывающий, а колонки ограничены (details
-    // varchar(4000), entity_id varchar(255)), и выше по стеку их не режет никто. Без обрезки
-    // вставка падает, отказ превращается в 500, и запись, ради которой всё делалось, не пишется:
-    // любой аутентифицированный пользователь выключал бы аудит отказов набивкой поля.
+    // varchar(4000), entity_id varchar(255)). Без обрезки вставка падает, отказ превращается в 500, и
+    // запись, ради которой всё делалось, не пишется: любой аутентифицированный пользователь выключал бы
+    // аудит отказов набивкой поля. Тело ограничивает @Size (DB-CONSTRAINT-500), id в адресе — нет.
     @Test
-    public void deniedCreate_withOversizedInput_stillReturns403AndIsRecorded() throws Exception {
-        String overlongName = "X".repeat(5000);
-
-        mockMvc.perform(post("/api/v1/companies")
-                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                company("Z".repeat(400), overlongName))))
+    public void deniedDelete_withOversizedId_stillReturns403AndIsRecorded() throws Exception {
+        mockMvc.perform(delete("/api/v1/companies/{id}", "Z".repeat(5000))
+                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
                 .andExpect(status().isForbidden());
 
         List<AuditLog> records = auditLogs.findAll();

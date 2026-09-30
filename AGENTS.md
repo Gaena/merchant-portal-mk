@@ -199,6 +199,7 @@ export JWT_SECRET="$(openssl rand -base64 48)"   # одно значение н�
    | `InvalidStateException` | **403** (используется как «доступ запрещён») |
    | `ResourceNotFoundException` | 404 |
    | `ConflictException`, `OptimisticLockingFailureException` | 409 |
+   | `DataIntegrityViolationException` — ограничение базы: гонка «проверил — вставил», значение шире колонки | 400 при SQLState класса 22 (длина, формат), иначе 409; текст драйвера — ни в ответ, ни в лог |
    | `PaymentOutcomeUnknownException` | **502** |
    | `CallNotPermittedException` — открыт circuit breaker к эквайеру, только `pbl` (`AcquirerUnavailableHandler`) | **503**: вызов не ушёл, денег не двигал (Р-103) |
 
@@ -858,7 +859,10 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 
 - **Ошибка клиента не должна выглядеть как сбой сервера.** Всё, что не перечислено в
   `GlobalExceptionHandler`, падает в `handleUnexpected` — 500 и ERROR со стектрейсом. Добавляя
-  эндпоинт, проверь, что Spring бросит на кривом запросе и есть ли обработчик.
+  эндпоинт, проверь, что Spring бросит на кривом запросе и есть ли обработчик. Строковое поле тела,
+  которое ложится в колонку, — с `@Size` по её ширине: `handleDataIntegrity` превратит отказ базы в 400/409,
+  но только после всей работы запроса. Где запись идёт после похода к провайдеру (`User-Agent` на `/open`),
+  значение обрезается, а не отвергается.
 - **Ввод клиента в лог — только проверенный.** Сообщение Jackson о кривом теле цитирует его кусок —
   пароль без кавычек, поэтому `GlobalExceptionHandler` пишет только вид ошибки, место и имя поля;
   `ex.getMessage()` разбора тела в лог не класть. `traceId` из заголовка — только `[A-Za-z0-9._-]{1,64}`:

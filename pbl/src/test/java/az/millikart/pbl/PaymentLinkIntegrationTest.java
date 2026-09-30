@@ -254,6 +254,21 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.message", containsString("has no acquirer credentials")));
     }
 
+    // DB-CONSTRAINT-500: описание длиннее колонки проходило проверку DTO и роняло вставку — 500 и ERROR.
+    @Test
+    void createPaymentLink_descriptionLongerThanTheColumn_returns400() throws Exception {
+        ObjectNode request = validCreateRequest();
+        request.put("description", "x".repeat(256));
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("description must be at most 255 characters")));
+
+        Assertions.assertEquals(0, paymentLinkRepository.count());
+    }
+
     // Клиент — только у одноразовой ссылки (Р-96): у многоразовой отказ, а не молчаливый пропуск.
     @Test
     void createPaymentLink_multiUseWithACustomer_returns400() throws Exception {
@@ -633,6 +648,20 @@ class PaymentLinkIntegrationTest {
         Transaction attempt = transactionRepository.findAll().getFirst();
         Assertions.assertEquals("https://gateway.txpg.example.com/pay?id=" + attempt.getProviderOrderId()
                 + "&password=" + attempt.getProviderPassword(), location);
+    }
+
+    // DB-CONSTRAINT-500: User-Agent длиннее transactions.user_agent (512) ронял вставку попытки уже после
+    // заказа у провайдера — плательщик получал 500 вместо платёжной страницы. Теперь он обрезается.
+    @Test
+    void openPaymentLink_withAnOverlongUserAgent_stillRedirects() throws Exception {
+        UUID id = createLinkAndGetId(headToken);
+        String userAgent = "Mozilla/5.0 " + "x".repeat(600);
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", id).header(HttpHeaders.USER_AGENT, userAgent))
+                .andExpect(status().isFound());
+
+        Transaction attempt = transactionRepository.findAll().getFirst();
+        Assertions.assertEquals(userAgent.substring(0, 512), attempt.getUserAgent());
     }
 
     // Р-103: circuit breaker к эквайеру открыт — вызов не ушёл, это 503 «попробуйте позже», а не 500

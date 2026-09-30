@@ -5,12 +5,15 @@ import com.fasterxml.jackson.core.JsonLocation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import jakarta.servlet.http.HttpServletRequest;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
@@ -31,6 +34,8 @@ public class GlobalExceptionHandler {
     private static final String PAYMENT_OUTCOME_UNKNOWN_MARKER = "PAYMENT_OUTCOME_UNKNOWN";
 
     private static final Pattern SIMPLE_FIELD_NAME = Pattern.compile("[A-Za-z0-9_]{1,64}");
+    private static final Pattern SIMPLE_CONSTRAINT_NAME = Pattern.compile("[A-Za-z0-9_.]{1,128}");
+    private static final Pattern SQL_STATE = Pattern.compile("[0-9A-Z]{5}");
 
     @ExceptionHandler(UnauthorizedException.class)
     public ResponseEntity<ErrorResponse> handleUnauthorized(UnauthorizedException ex, HttpServletRequest request) {
@@ -91,6 +96,40 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handlePessimisticLock(PessimisticLockingFailureException ex, HttpServletRequest request) {
         log.info("Refused {} {}: the row is locked by a concurrent request", request.getMethod(), request.getRequestURI());
         return build(HttpStatus.CONFLICT, "The resource is being changed by another request, please retry", request);
+    }
+
+    // Ограничение базы — ошибка клиента, а не сбой: гонка «проверил — вставил» или значение, которое не
+    // остановила проверка DTO (DB-CONSTRAINT-500). Класс 22 (длина, формат) — 400, остальное — 409. Текст
+    // драйвера цитирует значения: ни в ответ, ни в лог, только SQLState и имя ограничения.
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException ex, HttpServletRequest request) {
+        String sqlState = sqlStateOf(ex);
+        log.warn("Refused {} {}: the database rejected the data (SQLState {}, constraint {})",
+                request.getMethod(), request.getRequestURI(), sqlState, constraintNameOf(ex));
+        if (sqlState.startsWith("22")) {
+            return build(HttpStatus.BAD_REQUEST, "A field value is too long or has an invalid format", request);
+        }
+        return build(HttpStatus.CONFLICT, "The request conflicts with existing data", request);
+    }
+
+    private static String sqlStateOf(Throwable ex) {
+        for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sql && sql.getSQLState() != null) {
+                return SQL_STATE.matcher(sql.getSQLState()).matches() ? sql.getSQLState() : "?";
+            }
+        }
+        return "?";
+    }
+
+    // Имя ограничения Hibernate у H2 вырезает из текста драйвера, и в нём бывают значения: в лог — только простое.
+    private static String constraintNameOf(Throwable ex) {
+        for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ConstraintViolationException violation && violation.getConstraintName() != null) {
+                String name = violation.getConstraintName();
+                return SIMPLE_CONSTRAINT_NAME.matcher(name).matches() ? name : "?";
+            }
+        }
+        return "-";
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -103,11 +103,11 @@ public class UserService {
             throw new BusinessException("Role " + request.role() + " requires a company");
         }
 
-        if (request.companyId() != null && !request.companyId().isBlank()) {
-            if (!liveCompanyExists(request.companyId())) {
-                log.warn("User creation failed: companyId {} not found", request.companyId());
-                throw new BusinessException("Company not found");
-            }
+        // Пустая строка — «без компании», как в правке: "" ушло бы в users.company_id и упало на внешнем ключе.
+        String companyId = request.companyId() == null || request.companyId().isBlank() ? null : request.companyId();
+        if (companyId != null && !liveCompanyExists(companyId)) {
+            log.warn("User creation failed: companyId {} not found", companyId);
+            throw new BusinessException("Company not found");
         }
 
         User user = User.builder()
@@ -115,7 +115,7 @@ public class UserService {
                 .passwordHash(passwordEncoder.encode(request.password()))
                 .fullName(request.fullName())
                 .role(request.role())
-                .companyId(request.companyId())
+                .companyId(companyId)
                 .status(STATUS_ACTIVE)
                 // Пароль задал не владелец — сменит при первом входе (PCI DSS 8.3.5, Р-100).
                 .passwordChangeRequired(true)

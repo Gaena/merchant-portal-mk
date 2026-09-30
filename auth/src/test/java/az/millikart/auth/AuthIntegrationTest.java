@@ -401,6 +401,35 @@ public class AuthIntegrationTest {
                 .andExpect(status().isCreated());
     }
 
+    // DB-CONSTRAINT-500: пустая строка уходила в users.company_id как есть, падала на внешнем ключе к
+    // companies, и администратор получал 500. Пустая компания — «без компании», как в правке.
+    @Test
+    public void createUser_auditorWithAnEmptyCompany_isCreatedWithoutOne() throws Exception {
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateUserRequest(
+                                "auditor2@millikart.az", USER_PASSWORD, "Auditor", "AUDITOR", ""))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.companyId").doesNotExist());
+
+        Assertions.assertNull(userRepository.findByUsername("auditor2@millikart.az").orElseThrow().getCompanyId());
+    }
+
+    // DB-CONSTRAINT-500: имя длиннее колонки проходило проверку DTO и роняло вставку — 500 и ERROR.
+    @Test
+    public void createUser_withAFullNameLongerThanTheColumn_isABadRequest() throws Exception {
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateUserRequest(
+                                "longname@comp01.com", USER_PASSWORD, "x".repeat(256), "COMPANY_EMPLOYEE", "comp-01"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Full name must be at most 255 characters")));
+
+        Assertions.assertTrue(userRepository.findByUsername("longname@comp01.com").isEmpty());
+    }
+
     // Р-103: правкой ставятся только ACTIVE и BLOCKED. DELETED через PATCH удалял бы в обход DELETE и
     // его записи в журнале, а незнакомое значение ни один экран не прочтёт.
     @Test

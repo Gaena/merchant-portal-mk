@@ -469,6 +469,42 @@ public class DirectoryIntegrationTest {
         assertThat(credentialCipher.decrypt(stored)).isEqualTo("secret-comp-01");
     }
 
+    // DB-CONSTRAINT-500: шифротекст пароля лежит в varchar(512), и длинный пароль ронял вставку — 500 и
+    // ERROR. Потолок 100 знаков с запасом: самые «тяжёлые» знаки (три байта UTF-8) ещё влезают.
+    @Test
+    public void providerPassword_isCappedSoItsCiphertextFitsTheColumn() throws Exception {
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateCompanyRequest(
+                                "comp-02", "Other LLC", "MultiMerchantSys/comp-02", "€".repeat(101)))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Provider password must be at most 100 characters")));
+        assertThat(companyRepository.existsById("comp-02")).isFalse();
+
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateCompanyRequest(
+                                "comp-01", "MilliKart LLC", "MultiMerchantSys/comp-01", "€".repeat(100)))))
+                .andExpect(status().isCreated());
+        String stored = companyRepository.findById("comp-01").orElseThrow().getProviderPassword();
+        assertThat(credentialCipher.decrypt(stored)).isEqualTo("€".repeat(100));
+    }
+
+    // DB-CONSTRAINT-500: название длиннее колонки проходило проверку DTO и роняло вставку.
+    @Test
+    public void companyName_longerThanTheColumn_isABadRequest() throws Exception {
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(company("comp-01", "x".repeat(256)))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Company name must be at most 255 characters")));
+
+        assertThat(companyRepository.existsById("comp-01")).isFalse();
+    }
+
     // Логин к провайдеру задаёт и видит только администратор; остальным компания отдаётся без него.
     @Test
     public void providerLogin_isShownOnlyToASystemAdmin() throws Exception {

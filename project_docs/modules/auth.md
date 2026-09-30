@@ -225,7 +225,7 @@ Refresh и отзыв одной цепочки могут идти одновр
         ```
         Логин обрезается и приводится к нижнему регистру. `companyId` обязателен для ролей компании
         (`COMPANY_HEAD`, `COMPANY_MANAGER`, `COMPANY_EMPLOYEE`); у `SYSTEM_ADMIN` и `AUDITOR` его можно не
-        передавать. Роль по словарю не проверяется: учётке с неизвестной ролью везде отказывают (`../../AGENTS.md` §6).
+        передавать, пустая строка — то же, что без компании. Роль по словарю не проверяется: учётке с неизвестной ролью везде отказывают (`../../AGENTS.md` §6).
     -   *Кто*: *админ* — любого пользователя в любую компанию; *руководитель* — только в свою компанию и только
         с ролями `COMPANY_MANAGER`, `COMPANY_EMPLOYEE`.
     -   *Ответ `201`*: `UserResponse` (как в списке ниже), `passwordChangeRequired: true` — пароль задал не
@@ -234,7 +234,7 @@ Refresh и отзыв одной цепочки могут идти одновр
 
         | Код | `message` | Когда | Журнал |
         |:---|:---|:---|:---|
-        | `400` | `Username is required`, `Username must be a valid email address`, `Password is required`, `Full name is required`, `Role is required`, текст политики пароля (§4.1.3) | не прошла валидация тела | — |
+        | `400` | `Username is required`, `Username must be a valid email address`, `Username must be at most 255 characters`, `Password is required`, `Full name is required`, `Full name must be at most 255 characters`, `Role is required`, текст политики пароля (§4.1.3) | не прошла валидация тела | — |
         | `403` | `Access denied` | учётка актора не `ACTIVE` | `USER` / `CREATE` / `DENIED` |
         | `403` | `Cannot create user for another company` | руководитель не указал `companyId` или указал чужую | — |
         | `403` | `Cannot assign this role` | руководитель выдаёт роль не из `COMPANY_MANAGER`, `COMPANY_EMPLOYEE` | `USER` / `CREATE` / `DENIED` |
@@ -242,6 +242,7 @@ Refresh и отзыв одной цепочки могут идти одновр
         | `400` | `Username already exists` | логин занят, в том числе удалённой учёткой | — |
         | `400` | `Role <ROLE> requires a company` | роль компании без `companyId` (Р-103) | — |
         | `400` | `Company not found` | компании нет или она удалена | — |
+        | `409` | `The request conflicts with existing data` | одновременный запрос успел занять тот же ключ между проверкой и записью; повтор получит отказ выше | — |
 
     -   *Журнал*: `USER` / `CREATE` `Created user <логин> with role <роль> in company <id>`.
 2.  **Список пользователей** (`GET /api/v1/users`) — постранично (P2-1).
@@ -309,7 +310,7 @@ Refresh и отзыв одной цепочки могут идти одновр
 
         | Код | `message` | Когда | Журнал |
         |:---|:---|:---|:---|
-        | `400` | текст политики пароля (§4.1.3) | `password` не по политике | — |
+        | `400` | текст политики пароля (§4.1.3), `Full name must be at most 255 characters` | не прошла валидация тела | — |
         | `400` | `User not found` | нет такого пользователя или он удалён | — |
         | `403` | `Access denied` | учётка актора не `ACTIVE` | `USER` / `UPDATE` / `DENIED` |
         | `403` | `Access denied` | чужая компания или роль без права правки | — |

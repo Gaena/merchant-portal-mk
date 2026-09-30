@@ -121,8 +121,8 @@ with the company's links. Event dictionary — `../guides/technical_handover.md`
 | `paymentType` | required, `SMS` or `DMS` |
 | `usageType` | required, `SINGLE` or `MULTIPLE` |
 | `maxPayments` | required and > 0 for `MULTIPLE`; ignored and not stored for `SINGLE` |
-| `merchantOrderId`, `description` | optional, free text |
-| `customer` | optional, **single-use links only** (Р-96): a customer with any filled field on a `MULTIPLE` link is refused, not dropped. `email` — a valid address. `phone` — an Azerbaijani number: `+994`, `994` or `0` followed by 9 digits, spaces, dashes and brackets allowed; stored as `+994XXXXXXXXX` |
+| `merchantOrderId`, `description` | optional, free text, at most 255 characters |
+| `customer` | optional, **single-use links only** (Р-96): a customer with any filled field on a `MULTIPLE` link is refused, not dropped. `fullName` — at most 255 characters. `email` — a valid address, at most 255 characters. `phone` — an Azerbaijani number: `+994`, `994` or `0` followed by 9 digits, spaces, dashes and brackets allowed; stored as `+994XXXXXXXXX` |
 | `expiresAt` | optional ISO-8601 instant, §5.1.1 |
 | `metadata` | optional JSON object, stored as is |
 
@@ -359,7 +359,9 @@ The whole open is one database transaction:
     none is filled. A multi-use link sends no customer; a stored phone that is not an Azerbaijani number
     is left out.
 8.  A `PENDING` transaction is stored with `ridByMerchant`, the provider order id, the order password
-    (only in `provider_password`, P0-9), the payer's IP (through the trusted proxies) and `User-Agent`.
+    (only in `provider_password`, P0-9), the payer's IP (through the trusted proxies) and `User-Agent`,
+    cut to 512 characters: the row is written after the acquirer order, and a refusal here would leave the
+    payer without the payment page.
 
 The lock is held during the call to the acquirer (P1-5). A refusal rolls the whole transaction back,
 including what the polls of steps 4–5 found; those attempts are settled later by the return page,
@@ -784,6 +786,8 @@ Every error is the `ErrorResponse` JSON `{ timestamp, status, error, message, pa
 | 405 | `Method <M> is not supported for this endpoint; use <M2>` | wrong method, with `Allow` |
 | 409 | `The resource is being changed by another request, please retry` | the link lock is taken (`NOWAIT`) by an open, a capture, a refund or a status poll of the same link. Nothing was sent to the acquirer, a retry is safe |
 | 409 | `The resource was updated concurrently, please retry` | a concurrent update of the same link (§5.2) |
+| 409 | `The request conflicts with existing data` | the database refused the row (a unique or foreign key constraint). The driver's text, which quotes the values, is not echoed |
+| 400 | `A field value is too long or has an invalid format` | the database refused a value that the body validation let through |
 | 415 | `Content-Type <type> is not supported by this endpoint; send application/json` | |
 | 500 | `Unexpected server error` | anything not listed here |
 | 502 | `No confirmation received from the acquirer. Check the transaction status before retrying.` | **the outcome of a capture or a refund is unknown** |

@@ -12,6 +12,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +23,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.MediaType;
@@ -85,6 +87,10 @@ class GlobalExceptionHandlerTest {
                 // Параллельная правка и занятая строка (NOWAIT, Р-85): повтор безопасен — 409, а не 500.
                 Arguments.of(new OptimisticLockingFailureException("stale"), 409),
                 Arguments.of(new PessimisticLockingFailureException("locked"), 409),
+                // Ограничение базы (DB-CONSTRAINT-500): слишком длинное значение — 400, дубль и чужой ключ — 409.
+                Arguments.of(dataIntegrity("22001"), 400),
+                Arguments.of(dataIntegrity("23505"), 409),
+                Arguments.of(dataIntegrity("23503"), 409),
                 // Не наследник BusinessException: 400 читался бы как «отказ, повторяй», а это двойной возврат.
                 Arguments.of(new PaymentOutcomeUnknownException("Read timed out"), 502),
                 Arguments.of(new IllegalStateException("bug"), 500));
@@ -122,6 +128,27 @@ class GlobalExceptionHandlerTest {
                 errors.getFirst().getFormattedMessage());
     }
 
+    // DB-CONSTRAINT-500: гонка двух POST /users или слишком длинное поле давали 500 и ERROR со стектрейсом.
+    // Текст драйвера цитирует значения («Key (username)=(…) already exists»): ни в ответ, ни в лог.
+    @Test
+    void aConstraintViolation_isAConflictWithoutTheDriverText() throws Exception {
+        controller.next = new DataIntegrityViolationException("could not execute statement",
+                new SQLException("ERROR: duplicate key value violates unique constraint \"users_username_key\" "
+                        + "Detail: Key (username)=(leaked@example.com) already exists.", "23505"));
+
+        mockMvc.perform(get("/boom"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("The request conflicts with existing data"));
+
+        assertTrue(atLevel(Level.ERROR).isEmpty());
+        List<ILoggingEvent> warnings = atLevel(Level.WARN);
+        assertEquals(1, warnings.size(), String.valueOf(warnings));
+        String logged = warnings.getFirst().getFormattedMessage();
+        assertFalse(logged.contains("leaked@example.com"), logged);
+        assertTrue(logged.contains("SQLState 23505"), logged);
+        assertTrue(warnings.getFirst().getThrowableProxy() == null, "no stack trace for a client error");
+    }
+
     // Битое тело — ошибка клиента, а не 500 со стектрейсом.
     @Test
     void aMalformedBody_isABadRequest() throws Exception {
@@ -156,6 +183,11 @@ class GlobalExceptionHandlerTest {
 
         assertTrue(atLevel(Level.WARN).getFirst().getFormattedMessage().endsWith(", field attempts"),
                 atLevel(Level.WARN).getFirst().getFormattedMessage());
+    }
+
+    private static DataIntegrityViolationException dataIntegrity(String sqlState) {
+        return new DataIntegrityViolationException("could not execute statement",
+                new SQLException("driver text", sqlState));
     }
 
     private List<ILoggingEvent> atLevel(Level level) {

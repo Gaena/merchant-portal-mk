@@ -54,6 +54,10 @@ public class OpenLinkService {
     // У ссылки, занятой холдом, свой текст отказа: «использована» и «ждёт списания» — разные ситуации.
     private static final String HOLD_BLOCKED_MESSAGE = "Payment link has an authorized payment awaiting capture";
 
+    // Ширина transactions.user_agent. Длиннее — обрезаем: строка пишется уже после заказа у провайдера, и
+    // отказ базы оставил бы плательщика без платёжной страницы (DB-CONSTRAINT-500).
+    private static final int USER_AGENT_MAX_LENGTH = 512;
+
     private final AcquiringClient acquiringClient;
     private final PaymentLinkRepository paymentLinkRepository;
     private final TransactionRepository transactionRepository;
@@ -189,7 +193,7 @@ public class OpenLinkService {
                 .amount(link.getAmount())
                 .status(TransactionStatus.PENDING)
                 .clientIp(clientIp)
-                .userAgent(userAgent)
+                .userAgent(fitUserAgent(userAgent))
                 // Пароля заказа здесь нет и не класть: он только в provider_password (P0-9).
                 .providerResponse(Map.of(
                         "hppUrl", response.order().hppUrl(),
@@ -200,11 +204,22 @@ public class OpenLinkService {
         transactionRepository.save(transaction);
         // Одна строка на открытие: адрес плательщика — в MDC, запрос и ответ провайдера — на DEBUG.
         log.info("Link {} opened: attempt {}, provider order {}, terminal {}, user agent: {}",
-                id, transaction.getId(), response.order().id(), terminal.getId(), userAgent);
+                id, transaction.getId(), response.order().id(), terminal.getId(), transaction.getUserAgent());
 
         // Пароль нужен плательщику для платёжной страницы (§5.3). Адрес не логировать — только через
         // ProviderPayloads.urlForLog, как в контроллере.
         return response.order().hppUrl() + "?id=" + response.order().id() + "&password=" + response.order().password();
+    }
+
+    // Суррогатную пару не разрезаем: половинка символа ушла бы в базу мусором.
+    private static String fitUserAgent(String userAgent) {
+        if (userAgent == null || userAgent.length() <= USER_AGENT_MAX_LENGTH) {
+            return userAgent;
+        }
+        int end = Character.isHighSurrogate(userAgent.charAt(USER_AGENT_MAX_LENGTH - 1))
+                ? USER_AGENT_MAX_LENGTH - 1
+                : USER_AGENT_MAX_LENGTH;
+        return userAgent.substring(0, end);
     }
 
     private static boolean slotsTaken(PaymentLink link, long occupiedSlots) {

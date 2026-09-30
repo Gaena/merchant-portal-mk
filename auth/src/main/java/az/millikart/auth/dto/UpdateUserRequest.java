@@ -1,8 +1,10 @@
 package az.millikart.auth.dto;
 
 import az.millikart.common.validation.ValidPassword;
+import jakarta.validation.constraints.Size;
 
 public record UpdateUserRequest(
+        @Size(max = 255, message = "Full name must be at most 255 characters")
         String fullName,
         String role,
         @ValidPassword

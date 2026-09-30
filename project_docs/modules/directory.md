@@ -69,7 +69,7 @@
 
     | Код | `message` | Когда | Журнал |
     |:---|:---|:---|:---|
-    | `400` | `Company ID is required`, `Company name is required`, `Provider login is required`, `Provider password is required` | не прошла валидация | — |
+    | `400` | `Company ID is required`, `Company name is required`, `Provider login is required`, `Provider password is required`; `Company ID must be at most 255 characters`, `Company name must be at most 255 characters`, `Provider password must be at most 100 characters` | не прошла валидация. Пароль ложится шифротекстом в `varchar(512)`: 100 знаков влезают при любых символах | — |
     | `403` | `Access denied: Only SYSTEM_ADMIN can create companies` | не администратор | `COMPANY` / `CREATE` / `DENIED` |
     | `400` | `Company with ID '<id>' already exists` | `id` занят, в том числе удалённой компанией | — |
     | `400` | `Provider login must be a multimerchant login: MultiMerchantSys/<login>` | логин без префикса `MultiMerchantSys/` | — |
@@ -78,6 +78,7 @@
     | `400` | `Provider login <login> is not active at the provider` | логин не `Active` | — |
     | `400` | `Provider login <login> has no active merchants at the provider` | нет активной связи с мерчантом | — |
     | `409` | `Provider login is already used by another company` | логин у другой компании; удалённые компании его не освобождают | — |
+    | `409` | `The request conflicts with existing data` | одновременный запрос успел занять тот же ключ между проверкой и записью; повтор получит отказ выше (`id` или логин) | — |
 
     *Журнал*: `COMPANY` / `CREATE` `Created company: <name>, provider login <login>`.
 -   `GET /api/v1/companies` — Получить список компаний (постранично).  
@@ -111,6 +112,7 @@
 
     | Код | `message` | Когда | Журнал |
     |:---|:---|:---|:---|
+    | `400` | `Company name must be at most 255 characters`, `Provider password must be at most 100 characters` | не прошла валидация | — |
     | `403` | `Access denied: Only SYSTEM_ADMIN can update companies` | не администратор | `COMPANY` / `UPDATE` / `DENIED` |
     | `400` | `Company not found` | нет такой или она удалена | — |
     | `400` | `Company status must be ACTIVE or INACTIVE` | иной `status` | — |
@@ -168,6 +170,7 @@
     | `403` | `Access denied: AUDITOR is read-only` / `Access denied` | аудитор / прочие не-администраторы | `TERMINAL` / `CREATE` / `DENIED`, `entityId` = `NEW` |
     | `400` | `Company with ID '<id>' not found` | компании нет или она удалена | — |
     | `400` | `Provider terminal <rid> is already linked to terminal <id>` | мерчант уже заведён: один терминал провайдера — одна компания | — |
+    | `409` | `The request conflicts with existing data` | тот же мерчант заводится одновременным запросом: он успел между проверкой и записью | — |
     | `400` | `Provider terminal <rid> is not in the synchronised list` | мерчанта нет в справочнике | — |
     | `400` | `Provider terminal <rid> has no name, login or terminal number in the synchronised list` | в строке справочника нет названия, логина или номера терминала | — |
     | `400` | `Provider terminal <rid> is not active at the provider` | строка справочника неактивна | — |
@@ -221,6 +224,7 @@
 
     | Код | `message` | Когда | Журнал |
     |:---|:---|:---|:---|
+    | `400` | `Terminal name must be at most 255 characters` | не прошла валидация | — |
     | `400` | `Terminal not found` | нет такого терминала | — |
     | `403` | `Access denied: AUDITOR is read-only` / `Access denied` | аудитор / роль без права записи или чужой терминал | `TERMINAL` / `UPDATE` / `DENIED` |
     | `403` | `Access denied` | не администратор переносит терминал в другую компанию | `TERMINAL` / `UPDATE` / `DENIED` |

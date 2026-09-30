@@ -9,8 +9,10 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Map;
 
+// Потолки длины — ширина колонок payment_links: длиннее база не примет (DB-CONSTRAINT-500).
 public record CreatePaymentLinkRequest(
 
+        @Size(max = 255, message = "merchantOrderId must be at most 255 characters")
         String merchantOrderId,
 
         @NotNull(message = "terminal is required")
@@ -25,6 +27,7 @@ public record CreatePaymentLinkRequest(
         @Size(min = 3, max = 3, message = "currency must be a 3-letter ISO 4217 code")
         String currency,
 
+        @Size(max = 255, message = "description must be at most 255 characters")
         String description,
 
         @Valid
