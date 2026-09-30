@@ -8,7 +8,6 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 // Role.fromValue стоит между неограниченным входом — claim role в JWT и varchar users.role —
@@ -16,12 +15,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 // ниже: он никогда не бросает и сравнивает точно.
 class RoleTest {
 
-    @ParameterizedTest
-    @EnumSource(Role.class)
-    void fromValue_knownRoles_areParsed(Role role) {
-        assertEquals(Optional.of(role), Role.fromValue(role.name()));
-    }
-
+    // Ровно пять ролей, и каждая разбирается из своего имени — значения в JWT и users.role.
     @Test
     void fromValue_allFiveRolesExist() {
         assertEquals(5, Role.values().length);

@@ -345,24 +345,6 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.name", is("Main Terminal")));
     }
 
-    @Test
-    public void blockTerminal_asEmployee_returns403() throws Exception {
-        createCompany("comp-01", "MilliKart LLC");
-        int terminalId = createTerminal("Main Terminal", "comp-01", adminToken);
-
-        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
-                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED))))
-                .andExpect(status().isForbidden());
-
-        mockMvc.perform(get("/api/v1/terminals/" + terminalId)
-                        .header(HttpHeaders.AUTHORIZATION, adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("ACTIVE")));
-    }
-
     // P2-8: эндпоинта нет, а путь есть. Терминал, через который прошёл платёж, удалить нельзя
     // вовсе (на него ссылаются ссылки), так что DELETE тут бессмыслен — но ресурс существует,
     // поэтому честный ответ 405, а 404 был бы враньём про URL.

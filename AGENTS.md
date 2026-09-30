@@ -916,7 +916,7 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 | Модуль | Тесты на PostgreSQL |
 |:---|:---|
 | `auth` | `RefreshTokenConcurrencyTest`, `UserListPaginationTest` |
-| `directory` | `AuditLogSchemaTest`, `SharedSchemaMigrationTest`, `DirectoryListPaginationTest`, `AuditLogQueryTest`, `TerminalBlockingIntegrationTest` |
+| `directory` | `SharedSchemaMigrationTest`, `DirectoryListPaginationTest`, `AuditLogQueryTest`, `TerminalBlockingIntegrationTest` |
 | `pbl` | `TransactionIndexSchemaTest`, `OpenLinkConcurrencyTest`, `MoneyOperationsIntegrationTest`, `TerminalBlockedIntegrationTest`, `TransactionReconciliationIntegrationTest`, `DashboardSummaryTest`, `PaymentLinkRefundUsageTest` |
 
 Остальные тесты с базой на H2 намеренно: там база просто хранилище.

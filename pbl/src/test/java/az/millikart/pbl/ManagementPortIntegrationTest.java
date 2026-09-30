@@ -64,6 +64,11 @@ class ManagementPortIntegrationTest {
         Assertions.assertEquals(HttpStatus.NOT_FOUND, get(serverPort, "/actuator/metrics").getStatusCode());
     }
 
+    @Test
+    void actuatorInfo_onServicePort_isNotExposed() {
+        Assertions.assertEquals(HttpStatus.NOT_FOUND, get(serverPort, "/actuator/info").getStatusCode());
+    }
+
     // Запрет по умолчанию держится и в настоящем контейнере, не только под MockMvc.
     @Test
     void unknownPath_onServicePort_withoutToken_returns401() {

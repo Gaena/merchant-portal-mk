@@ -907,19 +907,6 @@ class PaymentLinkIntegrationTest {
     }
 
     @Test
-    void listTransactions_asForeignCompanyHead_doesNotSeeOtherCompany() throws Exception {
-        createTransaction(TERMINAL_ID, "TX-OWN");
-        Transaction foreign = createTransaction(FOREIGN_TERMINAL_ID, "TX-FOREIGN");
-
-        mockMvc.perform(authed(get("/api/v1/transactions"), foreignToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements", is(1)))
-                .andExpect(jsonPath("$.content.length()", is(1)))
-                .andExpect(jsonPath("$.content[0].id", is(foreign.getId().toString())))
-                .andExpect(jsonPath("$.content[0].terminalId", is(FOREIGN_TERMINAL_ID)));
-    }
-
-    @Test
     void listTransactions_asSystemAdmin_returnsAll() throws Exception {
         createTransaction(TERMINAL_ID, "TX-OWN");
         createTransaction(FOREIGN_TERMINAL_ID, "TX-FOREIGN");
@@ -1482,17 +1469,6 @@ class PaymentLinkIntegrationTest {
 
         Assertions.assertEquals(extended, Instant.parse(objectMapper.readTree(response).get("expiresAt").asText()));
         Assertions.assertEquals(extended, paymentLinkRepository.findById(id).orElseThrow().getExpiresAt());
-    }
-
-    // Поля не было в PaymentLinkResponse, хотя в PaymentLinkSummaryResponse оно было, — именно это
-    // и толкнуло портал выдумать собственный срок жизни.
-    @Test
-    void createLink_response_containsExpiresAt() throws Exception {
-        UUID id = createLinkAndGetId(headToken);
-
-        mockMvc.perform(authed(get("/api/v1/payment-links/{id}", id), headToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.expiresAt", notNullValue()));
     }
 
     // Теперь, когда ссылки действительно истекают, пути открытия есть что отклонять.

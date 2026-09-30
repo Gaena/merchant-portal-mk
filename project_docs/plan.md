@@ -71,5 +71,4 @@
 
 | ID | Задача | Модуль | Статус | Зависит от | Примечание |
 |:---|:---|:---|:---|:---|:---|
-| **T-REDUNDANT** | Лишние и дублирующие тесты | все | — | — | **Низкая.** `AuditLogSchemaTest` слить в `SharedSchemaMigrationTest`; три повторные последовательности в `SharedSchemaMigrationTest`; отказ сотруднику в блокировке терминала (×3); два теста `pbl` `SecurityBoundaryIntegrationTest`, повторяющие `PaymentLinkIntegrationTest`, и MockMvc-тесты actuator; дубли внутри `PaymentLinkIntegrationTest`; по одному тесту в `RoleTest`, `AuditLogAppendOnlyTest`, `ProviderOrderStatusTest`, `EcomTransactionScopeTest` |
 | **T-FIXTURES** | Ручные копии DDL и устаревшие комментарии в тестах | `directory`, `auth`, `pbl` | — | — | **Низкая.** `provider_terminals`/`provider_logins` в `DirectoryTestFixtures` — рукописные копии DDL; тестовый yaml `pbl` расходится с боевым в путях провайдера; устаревшие факты в комментариях `RefreshTokenIntegrationTest` |
