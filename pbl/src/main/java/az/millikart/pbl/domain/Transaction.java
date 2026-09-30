@@ -86,4 +86,8 @@ public class Transaction {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    // Когда сверка последний раз брала строку в пакет (Р-110); пишет только её отметка.
+    @Column(name = "last_reconciled_at")
+    private Instant lastReconciledAt;
 }

@@ -400,7 +400,9 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
 `createdAt`, `mpCapture.at`, каждое `mpRefunds[i].at` и текущий статус (Р-63).
 
 **Сверка зависших `PENDING`** (`TransactionReconciliationService`, P1-3). Берёт до `batch-size`
-транзакций в `PENDING` с `createdAt` между `now - give-up-age` и `now - min-age`, каждую — в своей
+транзакций в `PENDING` с `createdAt` между `now - give-up-age` и `now - min-age`, давно не опрашиваемые
+первыми (`last_reconciled_at NULLS FIRST`, Р-110): отметка ставится до опроса и в своей транзакции, иначе
+строки, которые сверка закрыть не может, занимали бы весь пакет каждый проход. Каждую — в своей
 транзакции (`REQUIRES_NEW`) и под замком её ссылки: занятая — до следующего прохода (Р-109). `FAILED` по
 `max-age` — **только** при `NON_FINAL`; `UNKNOWN` и
 `SETTLED_OTHER` остаются `PENDING` для человека. `AUTHORIZED` сверка не трогает: живой холд —

@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,6 +37,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -451,6 +453,32 @@ class TransactionReconciliationIntegrationTest {
         Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
 
         Assertions.assertEquals(TransactionStatus.SUCCESS, statusOf(live));
+    }
+
+    // RECON-STARVATION (Р-110): пакет брал самые старые PENDING, и строки, которые сверка закрыть не может
+    // (незнакомый статус, SETTLED_OTHER, эквайер недоступен), занимали его каждый проход до give-up-age —
+    // остальные не опрашивались неделю. Теперь опрошенная уходит в конец очереди, второй проход берёт новые.
+    @Test
+    void reconcile_rowsItCannotSettle_doNotStarveTheRestOfTheQueue() {
+        int queue = BATCH_SIZE + 2;
+        for (int i = 0; i < queue; i++) {
+            agedTransaction("STUCK-" + i, TransactionStatus.PENDING, Duration.ofMinutes(10 + i));
+        }
+        providerAnswers("SomethingNew");
+
+        Assertions.assertEquals(BATCH_SIZE, reconciliationService.reconcilePendingTransactions());
+        Assertions.assertEquals(BATCH_SIZE, reconciliationService.reconcilePendingTransactions());
+
+        ArgumentCaptor<String> polled = ArgumentCaptor.forClass(String.class);
+        verify(acquiringClient, times(2 * BATCH_SIZE)).getOrderStatus(polled.capture(), anyString(), any());
+        List<String> firstPass = polled.getAllValues().subList(0, BATCH_SIZE);
+        List<String> secondPass = polled.getAllValues().subList(BATCH_SIZE, 2 * BATCH_SIZE);
+        Assertions.assertEquals(List.of("ORD-STUCK-4", "ORD-STUCK-3", "ORD-STUCK-2"), firstPass);
+        Assertions.assertEquals(List.of("ORD-STUCK-1", "ORD-STUCK-0", "ORD-STUCK-4"), secondPass,
+                "the never-polled rows go first, then the longest-unpolled one");
+        Assertions.assertEquals(queue, transactionRepository.findAll().stream()
+                .filter(t -> t.getStatus() == TransactionStatus.PENDING)
+                .count());
     }
 
     // Фикстуры

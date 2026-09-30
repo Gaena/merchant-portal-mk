@@ -368,6 +368,7 @@ erDiagram
         varchar user_agent "Плательщика"
         timestamp created_at
         timestamp updated_at
+        timestamp last_reconciled_at "Когда сверка последний раз брала в пакет (Р-110)"
     }
 
     transaction_refunds {
@@ -436,6 +437,7 @@ erDiagram
 | `pbl` | `011-company-provider-credentials.xml` | `companies`, если ещё нет (в виде `auth/002`), колонки кредов, если их нет; удаление `terminals.password` (Р-93) |
 | `pbl` | `012-terminal-rid.xml` | `terminals.terminal_rid`, если его ещё нет (Р-96) |
 | `pbl` | `013-transaction-rid-index.xml` | уникальный индекс `transactions (rid_by_merchant)` — по нему ищет публичная страница возврата |
+| `pbl` | `014-transaction-last-reconciled.xml` | `transactions.last_reconciled_at`, если её ещё нет: очередь сверки (Р-110) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` и индекс по `login`; без преконтроля |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет; таблица `terminals` уже должна быть (§4.2) |
 | `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам — и индекс по `login` (Р-94) |

@@ -51,7 +51,7 @@ public class TransactionReconciliationService {
         Instant now = Instant.now();
         Instant createdBefore = now.minus(minAge);
         Instant createdAfter = now.minus(giveUpAge);
-        List<Transaction> stale = transactionRepository.findByStatusAndCreatedAtBetweenOrderByCreatedAtAsc(
+        List<Transaction> stale = transactionRepository.findReconciliationBatch(
                 TransactionStatus.PENDING, createdAfter, createdBefore, PageRequest.of(0, batchSize));
 
         if (stale.isEmpty()) {
@@ -61,6 +61,7 @@ public class TransactionReconciliationService {
         }
 
         List<UUID> batch = stale.stream().map(Transaction::getId).toList();
+        transactionRepository.markTakenForReconciliation(batch, now);
         log.info("Reconciliation: picked up {} PENDING transaction(s) older than {}", batch.size(), minAge);
 
         for (UUID transactionId : batch) {
