@@ -17,17 +17,21 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface TransactionRepository extends JpaRepository<Transaction, UUID> {
-    Optional<Transaction> findByProviderOrderId(String providerOrderId);
 
-    // Скаляр, а не сущность: денежная операция сначала берёт блокировку ссылки, потом читает транзакцию.
-    // Загруженная до блокировки сущность осталась бы в persistence context старой.
+    // Скаляры, а не сущности: денежная операция и опрос статуса сначала берут блокировку ссылки, потом
+    // читают транзакцию. Загруженная до блокировки сущность осталась бы в persistence context старой.
     @Query("SELECT t.link.id FROM Transaction t WHERE t.id = :id")
     Optional<UUID> findLinkIdById(@Param("id") UUID id);
 
-    // Ключ публичной страницы возврата: случайный ridByMerchant, в отличие от providerOrderId, не
-    // перебрать. Граф — ленивый link, из которого чек.
-    @EntityGraph(attributePaths = "link")
-    Optional<Transaction> findByRidByMerchant(UUID ridByMerchant);
+    @Query("SELECT t.link.terminalId FROM Transaction t WHERE t.id = :id")
+    Optional<Integer> findTerminalIdById(@Param("id") UUID id);
+
+    @Query("SELECT t.id FROM Transaction t WHERE t.providerOrderId = :providerOrderId")
+    Optional<UUID> findIdByProviderOrderId(@Param("providerOrderId") String providerOrderId);
+
+    // Ключ публичной страницы возврата: случайный ridByMerchant, в отличие от providerOrderId, не перебрать.
+    @Query("SELECT t.id FROM Transaction t WHERE t.ridByMerchant = :ridByMerchant")
+    Optional<UUID> findIdByRidByMerchant(@Param("ridByMerchant") UUID ridByMerchant);
 
     // Использования ссылки считаются только здесь и набором PAID_STATUSES (Р-49); AUTHORIZED под слоты
     // добавляет OpenLinkService (P1-6). countByLinkIdAndStatus не заводить (P2-16): с ним возврат

@@ -398,8 +398,8 @@ Refusals are the JSON of §6, not an HTML page: the payer's browser shows the ra
     logged.
 -   **Behaviour:** the transaction is polled at the acquirer once, synchronously, and the result is stored
     (as §5.8: a final status is not polled). There is no polling in the page and no JavaScript data
-    loading. If the acquirer is unavailable, the last known state is shown; a concurrent update of the
-    same link is retried once.
+    loading. The poll takes the link lock (Р-109); if the lock is busy or the acquirer is unavailable, the
+    last known state is shown; a concurrent update of the same link is retried once.
 
 **Response:** always `200 OK`, `text/html` (Thymeleaf `redirect.html`):
 
@@ -442,7 +442,9 @@ order id.
     -   Any other `SETTLED_OTHER` or unknown status leaves the transaction as it was, for a person to check.
     -   `SUCCESS`, `FAILED`, `REFUNDED`, `PARTIALLY_REFUNDED` — returned from the database, the acquirer is
         not asked. A refund or reversal made outside the portal is therefore not seen (`../../AGENTS.md` §10).
--   **Refusals:** `404 Transaction not found: <identifier>`; §4.1; for a polled transaction — `400 Terminal configuration not found`,
+    -   The poll takes the link lock, like a capture or a refund (Р-109): while one of them is running, the
+        answer is `409` at once and the acquirer is not asked.
+-   **Refusals:** `404 Transaction not found: <identifier>`; §4.1; `409` — the link lock is busy (§6); for a polled transaction — `400 Terminal configuration not found`,
     the credentials texts (§6), `400 Acquirer error: <description>` (the acquirer refused: `errorCode` or
     HTTP error), `400 Order status check failed: <reason>` (no answer), `503` (§6).
 -   No journal record.
@@ -780,7 +782,7 @@ Every error is the `ErrorResponse` JSON `{ timestamp, status, error, message, pa
 | 403 | access and state refusals | §4.1, §5.5 |
 | 404 | `… not found: <id>`; `Endpoint not found` | missing resource; unknown path |
 | 405 | `Method <M> is not supported for this endpoint; use <M2>` | wrong method, with `Allow` |
-| 409 | `The resource is being changed by another request, please retry` | the link lock is taken (`NOWAIT`) by an open, a capture or a refund of the same link. Nothing was sent to the acquirer, a retry is safe |
+| 409 | `The resource is being changed by another request, please retry` | the link lock is taken (`NOWAIT`) by an open, a capture, a refund or a status poll of the same link. Nothing was sent to the acquirer, a retry is safe |
 | 409 | `The resource was updated concurrently, please retry` | a concurrent update of the same link (§5.2) |
 | 415 | `Content-Type <type> is not supported by this endpoint; send application/json` | |
 | 500 | `Unexpected server error` | anything not listed here |

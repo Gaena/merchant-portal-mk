@@ -10,6 +10,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -66,6 +67,10 @@ public class TransactionReconciliationService {
             try {
                 // Своя транзакция на запись (REQUIRES_NEW): сбой на одной не роняет пакет.
                 paymentLinkService.reconcileOne(transactionId, maxAge);
+            } catch (PessimisticLockingFailureException e) {
+                // Ссылку сейчас держит списание, возврат или открытие: не сбой, строку возьмёт следующий проход.
+                log.debug("Reconciliation skipped transaction {}: its link is being changed by another request",
+                        transactionId);
             } catch (RuntimeException e) {
                 log.warn("Reconciliation of transaction {} failed; continuing with the rest of the batch",
                         transactionId, e);

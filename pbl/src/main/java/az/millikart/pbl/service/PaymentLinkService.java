@@ -59,6 +59,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
@@ -755,34 +757,45 @@ public class PaymentLinkService {
         }
     }
 
+    // Опрос — под замком ссылки, как списание и возврат: без него он сохранял бы снимок, прочитанный до чужого
+    // подтверждённого списания, и затирал бы его (Р-109). Занята — 409 до похода к эквайеру.
     @Transactional
     public TransactionResponse checkAndStatusUpdate(String identifier, UserPrincipal principal) {
 
         log.info("Request to check transaction status: identifier={}", identifier);
 
-        Transaction tx = resolveTransaction(identifier);
-        validateAccess(tx.getLink().getTerminalId(), principal, READ_ROLES);
-        return mapToTransactionResponse(refreshStatus(tx).transaction());
+        UUID transactionId = resolveTransactionId(identifier);
+        Integer terminalId = transactionRepository.findTerminalIdById(transactionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + identifier));
+        validateAccess(terminalId, principal, READ_ROLES);
+        return mapToTransactionResponse(refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction());
     }
 
     // Страница возврата плательщика: владение не проверяется — ключ случайный ridByMerchant, его не
     // перебрать. Ответ беден на персональные данные; пусто вместо ошибки — не выдать, есть ли операция.
-    @Transactional
+    // Опрос — в своей транзакции под замком ссылки: занятый замок или недоступный эквайер не должны
+    // портить страницу, тогда она рисуется последним известным состоянием.
     public Optional<PaymentReceiptView> refreshByRidByMerchant(UUID ridByMerchant) {
-        Optional<Transaction> found = transactionRepository.findByRidByMerchant(ridByMerchant);
+        Optional<UUID> found = transactionRepository.findIdByRidByMerchant(ridByMerchant);
         if (found.isEmpty()) {
             log.info("No transaction matches the ridByMerchant on the return page request");
             return Optional.empty();
         }
 
-        Transaction tx = found.get();
+        UUID transactionId = found.get();
         try {
-            tx = refreshStatus(tx).transaction();
+            return Optional.of(txTemplate.execute(status ->
+                    toReceiptView(refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction())));
+        } catch (OptimisticLockingFailureException e) {
+            // Версию ссылки поднял запрос без её замка: повторяет контроллер — свежий опрос лучше старого состояния.
+            throw e;
+        } catch (PessimisticLockingFailureException e) {
+            log.info("Transaction {} is being changed by another request; the return page shows the last known state",
+                    transactionId);
         } catch (RuntimeException e) {
-            // Страница плательщика рисуется и при недоступном эквайере — последним известным состоянием.
-            log.warn("Status refresh failed for transaction {}: {}; rendering the last known state", tx.getId(), e.getMessage());
+            log.warn("Status refresh failed for transaction {}: {}; rendering the last known state", transactionId, e.getMessage());
         }
-        return Optional.of(toReceiptView(tx));
+        return txTemplate.execute(status -> transactionRepository.findById(transactionId).map(this::toReceiptView));
     }
 
     // Метка в providerResponse: платёж закончил этот сервис, а не эквайер.
@@ -810,14 +823,15 @@ public class PaymentLinkService {
     public record StatusRefresh(Transaction transaction, ProviderOrderOutcome outcome) {}
 
     // Своя транзакция: сбой на одной записи не откатывает пакет. FAILED — только если опрос удался,
-    // вернул NON_FINAL и запись старше maxAge (Р-20).
+    // вернул NON_FINAL и запись старше maxAge (Р-20). Под замком ссылки (Р-109): занята —
+    // PessimisticLockingFailureException, и строку возьмёт следующий проход.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void reconcileOne(UUID transactionId, Duration maxAge) {
-        Transaction tx = transactionRepository.findById(transactionId).orElse(null);
-        if (tx == null) {
+        if (transactionRepository.findLinkIdById(transactionId).isEmpty()) {
             log.debug("Reconciliation skipped: transaction {} no longer exists", transactionId);
             return;
         }
+        Transaction tx = lockLinkAndLoadTransaction(transactionId);
         if (tx.getStatus() != TransactionStatus.PENDING) {
             log.debug("Reconciliation skipped: transaction {} is already {}", transactionId, tx.getStatus());
             return;
@@ -877,22 +891,20 @@ public class PaymentLinkService {
                 transactionId, maxAge);
     }
 
-    private Transaction resolveTransaction(String identifier) {
-        Transaction tx = null;
-
+    // Только номер: саму транзакцию читают после замка ссылки, иначе в сессии остался бы снимок до него.
+    private UUID resolveTransactionId(String identifier) {
         try {
             UUID uuid = UUID.fromString(identifier);
-            tx = transactionRepository.findById(uuid).orElse(null);
+            if (transactionRepository.existsById(uuid)) {
+                return uuid;
+            }
         } catch (IllegalArgumentException ignored) {}
 
-        if (tx == null) {
-            tx = transactionRepository.findByProviderOrderId(identifier)
-                    .orElseThrow(() -> {
-                        log.warn("Transaction not found for identifier: {}", identifier);
-                        return new ResourceNotFoundException("Transaction not found: " + identifier);
-                    });
-        }
-        return tx;
+        return transactionRepository.findIdByProviderOrderId(identifier)
+                .orElseThrow(() -> {
+                    log.warn("Transaction not found for identifier: {}", identifier);
+                    return new ResourceNotFoundException("Transaction not found: " + identifier);
+                });
     }
 
     // Один опрос эквайера; финальный статус возвращается без опроса. Блокировку терминала не проверять

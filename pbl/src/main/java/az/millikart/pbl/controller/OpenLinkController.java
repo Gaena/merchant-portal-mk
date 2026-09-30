@@ -62,8 +62,8 @@ public class OpenLinkController {
             try {
                 receipt = paymentLinkService.refreshByRidByMerchant(ridByMerchant).orElse(null);
             } catch (OptimisticLockingFailureException e) {
-                // Другой плательщик той же ссылки поднял её версию; конфликт всплывает на коммите, мимо
-                // catch сервиса: один повтор вместо JSON 409.
+                // Версию ссылки поднял другой запрос; сервис этот конфликт не глотает: один повтор вместо
+                // последнего известного состояния.
                 log.info("Return page refresh for a payment raced with another update of its link; retrying once");
                 receipt = paymentLinkService.refreshByRidByMerchant(ridByMerchant).orElse(null);
             }

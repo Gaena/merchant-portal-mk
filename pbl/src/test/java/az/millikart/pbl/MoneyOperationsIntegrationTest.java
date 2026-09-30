@@ -20,6 +20,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.PaymentOutcomeUnknownException;
 import az.millikart.common.security.JwtProvider;
+import az.millikart.common.security.UserPrincipal;
+import az.millikart.pbl.dto.CompleteDmsRequest;
+import az.millikart.pbl.service.PaymentLinkService;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentLinkStatus;
 import az.millikart.pbl.domain.PaymentType;
@@ -46,6 +49,12 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -60,6 +69,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -114,6 +124,9 @@ class MoneyOperationsIntegrationTest {
 
     @Autowired
     private DataSource dataSource;
+
+    @Autowired
+    private PaymentLinkService paymentLinkService;
 
     @MockBean
     private AcquiringClient acquiringClient;
@@ -839,12 +852,90 @@ class MoneyOperationsIntegrationTest {
                 "no acquirer reference is recorded for a transition nobody wrote down");
     }
 
+    // --- опрос статуса под тем же замком (Р-109) --------------------------------------
+
+    // Списание уже у эквайера, а /status пришёл в эти секунды. Без замка опрос прочитал бы AUTHORIZED и после
+    // коммита списания записал бы его обратно — с пустым capturedAmount и без mpCapture, и кнопка списания
+    // вернулась бы. С замком опрос сразу получает 409 и к эквайеру не идёт, а списание сохраняется целиком.
+    @Test
+    void aStatusCheckDuringACapture_isRefused_andTheCaptureIsKeptWhole() throws Exception {
+        Transaction held = transaction("RACE-CAPTURE", TransactionStatus.AUTHORIZED);
+        CountDownLatch captureAtTheAcquirer = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(acquiringClient.completeDms(anyString(), anyString(), any(), any())).thenAnswer(invocation -> {
+            captureAtTheAcquirer.countDown();
+            Assertions.assertTrue(release.await(10, TimeUnit.SECONDS), "the capture was not released in time");
+            return confirmed("RACE");
+        });
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any())).thenReturn(Map.of("status", "Authorized"));
+
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> capture = pool.submit(() ->
+                    paymentLinkService.completeDms(held.getId(), new CompleteDmsRequest(AMOUNT), head()));
+            Assertions.assertTrue(captureAtTheAcquirer.await(10, TimeUnit.SECONDS), "the capture never reached the acquirer");
+
+            mockMvc.perform(statusCheck(held))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.message", is("The resource is being changed by another request, please retry")));
+
+            release.countDown();
+            capture.get(10, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
+        Transaction captured = reload(held);
+        Assertions.assertEquals(TransactionStatus.SUCCESS, captured.getStatus());
+        Assertions.assertEquals(0, AMOUNT.compareTo(captured.getCapturedAmount()));
+        Assertions.assertNotNull(captured.getProviderResponse().get("mpCapture"));
+    }
+
+    // На запертой ссылке ни один опрос к эквайеру не идёт: /status — 409, страница возврата плательщика рисует
+    // последнее известное состояние, сверка отдаёт строку следующему проходу.
+    @Test
+    void everyStatusRefreshOnALockedLink_leavesTheAcquirerAlone() throws Exception {
+        Transaction pending = transaction("LOCKED-REFRESH", TransactionStatus.PENDING);
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any())).thenReturn(Map.of("status", "FullyPaid"));
+
+        try (Connection other = dataSource.getConnection()) {
+            other.setAutoCommit(false);
+            lockLink(other, pending);
+
+            mockMvc.perform(statusCheck(pending)).andExpect(status().isConflict());
+            mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", pending.getRidByMerchant()))
+                    .andExpect(status().isOk());
+            Assertions.assertThrows(PessimisticLockingFailureException.class,
+                    () -> paymentLinkService.reconcileOne(pending.getId(), Duration.ofHours(24)));
+
+            verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
+            Assertions.assertEquals(TransactionStatus.PENDING, statusOf(pending));
+            other.rollback();
+        }
+
+        // Замок снят — тот же опрос доходит до эквайера: 409 был из-за замка, а не из-за данных.
+        mockMvc.perform(statusCheck(pending))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("SUCCESS")));
+    }
+
     private JsonNode historyOf(Transaction tx) throws Exception {
         String body = mockMvc.perform(get("/api/v1/transactions/{id}", tx.getId())
                         .header(HttpHeaders.AUTHORIZATION, headToken))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).get("statusHistory");
+    }
+
+    private MockHttpServletRequestBuilder statusCheck(Transaction tx) {
+        return get("/api/v1/transactions/{id}/status", tx.getId()).header(HttpHeaders.AUTHORIZATION, headToken);
+    }
+
+    // Тот же руководитель, что в headToken, — для вызова сервиса мимо MockMvc.
+    private static UserPrincipal head() {
+        return new UserPrincipal("head-user", "head-user@test.com", "COMPANY_HEAD", "test-company");
     }
 
     private MockHttpServletRequestBuilder capture(Transaction tx, BigDecimal amount) throws Exception {
