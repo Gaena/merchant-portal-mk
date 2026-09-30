@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.beans.factory.annotation.Value;
 import org.yaml.snakeyaml.Yaml;
 
 // Боевые application.yaml всех сервисов, без Spring. Тесты сервисов идут на тестовых yaml, которые
@@ -81,6 +82,23 @@ class ProductionConfigurationTest {
         assertEquals("${ECOM_TXPG_URL}", value(yaml, "ecom.txpg.datasource.url"), service);
         assertEquals("${ECOM_TXPG_USERNAME}", value(yaml, "ecom.txpg.datasource.username"), service);
         assertEquals("${ECOM_TXPG_PASSWORD}", value(yaml, "ecom.txpg.datasource.password"), service);
+    }
+
+    // BCrypt в проде — стоимость не ниже 10 (в тестах 4 ради скорости). Боевой yaml её либо не задаёт, и
+    // работает умолчание в коде, либо задаёт не ниже 10; само умолчание — тоже не ниже 10.
+    @ParameterizedTest
+    @ValueSource(strings = {"auth", "directory", "pbl", "ecom"})
+    void bcryptCostInProduction_isAtLeastTen(String service) throws Exception {
+        Object configured = value(productionYaml(service), "mp.security.bcrypt-strength");
+        if (configured != null) {
+            String text = String.valueOf(configured).replaceAll("^\\$\\{[^:}]*:(\\d+)}$", "$1");
+            assertTrue(text.matches("\\d+") && Integer.parseInt(text) >= 10, service + ": " + configured);
+        }
+
+        String declared = SecurityConfig.class.getMethod("passwordEncoder", int.class)
+                .getParameters()[0].getAnnotation(Value.class).value();
+        java.util.regex.Matcher fallback = Pattern.compile("^\\$\\{mp\\.security\\.bcrypt-strength:(\\d+)}$").matcher(declared);
+        assertTrue(fallback.matches() && Integer.parseInt(fallback.group(1)) >= 10, declared);
     }
 
     @SuppressWarnings("unchecked")

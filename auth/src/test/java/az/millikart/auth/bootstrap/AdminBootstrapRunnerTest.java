@@ -40,7 +40,8 @@ class AdminBootstrapRunnerTest {
     @BeforeEach
     void setUp() {
         userRepository = Mockito.mock(UserRepository.class);
-        passwordEncoder = new BCryptPasswordEncoder();
+        // Стоимость 4, как в тестовом профиле: хэш настоящий BCrypt, но считается за миллисекунду.
+        passwordEncoder = new BCryptPasswordEncoder(4);
     }
 
     private AdminBootstrapRunner runner(String username, String password) {

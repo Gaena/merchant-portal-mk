@@ -71,8 +71,10 @@ public class SecurityConfig {
         return http.build();
     }
 
+    // Стоимость — свойством только ради тестов (там 4): в боевых yaml её нет, работает умолчание 10, ниже
+    // не опускать (сторожит ProductionConfigurationTest). Хэши с другой стоимостью по-прежнему проверяются.
     @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+    public PasswordEncoder passwordEncoder(@Value("${mp.security.bcrypt-strength:10}") int strength) {
+        return new BCryptPasswordEncoder(strength);
     }
 }

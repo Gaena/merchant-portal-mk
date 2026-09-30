@@ -50,10 +50,10 @@ public class AuthService {
     // Статус не называется намеренно: «заблокирован» или «удалён» — сведения для администратора.
     private static final String ACCOUNT_NOT_ACTIVE = "Account is not active. Please contact your administrator.";
 
-    // BCrypt-хэш строки, которой никто не знает: на несуществующем логине matches тратит те же ~80 мс,
-    // иначе неизвестный логин выдают часы. Ничему не соответствует — не делать выводимым.
-    private static final String ABSENT_USER_PASSWORD_HASH =
-            "$2a$10$RvlUdzsjEzQg7hkn6vKLe.CjBwtkZ2GCIsbWtBM96m2q/jjEDRjlG";
+    // Хэш случайной строки, которую никто не знает: на несуществующем логине matches тратит столько же, сколько
+    // на настоящем, иначе неизвестный логин выдают часы. Считается при старте тем же кодировщиком, поэтому
+    // стоимость всегда совпадает с настоящими хэшами — константа разошлась бы с mp.security.bcrypt-strength.
+    private final String absentUserPasswordHash;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -80,6 +80,7 @@ public class AuthService {
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
         this.passwordHistory = passwordHistory;
+        this.absentUserPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
     @Transactional(noRollbackFor = BusinessException.class)
@@ -127,7 +128,7 @@ public class AuthService {
 
         User user = userRepository.findForLoginByUsername(cleanEmail).orElse(null);
         if (user == null) {
-            passwordEncoder.matches(password, ABSENT_USER_PASSWORD_HASH);
+            passwordEncoder.matches(password, absentUserPasswordHash);
             recordAddressFailure(clientIp, cleanEmail);
             // В журнал — категория отказа, не пароль; cleanEmail — недоверенный ввод, его обрезает
             // AuditLogService.
