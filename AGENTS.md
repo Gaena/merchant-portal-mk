@@ -406,8 +406,8 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
 легитимное состояние покоя. Параметры — `pbl.reconciliation.*`.
 
 **Планировщики** (их шесть: по два в `pbl` и `auth`, по одному в `ecom` и `directory`) — таблица с
-расписаниями и выключателями в `project_docs/guides/application_description.md` §9. В тестовых профилях
-`pbl` и `auth` сверка и уборка выключены — тесты вызывают сервисы напрямую.
+расписаниями и выключателями в `project_docs/guides/application_description.md` §9. В тестах все
+выключены (§11).
 
 ---
 
@@ -949,8 +949,9 @@ yaml), как в проде, где `ecom` стартует после `director
 дополняет, поэтому повторяет его значимые места: management-порт задан, `springdoc.*.enabled: false`,
 fallback-токен выключен. Ключ подписи — `test-only-jwt-secret-not-used-anywhere-else-0123456789`,
 одинаковый во всех модулях; ключ шифрования кредов — один в `directory`, `pbl` и `CredentialCipherTest`.
-Сверка `PENDING` в `pbl` и уборка refresh-токенов в `auth` в тестах выключены — тесты вызывают сервисы
-напрямую.
+Все шесть планировщиков в тестах выключены своими флагами: контекст живёт весь прогон, и задача по
+расписанию сработала бы посреди чужого теста. Тесты зовут сервисы (или метод планировщика) напрямую; новый
+планировщик — только с выключателем, иначе упадёт `noTaskRunsByTheClockInTests` модуля.
 
 **Провайдер в тестах.** Боевая реализация одна, подмена — только явная:
 - `@Import(StubAcquirerConfig.class)` даёт `@Primary`-мок, делегирующий двойнику `StubAcquiringClient`;

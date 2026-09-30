@@ -61,6 +61,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -68,6 +69,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -87,7 +91,10 @@ class PaymentLinkIntegrationTest {
     private PaymentLinkRepository paymentLinkRepository;
 
     @Autowired
-    private PaymentLinkScheduler paymentLinkScheduler;
+    private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private ApplicationContext applicationContext;
 
     @Autowired
     private TransactionRepository transactionRepository;
@@ -1507,13 +1514,29 @@ class PaymentLinkIntegrationTest {
         PaymentLink overdue = linkFixture(UsageType.SINGLE, null, Instant.now().minus(Duration.ofMinutes(1)));
         PaymentLink live = linkFixture(UsageType.SINGLE, null, Instant.now().plus(DEFAULT_TTL));
 
-        // Сам планировщик, а не его запрос: ловит и сломанный планировщик, и сломанный запрос.
-        paymentLinkScheduler.cleanupExpiredLinksAndSessions();
+        // Сам планировщик, а не его запрос: ловит и сломанный планировщик, и сломанный запрос. Бин в тестах
+        // выключен (pbl.link-expiry.enabled), поэтому метод зовётся на своём экземпляре в транзакции, как у прокси.
+        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                new PaymentLinkScheduler(paymentLinkRepository).cleanupExpiredLinksAndSessions());
 
         Assertions.assertEquals(PaymentLinkStatus.EXPIRED,
                 paymentLinkRepository.findById(overdue.getId()).orElseThrow().getStatus());
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE,
                 paymentLinkRepository.findById(live.getId()).orElseThrow().getStatus());
+    }
+
+    // Контексты тестов живут весь прогон: задача по расписанию сработала бы посреди чужого теста. Новый
+    // планировщик без выключателя в тестовом yaml уронит этот тест.
+    @Test
+    void noTaskRunsByTheClockInTests() {
+        // Держатель задач есть всегда (@EnableScheduling): без него проверка прошла бы впустую.
+        java.util.Collection<ScheduledTaskHolder> holders = applicationContext.getBeansOfType(ScheduledTaskHolder.class).values();
+        org.junit.jupiter.api.Assertions.assertFalse(holders.isEmpty());
+        List<String> tasks = holders.stream()
+                .flatMap(holder -> holder.getScheduledTasks().stream())
+                .map(String::valueOf)
+                .toList();
+        Assertions.assertTrue(tasks.isEmpty(), "scheduled in tests: " + tasks);
     }
 
     // Создаёт ссылку через API и возвращает разобранное тело ответа.

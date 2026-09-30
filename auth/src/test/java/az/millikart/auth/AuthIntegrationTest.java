@@ -28,6 +28,9 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import java.util.List;
+import org.springframework.context.ApplicationContext;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
 
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -51,6 +54,9 @@ public class AuthIntegrationTest {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private ApplicationContext applicationContext;
 
     // Миграция больше не заводит админа (P0-6), поэтому фикстура создаёт своего. Пароль отвечает
     // той же политике, которую API требует от любого аккаунта.
@@ -672,6 +678,20 @@ public class AuthIntegrationTest {
         for (int i = 0; i < MAX_FAILURES_PER_ADDRESS - 1; i++) {
             login("nobody" + i + "@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
         }
+    }
+
+    // Контексты тестов живут весь прогон: задача по расписанию сработала бы посреди чужого теста. Новый
+    // планировщик без выключателя в тестовом yaml уронит этот тест.
+    @Test
+    public void noTaskRunsByTheClockInTests() {
+        // Держатель задач есть всегда (@EnableScheduling): без него проверка прошла бы впустую.
+        java.util.Collection<ScheduledTaskHolder> holders = applicationContext.getBeansOfType(ScheduledTaskHolder.class).values();
+        org.junit.jupiter.api.Assertions.assertFalse(holders.isEmpty());
+        List<String> tasks = holders.stream()
+                .flatMap(holder -> holder.getScheduledTasks().stream())
+                .map(String::valueOf)
+                .toList();
+        Assertions.assertTrue(tasks.isEmpty(), "scheduled in tests: " + tasks);
     }
 
     // Фикстуры и хелперы

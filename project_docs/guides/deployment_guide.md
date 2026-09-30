@@ -1708,6 +1708,7 @@ sudo systemctl restart mp-auth
 | `PBL_DASHBOARD_ZONE` | — | — | + | — | `Asia/Baku` — часовой пояс статистики оплат по ссылкам (вкладка «Статистика» страницы Pay by Link). Пояс главной и выписки — `ECOM_TXPG_ZONE` |
 | `PBL_LINK_DEFAULT_TTL` | — | — | + | — | `PT24H` — срок ссылки, если при создании он не задан |
 | `PBL_LINK_MAX_TTL` | — | — | + | — | `P90D` — потолок срока ссылки, считается от её создания |
+| `PBL_LINK_EXPIRY_ENABLED` | — | — | + | — | `true` — перевод просроченных активных ссылок в `EXPIRED` раз в 5 минут; открытие проверяет срок и без него |
 | `PBL_RECONCILIATION_ENABLED`, `PBL_RECONCILIATION_CRON` | — | — | + | — | `true`, `0 */2 * * * *` — фоновая сверка зависших `PENDING` с эквайером |
 | `PBL_RECONCILIATION_MIN_AGE`, `PBL_RECONCILIATION_MAX_AGE`, `PBL_RECONCILIATION_GIVE_UP_AGE`, `PBL_RECONCILIATION_BATCH_SIZE` | — | — | + | — | `PT2M`, `PT24H`, `P7D`, `50`: моложе `MIN_AGE` операция не опрашивается; неоплаченная старше `MAX_AGE` становится `FAILED` (только при статусе эквайера `Preparing`); старше `GIVE_UP_AGE` не опрашивается — ручной разбор; `BATCH_SIZE` — сколько операций за проход |
 

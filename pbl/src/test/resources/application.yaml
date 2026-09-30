@@ -34,6 +34,10 @@ pbl:
     # expiresAt explicitly instead.
     default-ttl: PT24H
     max-ttl: P90D
+  link-expiry:
+    # Off like the sweep below: every five minutes it would expire other tests' fixtures.
+    # PaymentLinkIntegrationTest calls the scheduler method itself.
+    enabled: false
   reconciliation:
     # Off by default so the sweep never races the fixtures of the other integration tests.
     # TransactionReconciliationIntegrationTest drives the service directly instead.

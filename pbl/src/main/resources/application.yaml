@@ -41,6 +41,9 @@ pbl:
     # Ceiling counted from the link's CREATION, on create and on every PATCH: counted from "now", a
     # chain of PATCHes would extend the expiry forever (P1-9).
     max-ttl: ${PBL_LINK_MAX_TTL:P90D}
+  link-expiry:
+    # ACTIVE links past expiresAt -> EXPIRED every 5 minutes. Opening checks the expiry by itself.
+    enabled: ${PBL_LINK_EXPIRY_ENABLED:true}
   reconciliation:
     # Sweep of PENDING rows the payer never returned from: the acquirer has no callback (Р-7).
     enabled: ${PBL_RECONCILIATION_ENABLED:true}

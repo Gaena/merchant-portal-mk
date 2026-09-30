@@ -27,6 +27,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.ApplicationContext;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
@@ -56,6 +58,9 @@ class EcomApplicationIntegrationTest {
 
     @MockBean
     private ProviderLoginSource loginSource;
+
+    @Autowired
+    private ApplicationContext applicationContext;
 
     private JdbcTemplate portal;
 
@@ -193,6 +198,20 @@ class EcomApplicationIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, token("SYSTEM_ADMIN", null)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[*].rid", contains("M-1")));
+    }
+
+    // Контексты тестов живут весь прогон: задача по расписанию сработала бы посреди чужого теста. Новый
+    // планировщик без выключателя в тестовом yaml уронит этот тест.
+    @Test
+    void noTaskRunsByTheClockInTests() {
+        // Держатель задач есть всегда (@EnableScheduling): без него проверка прошла бы впустую.
+        java.util.Collection<ScheduledTaskHolder> holders = applicationContext.getBeansOfType(ScheduledTaskHolder.class).values();
+        org.junit.jupiter.api.Assertions.assertFalse(holders.isEmpty());
+        List<String> tasks = holders.stream()
+                .flatMap(holder -> holder.getScheduledTasks().stream())
+                .map(String::valueOf)
+                .toList();
+        org.junit.jupiter.api.Assertions.assertTrue(tasks.isEmpty(), "scheduled in tests: " + tasks);
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder terminals(String token) {

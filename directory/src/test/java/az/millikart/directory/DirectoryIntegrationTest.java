@@ -36,6 +36,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -69,6 +71,9 @@ public class DirectoryIntegrationTest {
 
     @Autowired
     private CredentialCipher credentialCipher;
+
+    @Autowired
+    private ApplicationContext applicationContext;
 
     private String adminToken;
     private String headTokenCompany1;
@@ -1030,6 +1035,20 @@ public class DirectoryIntegrationTest {
     }
 
     // Фикстуры
+
+    // Контексты тестов живут весь прогон: задача по расписанию сработала бы посреди чужого теста. Новый
+    // планировщик без выключателя в тестовом yaml уронит этот тест.
+    @Test
+    public void noTaskRunsByTheClockInTests() {
+        // Держатель задач есть всегда (@EnableScheduling): без него проверка прошла бы впустую.
+        java.util.Collection<ScheduledTaskHolder> holders = applicationContext.getBeansOfType(ScheduledTaskHolder.class).values();
+        org.junit.jupiter.api.Assertions.assertFalse(holders.isEmpty());
+        List<String> tasks = holders.stream()
+                .flatMap(holder -> holder.getScheduledTasks().stream())
+                .map(String::valueOf)
+                .toList();
+        org.junit.jupiter.api.Assertions.assertTrue(tasks.isEmpty(), "scheduled in tests: " + tasks);
+    }
 
     private void assertCompanyRefused(String providerLogin, String reason) throws Exception {
         mockMvc.perform(post("/api/v1/companies")
