@@ -18,10 +18,13 @@ import az.millikart.auth.repository.CompanyRepository;
 import az.millikart.auth.repository.RefreshTokenRepository;
 import az.millikart.auth.repository.UserRepository;
 import az.millikart.auth.service.InactiveAccountService;
+import az.millikart.common.audit.AuditLog;
+import az.millikart.common.audit.AuditOutcome;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -69,6 +72,9 @@ class InactiveAccountIntegrationTest {
     @Autowired
     private InactiveAccountService inactiveAccounts;
 
+    @Autowired
+    private AuditLogTestRepository auditLogs;
+
     @BeforeEach
     void setUp() {
         refreshTokenRepository.deleteAll();
@@ -101,6 +107,29 @@ class InactiveAccountIntegrationTest {
                         .content(objectMapper.writeValueAsString(new RefreshRequest(refreshToken))))
                 .andExpect(status().isUnauthorized());
         login(CLERK).andExpect(status().isBadRequest());
+    }
+
+    // Блокирует планировщик, а не человек: актор — system (P3-2), причина и последняя активность — в записи,
+    // иначе администратор не отличит автоблокировку от ручной.
+    @Test
+    void idleBlocking_isRecordedAgainstTheSystem() {
+        Instant lastActivity = Instant.now().minus(MAX_IDLE).minus(Duration.ofDays(1)).truncatedTo(ChronoUnit.SECONDS);
+        age(CLERK, lastActivity);
+
+        inactiveAccounts.blockInactive(Instant.now());
+
+        String clerkId = user(CLERK).getId().toString();
+        List<AuditLog> records = auditLogs.findAll().stream()
+                .filter(record -> clerkId.equals(record.getEntityId()))
+                .toList();
+        assertEquals(1, records.size(), String.valueOf(records));
+        AuditLog record = records.getFirst();
+        assertEquals("BLOCK", record.getAction());
+        assertEquals(AuditOutcome.SUCCESS, record.getOutcome());
+        assertEquals("system", record.getPerformedBy());
+        assertEquals("comp-01", record.getCompanyId());
+        assertTrue(record.getDetails().contains("PCI DSS 8.2.6") && record.getDetails().contains(lastActivity.toString()),
+                record.getDetails());
     }
 
     // Вход — новый отсчёт; учётки, уже не ACTIVE, проход не трогает.

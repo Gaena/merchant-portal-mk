@@ -149,6 +149,8 @@ public class UserService {
             }
             companyScope = actorCompanyId;
         } else {
+            auditLogService.logDenied(AuditEntity.USER, "ALL", AuditAction.LIST, UserPrincipal.getUsername(principal),
+                    actorCompanyId, "Denied: role " + UserPrincipal.getRawRole(principal) + " attempted to list users");
             throw new InvalidStateException("Access denied");
         }
 
@@ -163,13 +165,11 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public UserResponse getUser(UUID id, UserPrincipal principal) {
-        Role actorRole = UserPrincipal.getRole(principal);
-        String actorCompanyId = UserPrincipal.getCompanyId(principal);
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("User not found"));
 
         if (!STATUS_DELETED.equals(user.getStatus())) {
-            validateAccess(user, actorRole, actorCompanyId);
+            validateAccess(user, principal, AuditAction.READ);
         } else {
             throw new BusinessException("User not found");
         }
@@ -345,6 +345,10 @@ public class UserService {
         }
         if (actorRole == Role.COMPANY_HEAD) {
             if (request.companyId() == null || !request.companyId().equals(actorCompanyId)) {
+                auditLogService.logDenied(AuditEntity.USER, request.username(), AuditAction.CREATE,
+                        UserPrincipal.getUsername(principal), actorCompanyId,
+                        "Denied: role " + UserPrincipal.getRawRole(principal)
+                                + " attempted to create a user in company " + request.companyId());
                 throw new InvalidStateException("Cannot create user for another company");
             }
             if (!HEAD_MANAGED_ROLES.contains(Role.fromValue(request.role()).orElse(null))) {
@@ -356,13 +360,16 @@ public class UserService {
             }
             return;
         }
+        auditLogService.logDenied(AuditEntity.USER, request.username(), AuditAction.CREATE,
+                UserPrincipal.getUsername(principal), actorCompanyId,
+                "Denied: role " + UserPrincipal.getRawRole(principal) + " attempted to create a user");
         throw new InvalidStateException("Access denied");
     }
 
     // Правка и удаление: руководитель трогает в своей компании только роли ниже своей и себя самого.
     private void validateWriteAccess(User targetUser, UserPrincipal principal, String action) {
         Role actorRole = UserPrincipal.getRole(principal);
-        validateAccess(targetUser, actorRole, UserPrincipal.getCompanyId(principal));
+        validateAccess(targetUser, principal, action);
         if (actorRole == Role.COMPANY_HEAD
                 && !targetUser.getId().toString().equals(UserPrincipal.getUserId(principal))
                 && !HEAD_MANAGED_ROLES.contains(Role.fromValue(targetUser.getRole()).orElse(null))) {
@@ -400,15 +407,21 @@ public class UserService {
         }
     }
 
-    private void validateAccess(User targetUser, Role actorRole, String actorCompanyId) {
+    // Компанию цели в details не писать: руководитель читает журнал своей компании и узнал бы, чей это UUID.
+    private void validateAccess(User targetUser, UserPrincipal principal, String action) {
+        Role actorRole = UserPrincipal.getRole(principal);
+        String actorCompanyId = UserPrincipal.getCompanyId(principal);
         if (actorRole == Role.SYSTEM_ADMIN) {
             return;
         }
-        if (actorRole == Role.COMPANY_HEAD) {
-            if (targetUser.getCompanyId() != null && targetUser.getCompanyId().equals(actorCompanyId)) {
-                return;
-            }
+        if (actorRole == Role.COMPANY_HEAD
+                && targetUser.getCompanyId() != null && targetUser.getCompanyId().equals(actorCompanyId)) {
+            return;
         }
+        auditLogService.logDenied(AuditEntity.USER, targetUser.getId().toString(), action,
+                UserPrincipal.getUsername(principal), actorCompanyId,
+                "Denied: role " + UserPrincipal.getRawRole(principal) + " of company " + actorCompanyId
+                        + " attempted " + action + " of user " + targetUser.getId() + " outside its company");
         throw new InvalidStateException("Access denied");
     }
 

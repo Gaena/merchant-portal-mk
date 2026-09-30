@@ -838,6 +838,11 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
   логин неудачного входа — недоверенный ввод, обрезается по ширине колонки.
 - **Лимит входа пишет в журнал один раз за окно** (`count == maxFailures`) и в базу не ходит: запись
   на каждую отбитую попытку сделала бы защиту усилителем нагрузки.
+- **Журнал нельзя править из приложения** (Р-42). У `AuditLogRepository` только `save`, у
+  `AuditLogQueryRepository` только `findAll(Specification, Pageable)` — `JpaSpecificationExecutor` не
+  наследовать, в нём `delete(Specification)`. `AuditLog` — `@Immutable`, билдер не задаёт `id`: `save`
+  записи с существующим `id` сделал бы `merge` и переписал её. Сторожат `AuditLogAppendOnlyTest` и
+  `AuditLogQueryRepositoryReadOnlyTest`.
 
 **Spring и ошибки**
 

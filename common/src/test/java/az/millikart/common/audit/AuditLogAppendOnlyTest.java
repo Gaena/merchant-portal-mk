@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Locale;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.hibernate.annotations.Immutable;
 
 // Р-42: журнал append-only, и первая половина правила держится в Java — у репозитория нет
 // способа удалить или заменить запись, у сущности нет способа изменить прочитанную. Вторая
@@ -56,5 +57,21 @@ class AuditLogAppendOnlyTest {
                 .toList();
 
         assertThat(setters).isEmpty();
+    }
+
+    // Единственный save пишущей стороны на записи с id существующей делает merge — и переписывает её.
+    // Поэтому id и время не задаются снаружи, а @Immutable не даёт Hibernate выпустить UPDATE вовсе.
+    @Test
+    void builderCannotChooseTheIdOrTheTime() {
+        List<String> builderMethods = Arrays.stream(AuditLog.AuditLogBuilder.class.getMethods())
+                .map(Method::getName)
+                .toList();
+
+        assertThat(builderMethods).doesNotContain("id", "createdAt");
+    }
+
+    @Test
+    void entityIsImmutableForHibernate() {
+        assertThat(AuditLog.class.isAnnotationPresent(Immutable.class)).isTrue();
     }
 }
