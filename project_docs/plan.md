@@ -71,7 +71,6 @@
 
 | ID | Задача | Модуль | Статус | Зависит от | Примечание |
 |:---|:---|:---|:---|:---|:---|
-| **T-SPEED-PARALLEL** | Модули тестируются по очереди | корень | — | — | **Средняя.** `org.gradle.parallel=true` в `gradle.properties`: ~115 → ~50 с на полном `./gradlew test` |
 | **T-SPEED-BCRYPT** | BCrypt боевой стоимости в тестах | `common`, `auth` | — | — | **Низкая.** Основное время `auth` (37 с). Стоимость — свойством, в тестах 4, тест на «в боевом не ниже 10» и на совпадение стоимости «пустого» хэша (выравнивание времени входа). −20–25 с |
 | **T-SPEED-CONTEXTS** | Лишние Spring-контексты | `pbl`, `directory`, `auth` | — | — | **Низкая.** `pbl` 12 → ~7, `directory` 7 → 4, `auth` 7 → 5: мета-аннотации для PG-классов, `@AutoConfigureMockMvc` там, где его не хватает для общего ключа, `WithZeroGrace` убрать, `Thread.sleep(1100)` в `RefreshTokenIntegrationTest` убрать. −10–15 с |
 | **T-REDUNDANT** | Лишние и дублирующие тесты | все | — | — | **Низкая.** Удалить `*ApplicationTests.contextLoads` (×3); `AuditLogSchemaTest` слить в `SharedSchemaMigrationTest`; три повторные последовательности в `SharedSchemaMigrationTest`; отказ сотруднику в блокировке терминала (×3); два теста `pbl` `SecurityBoundaryIntegrationTest`, повторяющие `PaymentLinkIntegrationTest`, и MockMvc-тесты actuator; дубли внутри `PaymentLinkIntegrationTest`; по одному тесту в `RoleTest`, `AuditLogAppendOnlyTest`, `ProviderOrderStatusTest`, `EcomTransactionScopeTest` |
