@@ -21,7 +21,3 @@ dependencies {
     // H2 в режиме совместимости их вопросы не проверяет. См. common PostgresTestContainer.
     testImplementation testFixtures(project(':common'))
 }
-
-tasks.named('test') {
-    useJUnitPlatform()
-}

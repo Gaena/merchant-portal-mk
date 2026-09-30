@@ -39,4 +39,10 @@ subprojects {
         // безвредно, потому что 1.40 поддерживается всеми версиями с 2019 года.
         systemProperty 'api.version', System.getProperty('api.version') ?: '1.40'
     }
+
+    dependencies {
+        // Gradle 9 не подгружает launcher JUnit Platform сам: без явной зависимости тесты не стартуют.
+        // Версия — из BOM Spring Boot.
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
 }

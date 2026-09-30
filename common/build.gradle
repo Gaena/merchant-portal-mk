@@ -49,7 +49,3 @@ dependencies {
     testFixturesApi 'org.springframework.boot:spring-boot-starter-test'
     testFixturesRuntimeOnly 'org.postgresql:postgresql'
 }
-
-tasks.named('test') {
-    useJUnitPlatform()
-}
