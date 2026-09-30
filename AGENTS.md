@@ -934,8 +934,9 @@ yaml), как в проде, где `ecom` стартует после `director
 - Объявлен один раз — `common` testFixtures, `PostgresTestContainer`: статичный, один на JVM. Образ
   `postgres:16-alpine` прибит и совпадает с продовой версией: меняется одна — меняется и другая
   (`project_docs/guides/deployment_guide.md` §4.5).
-  Подключается `@Import(PostgresTestContainer.class)` рядом с `@SpringBootTest`; тестам без Spring
-  доступен через `instance()`, и в `SharedSchemaMigrationTest` каждый метод работает в своей схеме.
+  Spring-тест на нём — только `@PostgresIntegrationTest` (там же: `@SpringBootTest`, `@AutoConfigureMockMvc`,
+  контейнер), чтобы все такие классы делили один контекст; тестам без Spring контейнер доступен через
+  `instance()`, и в `SharedSchemaMigrationTest` каждый метод работает в своей схеме.
 - Контексту отдаётся только адрес (`JdbcConnectionDetails`), не сам контейнер: контейнер-бин Spring Boot
   останавливает при закрытии контекста, и одна закрывшаяся конфигурация погасила бы базу остальным.
   `withReuse` не ставить: база делилась бы между модулями и прогонами.
@@ -975,8 +976,14 @@ BCrypt в тестах `auth` — стоимость 4 (`mp.security.bcrypt-stre
   проверяется на управляемом HTTP в `TxpgAcquiringClientTest` (`MockRestServiceServer`).
 
 **Фикстуры** для листингов создаются прямо через репозитории, минуя провайдера. Тесты гонок
-(`OpenLinkConcurrencyTest`, `RefreshTokenConcurrencyTest`) — без MockMvc и без `@Transactional` на
-тесте: потоки должны видеть коммиты и блокировки друг друга.
+(`OpenLinkConcurrencyTest`, `RefreshTokenConcurrencyTest`) зовут сервисы не через MockMvc и без
+`@Transactional` на тесте: потоки должны видеть коммиты и блокировки друг друга.
+
+**Контекст Spring кэшируется по конфигурации класса.** Свои `properties`, `@MockBean`/`@SpyBean`, лишний или
+недостающий `@Import`/`@AutoConfigureMockMvc`, `@Nested` со своим `@SpringBootTest` — это ещё один контекст с
+миграциями. Сначала — встать на существующий: нужное состояние задать данными в базе (состарить
+`rotated_at`), журнал сломать переименованием таблицы, свойство — в тестовый yaml, если других
+потребителей у него нет.
 
 **Не покрыто:** идемпотентность возвратов на уровне хранилища — таблицы `refunds` и ключей
 идемпотентности нет (Р-12), 502 перекладывает сверку на человека. Фронтенд-тестов нет вовсе.

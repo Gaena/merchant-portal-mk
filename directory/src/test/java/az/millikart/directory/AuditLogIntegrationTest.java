@@ -4,8 +4,6 @@ import static az.millikart.directory.DirectoryTestFixtures.company;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -17,7 +15,6 @@ import az.millikart.common.security.UserPrincipal;
 import az.millikart.common.audit.AuditLog;
 import az.millikart.common.audit.AuditOutcome;
 import az.millikart.directory.dto.UpdateCompanyRequest;
-import az.millikart.common.audit.AuditLogRepository;
 import az.millikart.directory.repository.CompanyRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.common.audit.AuditLogService;
@@ -36,8 +33,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.SpyBean;
-import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -65,9 +60,6 @@ public class AuditLogIntegrationTest {
 
     @Autowired
     private TerminalRepository terminalRepository;
-
-    @SpyBean
-    private AuditLogRepository auditLogRepository;
 
     // Чтение и очистка: репозиторий приложения умеет только добавлять строки (Р-42).
     @Autowired
@@ -398,15 +390,17 @@ public class AuditLogIntegrationTest {
 
     @Test
     public void auditWriteFailure_doesNotBreakBusinessOperation() throws Exception {
-        doThrow(new DataAccessResourceFailureException("audit storage is down"))
-                .when(auditLogRepository).save(any(AuditLog.class));
-
-        mockMvc.perform(post("/api/v1/companies")
-                        .header(HttpHeaders.AUTHORIZATION, adminToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                company("comp-01", "MilliKart LLC"))))
-                .andExpect(status().isCreated());
+        parkAuditTable();
+        try {
+            mockMvc.perform(post("/api/v1/companies")
+                            .header(HttpHeaders.AUTHORIZATION, adminToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(
+                                    company("comp-01", "MilliKart LLC"))))
+                    .andExpect(status().isCreated());
+        } finally {
+            restoreAuditTable();
+        }
 
         assertThat(companyRepository.existsById("comp-01"))
                 .as("the operation itself must have committed")
@@ -422,15 +416,17 @@ public class AuditLogIntegrationTest {
     // поэтому вылетевшее исключение подменило бы законный 403 на 500.
     @Test
     public void auditWriteFailure_onDeniedPath_stillReturns403() throws Exception {
-        doThrow(new DataAccessResourceFailureException("audit storage is down"))
-                .when(auditLogRepository).save(any(AuditLog.class));
-
-        mockMvc.perform(post("/api/v1/companies")
-                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                company("comp-01", "MilliKart LLC"))))
-                .andExpect(status().isForbidden());
+        parkAuditTable();
+        try {
+            mockMvc.perform(post("/api/v1/companies")
+                            .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(
+                                    company("comp-01", "MilliKart LLC"))))
+                    .andExpect(status().isForbidden());
+        } finally {
+            restoreAuditTable();
+        }
 
         assertThat(serviceLogAppender.list)
                 .as("the lost denial must be reported with the monitoring marker")
@@ -499,5 +495,15 @@ public class AuditLogIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(company(id, name))))
                 .andExpect(status().isCreated());
+    }
+
+    // Журнал ломается переименованием таблицы, а не @SpyBean: шпион дал бы классу свой Spring-контекст, а
+    // таблица возвращается ровно той, что была.
+    private void parkAuditTable() {
+        jdbcTemplate.execute("ALTER TABLE audit_logs RENAME TO audit_logs_parked");
+    }
+
+    private void restoreAuditTable() {
+        jdbcTemplate.execute("ALTER TABLE audit_logs_parked RENAME TO audit_logs");
     }
 }

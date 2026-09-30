@@ -2,7 +2,7 @@ package az.millikart.pbl;
 
 import az.millikart.common.security.CredentialCipher;
 import org.springframework.jdbc.core.JdbcTemplate;
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
@@ -59,9 +59,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -78,9 +75,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 // читаются и пишутся через неё, а у H2 под `@JdbcTypeCode(SqlTypes.JSON)` свой тип со своим
 // поведением. Сюда же суммы: точность BigDecimal при частичном списании — вопрос к настоящему
 // numeric, а не к его эмуляции.
-@SpringBootTest
-@AutoConfigureMockMvc
-@Import(PostgresTestContainer.class)
+@PostgresIntegrationTest
 class MoneyOperationsIntegrationTest {
 
     private static final int TERMINAL_ID = 123456789;

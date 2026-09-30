@@ -46,7 +46,8 @@ pbl:
     min-age: PT2M
     max-age: PT24H
     give-up-age: P7D
-    batch-size: 50
+    # Small on purpose: TransactionReconciliationIntegrationTest.reconcile_respectsBatchSize overflows it.
+    batch-size: 3
   provider:
     gateway-base-url: https://gateway.txpg.example.com/pay
     api-base-url: https://api.txpg.example.com/pay

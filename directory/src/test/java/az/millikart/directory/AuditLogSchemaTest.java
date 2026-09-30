@@ -1,6 +1,6 @@
 package az.millikart.directory;
 
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.sql.Connection;
@@ -13,8 +13,6 @@ import java.util.Map;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 
 // Три индекса changeset 004 обязаны существовать после миграции, и проверяются они по метаданным
 // схемы, а не по учёту самого Liquibase: changeset, отмеченный как выполненный, но тихо
@@ -22,8 +20,7 @@ import org.springframework.context.annotation.Import;
 //
 // На настоящей PostgreSQL, а не на H2: проверять созданные миграцией индексы на эмуляции значит
 // проверять схему, которой в проде нет.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
+@PostgresIntegrationTest
 public class AuditLogSchemaTest {
 
     @Autowired

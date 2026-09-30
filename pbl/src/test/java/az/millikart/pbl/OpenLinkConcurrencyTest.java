@@ -2,7 +2,7 @@ package az.millikart.pbl;
 
 import az.millikart.common.security.CredentialCipher;
 import org.springframework.jdbc.core.JdbcTemplate;
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
@@ -36,8 +36,6 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
 // P1-5: два одновременных открытия одной ссылки обязаны дать одну попытку платежа, а не две.
@@ -47,8 +45,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 // На настоящей PostgreSQL, а не на H2, и это здесь главное: тест держит ссылку под
 // `SELECT ... FOR UPDATE`, а семантика блокировок у H2 своя. На эмуляции он подтверждал бы,
 // что код не виснет, но не что гонка закрыта той СУБД, которая стоит в проде.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
+@PostgresIntegrationTest
 class OpenLinkConcurrencyTest {
 
     private static final int TERMINAL_ID = 123456789;

@@ -1,7 +1,7 @@
 package az.millikart.pbl;
 
 import az.millikart.common.security.CredentialCipher;
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -39,8 +39,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -52,16 +50,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 // На настоящей PostgreSQL, а не на H2: метки, по которым свёртка узнаёт судьбу платежа, лежат
 // в `provider_response` — колонке jsonb, а выборка идёт по возрасту операции. И тип, и работа
 // с временем у эмуляции свои.
-@SpringBootTest(properties = {
-        "pbl.reconciliation.min-age=PT2M",
-        "pbl.reconciliation.max-age=PT24H",
-        "pbl.reconciliation.give-up-age=P7D",
-        "pbl.reconciliation.batch-size=3"
-})
-@Import(PostgresTestContainer.class)
+@PostgresIntegrationTest
 class TransactionReconciliationIntegrationTest {
 
-    // Обязаны повторять свойства выше: фикстуры состариваются относительно них.
+    // Обязаны повторять pbl.reconciliation.* тестового yaml: фикстуры состариваются относительно них.
     private static final Duration MIN_AGE = Duration.ofMinutes(2);
     private static final Duration MAX_AGE = Duration.ofHours(24);
     private static final Duration GIVE_UP_AGE = Duration.ofDays(7);

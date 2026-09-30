@@ -1,6 +1,6 @@
 package az.millikart.pbl;
 
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -40,8 +40,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -50,9 +48,8 @@ import org.springframework.test.web.servlet.MockMvc;
 // Статистика оплат по ссылкам (P3-7, Р-91): считает база, и считает то, что написано на экране.
 // На настоящей PostgreSQL: сводка режет сутки в поясе отчёта, а функции дат и раскладка по окнам у
 // H2 другие — на эмуляции тест подтверждал бы чужую арифметику.
-@SpringBootTest
-@AutoConfigureMockMvc
-@Import({StubAcquirerConfig.class, PostgresTestContainer.class})
+@PostgresIntegrationTest
+@Import(StubAcquirerConfig.class)
 public class DashboardSummaryTest {
 
     private static final int TERMINAL_A = 1001;

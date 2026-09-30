@@ -1,6 +1,7 @@
 package az.millikart.pbl;
 
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
+import az.millikart.pbl.provider.StubAcquirerConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.sql.Connection;
@@ -13,7 +14,6 @@ import java.util.Map;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 
 // Индексы pbl обязаны существовать после миграции; проверяем по метаданным самой
@@ -24,8 +24,8 @@ import org.springframework.context.annotation.Import;
 // На настоящей PostgreSQL, а не на H2: смысл теста в том, что миграция создаёт индексы там, где
 // они будут в проде. H2 в режиме совместимости — эмуляция, и её метаданные отвечают за свою схему,
 // а не за нашу.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
+@PostgresIntegrationTest
+@Import(StubAcquirerConfig.class)
 public class TransactionIndexSchemaTest {
 
     @Autowired

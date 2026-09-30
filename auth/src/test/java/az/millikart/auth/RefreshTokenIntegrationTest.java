@@ -37,7 +37,6 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,10 +53,11 @@ import org.springframework.test.web.servlet.ResultActions;
 
 // P1-12: refresh-токены с ротацией, logout, отзыв при блокировке и удалении. Тестовый профиль
 // даёт access-токену 1 час вместо продовых 24 — именно это позволяет login_returnsRefreshToken
-// поймать зашитый expiresIn = 86400. TTL refresh и окно грации продовые (20 минут / 10 секунд);
-// единственный сценарий с другой грацией живёт в WithZeroGrace.
+// поймать зашитый expiresIn = 86400. TTL refresh и окно грации продовые (20 минут / 10 секунд); за окно
+// выходят, состаривая rotated_at в базе, — своя грация дала бы классу второй Spring-контекст.
 @SpringBootTest
 @AutoConfigureMockMvc
+@ExtendWith(OutputCaptureExtension.class)
 public class RefreshTokenIntegrationTest {
 
     private static final String ADMIN_EMAIL = "admin@millikart.az";
@@ -177,10 +177,6 @@ public class RefreshTokenIntegrationTest {
         String oldAccess = first.get("token").asText();
         String oldRefresh = first.get("refreshToken").asText();
 
-        // В JWT iat/exp — целые секунды: два токена с одними claims внутри одной секунды выйдут
-        // побайтово одинаковыми, поэтому переходим через границу секунды.
-        Thread.sleep(1100);
-
         JsonNode second = refresh(oldRefresh).andExpect(status().isOk())
                 .andExpect(jsonPath("$.token", notNullValue()))
                 .andExpect(jsonPath("$.refreshToken", notNullValue()))
@@ -191,7 +187,8 @@ public class RefreshTokenIntegrationTest {
 
         String newAccess = second.get("token").asText();
         String newRefresh = second.get("refreshToken").asText();
-        assertNotEquals(oldAccess, newAccess, "a new access token must be issued");
+        // Равенство access-токенов не проверяется: iat и exp в JWT — целые секунды, и токены с одними claims,
+        // выданные в одну секунду, побайтно равны. Новизну пары доказывает refresh-токен.
         assertNotEquals(oldRefresh, newRefresh, "a new refresh token must be issued");
         assertEquals(HEAD_EMAIL, jwtProvider.validateAndGetClaims(newAccess).getSubject(),
                 "the new access token must be a valid JWT for the same user");
@@ -417,51 +414,41 @@ public class RefreshTokenIntegrationTest {
         refresh(live).andExpect(status().isOk());
     }
 
-    // Обнаружение переиспользования (грация = 0)
+    // Обнаружение переиспользования
 
-    // Тесту 3 нужна нулевая грация, а это уже другой Spring-контекст. Контекст объявлен здесь,
-    // окружающая фикстура (setUp, хелперы, репозитории) переиспользуется как есть: оба контекста
-    // делят одну H2, и записи одного видны другому. Через MockMvc ИМЕННО этого контекста должны
-    // идти только вызовы refresh — только там действует rotation-grace=PT0S.
-    @Nested
-    @SpringBootTest(properties = "auth.refresh.rotation-grace=PT0S")
-    @AutoConfigureMockMvc
-    @ExtendWith(OutputCaptureExtension.class)
-    class WithZeroGrace {
+    @Test
+    @DisplayName("3. reuse of a rotated token after the grace window revokes the whole family — the new token dies too")
+    void refresh_withRotatedTokenAfterGrace_revokesWholeFamily(CapturedOutput output) throws Exception {
+        String original = login(HEAD_EMAIL, HEAD_PASSWORD).get("refreshToken").asText();
 
-        @Autowired
-        private MockMvc zeroGraceMvc;
+        String successor = refresh(original).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString().transform(this::readTree)
+                .get("refreshToken").asText();
+        refresh(successor).andExpect(status().isOk()); // the successor works before the theft
 
-        @Test
-        @DisplayName("3. reuse of a rotated token after the grace window revokes the whole family — the new token dies too")
-        void refresh_withRotatedTokenAfterGrace_revokesWholeFamily(CapturedOutput output) throws Exception {
-            String original = login(HEAD_EMAIL, HEAD_PASSWORD).get("refreshToken").asText();
+        // Ротация «час назад»: окно грации (10 с) давно прошло, без sleep и без своего контекста.
+        RefreshToken retired = refreshTokenRepository.findAllByUserId(headId).stream()
+                .filter(t -> t.getTokenHash().equals(sha256Hex(original)))
+                .findFirst().orElseThrow();
+        retired.setRotatedAt(Instant.now().minus(Duration.ofHours(1)));
+        refreshTokenRepository.save(retired);
 
-            String successor = refresh(zeroGraceMvc, original).andExpect(status().isOk())
-                    .andReturn().getResponse().getContentAsString().transform(RefreshTokenIntegrationTest.this::readTree)
-                    .get("refreshToken").asText();
-            refresh(zeroGraceMvc, successor).andExpect(status().isOk()); // the successor works before the theft
+        // Переиспользование отправленного на пенсию токена.
+        refresh(original).andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message", is("Invalid refresh token")));
 
-            // Грация нулевая, любое позднейшее использование — "после окна"; пара мс для ясности.
-            Thread.sleep(20);
+        // Сигнал для мониторинга сработал...
+        assertTrue(output.getOut().contains("REFRESH_TOKEN_REUSE"),
+                "reuse must be logged with the REFRESH_TOKEN_REUSE marker");
 
-            // Переиспользование отправленного на пенсию токена.
-            refresh(zeroGraceMvc, original).andExpect(status().isUnauthorized())
-                    .andExpect(jsonPath("$.message", is("Invalid refresh token")));
+        // ...вся семья отозвана в базе, и отзыв пережил 401...
+        List<RefreshToken> tokens = refreshTokenRepository.findAllByUserId(headId);
+        assertEquals(3, tokens.size());
+        assertTrue(tokens.stream().allMatch(RefreshToken::isRevoked), "reuse must revoke every token of the family");
+        assertEquals(1, tokens.stream().map(RefreshToken::getFamilyId).distinct().count());
 
-            // Сигнал для мониторинга сработал...
-            assertTrue(output.getOut().contains("REFRESH_TOKEN_REUSE"),
-                    "reuse must be logged with the REFRESH_TOKEN_REUSE marker");
-
-            // ...вся семья отозвана в базе, и отзыв пережил 401...
-            List<RefreshToken> tokens = refreshTokenRepository.findAllByUserId(headId);
-            assertEquals(3, tokens.size());
-            assertTrue(tokens.stream().allMatch(RefreshToken::isRevoked), "reuse must revoke every token of the family");
-            assertEquals(1, tokens.stream().map(RefreshToken::getFamilyId).distinct().count());
-
-            // ...поэтому и токен, оставшийся у законного владельца, перестаёт работать.
-            refresh(zeroGraceMvc, successor).andExpect(status().isUnauthorized());
-        }
+        // ...поэтому и токен, оставшийся у законного владельца, перестаёт работать.
+        refresh(successor).andExpect(status().isUnauthorized());
     }
 
     // Хелперы
