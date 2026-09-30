@@ -29,7 +29,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import az.millikart.pbl.provider.AcquiringClient;
 import az.millikart.pbl.provider.StubAcquirerConfig;
+import org.mockito.Mockito;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
@@ -70,6 +72,11 @@ class SecurityBoundaryIntegrationTest {
     @Autowired
     private TransactionRepository transactionRepository;
 
+    // Мок эквайера общий с другими классами этого контекста (StubAcquirerConfig): подменённый там ответ
+    // протёк бы сюда, если его не сбросить.
+    @Autowired
+    private AcquiringClient acquiringClient;
+
     // Свой диапазон, чтобы фикстуры не сталкивались с другими интеграционными тестами.
     private static final int TERMINAL_ID = 770101;
 
@@ -77,6 +84,7 @@ class SecurityBoundaryIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        Mockito.reset(acquiringClient);
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();

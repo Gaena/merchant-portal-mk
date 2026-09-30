@@ -164,15 +164,16 @@ class TerminalBlockedIntegrationTest {
         UUID linkId = link(ACTIVE_TERMINAL, PaymentLinkStatus.ACTIVE).getId();
 
         CountDownLatch lockHeld = new CountDownLatch(1);
+        CountDownLatch openRefused = new CountDownLatch(1);
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             Future<?> holder = executor.submit(() -> new TransactionTemplate(transactionManager)
                     .execute(status -> {
                         paymentLinkRepository.findWithLockById(linkId);
                         lockHeld.countDown();
-                        // Достаточно, чтобы открытие точно встало в очередь за замком,
-                        // а для любой более ранней проверки терминал был ещё ACTIVE.
-                        sleep(250);
+                        // Терминал блокируется под замком и только после отказа открытию: для открытия,
+                        // пришедшего раньше, он был ещё ACTIVE.
+                        await(openRefused);
                         terminalRepository.save(terminal(ACTIVE_TERMINAL, TerminalStatus.BLOCKED));
                         return null;
                     }));
@@ -182,6 +183,7 @@ class TerminalBlockedIntegrationTest {
             assertThatThrownBy(() -> openLinkService.openAndBuildRedirect(linkId, "203.0.113.9", "curl"))
                     .as("while another transaction holds the link, the open is refused at once")
                     .isInstanceOf(PessimisticLockingFailureException.class);
+            openRefused.countDown();
 
             holder.get(5, TimeUnit.SECONDS);
         } finally {
@@ -198,9 +200,11 @@ class TerminalBlockedIntegrationTest {
                 .isZero();
     }
 
-    private static void sleep(long millis) {
+    private static void await(CountDownLatch latch) {
         try {
-            Thread.sleep(millis);
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("the open was not refused in time");
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);

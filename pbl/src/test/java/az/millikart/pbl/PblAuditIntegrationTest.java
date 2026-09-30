@@ -278,7 +278,7 @@ class PblAuditIntegrationTest {
         when(acquiringClient.refund(any(), anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-99", "RID-99", "APPR-99", Map.of("status", "ok")));
 
-        jdbcTemplate.execute("DROP TABLE audit_logs");
+        parkAuditTable();
         try {
             mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
                             .header(HttpHeaders.AUTHORIZATION, headToken)
@@ -343,20 +343,13 @@ class PblAuditIntegrationTest {
         return records.getFirst();
     }
 
+    // Журнал ломается переименованием, а не DROP: база общая на все классы модуля, и таблица должна
+    // вернуться ровно той, что была, — с индексами и умолчаниями, а не рукописной копией.
+    private void parkAuditTable() {
+        jdbcTemplate.execute("ALTER TABLE audit_logs RENAME TO audit_logs_parked");
+    }
+
     private void restoreAuditTable() {
-        jdbcTemplate.execute("""
-                CREATE TABLE audit_logs (
-                    id uuid NOT NULL,
-                    entity_type varchar(50) NOT NULL,
-                    entity_id varchar(255) NOT NULL,
-                    action varchar(50) NOT NULL,
-                    performed_by varchar(255) NOT NULL,
-                    company_id varchar(255),
-                    details varchar(4000),
-                    client_ip varchar(45),
-                    outcome varchar(16) DEFAULT 'SUCCESS' NOT NULL,
-                    created_at timestamp,
-                    CONSTRAINT pk_audit_logs PRIMARY KEY (id)
-                )""");
+        jdbcTemplate.execute("ALTER TABLE audit_logs_parked RENAME TO audit_logs");
     }
 }

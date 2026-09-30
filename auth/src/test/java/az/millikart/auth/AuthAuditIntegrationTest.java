@@ -470,13 +470,13 @@ public class AuthAuditIntegrationTest {
 
     // 12. Сбой журнала не должен стоить кому-то входа.
 
-    // Таблица аудита удаляется на время попытки — это самое грубое "журнал сломан". Вход обязан
+    // Таблицы аудита нет на время попытки — это самое грубое "журнал сломан". Вход обязан
     // пройти: запись в аудит, способная отказать во входе, — это рубильник отказа в обслуживании.
     @Test
     public void auditFailure_doesNotBreakLogin() throws Exception {
         auditLogs.deleteAll();
         try {
-            dropAuditTable();
+            parkAuditTable();
 
             login(ADMIN, ADMIN_PASSWORD, "203.0.113.9").andExpect(status().isOk());
             login(ADMIN, "WrongPassword123!", "203.0.113.9").andExpect(status().isBadRequest());
@@ -551,24 +551,13 @@ public class AuthAuditIntegrationTest {
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
-    private void dropAuditTable() {
-        jdbcTemplate.execute("DROP TABLE audit_logs");
+    // Журнал ломается переименованием, а не DROP: база общая на все классы модуля, и таблица должна
+    // вернуться ровно той, что была, — с индексами и умолчаниями, а не рукописной копией.
+    private void parkAuditTable() {
+        jdbcTemplate.execute("ALTER TABLE audit_logs RENAME TO audit_logs_parked");
     }
 
     private void restoreAuditTable() {
-        jdbcTemplate.execute("""
-                CREATE TABLE audit_logs (
-                    id uuid NOT NULL,
-                    entity_type varchar(50) NOT NULL,
-                    entity_id varchar(255) NOT NULL,
-                    action varchar(50) NOT NULL,
-                    performed_by varchar(255) NOT NULL,
-                    company_id varchar(255),
-                    details varchar(4000),
-                    client_ip varchar(45),
-                    outcome varchar(16) DEFAULT 'SUCCESS' NOT NULL,
-                    created_at timestamp,
-                    CONSTRAINT pk_audit_logs PRIMARY KEY (id)
-                )""");
+        jdbcTemplate.execute("ALTER TABLE audit_logs_parked RENAME TO audit_logs");
     }
 }

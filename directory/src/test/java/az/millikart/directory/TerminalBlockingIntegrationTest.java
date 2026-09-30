@@ -13,6 +13,7 @@ import az.millikart.directory.repository.PaymentLinkStatusRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.directory.service.TerminalService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -95,6 +96,13 @@ public class TerminalBlockingIntegrationTest {
     // Номера выдаёт база при заведении (Р-81), поэтому поля, а не константы.
     private int terminal;
     private int otherTerminal;
+
+    // payment_links ссылается на terminals: оставленные строки уронили бы на внешнем ключе deleteAll терминалов
+    // в следующих классах на той же базе (AuditLogQueryTest, DirectoryListPaginationTest).
+    @AfterEach
+    public void removePaymentLinks() {
+        jdbcTemplate.update("DELETE FROM payment_links");
+    }
 
     @BeforeEach
     public void setup() throws Exception {
