@@ -2,6 +2,7 @@ package az.millikart.directory;
 
 import static az.millikart.directory.DirectoryTestFixtures.company;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -727,6 +729,52 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.message", containsString("does not belong to the multimerchant login of company comp-01")));
 
         assertThat(terminalRepository.findByMerchantRid("RID-FOREIGN")).isEmpty();
+    }
+
+    // Один терминал провайдера — одна наша компания (Р-67, Р-96): мерчант, общий для логинов двух компаний,
+    // достаётся заведшей первой. Иначе у одного мерчанта стало бы два терминала в разных компаниях, и сверка
+    // статусов и выписка не знали бы, чей он.
+    @Test
+    public void createTerminal_ofAMerchantAlreadyLinked_isRefusedToEveryCompany() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Second LLC");
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", "RID-SHARED", "Shared Shop", "SH00001");
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-02", "RID-SHARED");
+
+        String created = mockMvc.perform(post("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-SHARED"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        int terminalId = objectMapper.readTree(created).get("id").asInt();
+
+        for (String companyId : List.of("comp-02", "comp-01")) {
+            mockMvc.perform(post("/api/v1/terminals")
+                            .header(HttpHeaders.AUTHORIZATION, adminToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(new CreateTerminalRequest(companyId, "RID-SHARED"))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", is("Provider terminal RID-SHARED is already linked to terminal " + terminalId)));
+        }
+
+        assertThat(terminalRepository.findAll())
+                .filteredOn(terminal -> "RID-SHARED".equals(terminal.getMerchantRid()))
+                .extracting(Terminal::getCompanyId)
+                .containsExactly("comp-01");
+    }
+
+    // То же правило в базе: уникальный индекс uk_terminals_merchant_rid держит его и для записи мимо проверки
+    // сервиса. Снимешь индекс — правило останется только в одном if.
+    @Test
+    public void oneMerchant_cannotBeStoredOnTwoTerminals() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int first = createTerminal("First Shop", "comp-01", adminToken);
+        int second = createTerminal("Second Shop", "comp-01", adminToken);
+        String firstMerchant = jdbcTemplate.queryForObject("SELECT merchant_rid FROM terminals WHERE id = ?", String.class, first);
+
+        assertThrows(DataIntegrityViolationException.class,
+                () -> jdbcTemplate.update("UPDATE terminals SET merchant_rid = ? WHERE id = ?", firstMerchant, second));
     }
 
     // Перенос — по тем же правилам, что заведение (Р-96, Р-97): в компанию, с логином которой мерчант терминала

@@ -16,7 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 
-// Три индекса из changeset 007 обязаны существовать после миграции; проверяем по метаданным самой
+// Индексы pbl обязаны существовать после миграции; проверяем по метаданным самой
 // схемы, а не по учёту Liquibase: changeset, помеченный как выполненный, но тихо пропущенный
 // предусловием, удовлетворил бы DATABASECHANGELOG и оставил таблицу без индексов. Та же логика,
 // что у AuditLogSchemaTest в directory.
@@ -35,29 +35,7 @@ public class TransactionIndexSchemaTest {
     public void transactionIndexes_existAfterMigration() throws Exception {
         Map<String, List<String>> columnsByIndex = new HashMap<>();
         Map<String, List<String>> orderingByIndex = new HashMap<>();
-
-        try (Connection connection = dataSource.getConnection();
-             ResultSet indexInfo = connection.getMetaData()
-                     // Имя в нижнем регистре: PostgreSQL складывает неэкранированные
-                     // идентификаторы именно так, и метаданные отдают их в том же виде.
-                     // С H2 здесь стояло "TRANSACTIONS" — первое же расхождение, которое
-                     // видно после переезда на настоящую СУБД.
-                     .getIndexInfo(null, null, "transactions", false, false)) {
-            // JDBC отдаёт строки по имени индекса и порядковой позиции, поэтому собранные здесь
-            // списки колонок идут в порядке определения индекса.
-            while (indexInfo.next()) {
-                String indexName = indexInfo.getString("INDEX_NAME");
-                String columnName = indexInfo.getString("COLUMN_NAME");
-                if (indexName == null || columnName == null) {
-                    continue;
-                }
-                String key = indexName.toLowerCase(Locale.ROOT);
-                columnsByIndex.computeIfAbsent(key, k -> new ArrayList<>())
-                        .add(columnName.toLowerCase(Locale.ROOT));
-                orderingByIndex.computeIfAbsent(key, k -> new ArrayList<>())
-                        .add(indexInfo.getString("ASC_OR_DESC"));
-            }
-        }
+        readIndexes("transactions", columnsByIndex, orderingByIndex);
 
         assertThat(columnsByIndex.get("idx_transactions_link_status"))
                 .as("attempt counting index (link_id, status)")
@@ -75,5 +53,43 @@ public class TransactionIndexSchemaTest {
         assertThat(orderingByIndex.get("idx_transactions_status_created").get(1))
                 .as("created_at must be ascending in the reconciliation index — the sweep drains oldest first")
                 .isEqualTo("A");
+    }
+
+    // Индексы 002, 008 и 010 — тоже под preConditions с MARK_RAN. Без них листинг ссылок, истечение,
+    // поиск по заказу провайдера и сводка с возвратами идут полным перебором — на тестовых объёмах незаметно.
+    @Test
+    public void linkDashboardAndRefundIndexes_existAfterMigration() throws Exception {
+        Map<String, List<String>> columnsByIndex = new HashMap<>();
+        for (String table : List.of("payment_links", "transactions", "transaction_refunds")) {
+            readIndexes(table, columnsByIndex, new HashMap<>());
+        }
+
+        assertThat(columnsByIndex.get("idx_payment_links_term_status")).containsExactly("terminal_id", "status");
+        assertThat(columnsByIndex.get("idx_payment_links_status_expires")).containsExactly("status", "expires_at");
+        assertThat(columnsByIndex.get("idx_transactions_provider_order")).containsExactly("provider_order_id");
+        assertThat(columnsByIndex.get("idx_transactions_created")).containsExactly("created_at");
+        assertThat(columnsByIndex.get("idx_transaction_refunds_refunded_at")).containsExactly("refunded_at");
+        assertThat(columnsByIndex.get("idx_transaction_refunds_transaction")).containsExactly("transaction_id");
+    }
+
+    // JDBC отдаёт строки по имени индекса и порядковой позиции, поэтому списки колонок идут в порядке
+    // определения индекса. Имя таблицы — в нижнем регистре: так PostgreSQL складывает неэкранированные имена.
+    private void readIndexes(String table, Map<String, List<String>> columnsByIndex,
+                             Map<String, List<String>> orderingByIndex) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+             ResultSet indexInfo = connection.getMetaData().getIndexInfo(null, null, table, false, false)) {
+            while (indexInfo.next()) {
+                String indexName = indexInfo.getString("INDEX_NAME");
+                String columnName = indexInfo.getString("COLUMN_NAME");
+                if (indexName == null || columnName == null) {
+                    continue;
+                }
+                String key = indexName.toLowerCase(Locale.ROOT);
+                columnsByIndex.computeIfAbsent(key, k -> new ArrayList<>())
+                        .add(columnName.toLowerCase(Locale.ROOT));
+                orderingByIndex.computeIfAbsent(key, k -> new ArrayList<>())
+                        .add(indexInfo.getString("ASC_OR_DESC"));
+            }
+        }
     }
 }

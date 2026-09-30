@@ -572,6 +572,34 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$.message", containsString("minutes")));
     }
 
+    // Истёкший локаут обнуляет счётчик: без сброса неудача после блокировки была бы седьмой, и первая же
+    // опечатка снова закрывала бы аккаунт на 30 минут (Р-28).
+    @Test
+    @DisplayName("16c. after the lockout has expired, a wrong password counts from one again")
+    public void expiredLockout_wrongPassword_startsTheCountAfresh() throws Exception {
+        expiredLockOut("admin@millikart.az");
+
+        login("admin@millikart.az", "WrongPass123!", "203.0.113.161")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is(INVALID_CREDENTIALS)));
+
+        User user = userRepository.findByUsername("admin@millikart.az").orElseThrow();
+        Assertions.assertEquals(1, user.getFailedLoginAttempts());
+        Assertions.assertNull(user.getLockoutUntil(), "one typo after the lockout must not lock the account again");
+    }
+
+    @Test
+    @DisplayName("16d. after the lockout has expired, the right password signs in and clears the count")
+    public void expiredLockout_rightPassword_signsIn() throws Exception {
+        expiredLockOut("admin@millikart.az");
+
+        login("admin@millikart.az", ADMIN_PASSWORD, "203.0.113.162").andExpect(status().isOk());
+
+        User user = userRepository.findByUsername("admin@millikart.az").orElseThrow();
+        Assertions.assertEquals(0, user.getFailedLoginAttempts());
+        Assertions.assertNull(user.getLockoutUntil());
+    }
+
     @Test
     @DisplayName("17. past the per-address limit → 429 with Retry-After")
     public void tooManyFailures_areRefusedWith429AndRetryAfter() throws Exception {
@@ -679,6 +707,14 @@ public class AuthIntegrationTest {
         User user = userRepository.findByUsername(username).orElseThrow();
         user.setFailedLoginAttempts(6);
         user.setLockoutUntil(Instant.now().plus(30, ChronoUnit.MINUTES));
+        userRepository.save(user);
+    }
+
+    // Шесть неудач и блокировка, срок которой уже прошёл.
+    private void expiredLockOut(String username) {
+        User user = userRepository.findByUsername(username).orElseThrow();
+        user.setFailedLoginAttempts(6);
+        user.setLockoutUntil(Instant.now().minus(1, ChronoUnit.MINUTES));
         userRepository.save(user);
     }
 

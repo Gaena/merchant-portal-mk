@@ -1,9 +1,13 @@
 package az.millikart.common.exception;
 
 import az.millikart.common.dto.ErrorResponse;
+import com.fasterxml.jackson.core.JsonLocation;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +29,8 @@ public class GlobalExceptionHandler {
 
     // Маркер мониторинга: движение денег с неизвестным исходом, человек сверяет его с эквайером.
     private static final String PAYMENT_OUTCOME_UNKNOWN_MARKER = "PAYMENT_OUTCOME_UNKNOWN";
+
+    private static final Pattern SIMPLE_FIELD_NAME = Pattern.compile("[A-Za-z0-9_]{1,64}");
 
     @ExceptionHandler(UnauthorizedException.class)
     public ResponseEntity<ErrorResponse> handleUnauthorized(UnauthorizedException ex, HttpServletRequest request) {
@@ -115,12 +121,40 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, "Parameter '" + ex.getName() + "' has an invalid value", request);
     }
 
+    // Сообщение Jackson цитирует кусок тела: пароль без кавычек ушёл бы в лог (P0-9). В лог — только вид
+    // ошибки, место и имя поля.
     @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(
             org.springframework.http.converter.HttpMessageNotReadableException ex,
             HttpServletRequest request) {
-        log.warn("Malformed JSON or invalid request payload: {}", ex.getMessage());
+        log.warn("Unreadable request body in {} {}: {}", request.getMethod(), request.getRequestURI(), whereUnreadable(ex));
         return build(HttpStatus.BAD_REQUEST, "Invalid request payload format or parameter value", request);
+    }
+
+    private static String whereUnreadable(Exception ex) {
+        if (!(ex.getCause() instanceof JsonProcessingException json)) {
+            return ex.getCause() == null ? "no readable body" : ex.getCause().getClass().getSimpleName();
+        }
+        StringBuilder where = new StringBuilder(json.getClass().getSimpleName());
+        JsonLocation location = json.getLocation();
+        if (location != null && location.getLineNr() > 0) {
+            where.append(" at line ").append(location.getLineNr()).append(", column ").append(location.getColumnNr());
+        }
+        if (json instanceof JsonMappingException mapping && !mapping.getPath().isEmpty()) {
+            where.append(", field ").append(mapping.getPath().stream()
+                    .map(GlobalExceptionHandler::fieldName)
+                    .collect(Collectors.joining(".")));
+        }
+        return where.toString();
+    }
+
+    // Ключ у Map-поля — ввод клиента: в лог только простое имя.
+    private static String fieldName(JsonMappingException.Reference reference) {
+        String name = reference.getFieldName();
+        if (name == null) {
+            return "[" + reference.getIndex() + "]";
+        }
+        return SIMPLE_FIELD_NAME.matcher(name).matches() ? name : "?";
     }
 
     // Путь без обработчика — 404, а не 500 с ERROR за опечатку в URL. Сюда же попадают actuator и
