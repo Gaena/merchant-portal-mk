@@ -84,6 +84,26 @@ class ProviderLoginSyncTest {
         Assertions.assertNotNull(lonely.getSyncedAt());
     }
 
+    // Статусы логина и связи ложатся в слепок как пришли, без фильтра: по ним directory отличает «логин
+    // выключен» от «логина нет» (Р-94), а скоуп берёт только активные связи (Р-97).
+    @Test
+    @SuppressWarnings("unchecked")
+    void theStatusesOfTheLoginAndTheLink_areStoredAsSent() {
+        when(source.fetchMultiMerchantLogins()).thenReturn(List.of(
+                new ProviderLoginRow("frozen@company.com", "Blocked", "Active", "M-1", "Frozen"),
+                new ProviderLoginRow("shop@company.com", "Active", "Inactive", "M-2", "Unlinked")));
+
+        service.sync();
+
+        ArgumentCaptor<List<ProviderLogin>> saved = ArgumentCaptor.forClass(List.class);
+        verify(repository).saveAll(saved.capture());
+        Assertions.assertEquals(List.of("frozen@company.com Blocked Active M-1", "shop@company.com Active Inactive M-2"),
+                saved.getValue().stream()
+                        .map(link -> link.getLogin() + " " + link.getLoginStatus() + " " + link.getLinkStatus()
+                                + " " + link.getMerchantRid())
+                        .toList());
+    }
+
     @Test
     void rowsWithoutLoginsOnly_keepThePreviousSnapshot() {
         when(source.fetchMultiMerchantLogins()).thenReturn(List.of(new ProviderLoginRow(null, "Active", "Active", "1", "x")));

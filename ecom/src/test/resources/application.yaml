@@ -1,0 +1,49 @@
+# Заменяет боевой application.yaml целиком (AGENTS §11), поэтому повторяет его значимые места.
+spring:
+  datasource:
+    url: jdbc:h2:mem:ecom;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+
+# Общие таблицы (companies, terminals, audit_logs) создаёт changelog directory — до старта контекста,
+# как в проде, где ecom стартует после directory (AGENTS §4).
+context:
+  initializer:
+    classes: az.millikart.ecom.DirectorySchemaInitializer
+
+ecom:
+  txpg:
+    datasource:
+      # Вместо Oracle шлюза — своя пустая H2: тесты проверяют, что туда не уходит ничего нашего.
+      url: jdbc:h2:mem:txpg;DB_CLOSE_DELAY=-1
+      driver-class-name: org.h2.Driver
+      username: sa
+      password: test-only
+  terminal-sync:
+    # Тесты зовут синхронизацию сами.
+    enabled: false
+
+pbl:
+  security:
+    api-token-enabled: false
+    jwt:
+      # Test-only key, identical in auth/directory/pbl/ecom test configs. Never used by a running service.
+      secret: test-only-jwt-secret-not-used-anywhere-else-0123456789
+
+management:
+  server:
+    port: 9083
+    address: 127.0.0.1
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

@@ -37,6 +37,10 @@ public class EcomScopeService {
     public EcomScope scopeFor(UserPrincipal principal) {
         Role role = UserPrincipal.getRole(principal);
         if (role == null) {
+            auditLogService.logDenied(AuditEntity.TERMINAL, "ALL", AuditAction.LIST,
+                    UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                    "Denied: unrecognised role " + UserPrincipal.getRawRole(principal)
+                            + " asked for acquiring transactions");
             throw new InvalidStateException("Access denied");
         }
 

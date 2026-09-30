@@ -272,6 +272,38 @@ public class SharedSchemaMigrationTest {
         assertTrue(columnExists("companies", "provider_password"));
     }
 
+    // --- ecom: свои слепки и колонки сверки в общей terminals ---
+
+    // ecom стартует после directory или pbl (AGENTS §4): terminals он дополняет, но не создаёт.
+    @Test
+    @DisplayName("directory first, then ecom: the snapshots are created, the terminal columns are found in place")
+    void directoryFirst_thenEcom_bothMigrate() throws Exception {
+        assertDoesNotThrow(this::runDirectoryChangelog);
+        assertDoesNotThrow(this::runEcomChangelog);
+
+        assertTrue(columnExists("provider_terminals", "terminal_rid"));
+        assertTrue(tableExists("provider_logins"));
+        assertTrue(indexExists("terminals", "uk_terminals_merchant_rid"));
+
+        assertDoesNotThrow(this::runEcomChangelog, "a second ecom run must change nothing");
+        assertDoesNotThrow(this::runDirectoryChangelog, "directory after ecom must change nothing");
+    }
+
+    // pbl создаёт terminals сам; колонки сверки добавляет тот из ecom и directory, кто пришёл первым.
+    @Test
+    @DisplayName("pbl first, then ecom, then directory and auth: the reconciliation columns are added once")
+    void pblFirst_thenEcom_thenDirectory_allMigrate() throws Exception {
+        assertDoesNotThrow(this::runPblChangelog);
+        assertDoesNotThrow(this::runEcomChangelog);
+        assertTrue(columnExists("terminals", "status_source"));
+        assertTrue(columnExists("terminals", "merchant_rid"));
+
+        assertDoesNotThrow(this::runDirectoryChangelog);
+        assertDoesNotThrow(this::runAuthChangelog);
+        assertTrue(indexExists("terminals", "uk_terminals_merchant_rid"));
+        assertTrue(tableExists("audit_logs"));
+    }
+
     // --- вспомогательное ---
 
     private void runDirectoryChangelog() throws Exception {
@@ -284,6 +316,10 @@ public class SharedSchemaMigrationTest {
 
     private void runAuthChangelog() throws Exception {
         runChangelog("auth/src/main/resources");
+    }
+
+    private void runEcomChangelog() throws Exception {
+        runChangelog("ecom/src/main/resources");
     }
 
     private void runChangelog(String moduleResources) throws Exception {

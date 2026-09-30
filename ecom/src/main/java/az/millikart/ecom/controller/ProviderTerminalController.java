@@ -1,5 +1,8 @@
 package az.millikart.ecom.controller;
 
+import az.millikart.common.audit.AuditAction;
+import az.millikart.common.audit.AuditEntity;
+import az.millikart.common.audit.AuditLogService;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
@@ -26,13 +29,16 @@ public class ProviderTerminalController {
     private final ProviderTerminalRepository repository;
     private final ProviderTerminalSyncService syncService;
     private final ProviderLoginSyncService loginSyncService;
+    private final AuditLogService auditLogService;
 
     public ProviderTerminalController(ProviderTerminalRepository repository,
                                       ProviderTerminalSyncService syncService,
-                                      ProviderLoginSyncService loginSyncService) {
+                                      ProviderLoginSyncService loginSyncService,
+                                      AuditLogService auditLogService) {
         this.repository = repository;
         this.syncService = syncService;
         this.loginSyncService = loginSyncService;
+        this.auditLogService = auditLogService;
     }
 
     // includeInactive — для разбора, куда делся знакомый администратору терминал.
@@ -40,7 +46,7 @@ public class ProviderTerminalController {
     public List<ProviderTerminalResponse> list(
             @RequestParam(defaultValue = "false") boolean includeInactive,
             @AuthenticationPrincipal UserPrincipal principal) {
-        requireSystemAdmin(principal);
+        requireSystemAdmin(principal, AuditAction.LIST, "list provider terminals");
         List<ProviderTerminal> terminals = includeInactive
                 ? repository.findAll()
                 : repository.findByActiveTrueOrderByTitleAsc();
@@ -54,13 +60,16 @@ public class ProviderTerminalController {
     // терминала, и форма компании, чей логин только что завели у провайдера.
     @PostMapping("/sync")
     public ProviderSyncResponse sync(@AuthenticationPrincipal UserPrincipal principal) {
-        requireSystemAdmin(principal);
+        requireSystemAdmin(principal, AuditAction.UPDATE, "sync provider snapshots");
         return ProviderSyncResponse.of(syncService.sync(), loginSyncService.sync());
     }
 
     // Карта всех мерчантов провайдера, включая чужих, — только SYSTEM_ADMIN.
-    private void requireSystemAdmin(UserPrincipal principal) {
+    private void requireSystemAdmin(UserPrincipal principal, String action, String attempted) {
         if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
+            auditLogService.logDenied(AuditEntity.TERMINAL, "ALL", action, UserPrincipal.getUsername(principal),
+                    UserPrincipal.getCompanyId(principal),
+                    "Denied: role " + UserPrincipal.getRawRole(principal) + " attempted to " + attempted);
             throw new InvalidStateException("Access denied");
         }
     }

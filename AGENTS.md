@@ -805,10 +805,11 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 - **`getLowIdForTime` не получает будущего времени** — на нём функция не работает (провайдер). Вызов
   только через `lowIdForTime`, где аргумент прижат к `sysdate` базы, а не к нашим часам и поясу;
   верхняя граница окна — только у периодов, закончившихся больше суток назад.
-- **Колонки — только из SQL провайдера.** Отсутствующая в схеме колонка роняет всю выписку:
-  `terminalid`, `ridbypmo`, `srcemail`, `srcmobile`, `getHighIdForTime` не читаются, это проверяет
-  `TxpgTransactionRepositoryTest`. `tran.ridbyacq` — только строкой. Даты шлюза — местное время
-  `ecom.txpg.zone`: в параметры уходит `LocalDateTime`, не `Instant`.
+- **Колонки — только из SQL провайдера.** Отсутствующая в схеме колонка роняет всю выписку: каждая
+  ссылка `алиас.колонка` во всех запросах к шлюзу сверяется с белым списком `TxpgColumns` (тесты
+  репозиториев `ecom`); новая колонка — сначала туда, с источником. `terminalid` у операций, `ridbypmo`,
+  `srcemail`, `srcmobile`, `getHighIdForTime` в SQL провайдера нет. `tran.ridbyacq` — только строкой.
+  Даты шлюза — местное время `ecom.txpg.zone`: в параметры уходит `LocalDateTime`, не `Instant`.
 - **Скоуп — только `EcomScopeService`:** компания → её логин мультимерчанта → активные связи логина в
   `provider_logins` (Р-97). Терминалы портала в скоупе не участвуют. Пустой список — пустая выписка;
   ветки «мерчантов нет, значит показать всё» быть не должно. В SQL скоуп — во всех трёх запросах
@@ -919,6 +920,11 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 | `pbl` | `TransactionIndexSchemaTest`, `OpenLinkConcurrencyTest`, `MoneyOperationsIntegrationTest`, `TerminalBlockedIntegrationTest`, `TransactionReconciliationIntegrationTest`, `DashboardSummaryTest`, `PaymentLinkRefundUsageTest` |
 
 Остальные тесты с базой на H2 намеренно: там база просто хранилище.
+
+**`ecom` в Spring-тестах** (`EcomApplicationIntegrationTest`) — на H2, база шлюза — вторая пустая H2: SQL
+выписки и справочников написан под Oracle провайдера и здесь не исполняется. Общие таблицы создаёт
+настоящий changelog `directory` до старта контекста (`DirectorySchemaInitializer`, подключён в тестовом
+yaml), как в проде, где `ecom` стартует после `directory`; рукописной копии DDL нет.
 
 **Контейнер:**
 - Объявлен один раз — `common` testFixtures, `PostgresTestContainer`: статичный, один на JVM. Образ

@@ -118,6 +118,21 @@ class ProviderTerminalSyncTest {
         Assertions.assertTrue(terminal.isActive());
     }
 
+    // Выключенный после трёх пропаданий терминал вернулся в выгрузку — снова активен: иначе включённый у
+    // провайдера терминал навсегда остался бы выключенным у нас, и включить его вручную нельзя (Р-66).
+    @Test
+    void aDisabledTerminalThatComesBack_isActiveAgain() {
+        ProviderTerminal terminal = ProviderTerminal.builder()
+                .rid("E1120020").active(false).missingRuns(3).build();
+        stored.add(terminal);
+        when(source.fetchActive()).thenReturn(List.of(new ProviderTerminalRow("E1120020", "BazarStore", "login-1", "login-1")));
+
+        service.sync();
+
+        Assertions.assertTrue(terminal.isActive());
+        Assertions.assertEquals(0, terminal.getMissingRuns());
+    }
+
     // Логин, название и номер терминала принадлежат провайдеру: сменил у себя — сменилось и у нас, иначе
     // заказ однажды уйдёт на чужой или несуществующий терминал (Р-96).
     @Test
