@@ -633,9 +633,10 @@ public class DirectoryIntegrationTest {
     @Test
     public void freeProviderLogins_listOnlyLoginsThatPassTheCheck_andAreNotTaken() throws Exception {
         jdbcTemplate.update("DELETE FROM provider_logins WHERE login = 'free-login'");
-        jdbcTemplate.update("INSERT INTO provider_logins (login, login_status, link_status, merchant_rid, merchant_title) "
-                + "VALUES ('free-login', 'Active', 'Active', 'M-A', 'Shop A'), ('free-login', 'Active', 'Active', 'M-B', 'Shop B'), "
-                + "('free-login', 'Active', 'Blocked', 'M-C', 'Shop C')");
+        jdbcTemplate.update("INSERT INTO provider_logins (login, login_status, link_status, merchant_rid, merchant_title, synced_at) "
+                + "VALUES ('free-login', 'Active', 'Active', 'M-A', 'Shop A', CURRENT_TIMESTAMP), "
+                + "('free-login', 'Active', 'Active', 'M-B', 'Shop B', CURRENT_TIMESTAMP), "
+                + "('free-login', 'Active', 'Blocked', 'M-C', 'Shop C', CURRENT_TIMESTAMP)");
         DirectoryTestFixtures.providerLogin(jdbcTemplate, "blocked-login", "Blocked", "Active", "M-2");
         DirectoryTestFixtures.providerLogin(jdbcTemplate, "lonely-login", "Active", null, null);
         createCompany("comp-01", "MilliKart LLC");

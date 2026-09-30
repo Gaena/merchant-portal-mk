@@ -928,7 +928,9 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 **`ecom` в Spring-тестах** (`EcomApplicationIntegrationTest`) — на H2, база шлюза — вторая пустая H2: SQL
 выписки и справочников написан под Oracle провайдера и здесь не исполняется. Общие таблицы создаёт
 настоящий changelog `directory` до старта контекста (`DirectorySchemaInitializer`, подключён в тестовом
-yaml), как в проде, где `ecom` стартует после `directory`; рукописной копии DDL нет.
+yaml), как в проде, где `ecom` стартует после `directory`. Так же в `directory`: `payment_links` и слепки
+`provider_*` создают changelog'и `pbl` и `ecom` (`SharedDatabaseSchema`). Рукописных копий чужого DDL в
+тестах нет — переименованная у владельца колонка должна ломать тесты, а не прод.
 
 **Контейнер:**
 - Объявлен один раз — `common` testFixtures, `PostgresTestContainer`: статичный, один на JVM. Образ

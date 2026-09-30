@@ -51,9 +51,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
-// P1-12: refresh-токены с ротацией, logout, отзыв при блокировке и удалении. Тестовый профиль
-// даёт access-токену 1 час вместо продовых 24 — именно это позволяет login_returnsRefreshToken
-// поймать зашитый expiresIn = 86400. TTL refresh и окно грации продовые (20 минут / 10 секунд); за окно
+// P1-12: refresh-токены с ротацией, logout, отзыв при блокировке и удалении. Тестовый профиль даёт
+// access-токену 1 час — не продовые 15 минут и не умолчание JwtProvider (24 часа): так
+// login_returnsRefreshToken ловит зашитый expiresIn. TTL refresh и окно грации продовые (20 минут / 10 секунд); за окно
 // выходят, состаривая rotated_at в базе, — своя грация дала бы классу второй Spring-контекст.
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -279,8 +279,8 @@ public class RefreshTokenIntegrationTest {
     void refresh_forBlockedUser_returns401AndRevokes() throws Exception {
         String refreshToken = login(HEAD_EMAIL, HEAD_PASSWORD).get("refreshToken").asText();
 
-        // Напрямую через репозиторий, минуя UserService: так проверяется проверка внутри самого
-        // refresh (шаг 5), а не отзыв при смене статуса — это тест 8.
+        // Напрямую через репозиторий, минуя UserService: так проверяется проверка статуса внутри самого
+        // refresh, а не отзыв при смене статуса — это тест 8.
         User head = userRepository.findById(headId).orElseThrow();
         head.setStatus("BLOCKED");
         userRepository.save(head);
