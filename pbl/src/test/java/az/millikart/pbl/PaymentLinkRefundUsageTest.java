@@ -295,6 +295,29 @@ class PaymentLinkRefundUsageTest {
                 .andExpect(jsonPath("$.refundedPaymentsCount", is(1)));
     }
 
+    // MAXPAY-HOLDS: нижней границей были только платежи, а слот занимает и живой холд (P1-6). Лимит
+    // опускали до 1 при платеже и холде, после списания холда ссылка показывала «2 из 1».
+    @Test
+    void lowerMaxPayments_belowPaymentsAndHolds_isRefused() throws Exception {
+        PaymentLink link = seedLink(UsageType.MULTIPLE, 5);
+        seedTransaction(link, TransactionStatus.SUCCESS);
+        seedTransaction(link, TransactionStatus.AUTHORIZED);
+
+        ObjectNode update = objectMapper.createObjectNode();
+        update.put("maxPayments", 1);
+        patchLink(link.getId(), update)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("maxPayments cannot be lowered to 1: 2 slots are taken by payments "
+                        + "and holds awaiting capture (a refunded payment still counts as a use)")));
+        Assertions.assertEquals(5, paymentLinkRepository.findById(link.getId()).orElseThrow().getMaxPayments());
+
+        update.put("maxPayments", 2);
+        patchLink(link.getId(), update)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxPayments", is(2)))
+                .andExpect(jsonPath("$.currentPaymentsCount", is(1)));
+    }
+
     // 9. Колонка и ответ говорят одно число
 
     // Колонка переписывается на каждом расчёте счётом по PAID_STATUSES, а возврат не трогает ни

@@ -20,12 +20,9 @@ import az.millikart.pbl.repository.TransactionRepository;
 import az.millikart.pbl.service.PaymentLinkService.StatusRefresh;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Collections;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,17 +35,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 public class OpenLinkService {
 
     private static final Logger log = LoggerFactory.getLogger(OpenLinkService.class);
-
-    // Слот занимают PAID_STATUSES (возврат слот НЕ освобождает, Р-49) и AUTHORIZED — будущий платёж
-    // (P1-6). Выводится из PAID_STATUSES, а не перечисляется заново: разъедутся наборы — одноразовую
-    // ссылку с живым холдом откроют повторно.
-    private static final Set<TransactionStatus> SLOT_OCCUPYING_STATUSES;
-
-    static {
-        EnumSet<TransactionStatus> statuses = EnumSet.copyOf(TransactionStatus.PAID_STATUSES);
-        statuses.add(TransactionStatus.AUTHORIZED);
-        SLOT_OCCUPYING_STATUSES = Collections.unmodifiableSet(statuses);
-    }
 
     // Прошлую попытку сверять с эквайером, не гасить вслепую: заказ у него живёт ещё ~10 минут (Р-71),
     // а FAILED никто не опрашивает — оплата потеряется.
@@ -158,9 +144,9 @@ public class OpenLinkService {
         }
 
         // Живая авторизация идёт в лимит наравне с прошедшими платежами (P1-6).
-        long occupiedSlots = transactionRepository.countByLinkIdAndStatusIn(id, SLOT_OCCUPYING_STATUSES);
+        long occupiedSlots = transactionRepository.countByLinkIdAndStatusIn(id, TransactionStatus.SLOT_OCCUPYING_STATUSES);
         if (slotsTaken(link, occupiedSlots) && holdReleasedAtAcquirer(id)) {
-            occupiedSlots = transactionRepository.countByLinkIdAndStatusIn(id, SLOT_OCCUPYING_STATUSES);
+            occupiedSlots = transactionRepository.countByLinkIdAndStatusIn(id, TransactionStatus.SLOT_OCCUPYING_STATUSES);
         }
 
         // Состоявшиеся платежи (возвращённые в том числе, Р-49) отличаются от живых холдов только

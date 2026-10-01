@@ -312,14 +312,15 @@ public class PaymentLinkService {
                 log.warn("Cannot set maxPayments on SINGLE use link {}", id);
                 throw new BusinessException("maxPayments can only be set when usageType is MULTIPLE");
             }
-            // Лимит ниже прошедших платежей дал бы «3 из 2 использовано» (P2-9). Считаются использования,
-            // а не строки SUCCESS: возвращённый платёж — тоже использование (P2-16).
-            if (request.maxPayments() < usedCount) {
-                log.warn("Refusing to lower maxPayments of link {} to {}: it was already used {} times",
-                        id, request.maxPayments(), usedCount);
+            // Лимит ниже занятых слотов дал бы «3 из 2 использовано» (P2-9): возвращённый платёж — тоже
+            // использование (P2-16), холд станет платежом при списании (MAXPAY-HOLDS) — счёт как у открытия.
+            long occupiedSlots = transactionRepository.countByLinkIdAndStatusIn(id, TransactionStatus.SLOT_OCCUPYING_STATUSES);
+            if (request.maxPayments() < occupiedSlots) {
+                log.warn("Refusing to lower maxPayments of link {} to {}: {} slots are taken",
+                        id, request.maxPayments(), occupiedSlots);
                 throw new BusinessException("maxPayments cannot be lowered to " + request.maxPayments()
-                        + ": the link was already used " + usedCount
-                        + " times (a refunded payment still counts as a use)");
+                        + ": " + occupiedSlots + " slots are taken by payments and holds awaiting capture"
+                        + " (a refunded payment still counts as a use)");
             }
             if (!request.maxPayments().equals(link.getMaxPayments())) {
                 changes.add("maxPayments " + link.getMaxPayments() + " -> " + request.maxPayments());

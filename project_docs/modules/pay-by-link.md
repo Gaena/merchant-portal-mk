@@ -234,8 +234,9 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 -   **`customer`** — single-use links only, same rules as §5.1. Each filled field replaces the stored one.
 -   **`expiresAt`** — the same bounds as §5.1.1, the ceiling counted from the link's `created_at`. It is
     applied before `status`, so one request can extend an expired link and reactivate it.
--   **`maxPayments`** — `MULTIPLE` links only; may not go below the number of uses, and a refunded
-    payment still counts as a use (Р-49). Equal is allowed and closes the link at what it has collected.
+-   **`maxPayments`** — `MULTIPLE` links only; may not go below the taken slots — the same count as the open
+    (§5.5): payments, a refunded one included (Р-49), and `AUTHORIZED` holds, which become payments when
+    captured. Equal is allowed and closes the link at what it has collected.
 -   **`metadata`** — replaces the stored object.
 -   **`status`** — case-insensitive, `CANCELLED` is read as `CANCELED`. Allowed transitions:
     `ACTIVE → CANCELED`, `EXPIRED → CANCELED`, `CANCELED → ACTIVE` (the expiry must be in the future).
@@ -256,7 +257,7 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 | 400 | `customer can only be set on a single-use link`, `customer.phone must be an Azerbaijani number: +994 and 9 digits` |
 | 400 | `expiresAt must be in the future`, `expiresAt must not be later than <instant>: …` |
 | 400 | `maxPayments can only be set when usageType is MULTIPLE` |
-| 400 | `maxPayments cannot be lowered to <n>: the link was already used <m> times (a refunded payment still counts as a use)` |
+| 400 | `maxPayments cannot be lowered to <n>: <m> slots are taken by payments and holds awaiting capture (a refunded payment still counts as a use)` |
 | 400 | `payment link is suspended because its terminal <id> is blocked; unblock the terminal to bring its links back` |
 | 400 | `payment link status SUSPENDED is set by blocking terminal <id>, not on the link itself` |
 | 400 | `payment link status cannot be changed from <A> to <B>` |
