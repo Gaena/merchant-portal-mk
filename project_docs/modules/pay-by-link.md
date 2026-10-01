@@ -369,9 +369,10 @@ The whole open is one database transaction:
     cut to 512 characters: the row is written after the acquirer order, and a refusal here would leave the
     payer without the payment page.
 
-The lock is held during the call to the acquirer (P1-5). A refusal rolls the whole transaction back,
-including what the polls of steps 4–5 found; those attempts are settled later by the return page,
-`/status` or the reconciliation.
+The lock is held during the call to the acquirer (P1-5). A refusal (`400`, `403`, `409`) still commits
+what the open found (Р-113): the statuses the polls of steps 4–5 brought, a link marked `EXPIRED` in step 3
+or `COMPLETED` in step 5. An unexpected failure (`5xx`) rolls everything back; those attempts are settled
+later by the return page, `/status` or the reconciliation.
 
 **Responses** (in the order of the checks):
 

@@ -166,8 +166,7 @@ class PaymentLinkRefundUsageTest {
 
     // Арифметика слотов на ссылке, которая ещё ACTIVE, хотя все слоты заняты: OpenLinkService
     // обязан считать возвращённый платёж занятым слотом и отказать до обращения к эквайеру.
-    // До P2-16 такое открытие проходило. Ссылка намеренно остаётся ACTIVE в базе: записи пути
-    // открытия откатываются вместе с отказом, см. openAndBuildRedirect.
+    // До P2-16 такое открытие проходило. Отказ коммитит открытие (Р-113): ссылка становится COMPLETED.
     @Test
     void openOnActiveLink_withARefundedPaymentAtTheLimit_isRefused() throws Exception {
         PaymentLink link = seedLink(UsageType.MULTIPLE, 2);
@@ -179,6 +178,8 @@ class PaymentLinkRefundUsageTest {
                 .andExpect(jsonPath("$.message", containsString("usage limit")));
 
         verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        Assertions.assertEquals(PaymentLinkStatus.COMPLETED,
+                paymentLinkRepository.findById(link.getId()).orElseThrow().getStatus());
     }
 
     // 3. Частичный возврат — тоже использование

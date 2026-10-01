@@ -1324,8 +1324,8 @@ class PaymentLinkIntegrationTest {
     }
 
     // OPEN-DOUBLE-PAY: эквайера спрашивали только о последней попытке. Ранняя, оплаченная без возврата на
-    // страницу, слот не занимала, последняя истекла — и ссылку открывали ещё раз. Теперь спрашивают о всех.
-    // Статусы, найденные опросом, отказ откатывает вместе с открытием (OPEN-ROLLBACK) — их не проверяем.
+    // страницу, слот не занимала, последняя истекла — и ссылку открывали ещё раз. Теперь спрашивают о всех,
+    // и найденное остаётся после отказа (Р-113).
     @Test
     void reopen_singleUse_anEarlierAttemptPaidAtTheAcquirer_refusesTheOpen() throws Exception {
         PaymentLink link = linkFixture(UsageType.SINGLE, null);
@@ -1344,6 +1344,10 @@ class PaymentLinkIntegrationTest {
         verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
         verify(acquiringClient).getOrderStatus(eq(paid.getProviderOrderId()), anyString(), any());
         verify(acquiringClient).getOrderStatus(eq(expired.getProviderOrderId()), anyString(), any());
+        Assertions.assertEquals(TransactionStatus.SUCCESS,
+                transactionRepository.findById(paid.getId()).orElseThrow().getStatus());
+        Assertions.assertEquals(TransactionStatus.FAILED,
+                transactionRepository.findById(expired.getId()).orElseThrow().getStatus());
     }
 
     // Эквайер не ответил о свежей попытке одноразовой ссылки: она может быть жива или оплачена, и второй
@@ -1380,11 +1384,12 @@ class PaymentLinkIntegrationTest {
     }
 
     // Плательщик оплатил старую страницу, но на страницу возврата не попал и открыл ссылку снова:
-    // эквайер говорит «оплачено», одноразовая ссылка занята, второго заказа нет.
+    // эквайер говорит «оплачено», одноразовая ссылка занята, второго заказа нет. OPEN-ROLLBACK (Р-113):
+    // отказ откатывал и сам опрос — оплаченная попытка оставалась PENDING, ссылка ACTIVE до сверки.
     @Test
     void reopen_withPendingTransactionPaidAtAcquirer_refusesSecondPayment() throws Exception {
         PaymentLink link = linkFixture(UsageType.SINGLE, null);
-        attemptFixture(link, TransactionStatus.PENDING);
+        Transaction paid = attemptFixture(link, TransactionStatus.PENDING);
         doReturn(Map.of("id", 11338, "status", "FullyPaid"))
                 .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
@@ -1393,6 +1398,10 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.message", is("Single-use payment link has already been used")));
 
         verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        Assertions.assertEquals(TransactionStatus.SUCCESS,
+                transactionRepository.findById(paid.getId()).orElseThrow().getStatus());
+        Assertions.assertEquals(PaymentLinkStatus.COMPLETED,
+                paymentLinkRepository.findById(link.getId()).orElseThrow().getStatus());
     }
 
     // Холд одноразовой ссылки банк снял сам, ничего не списав (Closed ← Authorized, Р-75): слот
@@ -1589,6 +1598,9 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.message", is("Payment link has expired")));
 
         verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        // Отказ коммитит открытие (Р-113): ссылка истекла сразу, а не со следующим проходом планировщика.
+        Assertions.assertEquals(PaymentLinkStatus.EXPIRED,
+                paymentLinkRepository.findById(link.getId()).orElseThrow().getStatus());
     }
 
     // Свёртка PaymentLinkScheduler ходит раз в пять минут. Она была верна и P1-9 её не трогал —

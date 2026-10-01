@@ -96,8 +96,9 @@ public class OpenLinkService {
 
     // Одна транзакция от блокировки строки ссылки до записи попытки (P1-5): иначе два одновременных
     // открытия одноразовой ссылки оба пройдут проверку, и её оплатят дважды. Цена — блокировка на время
-    // похода к эквайеру (AGENTS §10) и заказ у эквайера без нашей строки при сбое коммита.
-    @Transactional
+    // похода к эквайеру (AGENTS §10) и заказ у эквайера без нашей строки при сбое коммита. Отказ её
+    // коммитит: найденное опросом эквайера — факт, и откат вернул бы оплаченную попытку в PENDING (Р-113).
+    @Transactional(noRollbackFor = {InvalidStateException.class, ConflictException.class, BusinessException.class})
     public String openAndBuildRedirect(UUID id, String clientIp, String userAgent) {
         // До блокировки: попытка, созданная позже, — от одновременного открытия той же ссылки (ниже).
         Instant openedAt = Instant.now();
@@ -123,8 +124,7 @@ public class OpenLinkService {
 
         if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(Instant.now())) {
             log.info("Payment link {} has expired, changing status to EXPIRED", id);
-            // Эта запись и COMPLETED ниже откатываются следующим отказом. Надолго EXPIRED и COMPLETED
-            // ставят PaymentLinkScheduler и платёжный путь.
+            // Остаётся и после отказа, как COMPLETED ниже (Р-113).
             link.setStatus(PaymentLinkStatus.EXPIRED);
             paymentLinkRepository.save(link);
             throw new InvalidStateException("Payment link has expired");
