@@ -43,6 +43,9 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     boolean existsByLinkIdAndStatusIn(UUID linkId, Collection<TransactionStatus> statuses);
     Optional<Transaction> findFirstByLinkIdAndStatusInOrderByCreatedAtDesc(UUID linkId, Collection<TransactionStatus> statuses);
+    // Свежие попытки, новые первыми: открытие одноразовой ссылки спрашивает эквайера о каждой (OPEN-DOUBLE-PAY).
+    List<Transaction> findByLinkIdAndStatusInAndCreatedAtAfterOrderByCreatedAtDesc(
+            UUID linkId, Collection<TransactionStatus> statuses, Instant createdAfter);
     java.util.List<Transaction> findByLinkIdOrderByCreatedAtDesc(UUID linkId);
 
     // Граф на link: маппер трогает его на каждой строке страницы, иначе N+1.

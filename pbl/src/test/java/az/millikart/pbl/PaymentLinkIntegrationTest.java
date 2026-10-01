@@ -1282,10 +1282,11 @@ class PaymentLinkIntegrationTest {
     }
 
     // Неоплаченная PENDING-попытка при переоткрытии не гасится вслепую: заказ у эквайера ещё живёт, и
-    // оплату по нему потеряли бы. Она остаётся PENDING (её закроет сверка), новая регистрируется рядом.
+    // оплату по нему потеряли бы. Она остаётся PENDING (её закроет сверка). У многоразовой ссылки это
+    // сессия другого плательщика, и новая регистрируется рядом; одноразовую — ниже (OPEN-DOUBLE-PAY).
     @Test
     void reopen_withUnpaidPendingTransaction_keepsItPendingAndProceeds() throws Exception {
-        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        PaymentLink link = linkFixture(UsageType.MULTIPLE, 5);
         Transaction abandoned = attemptFixture(link, TransactionStatus.PENDING);
         doReturn(Map.of("id", 11338, "status", "Preparing"))
                 .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
@@ -1299,6 +1300,83 @@ class PaymentLinkIntegrationTest {
         List<Transaction> attempts = transactionRepository.findByLinkIdOrderByCreatedAtDesc(link.getId());
         Assertions.assertEquals(2, attempts.size());
         Assertions.assertEquals(TransactionStatus.PENDING, attempts.getFirst().getStatus());
+    }
+
+    // OPEN-DOUBLE-PAY (Р-112): заказ одноразовой ссылки ещё жив (Preparing), а повторное открытие заводило
+    // второй — около 10 минут оба можно было оплатить. Теперь отказ, второго заказа нет.
+    @Test
+    void reopen_singleUseWithALiveSession_isRefusedAndOpensNoSecondOrder() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        Transaction live = attemptFixture(link, TransactionStatus.PENDING);
+        doReturn(Map.of("id", 11338, "status", "Preparing"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", is(
+                        "A payment session for this link is already open; complete it or try again in about 10 minutes")));
+
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        Assertions.assertEquals(List.of(live.getId()), transactionRepository.findByLinkIdOrderByCreatedAtDesc(link.getId())
+                .stream().map(Transaction::getId).toList());
+        Assertions.assertEquals(TransactionStatus.PENDING,
+                transactionRepository.findById(live.getId()).orElseThrow().getStatus());
+    }
+
+    // OPEN-DOUBLE-PAY: эквайера спрашивали только о последней попытке. Ранняя, оплаченная без возврата на
+    // страницу, слот не занимала, последняя истекла — и ссылку открывали ещё раз. Теперь спрашивают о всех.
+    // Статусы, найденные опросом, отказ откатывает вместе с открытием (OPEN-ROLLBACK) — их не проверяем.
+    @Test
+    void reopen_singleUse_anEarlierAttemptPaidAtTheAcquirer_refusesTheOpen() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        Transaction paid = attemptFixture(link, TransactionStatus.PENDING);
+        backdateAttempt(paid, Duration.ofMinutes(8));
+        Transaction expired = attemptFixture(link, TransactionStatus.PENDING);
+        Mockito.doAnswer(invocation -> paid.getProviderOrderId().equals(invocation.getArgument(0))
+                        ? Map.of("id", 11338, "status", "FullyPaid")
+                        : Map.of("id", 11339, "status", "Expired"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message", is("Single-use payment link has already been used")));
+
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        verify(acquiringClient).getOrderStatus(eq(paid.getProviderOrderId()), anyString(), any());
+        verify(acquiringClient).getOrderStatus(eq(expired.getProviderOrderId()), anyString(), any());
+    }
+
+    // Эквайер не ответил о свежей попытке одноразовой ссылки: она может быть жива или оплачена, и второй
+    // заказ поверх — риск двойной оплаты. Отказ «повторите», а не новый заказ (Р-112).
+    @Test
+    void reopen_singleUseWhoseRecentSessionCouldNotBeChecked_isRefused() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        attemptFixture(link, TransactionStatus.PENDING);
+        Mockito.doThrow(new org.springframework.web.client.ResourceAccessException("Read timed out"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", is(
+                        "The previous payment session for this link could not be checked; try again in a minute")));
+
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+    }
+
+    // Обратная сторона окна: попытка старше получаса живой быть не может (провайдер закрывает заказ через
+    // 10 минут, Р-71), и молчание эквайера о ней ссылку не запирает.
+    @Test
+    void reopen_singleUseWhoseUncheckableSessionIsOlderThanAnOrderLives_proceeds() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        Transaction stale = attemptFixture(link, TransactionStatus.PENDING);
+        backdateAttempt(stale, Duration.ofMinutes(31));
+        Mockito.doThrow(new org.springframework.web.client.ResourceAccessException("Read timed out"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isFound());
+
+        Assertions.assertEquals(2, transactionRepository.findByLinkIdOrderByCreatedAtDesc(link.getId()).size());
     }
 
     // Плательщик оплатил старую страницу, но на страницу возврата не попал и открыл ссылку снова:
@@ -1587,6 +1665,13 @@ class PaymentLinkIntegrationTest {
         int rows = jdbcTemplate.update(
                 "UPDATE payment_links SET created_at = TIMESTAMPADD(SECOND, ?, created_at) WHERE id = ?",
                 -age.toSeconds(), linkId);
+        Assertions.assertEquals(1, rows, "backdating helper must touch exactly one row");
+    }
+
+    private void backdateAttempt(Transaction attempt, Duration age) {
+        int rows = jdbcTemplate.update(
+                "UPDATE transactions SET created_at = TIMESTAMPADD(SECOND, ?, created_at) WHERE id = ?",
+                -age.toSeconds(), attempt.getId());
         Assertions.assertEquals(1, rows, "backdating helper must touch exactly one row");
     }
 

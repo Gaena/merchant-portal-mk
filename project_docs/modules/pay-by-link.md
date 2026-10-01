@@ -339,15 +339,21 @@ The whole open is one database transaction:
 2.  The terminal is read under the lock. A blocked terminal or a `SUSPENDED` link — `403`, without naming
     the terminal to the payer.
 3.  `CANCELED` and `COMPLETED` links — `403`; a link past its expiry — `403 Payment link has expired`.
-4.  The newest `PENDING` attempt of the link is polled at the acquirer once (§5.8): its order stays payable
-    for about ten minutes, and a payment made on the old page must take its slot. An unpaid attempt stays
-    `PENDING` for the reconciliation; a failed poll leaves it as it was and the open goes on. An attempt
-    created after this request started is a second click on the same link — `409`.
+4.  Earlier `PENDING` attempts are polled at the acquirer once each (§5.8): an order stays payable for
+    about ten minutes, and a payment made on an old page must take its slot. A multi-use link polls its
+    newest attempt only — every payer has an order of their own. A single-use link polls the newest one and
+    every one created in the last 30 minutes (Р-112). An unpaid attempt stays `PENDING` for the
+    reconciliation; a failed poll leaves it as it was. An attempt created after this request started is a
+    second click on the same link — `409`.
 5.  Usage slots are counted: payments (`SUCCESS`, `REFUNDED`, `PARTIALLY_REFUNDED`) and `AUTHORIZED` holds,
     because there is no Void to release a hold (P1-6, `../../AGENTS.md` §10). A single-use link has one
     slot, a multi-use link `maxPayments`. When the slots are taken, the newest hold is polled once: a hold
     the bank released without a capture (`Closed` after `Authorized`, every record of `order.trans[]`
     carries `clearAmount` and none is positive) becomes `FAILED` and frees its slot. Still taken — `403`.
+    A single-use link whose earlier order is still payable (`Preparing`) gets no second order — `409`: both
+    orders would be payable, and the provider does not open the page of the first one again (Р-112). The
+    same `409` when the acquirer did not answer about an attempt younger than 30 minutes, or answered with an
+    unknown status.
 6.  The company credentials and the provider terminal number are checked (`400`, §6).
 7.  The order is registered: `POST /order?terminalRid=<terminal_rid>` with the company credentials; the
     call is retried and goes through the circuit breaker (§6). Body: `typeRid` `Order_SMS` or `Order_DMS`;
@@ -382,6 +388,8 @@ including what the polls of steps 4–5 found; those attempts are settled later 
 | 409 | `A payment session for this link is already being opened` | second click while the first open was running |
 | 403 | `Single-use payment link has already been used` | a payment took the slot; a refund does not free it |
 | 403 | `Payment link has an authorized payment awaiting capture` | a hold takes the slot |
+| 409 | `A payment session for this link is already open; complete it or try again in about 10 minutes` | single-use link: an earlier order is still payable (Р-112) |
+| 409 | `The previous payment session for this link could not be checked; try again in a minute` | single-use link: the acquirer did not answer about an attempt younger than 30 minutes, or its status is unknown |
 | 403 | `Payment link has reached its usage limit` | a multi-use link has `maxPayments` payments |
 | 400 | credentials and terminal number texts, §6 | |
 | 400 | `Acquirer error: <description>` | the acquirer refused or failed (HTTP 4xx or 5xx) |
