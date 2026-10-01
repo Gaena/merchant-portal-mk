@@ -248,10 +248,16 @@ public class PaymentLinkService {
             PaymentLinkStatus.COMPLETED, EnumSet.noneOf(PaymentLinkStatus.class),
             PaymentLinkStatus.SUSPENDED, EnumSet.noneOf(PaymentLinkStatus.class));
 
+    // Под замком ссылки, как открытие, списание и возврат (LINK-PATCH-LOCK): без него незакоммиченная
+    // попытка открытия не видна, и сумма менялась, пока открытие заводило заказ по старой (обход Р-31).
     @Transactional
     public PaymentLinkResponse update(UUID id, UpdatePaymentLinkRequest request, UserPrincipal principal) {
         log.debug("Request to update payment link {}", id);
-        PaymentLink link = findLinkOrThrow(id);
+        PaymentLink link = paymentLinkRepository.findWithLockById(id)
+                .orElseThrow(() -> {
+                    log.warn("Payment link not found: {}", id);
+                    return new ResourceNotFoundException("Payment link not found: " + id);
+                });
 
         String terminalCompanyId = validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES).getCompanyId();
 

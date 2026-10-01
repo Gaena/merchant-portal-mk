@@ -179,7 +179,7 @@ The same body is returned by §5.2, §5.3 and §5.9.
 
 | HTTP | `message` | When |
 |:---|:---|:---|
-| 400 | `terminal is required`, `amount is required`, `amount must be positive`, `currency is required`, `currency must be a 3-letter ISO 4217 code`, `paymentType is required`, `usageType is required`, `maxPayments must be greater than 0`, `maxPayments is required and must be greater than 0 when usageType is MULTIPLE`, `customer.email must be a valid email address` | body validation; one message per answer |
+| 400 | `terminal is required`, `amount is required`, `amount must be positive`, `currency is required`, `currency must be a 3-letter ISO 4217 code`, `paymentType is required`, `usageType is required`, `maxPayments must be greater than 0`, `maxPayments is required and must be greater than 0 when usageType is MULTIPLE`, `customer.email must be a valid email address`, `merchantOrderId must be at most 255 characters`, `description must be at most 255 characters`, `customer.fullName must be at most 255 characters`, `customer.email must be at most 255 characters` | body validation; one message per answer |
 | 400 | `Invalid request payload format or parameter value` | malformed JSON, unknown `paymentType` / `usageType` |
 | 403, 404 | §4.1 | role, terminal, company |
 | 400 | `terminal <id> is blocked and cannot take new payments; unblock it or use another terminal` | terminal `BLOCKED` |
@@ -251,7 +251,7 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 |:---|:---|
 | 404 | `Payment link not found: <id>` |
 | 403, 404 | §4.1 |
-| 400 | body validation: `amount must be positive`, `maxPayments must be greater than 0`, `customer.email must be a valid email address`; `Invalid request payload format or parameter value` for malformed JSON or an unknown status |
+| 400 | body validation: `amount must be positive`, `maxPayments must be greater than 0`, `customer.email must be a valid email address`, `description must be at most 255 characters`, `customer.fullName must be at most 255 characters`, `customer.email must be at most 255 characters`; `Invalid request payload format or parameter value` for malformed JSON or an unknown status |
 | 400 | `payment link already has payments, its amount cannot be changed; create a new link instead` |
 | 400 | `customer can only be set on a single-use link`, `customer.phone must be an Azerbaijani number: +994 and 9 digits` |
 | 400 | `expiresAt must be in the future`, `expiresAt must not be later than <instant>: …` |
@@ -261,6 +261,7 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 | 400 | `payment link status SUSPENDED is set by blocking terminal <id>, not on the link itself` |
 | 400 | `payment link status cannot be changed from <A> to <B>` |
 | 400 | `payment link expired at <instant> and cannot be reactivated; send a new expiresAt in the same request` |
+| 409 | `The resource is being changed by another request, please retry` — an open, a capture, a refund or a status poll of this link holds its lock (`NOWAIT`); nothing was changed, a retry is safe |
 | 409 | `The resource was updated concurrently, please retry` — the link was changed by another request |
 
 **Audit journal:** `PAYMENT_LINK` / `UPDATE`, or `CANCEL` when the link is `CANCELED` after the
@@ -334,8 +335,8 @@ request; the details name the changed fields (customer values are not written). 
 
 The whole open is one database transaction:
 
-1.  The link row is locked with `SELECT … FOR UPDATE NOWAIT` (Р-85). If an open, a capture or a refund of
-    the same link holds the lock, the answer is `409` at once.
+1.  The link row is locked with `SELECT … FOR UPDATE NOWAIT` (Р-85). If an open, a capture, a refund, a
+    status poll or an edit (§5.2) of the same link holds the lock, the answer is `409` at once.
 2.  The terminal is read under the lock. A blocked terminal or a `SUSPENDED` link — `403`, without naming
     the terminal to the payer.
 3.  `CANCELED` and `COMPLETED` links — `403`; a link past its expiry — `403 Payment link has expired`.
@@ -793,7 +794,7 @@ Every error is the `ErrorResponse` JSON `{ timestamp, status, error, message, pa
 | 403 | access and state refusals | §4.1, §5.5 |
 | 404 | `… not found: <id>`; `Endpoint not found` | missing resource; unknown path |
 | 405 | `Method <M> is not supported for this endpoint; use <M2>` | wrong method, with `Allow` |
-| 409 | `The resource is being changed by another request, please retry` | the link lock is taken (`NOWAIT`) by an open, a capture, a refund or a status poll of the same link. Nothing was sent to the acquirer, a retry is safe |
+| 409 | `The resource is being changed by another request, please retry` | the link lock is taken (`NOWAIT`) by an open, a capture, a refund, a status poll or an edit of the same link. Nothing was sent to the acquirer, a retry is safe |
 | 409 | `The resource was updated concurrently, please retry` | a concurrent update of the same link (§5.2) |
 | 409 | `The request conflicts with existing data` | the database refused the row (a unique or foreign key constraint). The driver's text, which quotes the values, is not echoed |
 | 400 | `A field value is too long or has an invalid format` | the database refused a value that the body validation let through |
