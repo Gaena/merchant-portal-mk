@@ -116,7 +116,7 @@ with the company's links. Event dictionary — `../guides/technical_handover.md`
 | Field | Rules |
 |:---|:---|
 | `terminal` | required, our terminal id. The terminal must be `ACTIVE` (a blocked terminal takes no new payments, Р-38), its company must have acquirer credentials, and it must carry the provider terminal number (`terminal_rid`, Р-96) |
-| `amount` | required, > 0 |
+| `amount` | required, > 0, at most two decimal places as written (`10.555` and `10.500` are refused, like a capture or a refund: the column keeps two and would round the rest) and at most 17 integer digits |
 | `currency` | required, exactly 3 characters; only the length is checked, not ISO 4217 |
 | `paymentType` | required, `SMS` or `DMS` |
 | `usageType` | required, `SINGLE` or `MULTIPLE` |
@@ -179,7 +179,7 @@ The same body is returned by §5.2, §5.3 and §5.9.
 
 | HTTP | `message` | When |
 |:---|:---|:---|
-| 400 | `terminal is required`, `amount is required`, `amount must be positive`, `currency is required`, `currency must be a 3-letter ISO 4217 code`, `paymentType is required`, `usageType is required`, `maxPayments must be greater than 0`, `maxPayments is required and must be greater than 0 when usageType is MULTIPLE`, `customer.email must be a valid email address`, `merchantOrderId must be at most 255 characters`, `description must be at most 255 characters`, `customer.fullName must be at most 255 characters`, `customer.email must be at most 255 characters` | body validation; one message per answer |
+| 400 | `terminal is required`, `amount is required`, `amount must be positive`, `amount must have at most 17 integer digits and 2 decimal places`, `currency is required`, `currency must be a 3-letter ISO 4217 code`, `paymentType is required`, `usageType is required`, `maxPayments must be greater than 0`, `maxPayments is required and must be greater than 0 when usageType is MULTIPLE`, `customer.email must be a valid email address`, `merchantOrderId must be at most 255 characters`, `description must be at most 255 characters`, `customer.fullName must be at most 255 characters`, `customer.email must be at most 255 characters` | body validation; one message per answer |
 | 400 | `Invalid request payload format or parameter value` | malformed JSON, unknown `paymentType` / `usageType` |
 | 403, 404 | §4.1 | role, terminal, company |
 | 400 | `terminal <id> is blocked and cannot take new payments; unblock it or use another terminal` | terminal `BLOCKED` |
@@ -230,7 +230,7 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 
 -   **`amount` is frozen once the link has an attempt** in `PENDING`, `AUTHORIZED`, `SUCCESS`,
     `PARTIALLY_REFUNDED` or `REFUNDED` (P2-9, Р-31); only `FAILED` attempts leave it editable. Sending
-    the current amount is always accepted.
+    the current amount is always accepted. The scale rule of §5.1 applies.
 -   **`customer`** — single-use links only, same rules as §5.1. Each filled field replaces the stored one.
 -   **`expiresAt`** — the same bounds as §5.1.1, the ceiling counted from the link's `created_at`. It is
     applied before `status`, so one request can extend an expired link and reactivate it.
@@ -252,7 +252,7 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 |:---|:---|
 | 404 | `Payment link not found: <id>` |
 | 403, 404 | §4.1 |
-| 400 | body validation: `amount must be positive`, `maxPayments must be greater than 0`, `customer.email must be a valid email address`, `description must be at most 255 characters`, `customer.fullName must be at most 255 characters`, `customer.email must be at most 255 characters`; `Invalid request payload format or parameter value` for malformed JSON or an unknown status |
+| 400 | body validation: `amount must be positive`, `amount must have at most 17 integer digits and 2 decimal places`, `maxPayments must be greater than 0`, `customer.email must be a valid email address`, `description must be at most 255 characters`, `customer.fullName must be at most 255 characters`, `customer.email must be at most 255 characters`; `Invalid request payload format or parameter value` for malformed JSON or an unknown status |
 | 400 | `payment link already has payments, its amount cannot be changed; create a new link instead` |
 | 400 | `customer can only be set on a single-use link`, `customer.phone must be an Azerbaijani number: +994 and 9 digits` |
 | 400 | `expiresAt must be in the future`, `expiresAt must not be later than <instant>: …` |

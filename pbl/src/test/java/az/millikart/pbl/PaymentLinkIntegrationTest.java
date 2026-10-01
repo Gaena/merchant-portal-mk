@@ -57,6 +57,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -252,6 +253,35 @@ class PaymentLinkIntegrationTest {
                         .content(objectMapper.writeValueAsString(validCreateRequest())))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("has no acquirer credentials")));
+    }
+
+    // LINK-AMOUNT-SCALE: numeric(19,2) молча округлял третий знак — ответ и журнал говорили 10.555, база и
+    // эквайер — 10.56, а 0.004 проходил @Positive и давал ссылку на 0.00. Отказ, как у списания и возврата.
+    @ParameterizedTest
+    @ValueSource(strings = {"10.555", "0.004"})
+    void createPaymentLink_amountWithMoreThanTwoDecimals_returns400(String amount) throws Exception {
+        ObjectNode request = validCreateRequest();
+        request.put("amount", new BigDecimal(amount));
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("amount must have at most 17 integer digits and 2 decimal places")));
+
+        Assertions.assertEquals(0, paymentLinkRepository.count());
+    }
+
+    // Та же граница у правки суммы.
+    @Test
+    void updateAmount_withMoreThanTwoDecimals_returns400() throws Exception {
+        PaymentLink link = linkFixture(UsageType.MULTIPLE, 5);
+
+        patchLink(link.getId(), amountUpdate("10.555"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("amount must have at most 17 integer digits and 2 decimal places")));
+        Assertions.assertEquals(0, new BigDecimal("100.00").compareTo(
+                paymentLinkRepository.findById(link.getId()).orElseThrow().getAmount()));
     }
 
     // DB-CONSTRAINT-500: описание длиннее колонки проходило проверку DTO и роняло вставку — 500 и ERROR.
