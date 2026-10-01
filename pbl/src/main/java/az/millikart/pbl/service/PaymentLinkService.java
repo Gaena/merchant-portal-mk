@@ -260,6 +260,7 @@ public class PaymentLinkService {
                 });
 
         String terminalCompanyId = validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES).getCompanyId();
+        PaymentLinkStatus statusBefore = link.getStatus();
 
         long usedCount = usedCount(id);
 
@@ -338,8 +339,10 @@ public class PaymentLinkService {
 
         PaymentLink saved = paymentLinkRepository.save(link);
 
+        // CANCEL — только сама отмена: правка описания уже отменённой ссылки — UPDATE (AUDIT-CANCEL-KIND).
+        boolean cancelled = statusBefore != PaymentLinkStatus.CANCELED && saved.getStatus() == PaymentLinkStatus.CANCELED;
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.PAYMENT_LINK, saved.getId().toString(),
-                saved.getStatus() == PaymentLinkStatus.CANCELED ? AuditAction.CANCEL : AuditAction.UPDATE,
+                cancelled ? AuditAction.CANCEL : AuditAction.UPDATE,
                 UserPrincipal.getUsername(principal), terminalCompanyId,
                 changes.isEmpty() ? "No fields changed" : "Changed " + String.join(", ", changes)));
 

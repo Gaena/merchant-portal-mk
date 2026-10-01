@@ -268,6 +268,17 @@ class PblAuditIntegrationTest {
                 .andExpect(status().isOk());
 
         assertThat(single("CANCEL").getDetails()).contains("ACTIVE -> CANCELED");
+
+        // AUDIT-CANCEL-KIND: действие выбиралось по итоговому статусу, и правка описания уже отменённой
+        // ссылки ложилась в журнал второй отменой. CANCEL — только сам переход в CANCELED.
+        mockMvc.perform(patch("/api/v1/payment-links/" + linkId)
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Edited after the cancel\"}"))
+                .andExpect(status().isOk());
+
+        single("CANCEL");
+        assertThat(single("UPDATE").getDetails()).isEqualTo("Changed description");
     }
 
     // 18. Сломанный журнал не должен стоить мерчанту возврата

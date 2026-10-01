@@ -265,8 +265,8 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 | 409 | `The resource is being changed by another request, please retry` — an open, a capture, a refund or a status poll of this link holds its lock (`NOWAIT`); nothing was changed, a retry is safe |
 | 409 | `The resource was updated concurrently, please retry` — the link was changed by another request |
 
-**Audit journal:** `PAYMENT_LINK` / `UPDATE`, or `CANCEL` when the link is `CANCELED` after the
-request; the details name the changed fields (customer values are not written). Edits are not versioned
+**Audit journal:** `PAYMENT_LINK` / `CANCEL` when the request moves the link into `CANCELED`, otherwise
+`UPDATE` — an edit of an already canceled link included; the details name the changed fields (customer values are not written). Edits are not versioned
 (`../../AGENTS.md` §10).
 
 ### 5.3. Get Payment Link by ID
