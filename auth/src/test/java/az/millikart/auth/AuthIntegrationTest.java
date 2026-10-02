@@ -416,6 +416,24 @@ public class AuthIntegrationTest {
         Assertions.assertNull(userRepository.findByUsername("auditor2@millikart.az").orElseThrow().getCompanyId());
     }
 
+    // USER-EMPTY-PASSWORD: форма правки шлёт пустой пароль как «не менять», сервис так его и понимает, а
+    // проверка политики отвечала 400 на пустую строку — и правка имени срывалась.
+    @Test
+    public void updateUser_withAnEmptyPassword_changesTheRestAndKeepsThePassword() throws Exception {
+        UUID clerkId = createUser("clerk-empty@comp01.com", "COMPANY_EMPLOYEE", "comp-01");
+        String hashBefore = userRepository.findById(clerkId).orElseThrow().getPasswordHash();
+
+        mockMvc.perform(patch("/api/v1/users/" + clerkId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fullName\": \"Renamed Clerk\", \"password\": \"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fullName", is("Renamed Clerk")))
+                .andExpect(jsonPath("$.passwordChangeRequired", is(false)));
+
+        Assertions.assertEquals(hashBefore, userRepository.findById(clerkId).orElseThrow().getPasswordHash());
+    }
+
     // DB-CONSTRAINT-500: имя длиннее колонки проходило проверку DTO и роняло вставку — 500 и ERROR.
     @Test
     public void createUser_withAFullNameLongerThanTheColumn_isABadRequest() throws Exception {

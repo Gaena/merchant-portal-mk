@@ -45,9 +45,12 @@ class PasswordConstraintValidatorTest {
         assertTrue(validator.isValid("Abcdefghij1" + special, null), special);
     }
 
-    // null пропускается намеренно: обязательность задаёт @NotBlank, а в правке пользователя null — «не менять».
-    @Test
-    void null_isLeftToTheRequiredCheck() {
+    // null и пустое пропускаются намеренно: обязательность задаёт @NotBlank, а в правке пользователя пустое —
+    // «не менять». USER-EMPTY-PASSWORD: пустая строка получала отказ политики, хотя сервис её не менял бы.
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    void nullAndBlank_areLeftToTheRequiredCheck(String blank) {
         assertTrue(validator.isValid(null, null));
+        assertTrue(validator.isValid(blank, null), "'" + blank + "'");
     }
 }

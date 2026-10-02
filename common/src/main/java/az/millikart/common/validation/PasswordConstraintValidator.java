@@ -15,8 +15,10 @@ public class PasswordConstraintValidator implements ConstraintValidator<ValidPas
 
     @Override
     public boolean isValid(String password, ConstraintValidatorContext context) {
-        if (password == null) {
-            return true; // null запрещают @NotNull или @NotBlank
+        // Обязательность — дело @NotBlank (создание, смена пароля). В правке пользователя пустое — «не менять»,
+        // как считает UserService; иначе пустое поле формы давало 400 политики паролей (USER-EMPTY-PASSWORD).
+        if (password == null || password.isBlank()) {
+            return true;
         }
 
         if (password.length() < 12) {
