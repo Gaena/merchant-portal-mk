@@ -172,7 +172,7 @@ public class AuthService {
             user.setLockoutUntil(null);
             userRepository.save(user);
         }
-        rateLimiter.reset(clientIp);
+        rateLimiter.clearFailuresOf(clientIp, cleanEmail);
         return user;
     }
 
@@ -221,7 +221,7 @@ public class AuthService {
     // Журнал — один раз за окно, а не на каждую отбитую попытку: иначе защита стала бы усилителем
     // нагрузки. entityId — логин, адрес уже в client_ip.
     private void recordAddressFailure(String clientIp, String cleanEmail) {
-        if (rateLimiter.recordFailure(clientIp)) {
+        if (rateLimiter.recordFailure(clientIp, cleanEmail)) {
             auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.RATE_LIMIT, cleanEmail, null,
                     "Address reached the failed-login limit; further attempts refused for the window");
         }

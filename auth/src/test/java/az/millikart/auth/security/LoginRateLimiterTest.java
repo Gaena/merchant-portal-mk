@@ -19,6 +19,8 @@ class LoginRateLimiterTest {
     private static final Duration WINDOW = Duration.ofMinutes(15);
     private static final int MAX_FAILURES = 3;
     private static final String IP = "203.0.113.7";
+    private static final String STRANGER = "someone-else@millikart.az";
+    private static final String OWNER = "owner@millikart.az";
 
     @Test
     @DisplayName("8. max-failures attempts pass, the next one is refused")
@@ -28,7 +30,7 @@ class LoginRateLimiterTest {
 
         for (int i = 0; i < MAX_FAILURES; i++) {
             assertDoesNotThrow(() -> limiter.checkAllowed(IP), "attempt " + i + " must still be allowed");
-            limiter.recordFailure(IP);
+            limiter.recordFailure(IP, STRANGER);
         }
 
         TooManyRequestsException refused = assertThrows(TooManyRequestsException.class, () -> limiter.checkAllowed(IP));
@@ -36,19 +38,27 @@ class LoginRateLimiterTest {
         assertTrue(refused.getRetryAfter().compareTo(WINDOW) <= 0, "Retry-After must not exceed the window");
     }
 
-    // Иначе офис за одним NAT-адресом блокирует сам себя к середине утра.
+    // Успех снимает с адреса только неудачи своего логина (Р-117): опечатки сотрудника офиса за одним NAT
+    // не запирают остальных, а перебор чужих логинов свой вход больше не обнуляет (RATE-LIMIT-RESET).
     @Test
-    @DisplayName("9. a successful login clears the address")
-    void successResetsTheAddress() {
+    @DisplayName("9. a successful login clears only its own failures from the address")
+    void successClearsOnlyItsOwnFailures() {
         LoginRateLimiter limiter = limiter(true, new FakeTicker());
-        for (int i = 0; i < MAX_FAILURES; i++) {
-            limiter.recordFailure(IP);
+        limiter.recordFailure(IP, OWNER);
+        for (int i = 0; i < MAX_FAILURES - 1; i++) {
+            limiter.recordFailure(IP, STRANGER);
         }
         assertThrows(TooManyRequestsException.class, () -> limiter.checkAllowed(IP));
 
-        limiter.reset(IP);
+        limiter.clearFailuresOf(IP, OWNER);
 
         assertDoesNotThrow(() -> limiter.checkAllowed(IP));
+        assertEquals(java.util.Optional.of(MAX_FAILURES - 1), limiter.failuresOf(IP));
+
+        limiter.clearFailuresOf(IP, OWNER);
+        assertEquals(java.util.Optional.of(MAX_FAILURES - 1), limiter.failuresOf(IP),
+                "a login without failures of its own clears nothing");
+        limiter.clearFailuresOf(IP, STRANGER);
         assertEquals(java.util.Optional.empty(), limiter.failuresOf(IP));
     }
 
@@ -58,7 +68,7 @@ class LoginRateLimiterTest {
         FakeTicker ticker = new FakeTicker();
         LoginRateLimiter limiter = limiter(true, ticker);
         for (int i = 0; i < MAX_FAILURES; i++) {
-            limiter.recordFailure(IP);
+            limiter.recordFailure(IP, STRANGER);
         }
         assertThrows(TooManyRequestsException.class, () -> limiter.checkAllowed(IP));
 
@@ -73,7 +83,7 @@ class LoginRateLimiterTest {
     void addressesAreIndependent() {
         LoginRateLimiter limiter = limiter(true, new FakeTicker());
         for (int i = 0; i < MAX_FAILURES; i++) {
-            limiter.recordFailure(IP);
+            limiter.recordFailure(IP, STRANGER);
         }
 
         assertThrows(TooManyRequestsException.class, () -> limiter.checkAllowed(IP));
@@ -87,7 +97,7 @@ class LoginRateLimiterTest {
         LoginRateLimiter limiter = limiter(false, new FakeTicker());
 
         for (int i = 0; i < MAX_FAILURES * 10; i++) {
-            limiter.recordFailure(IP);
+            limiter.recordFailure(IP, STRANGER);
         }
 
         assertDoesNotThrow(() -> limiter.checkAllowed(IP));

@@ -35,6 +35,11 @@ public class LoginRateLimiter {
     private final int maxFailures;
     private final Duration window;
     private final Cache<String, Integer> failures;
+    // Доля каждого логина в счётчике адреса: успех снимает только её (RATE-LIMIT-RESET, Р-117).
+    private final Cache<AddressLogin, Integer> failuresByLogin;
+
+    private record AddressLogin(String clientIp, String login) {
+    }
 
     @Autowired // второй конструктор существует для тестов; Spring обязан брать этот
     public LoginRateLimiter(@Value("${auth.login.rate-limit.enabled}") boolean enabled,
@@ -55,6 +60,12 @@ public class LoginRateLimiter {
         this.maxFailures = maxFailures;
         this.window = window;
         this.failures = Caffeine.newBuilder()
+                .expireAfterWrite(window)
+                .maximumSize(MAX_TRACKED_ADDRESSES)
+                .ticker(ticker)
+                .build();
+        // Вытесненная доля не снимется успехом — адрес лишь дольше остаётся под счётом, а не наоборот.
+        this.failuresByLogin = Caffeine.newBuilder()
                 .expireAfterWrite(window)
                 .maximumSize(MAX_TRACKED_ADDRESSES)
                 .ticker(ticker)
@@ -84,10 +95,11 @@ public class LoginRateLimiter {
 
     // Считается и несуществующий логин: из него состоит перебор. true — ровно раз за окно, на попытке,
     // достигшей лимита: на этом держится одна запись в журнал за окно (P2-14).
-    public boolean recordFailure(String clientIp) {
+    public boolean recordFailure(String clientIp, String login) {
         if (!enabled || clientIp == null) {
             return false;
         }
+        failuresByLogin.asMap().merge(new AddressLogin(clientIp, login), 1, Integer::sum);
         int count = failures.asMap().merge(clientIp, 1, Integer::sum);
         if (count == maxFailures) {
             log.warn("{}: address {} reached {} failed login attempts; blocked for {}",
@@ -97,12 +109,17 @@ public class LoginRateLimiter {
         return false;
     }
 
-    // Успешный вход обнуляет счётчик адреса: офис за одним NAT не запирает сам себя.
-    public void reset(String clientIp) {
+    // Успешный вход снимает с адреса только неудачи своего логина: опечатки сотрудника не запирают офис за
+    // одним NAT, а чужие логины остаются в счёте — иначе свой вход каждые девять попыток обнулял бы перебор
+    // (RATE-LIMIT-RESET, Р-117). Снятие — запись: окно оставшихся отсчитывается заново, блок только длиннее.
+    public void clearFailuresOf(String clientIp, String login) {
         if (clientIp == null) {
             return;
         }
-        failures.invalidate(clientIp);
+        Integer own = failuresByLogin.asMap().remove(new AddressLogin(clientIp, login));
+        if (own != null) {
+            failures.asMap().computeIfPresent(clientIp, (address, total) -> total > own ? total - own : null);
+        }
     }
 
     // Возраст записи — с последней засчитанной неудачи: отбитые попытки не считаются и блокировку

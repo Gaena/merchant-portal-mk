@@ -117,7 +117,9 @@
     | `400` | `Account is locked due to multiple failed login attempts. Please try again in N minutes.` | пароль верен, но учётка в локауте | `AUTH` / `LOGIN` / `DENIED`: `Login refused: account locked until …` |
     | `400` | `Account is not active. Please contact your administrator.` | пароль верен, статус не `ACTIVE` | `AUTH` / `LOGIN` / `DENIED`: `Login refused: account status …` |
 
-    Неизвестный логин и неверный пароль считаются в лимит адреса; успешный вход счётчик адреса обнуляет.
+    Неизвестный логин и неверный пароль считаются в лимит адреса; успешный вход снимает с адреса только
+    неудачи своего логина (Р-117): опечатки сотрудника не запирают офис за одним адресом, а перебор чужих
+    логинов своим входом не обнулить.
     Шесть неверных паролей подряд — локаут учётки на 30 минут (PCI DSS 8.3.4, Р-28) и запись `AUTH` /
     `LOCKOUT`; неверный пароль во время локаута его не продлевает. Лимит адреса и локаут действуют и на
     смену пароля (§4.1.3). Журнал успеха — `AUTH` / `LOGIN` / `SUCCESS` `Login successful, role …`.

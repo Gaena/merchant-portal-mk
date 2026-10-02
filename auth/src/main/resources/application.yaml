@@ -26,7 +26,8 @@ auth:
     enabled: ${AUTH_BOOTSTRAP_ENABLED:false}
   login:
     rate-limit:
-      # Failed login attempts per client address (P3-Auth); a successful login clears the address.
+      # Failed login attempts per client address (P3-Auth); a successful login clears only the
+      # failures of its own login from the address (Р-117).
       # Counters live in memory (Р-27): a restart clears them.
       enabled: ${LOGIN_RATE_LIMIT_ENABLED:true}
       max-failures: ${LOGIN_RATE_LIMIT_MAX_FAILURES:10}

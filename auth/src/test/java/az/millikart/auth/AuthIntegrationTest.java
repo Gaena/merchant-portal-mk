@@ -690,23 +690,24 @@ public class AuthIntegrationTest {
                 .andExpect(status().isTooManyRequests());
     }
 
-    // Без сброса один общий офисный адрес исчерпает попытки за утро обычных опечаток. Для отказов
-    // взяты несуществующие логины, чтобы собственная блокировка аккаунта после шести отказов
-    // не мешала измерению.
+    // Свои опечатки вход снимает — общий офисный адрес не исчерпает попытки за утро; чужие логины остаются в
+    // счёте. Для чужих отказов взяты несуществующие логины, чтобы блокировка аккаунта не мешала измерению.
     @Test
-    @DisplayName("20. a successful login gives the address its full allowance back")
-    public void successfulLogin_resetsTheAddressCounter() throws Exception {
+    @DisplayName("20. a successful login takes back only its own failures from the address")
+    public void successfulLogin_clearsOnlyItsOwnFailuresFromTheAddress() throws Exception {
         String clientIp = "198.51.100.20";
-        for (int i = 0; i < MAX_FAILURES_PER_ADDRESS - 1; i++) {
+        for (int i = 0; i < MAX_FAILURES_PER_ADDRESS - 2; i++) {
             login("nobody" + i + "@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
         }
+        login("admin@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
 
         login("admin@millikart.az", ADMIN_PASSWORD, clientIp).andExpect(status().isOk());
 
-        // Без сброса вторая неудача этой партии была бы уже 429.
-        for (int i = 0; i < MAX_FAILURES_PER_ADDRESS - 1; i++) {
-            login("nobody" + i + "@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
-        }
+        // RATE-LIMIT-RESET (Р-117): вход обнулял весь адрес, и свой вход каждые девять попыток прятал перебор
+        // чужих логинов. Снимается только своя опечатка: две неудачи ещё проходят, третья — уже 429.
+        login("nobody-a@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
+        login("nobody-b@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
+        login("nobody-c@millikart.az", "WrongPass123!", clientIp).andExpect(status().isTooManyRequests());
     }
 
     // Контексты тестов живут весь прогон: задача по расписанию сработала бы посреди чужого теста. Новый
