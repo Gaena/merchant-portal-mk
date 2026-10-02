@@ -235,6 +235,7 @@
     | `400` | `Company with ID '<id>' not found` | целевой компании нет или она удалена | — |
     | `400` | `Terminal <id> cannot be moved to company <id>: its provider merchant is not linked to the multimerchant login of that company` | мерчант не связан с логином целевой компании или у терминала нет `merchant_rid` | — |
     | `403` | `Terminal <id> is out of service at the provider and will be unblocked automatically once the provider brings it back` | ручное включение терминала, выключенного сверкой (`status_source = PROVIDER`, Р-66) | `TERMINAL` / `UNBLOCK` / `DENIED` |
+    | `409` | `The resource was updated concurrently, please retry` | терминал изменила сверка или другая правка, пока шла эта (Р-115); ничего не сохранено | — |
 
     *Журнал*: `TERMINAL` / `UPDATE` с перечнем изменений (`Name changed from 'X' to 'Y'.`, `CompanyId changed
     from 'X' to 'Y'.`, смена статуса); смена статуса — ещё `BLOCK` `Blocked terminal <id>, suspended N links`
@@ -261,8 +262,11 @@
 Пустой справочник (синхронизация ещё не проходила или `ecom` не установлен) не применяется вовсе.
 Строку справочника неактивной делает `ecom`: терминал выключен у провайдера или три обновления подряд не
 приходил. Название, логин и номер терминала (`terminal_rid`, Р-96) сверка переносит к нам у любого терминала,
-найденного в справочнике по `merchant_rid`, и пишет `TERMINAL` / `UPDATE` от `system`. Смены статуса пишутся
-как `TERMINAL` / `BLOCK` или `UNBLOCK` с исполнителем `system`.
+найденного в справочнике по `merchant_rid`, и пишет `TERMINAL` / `UPDATE` от `system`; название длиннее 255
+знаков обрезается по колонке. Смены статуса пишутся как `TERMINAL` / `BLOCK` или `UNBLOCK` с исполнителем
+`system`. Каждый терминал сверяется в своей транзакции, и запись журнала ложится после её коммита (Р-115):
+сбой одного терминала не откатывает остальные и не оставляет записи о несостоявшемся. Терминал, который
+правят во время прохода, сверка не перезаписывает — он остаётся до следующего прохода.
 
 ### 3.3. Журнал аудита (Audit Logs)
 

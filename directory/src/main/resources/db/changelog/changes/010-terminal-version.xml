@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      TERMINAL-LOST-UPDATE: версия строки терминала для @Version. Сверка с провайдером и ручной PATCH
+      пишут строку целиком, и без версии поздний затирал ранний: ручная блокировка становилась
+      блокировкой провайдера, и сверка потом сама её снимала (против Р-66). Умолчание 0 — и у
+      существующих строк, и у тех, что вставляют мимо JPA (pbl и тесты не знают колонки).
+    -->
+    <changeSet id="10-directory-terminal-version" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="terminals"/>
+            <not>
+                <columnExists tableName="terminals" columnName="version"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="terminals">
+            <column name="version" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

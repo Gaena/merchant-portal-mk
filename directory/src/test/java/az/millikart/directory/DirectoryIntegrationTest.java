@@ -17,6 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.domain.TerminalStatus;
+import az.millikart.directory.domain.TerminalStatusSource;
 import az.millikart.directory.dto.CreateCompanyRequest;
 import az.millikart.directory.dto.CreateTerminalRequest;
 import az.millikart.directory.dto.UpdateCompanyRequest;
@@ -39,6 +40,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.scheduling.config.ScheduledTaskHolder;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -74,6 +76,9 @@ public class DirectoryIntegrationTest {
 
     @Autowired
     private ApplicationContext applicationContext;
+
+    @Autowired
+    private az.millikart.directory.service.TerminalStatusReconciliationService terminalReconciliation;
 
     private String adminToken;
     private String headTokenCompany1;
@@ -690,6 +695,52 @@ public class DirectoryIntegrationTest {
                 .andExpect(status().isOk());
         assertThat(companyRepository.findById("comp-01").orElseThrow().getProviderLogin())
                 .isEqualTo("MultiMerchantSys/new-login");
+    }
+
+    // TERMINAL-LOST-UPDATE: сверка и PATCH писали строку целиком, и копия, прочитанная до ручной блокировки,
+    // возвращала терминалу ACTIVE (или BLOCKED с источником PROVIDER — и сверка потом сама снимала блок).
+    // С версией устаревшая копия не сохраняется.
+    @Test
+    public void aStaleCopyOfATerminal_cannotOverwriteAManualBlock() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+        var stale = terminalRepository.findById(terminalId).orElseThrow();
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\": \"BLOCKED\"}"))
+                .andExpect(status().isOk());
+
+        stale.setName("Renamed from a stale copy");
+        assertThrows(OptimisticLockingFailureException.class, () -> terminalRepository.save(stale));
+        var stored = terminalRepository.findById(terminalId).orElseThrow();
+        assertThat(stored.getStatus()).isEqualTo(TerminalStatus.BLOCKED);
+        assertThat(stored.getStatusSource()).isEqualTo(TerminalStatusSource.MANUAL);
+        assertThat(stored.getName()).isEqualTo("Shop");
+    }
+
+    // Проход сверки на настоящей базе: транзакция на терминал, версия, ссылки и журнал после коммита
+    // работают вместе — терминал, выключенный у провайдера, блокируется, и запись BLOCK от system есть.
+    @Test
+    public void reconciliation_blocksATerminalTheProviderDisabled_andRecordsIt() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+        String merchantRid = terminalRepository.findById(terminalId).orElseThrow().getMerchantRid();
+        jdbcTemplate.update("UPDATE provider_terminals SET active = ? WHERE rid = ?", false, merchantRid);
+        auditLogRepository.deleteAll();
+
+        terminalReconciliation.reconcile();
+
+        var stored = terminalRepository.findById(terminalId).orElseThrow();
+        assertThat(stored.getStatus()).isEqualTo(TerminalStatus.BLOCKED);
+        assertThat(stored.getStatusSource()).isEqualTo(TerminalStatusSource.PROVIDER);
+        assertThat(auditLogRepository.findAll())
+                .anySatisfy(record -> {
+                    assertThat(record.getAction()).isEqualTo("BLOCK");
+                    assertThat(record.getEntityId()).isEqualTo(String.valueOf(terminalId));
+                    assertThat(record.getPerformedBy()).isEqualTo("system");
+                });
     }
 
     // Логин компании выбирается из справочника (Р-95): в списке только то, что пройдёт проверку при

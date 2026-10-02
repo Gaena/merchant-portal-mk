@@ -7,7 +7,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import az.millikart.common.audit.AuditEvent;
-import az.millikart.common.audit.AuditLogService;
 import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.domain.TerminalStatus;
 import az.millikart.directory.domain.TerminalStatusSource;
@@ -22,6 +21,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.transaction.PlatformTransactionManager;
 
 // Каждое правило сверки — про деньги: лишнее выключение останавливает приём платежей, недостающее
 // включение оставляет терминал мёртвым навсегда.
@@ -30,7 +32,7 @@ class TerminalStatusReconciliationTest {
     private TerminalRepository terminals;
     private ProviderTerminalStatusRepository snapshot;
     private PaymentLinkStatusRepository links;
-    private AuditLogService audit;
+    private ApplicationEventPublisher audit;
     private TerminalStatusReconciliationService service;
 
     @BeforeEach
@@ -38,14 +40,20 @@ class TerminalStatusReconciliationTest {
         terminals = Mockito.mock(TerminalRepository.class);
         snapshot = Mockito.mock(ProviderTerminalStatusRepository.class);
         links = Mockito.mock(PaymentLinkStatusRepository.class);
-        audit = Mockito.mock(AuditLogService.class);
+        audit = Mockito.mock(ApplicationEventPublisher.class);
         when(terminals.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        service = new TerminalStatusReconciliationService(terminals, snapshot, links, audit);
+        // Транзакции здесь не нужны: менеджер-мок отдаёт пустой статус, и шаблон просто зовёт действие.
+        service = new TerminalStatusReconciliationService(terminals, snapshot, links, audit,
+                Mockito.mock(PlatformTransactionManager.class));
     }
 
     private Terminal terminal(TerminalStatus status, TerminalStatusSource source, String merchantRid) {
+        return terminal(500001, status, source, merchantRid);
+    }
+
+    private Terminal terminal(int id, TerminalStatus status, TerminalStatusSource source, String merchantRid) {
         return Terminal.builder()
-                .id(500001)
+                .id(id)
                 .name("Terminal")
                 .login("login")
                 .companyId("comp-01")
@@ -201,7 +209,7 @@ class TerminalStatusReconciliationTest {
         service.reconcile();
 
         ArgumentCaptor<AuditEvent> events = ArgumentCaptor.forClass(AuditEvent.class);
-        verify(audit, Mockito.times(2)).recordSuccess(events.capture());
+        verify(audit, Mockito.times(2)).publishEvent(events.capture());
         AuditEvent block = events.getAllValues().get(0);
         Assertions.assertEquals("TERMINAL", block.entityType());
         Assertions.assertEquals("500001", block.entityId());
@@ -226,7 +234,7 @@ class TerminalStatusReconciliationTest {
         service.reconcile();
 
         ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
-        verify(audit).recordSuccess(event.capture());
+        verify(audit).publishEvent(event.capture());
         Assertions.assertEquals("UPDATE", event.getValue().action());
         Assertions.assertEquals("system", event.getValue().performedBy());
         Assertions.assertTrue(event.getValue().details().contains("Renamed Shop"), event.getValue().details());
@@ -252,6 +260,46 @@ class TerminalStatusReconciliationTest {
         verify(links, never()).suspendActiveLinks(anyInt());
         verify(links, never()).resumeSuspendedLinks(anyInt(), any());
         verify(terminals, never()).save(any());
-        verify(audit, never()).recordSuccess(any());
+        verify(audit, never()).publishEvent(any(Object.class));
+    }
+
+    // TERMINAL-LOST-UPDATE и RECON-AUDIT-ROLLBACK: проход был одной транзакцией. Терминал, который правили
+    // руками во время прохода, ронял весь проход, а записи журнала о блокировках других оставались. Теперь
+    // у каждого терминала своя транзакция: конфликт откладывает только его, запись — только о сделанном.
+    @Test
+    void aTerminalChangedByHandDuringThePass_isLeftForTheNextPass_andTheRestIsReconciled() {
+        Terminal edited = terminal(500001, TerminalStatus.ACTIVE, TerminalStatusSource.MANUAL, "E1");
+        Terminal gone = terminal(500002, TerminalStatus.ACTIVE, TerminalStatusSource.MANUAL, "E2");
+        when(snapshot.activityByRid()).thenReturn(Map.of("E1", false, "E2", false));
+        when(terminals.findAll()).thenReturn(List.of(edited, gone));
+        when(terminals.save(edited)).thenThrow(new ObjectOptimisticLockingFailureException(Terminal.class, 500001));
+
+        TerminalStatusReconciliationService.ReconcileOutcome outcome = service.reconcile();
+
+        Assertions.assertEquals(1, outcome.blocked());
+        Assertions.assertEquals(1, outcome.untouched());
+        verify(links, never()).suspendActiveLinks(500001);
+        verify(links).suspendActiveLinks(500002);
+        ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(audit).publishEvent(event.capture());
+        Assertions.assertEquals("500002", event.getValue().entityId());
+    }
+
+    // RECON-AUDIT-ROLLBACK: название у провайдера бывает на знак длиннее нашей колонки (256 против 255), и
+    // запись падала каждый проход. Режем по колонке, и обрезанное уже не считается новым названием.
+    @Test
+    void aProviderNameLongerThanOurColumn_isCutToFit_andIsNotReappliedEveryPass() {
+        String longTitle = "N".repeat(256);
+        Terminal ours = terminal(TerminalStatus.ACTIVE, TerminalStatusSource.MANUAL, "E1120020");
+        when(snapshot.activityByRid()).thenReturn(Map.of("E1120020", true));
+        when(snapshot.rowsByRid()).thenReturn(Map.of("E1120020",
+                new ProviderTerminalStatusRepository.ProviderTerminalRow("E1120020", longTitle, "login", true, null)));
+        when(terminals.findAll()).thenReturn(List.of(ours));
+
+        service.reconcile();
+        service.reconcile();
+
+        Assertions.assertEquals("N".repeat(255), ours.getName());
+        verify(terminals, Mockito.times(1)).save(any());
     }
 }

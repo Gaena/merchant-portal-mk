@@ -12,5 +12,6 @@
     <include file="changes/007-terminal-id-sequence.xml" relativeToChangelogFile="true"/>
     <include file="changes/008-company-provider-credentials.xml" relativeToChangelogFile="true"/>
     <include file="changes/009-terminal-rid.xml" relativeToChangelogFile="true"/>
+    <include file="changes/010-terminal-version.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
