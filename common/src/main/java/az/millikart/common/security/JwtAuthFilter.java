@@ -8,6 +8,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -78,7 +80,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String role;
         String companyId;
 
-        if (fallbackApiTokenEnabled && fallbackApiToken != null && !fallbackApiToken.isBlank() && fallbackApiToken.equals(token)) {
+        // Сравнение за постоянное время: equals обрывается на первом несовпавшем символе, и токен, дающий
+        // SYSTEM_ADMIN, подбирался бы по времени ответа посимвольно (API-TOKEN-COMPARE).
+        if (fallbackApiTokenEnabled && fallbackApiToken != null && !fallbackApiToken.isBlank()
+                && MessageDigest.isEqual(fallbackApiToken.getBytes(StandardCharsets.UTF_8),
+                        token.getBytes(StandardCharsets.UTF_8))) {
             username = "admin@millikart.az";
             userId = "00000000-0000-0000-0000-000000000000";
             role = Role.SYSTEM_ADMIN.name();
