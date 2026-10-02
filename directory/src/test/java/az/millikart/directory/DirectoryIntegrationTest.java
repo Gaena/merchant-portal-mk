@@ -25,6 +25,7 @@ import az.millikart.directory.dto.UpdateTerminalRequest;
 import az.millikart.directory.repository.CompanyRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.common.audit.AuditLog;
+import az.millikart.common.audit.AuditOutcome;
 import az.millikart.common.security.CredentialCipher;
 import az.millikart.common.security.JwtProvider;
 
@@ -695,6 +696,28 @@ public class DirectoryIntegrationTest {
                 .andExpect(status().isOk());
         assertThat(companyRepository.findById("comp-01").orElseThrow().getProviderLogin())
                 .isEqualTo("MultiMerchantSys/new-login");
+    }
+
+    // NULL-ROLE-READ: чтение по id сравнивало только companyId, и нераспознанная роль читала свою компанию и
+    // терминал, хотя список ей отказывает. Против AGENTS §6: такой учётке отказывают везде, с записью в журнал.
+    @Test
+    public void anUnrecognisedRole_cannotReadItsOwnCompanyOrTerminal() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+        auditLogRepository.deleteAll();
+
+        mockMvc.perform(get("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, unknownRoleToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, unknownRoleToken))
+                .andExpect(status().isForbidden());
+
+        assertThat(auditLogRepository.findAll())
+                .extracting(AuditLog::getEntityType, AuditLog::getOutcome)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("TERMINAL", AuditOutcome.DENIED),
+                        org.assertj.core.groups.Tuple.tuple("COMPANY", AuditOutcome.DENIED));
     }
 
     // TERMINAL-RENAME: название терминала из справочника — провайдера (Р-67), и сверка возвращала его через

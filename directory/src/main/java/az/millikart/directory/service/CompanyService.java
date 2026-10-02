@@ -295,7 +295,8 @@ public class CompanyService {
         if (actorRole == Role.SYSTEM_ADMIN || actorRole == Role.AUDITOR) {
             return;
         }
-        if (targetCompanyId != null && targetCompanyId.equals(actorCompanyId)) {
+        // Нераспознанной роли — отказ и в своей компании (AGENTS §6, NULL-ROLE-READ).
+        if (actorRole != null && targetCompanyId != null && targetCompanyId.equals(actorCompanyId)) {
             return;
         }
         auditLogService.logDenied(AuditEntity.COMPANY, targetCompanyId, AuditAction.READ,
