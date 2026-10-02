@@ -115,11 +115,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             writeUnauthorized(request, response, "Unauthorized: userId not found in token");
             return;
         }
+        // Без роли или логина — отказ, а не умолчание (JWT-DEFAULTS): роль COMPANY_EMPLOYEE дала бы права, которых
+        // в токене нет, а логин system подписал бы журнал именем автоматических действий. Наши токены несут оба.
+        if (role == null || role.isBlank() || username == null || username.isBlank()) {
+            log.warn("Rejected a token without the role or subject claim for {}", path);
+            writeUnauthorized(request, response, "Invalid or expired JWT token");
+            return;
+        }
 
         // Роль — сырой строкой намеренно: разбирает её UserPrincipal, нераспознанная доходит до
         // сервисов как «нет роли».
-        String finalRole = role != null ? role : Role.COMPANY_EMPLOYEE.name();
-        String finalUsername = username != null ? username : "system";
+        String finalRole = role;
+        String finalUsername = username;
 
         UserPrincipal principal = new UserPrincipal(userId, finalUsername, finalRole, companyId);
         UsernamePasswordAuthenticationToken authentication =

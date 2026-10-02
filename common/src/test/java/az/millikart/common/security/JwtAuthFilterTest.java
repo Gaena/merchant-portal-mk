@@ -75,6 +75,22 @@ class JwtAuthFilterTest {
         assertNull(warnings.getFirst().getThrowableProxy(), "no stack trace for a refused token");
     }
 
+    // JWT-DEFAULTS: подписанный токен без роли получал COMPANY_EMPLOYEE, без логина — имя system, которым в
+    // журнале подписаны автоматические действия. Против fail-closed (AGENTS §6): теперь такой токен — 401.
+    @Test
+    void aSignedTokenWithoutRoleOrSubject_isRefused() throws Exception {
+        for (String token : new String[] {
+                provider.generateToken("1", "head@comp1.com", null, "comp-01"),
+                provider.generateToken("1", "head@comp1.com", "", "comp-01"),
+                provider.generateToken("1", null, "COMPANY_HEAD", "comp-01")}) {
+            MockHttpServletResponse response = run(token, (request, ignored) -> {
+                throw new AssertionError("a token without role or subject must not reach the controller");
+            });
+
+            assertEquals(401, response.getStatus());
+        }
+    }
+
     @Test
     void theSignedInLogin_isInTheMdcForTheRequestOnly() throws Exception {
         AtomicReference<String> seen = new AtomicReference<>();

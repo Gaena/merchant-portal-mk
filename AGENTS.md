@@ -262,7 +262,9 @@ origin через nginx. Обоснование — в комментариях 
 - **никогда не бросает** — неизвестное значение даёт `Optional.empty()`, и вызывающий обязан
   отказать. `Role.valueOf(...)` на этих данных нельзя: аккуратный 403 превратится в 500;
 - **сравнение строго точное**, без `equalsIgnoreCase` и `trim`: иначе значение `system_admin` в базе
-  стало бы администратором (`RoleTest.fromValue_isCaseSensitive`, не удалять).
+  стало бы администратором (`RoleTest.fromValue_isCaseSensitive`, не удалять);
+- **токен без claim `role` или `sub` — 401** в `JwtAuthFilter`, умолчаний не подставлять: роль по умолчанию
+  дала бы права, которых в токене нет, а логин `system` подписал бы журнал именем автоматических действий.
 
 `UserPrincipal.getRole()` → `Role`, **nullable** (роль не распознана); `getRawRole()` — сырая строка
 для логов. Статические `UserPrincipal.getRole(principal)` / `getRawRole(principal)` /
