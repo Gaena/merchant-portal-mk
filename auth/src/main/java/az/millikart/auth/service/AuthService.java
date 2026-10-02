@@ -121,59 +121,59 @@ public class AuthService {
     // (неизвестный — сравнение с хэшем-заглушкой), затем пароль. Неизвестный логин и неверный пароль
     // отвечают одинаково; остаточная утечка принята (AGENTS.md §10).
     private User authenticate(String username, String password, String clientIp, Instant now) {
-        rateLimiter.checkAllowed(clientIp);
-
         String cleanEmail = username != null ? username.trim().toLowerCase() : "";
-        log.info("Login attempt for {}", cleanEmail);
+        try (LoginRateLimiter.Attempt ignored = rateLimiter.begin(clientIp, cleanEmail)) {
+            log.info("Login attempt for {}", cleanEmail);
 
-        User user = userRepository.findForLoginByUsername(cleanEmail).orElse(null);
-        if (user == null) {
-            passwordEncoder.matches(password, absentUserPasswordHash);
-            recordAddressFailure(clientIp, cleanEmail);
-            // В журнал — категория отказа, не пароль; cleanEmail — недоверенный ввод, его обрезает
-            // AuditLogService.
-            auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, null,
-                    "Login refused: no such account");
-            log.warn("Login failed: username {} not found", cleanEmail);
-            throw new BusinessException(INVALID_CREDENTIALS);
-        }
+            User user = userRepository.findForLoginByUsername(cleanEmail).orElse(null);
+            if (user == null) {
+                passwordEncoder.matches(password, absentUserPasswordHash);
+                recordAddressFailure(clientIp, cleanEmail);
+                // В журнал — категория отказа, не пароль; cleanEmail — недоверенный ввод, его обрезает
+                // AuditLogService.
+                auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, null,
+                        "Login refused: no such account");
+                log.warn("Login failed: username {} not found", cleanEmail);
+                throw new BusinessException(INVALID_CREDENTIALS);
+            }
 
-        boolean lockedOut = user.getLockoutUntil() != null && user.getLockoutUntil().isAfter(now);
-        if (!lockedOut && user.getLockoutUntil() != null) {
-            // Локаут истёк: попытка ниже считается с нуля.
-            log.info("Account lockout expired for username {}. Resetting lockout state.", cleanEmail);
-            user.setLockoutUntil(null);
-            user.setFailedLoginAttempts(0);
-        }
+            boolean lockedOut = user.getLockoutUntil() != null && user.getLockoutUntil().isAfter(now);
+            if (!lockedOut && user.getLockoutUntil() != null) {
+                // Локаут истёк: попытка ниже считается с нуля.
+                log.info("Account lockout expired for username {}. Resetting lockout state.", cleanEmail);
+                user.setLockoutUntil(null);
+                user.setFailedLoginAttempts(0);
+            }
 
-        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
-            registerFailedAttempt(user, cleanEmail, clientIp, lockedOut, now);
-            auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
-                    "Login refused: wrong password");
-            throw new BusinessException(INVALID_CREDENTIALS);
-        }
+            if (!passwordEncoder.matches(password, user.getPasswordHash())) {
+                registerFailedAttempt(user, cleanEmail, clientIp, lockedOut, now);
+                auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
+                        "Login refused: wrong password");
+                throw new BusinessException(INVALID_CREDENTIALS);
+            }
 
-        // Пароль верен: ответы ниже идут владельцу аккаунта и могут быть точными.
-        if (lockedOut) {
-            log.warn("Login blocked: account {} is locked until {}", cleanEmail, user.getLockoutUntil());
-            auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
-                    "Login refused: account locked until " + user.getLockoutUntil());
-            throw new BusinessException(ACCOUNT_LOCKED_PREFIX + tryAgainIn(user.getLockoutUntil(), now));
-        }
-        if (!STATUS_ACTIVE.equals(user.getStatus())) {
-            log.warn("Login blocked: account {} is in status {}", cleanEmail, user.getStatus());
-            auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
-                    "Login refused: account status " + user.getStatus());
-            throw new BusinessException(ACCOUNT_NOT_ACTIVE);
-        }
+            // Пароль верен: ответы ниже идут владельцу аккаунта и могут быть точными.
+            if (lockedOut) {
+                log.warn("Login blocked: account {} is locked until {}", cleanEmail, user.getLockoutUntil());
+                auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
+                        "Login refused: account locked until " + user.getLockoutUntil());
+                throw new BusinessException(ACCOUNT_LOCKED_PREFIX + tryAgainIn(user.getLockoutUntil(), now));
+            }
+            if (!STATUS_ACTIVE.equals(user.getStatus())) {
+                log.warn("Login blocked: account {} is in status {}", cleanEmail, user.getStatus());
+                auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
+                        "Login refused: account status " + user.getStatus());
+                throw new BusinessException(ACCOUNT_NOT_ACTIVE);
+            }
 
-        if ((user.getFailedLoginAttempts() != null && user.getFailedLoginAttempts() > 0) || user.getLockoutUntil() != null) {
-            user.setFailedLoginAttempts(0);
-            user.setLockoutUntil(null);
-            userRepository.save(user);
+            if ((user.getFailedLoginAttempts() != null && user.getFailedLoginAttempts() > 0) || user.getLockoutUntil() != null) {
+                user.setFailedLoginAttempts(0);
+                user.setLockoutUntil(null);
+                userRepository.save(user);
+            }
+            rateLimiter.clearFailuresOf(clientIp, cleanEmail);
+            return user;
         }
-        rateLimiter.clearFailuresOf(clientIp, cleanEmail);
-        return user;
     }
 
     private LoginResponse startSession(User user, Instant now) {

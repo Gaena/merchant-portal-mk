@@ -21,7 +21,8 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     List<User> findByStatusAndLastActivityAtBefore(String status, Instant threshold);
 
     // FOR UPDATE: без блокировки параллельные попытки теряют приращения счётчика неудач, и локаут
-    // Р-28 наступает позже шестой. Держится на время BCrypt одного входа.
+    // Р-28 наступает позже шестой. Держится на время BCrypt одного входа; вторую попытку в тот же логин сюда
+    // не пускает LoginRateLimiter, чтобы она не ждала замок с соединением пула (Р-118).
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT u FROM User u WHERE u.username = :username")
     Optional<User> findForLoginByUsername(@Param("username") String username);

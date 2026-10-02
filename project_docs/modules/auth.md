@@ -113,6 +113,7 @@
     |:---|:---|:---|:---|
     | `400` | `Username is required`, `Username must be a valid email address`, `Password is required` | не прошла валидация тела | — |
     | `429` | `Too many login attempts. Please try again later.` | с адреса клиента 10 неудачных попыток за 15 минут (`LOGIN_RATE_LIMIT_*`); заголовок `Retry-After` — секунды до конца окна | — ; `AUTH` / `RATE_LIMIT` пишет неудача, исчерпавшая лимит, — одна запись за окно |
+    | `429` | `Too many login attempts. Please try again later.`, `Retry-After: 1` | идущие попытки с адреса вместе с неудачами уже занимают все 10 мест, или в этот логин уже идёт попытка — с любого адреса (Р-118): одинаково для существующего и несуществующего логина | — |
     | `400` | `Invalid username or password` | нет такой учётки **или** неверный пароль — ответ одинаковый | `AUTH` / `LOGIN` / `DENIED`: `Login refused: no such account` или `… wrong password` |
     | `400` | `Account is locked due to multiple failed login attempts. Please try again in N minutes.` | пароль верен, но учётка в локауте | `AUTH` / `LOGIN` / `DENIED`: `Login refused: account locked until …` |
     | `400` | `Account is not active. Please contact your administrator.` | пароль верен, статус не `ACTIVE` | `AUTH` / `LOGIN` / `DENIED`: `Login refused: account status …` |

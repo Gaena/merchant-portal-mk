@@ -29,11 +29,11 @@ class LoginRateLimiterTest {
         LoginRateLimiter limiter = limiter(true, ticker);
 
         for (int i = 0; i < MAX_FAILURES; i++) {
-            assertDoesNotThrow(() -> limiter.checkAllowed(IP), "attempt " + i + " must still be allowed");
+            assertDoesNotThrow(() -> attempt(limiter, IP), "attempt " + i + " must still be allowed");
             limiter.recordFailure(IP, STRANGER);
         }
 
-        TooManyRequestsException refused = assertThrows(TooManyRequestsException.class, () -> limiter.checkAllowed(IP));
+        TooManyRequestsException refused = assertThrows(TooManyRequestsException.class, () -> attempt(limiter, IP));
         assertTrue(refused.getRetryAfter().compareTo(Duration.ZERO) > 0, "Retry-After must be positive");
         assertTrue(refused.getRetryAfter().compareTo(WINDOW) <= 0, "Retry-After must not exceed the window");
     }
@@ -48,11 +48,11 @@ class LoginRateLimiterTest {
         for (int i = 0; i < MAX_FAILURES - 1; i++) {
             limiter.recordFailure(IP, STRANGER);
         }
-        assertThrows(TooManyRequestsException.class, () -> limiter.checkAllowed(IP));
+        assertThrows(TooManyRequestsException.class, () -> attempt(limiter, IP));
 
         limiter.clearFailuresOf(IP, OWNER);
 
-        assertDoesNotThrow(() -> limiter.checkAllowed(IP));
+        assertDoesNotThrow(() -> attempt(limiter, IP));
         assertEquals(java.util.Optional.of(MAX_FAILURES - 1), limiter.failuresOf(IP));
 
         limiter.clearFailuresOf(IP, OWNER);
@@ -70,12 +70,12 @@ class LoginRateLimiterTest {
         for (int i = 0; i < MAX_FAILURES; i++) {
             limiter.recordFailure(IP, STRANGER);
         }
-        assertThrows(TooManyRequestsException.class, () -> limiter.checkAllowed(IP));
+        assertThrows(TooManyRequestsException.class, () -> attempt(limiter, IP));
 
         ticker.advance(WINDOW.plusSeconds(1));
 
         assertEquals(java.util.Optional.empty(), limiter.failuresOf(IP));
-        assertDoesNotThrow(() -> limiter.checkAllowed(IP));
+        assertDoesNotThrow(() -> attempt(limiter, IP));
     }
 
     @Test
@@ -86,8 +86,8 @@ class LoginRateLimiterTest {
             limiter.recordFailure(IP, STRANGER);
         }
 
-        assertThrows(TooManyRequestsException.class, () -> limiter.checkAllowed(IP));
-        assertDoesNotThrow(() -> limiter.checkAllowed("198.51.100.4"));
+        assertThrows(TooManyRequestsException.class, () -> attempt(limiter, IP));
+        assertDoesNotThrow(() -> attempt(limiter, "198.51.100.4"));
     }
 
     // Аварийный выход для локальной отладки — и ничего больше; см. комментарий в yaml.
@@ -100,8 +100,10 @@ class LoginRateLimiterTest {
             limiter.recordFailure(IP, STRANGER);
         }
 
-        assertDoesNotThrow(() -> limiter.checkAllowed(IP));
+        assertDoesNotThrow(() -> attempt(limiter, IP));
         assertEquals(java.util.Optional.empty(), limiter.failuresOf(IP));
+        limiter.begin(IP, OWNER);
+        assertDoesNotThrow(() -> limiter.begin(IP, OWNER).close());
     }
 
     @Test
@@ -110,6 +112,46 @@ class LoginRateLimiterTest {
         assertThrows(IllegalStateException.class, () -> new LoginRateLimiter(true, 0, WINDOW, new FakeTicker()));
         assertThrows(IllegalStateException.class, () -> new LoginRateLimiter(true, 3, Duration.ZERO, new FakeTicker()));
         assertThrows(IllegalStateException.class, () -> new LoginRateLimiter(true, 3, null, new FakeTicker()));
+    }
+
+    // LOGIN-POOL (Р-118): проверка читала счётчик, и залп параллельных попыток проходил её целиком — каждая
+    // доходила до BCrypt. Теперь идущая попытка держит место в лимите адреса до своего конца.
+    @Test
+    @DisplayName("13. running attempts take up the address allowance until they end")
+    void runningAttemptsReserveTheAllowance() {
+        LoginRateLimiter limiter = limiter(true, new FakeTicker());
+        java.util.List<LoginRateLimiter.Attempt> running = new java.util.ArrayList<>();
+        for (int i = 0; i < MAX_FAILURES; i++) {
+            running.add(limiter.begin(IP, "login-" + i + "@millikart.az"));
+        }
+
+        TooManyRequestsException refused = assertThrows(TooManyRequestsException.class,
+                () -> limiter.begin(IP, "one-more@millikart.az"));
+        assertEquals(Duration.ofSeconds(1), refused.getRetryAfter());
+        assertEquals(java.util.Optional.empty(), limiter.failuresOf(IP), "a reservation is not a failure");
+
+        running.getFirst().close();
+        assertDoesNotThrow(() -> limiter.begin(IP, "one-more@millikart.az").close());
+    }
+
+    // LOGIN-POOL (Р-118): вторая попытка в тот же логин ждала первую на FOR UPDATE, держа соединение пула, и
+    // залп в один логин клал вход всем. Пока идёт первая, вторая получает отказ сразу — с любого адреса.
+    @Test
+    @DisplayName("14. a login with an attempt running refuses a second one at once")
+    void aSecondAttemptOnTheSameLoginIsRefusedWhileTheFirstRuns() {
+        LoginRateLimiter limiter = limiter(true, new FakeTicker());
+        LoginRateLimiter.Attempt first = limiter.begin(IP, OWNER);
+
+        assertThrows(TooManyRequestsException.class, () -> limiter.begin("198.51.100.9", OWNER));
+
+        first.close();
+        first.close();
+        assertDoesNotThrow(() -> limiter.begin("198.51.100.9", OWNER).close());
+        assertDoesNotThrow(() -> limiter.begin(IP, STRANGER).close());
+    }
+
+    private static void attempt(LoginRateLimiter limiter, String clientIp) {
+        limiter.begin(clientIp, STRANGER).close();
     }
 
     private static LoginRateLimiter limiter(boolean enabled, Ticker ticker) {
