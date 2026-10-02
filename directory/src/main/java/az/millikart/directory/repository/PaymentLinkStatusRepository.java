@@ -2,12 +2,7 @@ package az.millikart.directory.repository;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.Instant;
-import java.util.Locale;
-import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
@@ -33,10 +28,10 @@ public class PaymentLinkStatusRepository {
     @PersistenceContext
     private EntityManager entityManager;
 
-    private final DataSource dataSource;
+    private final SharedTables sharedTables;
 
-    public PaymentLinkStatusRepository(DataSource dataSource) {
-        this.dataSource = dataSource;
+    public PaymentLinkStatusRepository(SharedTables sharedTables) {
+        this.sharedTables = sharedTables;
     }
 
     // Только ACTIVE: остальные статусы — факты о прошлом ссылки, иначе разблокировка не узнает,
@@ -90,23 +85,11 @@ public class PaymentLinkStatusRepository {
     // Таблицы нет, пока pbl ни разу не мигрировал: ссылок нет, и блокировка обязана пройти, а не
     // дать 500 (P1-2). Проверка на каждый вызов: кэш «нет таблицы» протух бы при выкате pbl.
     private boolean linksTableMissing() {
-        try (Connection connection = dataSource.getConnection()) {
-            if (tableExists(connection, TABLE) || tableExists(connection, TABLE.toUpperCase(Locale.ROOT))) {
-                return false;
-            }
-        } catch (SQLException e) {
-            // Не «отсутствует», а «неизвестно»: если база правда недоступна, транзакция упадёт сама.
-            log.warn("Could not determine whether {} exists; attempting the update anyway", TABLE, e);
+        if (!sharedTables.missing(TABLE)) {
             return false;
         }
         log.warn("Table {} is absent from this database: no payment links to move. "
                 + "Expected only where pbl has never migrated against it.", TABLE);
         return true;
-    }
-
-    private static boolean tableExists(Connection connection, String name) throws SQLException {
-        try (ResultSet tables = connection.getMetaData().getTables(null, null, name, null)) {
-            return tables.next();
-        }
     }
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import az.millikart.directory.repository.PaymentLinkStatusRepository;
+import az.millikart.directory.repository.SharedTables;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
@@ -32,7 +33,7 @@ class PaymentLinkStatusRepositoryTest {
         keepAlive = DriverManager.getConnection(url, "sa", "");
 
         DataSource dataSource = new DriverManagerDataSource(url, "sa", "");
-        repository = new PaymentLinkStatusRepository(dataSource);
+        repository = new PaymentLinkStatusRepository(new SharedTables(dataSource));
     }
 
     @AfterEach

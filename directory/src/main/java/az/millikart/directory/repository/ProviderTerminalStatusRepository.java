@@ -2,15 +2,10 @@ package az.millikart.directory.repository;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
@@ -28,10 +23,10 @@ public class ProviderTerminalStatusRepository {
     @PersistenceContext
     private EntityManager entityManager;
 
-    private final DataSource dataSource;
+    private final SharedTables sharedTables;
 
-    public ProviderTerminalStatusRepository(DataSource dataSource) {
-        this.dataSource = dataSource;
+    public ProviderTerminalStatusRepository(SharedTables sharedTables) {
+        this.sharedTables = sharedTables;
     }
 
     public boolean snapshotAvailable() {
@@ -114,23 +109,11 @@ public class ProviderTerminalStatusRepository {
     }
 
     private boolean snapshotTableMissing() {
-        try (Connection connection = dataSource.getConnection()) {
-            if (tableExists(connection, TABLE) || tableExists(connection, TABLE.toUpperCase(Locale.ROOT))) {
-                return false;
-            }
-        } catch (SQLException e) {
-            // Не «отсутствует», а «неизвестно»: если база правда недоступна, запрос упадёт сам.
-            log.warn("Could not determine whether {} exists; attempting the read anyway", TABLE, e);
+        if (!sharedTables.missing(TABLE)) {
             return false;
         }
         log.info("Table {} is absent from this database: nothing to reconcile terminal statuses "
                 + "against. Expected until ecom has started once.", TABLE);
         return true;
-    }
-
-    private static boolean tableExists(Connection connection, String name) throws SQLException {
-        try (ResultSet tables = connection.getMetaData().getTables(null, null, name, null)) {
-            return tables.next();
-        }
     }
 }
