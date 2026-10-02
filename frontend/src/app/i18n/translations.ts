@@ -468,6 +468,7 @@ export interface TranslationDictionary {
     searchPlaceholder: string;
     /** Пояснение к выбору компании в формах; виден только тем, кто выбирает (SYSTEM_ADMIN). */
     companyHint: string;
+    nameFromProvider: string;
     formIncomplete: string;
     created: string;
     createFailed: string;
@@ -1089,6 +1090,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editNothingChanged: 'Nothing changed — no request was sent.',
       searchPlaceholder: 'Search terminals by name, ID or login...',
       companyHint: 'The company that owns the terminal',
+      nameFromProvider: 'The name comes from the provider directory: rename the terminal at the provider',
       formIncomplete: 'Fill in every required field',
       created: 'Terminal registered',
       createFailed: 'Could not register the terminal',
@@ -1671,6 +1673,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editNothingChanged: 'Dəyişiklik yoxdur — sorğu göndərilmədi.',
       searchPlaceholder: 'Ad, ID və ya login üzrə axtarış...',
       companyHint: 'Terminalın aid olduğu şirkət',
+      nameFromProvider: 'Ad provayderin kataloqundan gəlir: terminalın adını provayderdə dəyişin',
       formIncomplete: 'Bütün məcburi sahələri doldurun',
       created: 'Terminal qeydiyyatdan keçdi',
       createFailed: 'Terminalı qeydiyyatdan keçirmək mümkün olmadı',
@@ -2253,6 +2256,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editNothingChanged: 'Изменений нет — запрос не отправлялся.',
       searchPlaceholder: 'Поиск по названию, ID или логину...',
       companyHint: 'Компания, которой принадлежит терминал',
+      nameFromProvider: 'Название приходит из справочника провайдера: переименуйте терминал у провайдера',
       formIncomplete: 'Заполните все обязательные поля',
       created: 'Терминал заведён',
       createFailed: 'Не удалось завести терминал',

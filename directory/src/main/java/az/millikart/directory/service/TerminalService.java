@@ -269,6 +269,12 @@ public class TerminalService {
 
         StringBuilder changes = new StringBuilder();
         if (request.name() != null && !request.name().isBlank() && !request.name().equals(terminal.getName())) {
+            // Название терминала из справочника — провайдера (Р-67): сверка вернула бы его через 15 минут, и
+            // API согласился бы на правку, которая не удержится (TERMINAL-RENAME).
+            if (terminal.getMerchantRid() != null) {
+                throw new BusinessException("Terminal " + id + " takes its name from the provider directory; "
+                        + "rename it at the provider");
+            }
             changes.append("Name changed from '").append(terminal.getName()).append("' to '").append(request.name()).append("'. ");
             terminal.setName(request.name());
         }
@@ -415,6 +421,7 @@ public class TerminalService {
                 terminal.getName(),
                 terminal.getLogin(),
                 terminal.getTerminalRid(),
+                terminal.getMerchantRid() != null,
                 terminal.getCompanyId(),
                 terminal.getStatus(),
                 terminal.getCreatedBy(),

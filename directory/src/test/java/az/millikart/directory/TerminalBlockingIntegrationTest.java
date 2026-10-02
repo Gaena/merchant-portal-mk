@@ -5,6 +5,7 @@ import az.millikart.common.audit.AuditLog;
 import az.millikart.common.audit.AuditOutcome;
 import az.millikart.common.security.JwtProvider;
 import az.millikart.common.security.UserPrincipal;
+import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.domain.TerminalStatus;
 import az.millikart.directory.dto.CreateTerminalRequest;
 import az.millikart.directory.dto.UpdateTerminalRequest;
@@ -377,12 +378,17 @@ public class TerminalBlockingIntegrationTest {
     }
 
     // Правка терминала руководителем компании осталась: заводит терминалы только администратор (Р-93).
+    // Переименовать можно только терминал без справочника: у связанного название провайдера (TERMINAL-RENAME).
     @Test
     public void nameChange_byACompanyHead_stillGoesThrough() throws Exception {
         String headTokenCompany1 = "Bearer " + jwtProvider.generateToken(
                 "111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
+        int manual = terminalRepository.saveAndFlush(Terminal.builder()
+                .id(700501).name("Manual Terminal").login("manual_login")
+                .companyId("comp-01").status(TerminalStatus.ACTIVE)
+                .createdBy("seeder").updatedBy("seeder").build()).getId();
 
-        mockMvc.perform(patch("/api/v1/terminals/{id}", terminal)
+        mockMvc.perform(patch("/api/v1/terminals/{id}", manual)
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Renamed Terminal\"}"))

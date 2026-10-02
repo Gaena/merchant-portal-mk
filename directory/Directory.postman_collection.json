@@ -420,7 +420,7 @@
 								"{{terminalId}}"
 							]
 						},
-						"description": "Updates the terminal name, company or status: SYSTEM_ADMIN, or COMPANY_HEAD / COMPANY_MANAGER of the terminal's company (COMPANY_EMPLOYEE and AUDITOR — 403). Every field is optional. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93). Only SYSTEM_ADMIN moves a terminal to another company, and only to one whose multimerchant login has an active link with the terminal's provider merchant, as on creation (Р-96, Р-97); otherwise 400, and a terminal without a provider merchant cannot be moved at all. For status see Block Terminal."
+						"description": "Updates the terminal name, company or status: SYSTEM_ADMIN, or COMPANY_HEAD / COMPANY_MANAGER of the terminal's company (COMPANY_EMPLOYEE and AUDITOR — 403). Every field is optional. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93). The name of a terminal linked to the provider directory (providerLinked: true) is the provider's (Р-67): a different name is 400 — this sample renames only a terminal registered without the directory. Only SYSTEM_ADMIN moves a terminal to another company, and only to one whose multimerchant login has an active link with the terminal's provider merchant, as on creation (Р-96, Р-97); otherwise 400, and a terminal without a provider merchant cannot be moved at all. For status see Block Terminal."
 					},
 					"response": []
 				},

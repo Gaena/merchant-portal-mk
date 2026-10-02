@@ -143,7 +143,8 @@
 `AUDITOR` и любая нераспознанная роль получают `403` даже на терминалы своей компании (P1-15). Чтение шире:
 свои терминалы видят все компанейские роли, включая `COMPANY_EMPLOYEE`, а `SYSTEM_ADMIN` и `AUDITOR` — все.
 
-`TerminalResponse` — `id`, `name`, `login`, `terminalRid`, `companyId`, `status`, `createdBy`, `createdAt`,
+`TerminalResponse` — `id`, `name`, `login`, `terminalRid`, `providerLinked` (связан со справочником провайдера: у
+терминала есть `merchant_rid`, название — провайдера), `companyId`, `status`, `createdBy`, `createdAt`,
 `updatedBy`, `updatedAt`:
 
 -   `id` — внутренний номер терминала в портале из последовательности `terminals_id_seq` (Р-81), а не номер у
@@ -212,7 +213,8 @@
     *Доступ*: `SYSTEM_ADMIN`, `COMPANY_HEAD`/`COMPANY_MANAGER` (своей компании).  
     *Запрос* (все поля необязательны, пустое — «не менять»): `{"name": "...", "companyId": "...", "status":
     "ACTIVE" | "BLOCKED"}`. Логин не правится — его меняет только сверка со справочником; `login` и
-    `password` в теле игнорируются.  
+    `password` в теле игнорируются. Название терминала из справочника (`providerLinked`) — тоже провайдера
+    (Р-67, Р-116): другое значение `name` — 400; переименовать можно только терминал без справочника.  
     *Компания*: переносит терминал в другую компанию **только `SYSTEM_ADMIN`** — для руководителя и менеджера
     чужая целевая компания — отказ в доступе. Терминал переходит только в компанию, с логином мультимерчанта
     которой его мерчант (`merchant_rid`) активно связан в `provider_logins`, — то же правило, что при заведении
@@ -230,6 +232,7 @@
     |:---|:---|:---|:---|
     | `400` | `Terminal name must be at most 255 characters` | не прошла валидация | — |
     | `400` | `Terminal not found` | нет такого терминала | — |
+    | `400` | `Terminal <id> takes its name from the provider directory; rename it at the provider` | новое `name` у терминала из справочника (после проверки прав) | — |
     | `403` | `Access denied: AUDITOR is read-only` / `Access denied` | аудитор / роль без права записи или чужой терминал | `TERMINAL` / `UPDATE` / `DENIED` |
     | `403` | `Access denied` | не администратор переносит терминал в другую компанию | `TERMINAL` / `UPDATE` / `DENIED` |
     | `400` | `Company with ID '<id>' not found` | целевой компании нет или она удалена | — |

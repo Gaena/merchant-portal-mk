@@ -697,6 +697,28 @@ public class DirectoryIntegrationTest {
                 .isEqualTo("MultiMerchantSys/new-login");
     }
 
+    // TERMINAL-RENAME: название терминала из справочника — провайдера (Р-67), и сверка возвращала его через
+    // 15 минут. PATCH соглашался на правку, которая не удержится; теперь отказ, и экран знает это заранее.
+    @Test
+    public void renamingAProviderTerminal_isRefused_andTheNameStays() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Renamed", null, null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Terminal " + terminalId
+                        + " takes its name from the provider directory; rename it at the provider")));
+
+        mockMvc.perform(get("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name", is("Shop")))
+                .andExpect(jsonPath("$.providerLinked", is(true)));
+    }
+
     // TERMINAL-LOST-UPDATE: сверка и PATCH писали строку целиком, и копия, прочитанная до ручной блокировки,
     // возвращала терминалу ACTIVE (или BLOCKED с источником PROVIDER — и сверка потом сама снимала блок).
     // С версией устаревшая копия не сохраняется.
@@ -892,7 +914,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Renamed", "comp-02", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("not linked to the multimerchant login of that company")));
         assertThat(terminalRepository.findById(terminalId).orElseThrow().getCompanyId()).isEqualTo("comp-01");
@@ -928,7 +950,8 @@ public class DirectoryIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Manual Shop 2", "comp-01", null))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.name", is("Manual Shop 2")));
+                .andExpect(jsonPath("$.name", is("Manual Shop 2")))
+                .andExpect(jsonPath("$.providerLinked", is(false)));
         assertThat(terminalRepository.findById(700401).orElseThrow().getCompanyId()).isEqualTo("comp-01");
     }
 
