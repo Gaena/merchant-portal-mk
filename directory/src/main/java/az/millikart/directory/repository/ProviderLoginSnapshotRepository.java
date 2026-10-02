@@ -10,6 +10,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +25,7 @@ public class ProviderLoginSnapshotRepository {
     private static final Logger log = LoggerFactory.getLogger(ProviderLoginSnapshotRepository.class);
 
     private static final String TABLE = "provider_logins";
+    private static final String ACTIVE = "Active";
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -89,6 +92,16 @@ public class ProviderLoginSnapshotRepository {
                         row[1] != null ? String.valueOf(row[1]) : null,
                         row[2] != null ? String.valueOf(row[2]) : null))
                 .toList();
+    }
+
+    // Мерчанты, за которых логин вправе ходить к провайдеру: связь и сам логин Active (Р-96). Одно правило
+    // на заведение и перенос терминала и на смену логина компании — разойдутся, и проверки разъедутся.
+    public Set<String> activeMerchantRidsOf(String login) {
+        return linksOf(login).stream()
+                .filter(link -> ACTIVE.equals(link.loginStatus()) && ACTIVE.equals(link.linkStatus())
+                        && link.merchantRid() != null)
+                .map(LoginLink::merchantRid)
+                .collect(Collectors.toSet());
     }
 
     private boolean tableMissing() {

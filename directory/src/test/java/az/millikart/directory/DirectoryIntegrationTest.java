@@ -664,6 +664,34 @@ public class DirectoryIntegrationTest {
                 .isEqualTo("MultiMerchantSys/comp-01");
     }
 
+    // LOGIN-CHANGE-TERMINALS: смена логина проверяла только сам логин. Новый логин без мерчанта заведённого
+    // терминала оставлял его без платежей (провайдер отказывает кредам компании) и без выписки (Р-97).
+    @Test
+    public void loginChange_toALoginWithoutTheMerchantsOfItsTerminals_isRefused() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+        String merchantRid = terminalRepository.findById(terminalId).orElseThrow().getMerchantRid();
+
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"providerLogin\": \"MultiMerchantSys/new-login\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString(
+                        "has no active link to the merchants of terminals " + terminalId + " of company comp-01")));
+        assertThat(companyRepository.findById("comp-01").orElseThrow().getProviderLogin())
+                .isEqualTo("MultiMerchantSys/comp-01");
+
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "new-login", merchantRid);
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"providerLogin\": \"MultiMerchantSys/new-login\"}"))
+                .andExpect(status().isOk());
+        assertThat(companyRepository.findById("comp-01").orElseThrow().getProviderLogin())
+                .isEqualTo("MultiMerchantSys/new-login");
+    }
+
     // Логин компании выбирается из справочника (Р-95): в списке только то, что пройдёт проверку при
     // сохранении, и ничего занятого — ни живой компанией, ни удалённой (уникальный индекс держит и её логин).
     @Test

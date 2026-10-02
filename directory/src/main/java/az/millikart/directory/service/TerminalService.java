@@ -52,8 +52,6 @@ public class TerminalService {
     // entityId отказа в заведении: номер терминалу выдаётся только при сохранении (Р-81).
     private static final String NEW_TERMINAL = "NEW";
 
-    private static final String PROVIDER_ACTIVE = "Active";
-
     private final TerminalRepository terminalRepository;
     private final CompanyRepository companyRepository;
     private final PaymentLinkStatusRepository paymentLinkStatusRepository;
@@ -217,11 +215,7 @@ public class TerminalService {
         if (providerLogin == null || !providerLogin.startsWith(CompanyService.MULTI_MERCHANT_PREFIX)) {
             return Set.of();
         }
-        return providerLogins.linksOf(providerLogin.substring(CompanyService.MULTI_MERCHANT_PREFIX.length())).stream()
-                .filter(link -> PROVIDER_ACTIVE.equals(link.loginStatus()) && PROVIDER_ACTIVE.equals(link.linkStatus())
-                        && link.merchantRid() != null)
-                .map(ProviderLoginSnapshotRepository.LoginLink::merchantRid)
-                .collect(Collectors.toSet());
+        return providerLogins.activeMerchantRidsOf(providerLogin.substring(CompanyService.MULTI_MERCHANT_PREFIX.length()));
     }
 
     // Возвращает не только флаг: роль без права на список получает отказ прямо здесь.

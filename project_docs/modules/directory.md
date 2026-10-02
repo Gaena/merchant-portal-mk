@@ -104,7 +104,10 @@
     *Доступ*: Только `SYSTEM_ADMIN`.  
     *Запрос* (все поля необязательны, пустое — «не менять»): `{"name", "status", "providerLogin",
     "providerPassword"}`. Новый пароль ложится шифротекстом; прочитать прежний нельзя. Новый логин
-    проверяется по слепку так же, как при создании; тот же логин проверку не запускает.  
+    проверяется по слепку так же, как при создании, и ещё по терминалам компании: мерчант каждого её
+    терминала, заблокированного тоже, должен быть активно связан с новым логином (Р-96, Р-97) — иначе этот
+    терминал остался бы без платежей, возвратов и выписки. Терминал без `merchant_rid` не сверяется. Тот же
+    логин проверку не запускает.  
     *Статус*: только `ACTIVE` или `INACTIVE`, сравнение точное. `DELETED` ставит только `DELETE`. `INACTIVE`
     платежей не останавливает (`../../AGENTS.md` §10): их останавливает блокировка терминалов.  
     *Ответ `200`*: `CompanyResponse`.  
@@ -118,6 +121,7 @@
     | `400` | `Company status must be ACTIVE or INACTIVE` | иной `status` | — |
     | `400` | те же, что у `POST`, для нового логина | новый логин не проходит проверку по слепку | — |
     | `409` | `Provider login is already used by another company` | новый логин занят | — |
+    | `400` | `Provider login <login> has no active link to the merchants of terminals <id, …> of company <id>; link them to this login at the provider and refresh the provider directory, or move the terminals to another company first` | мерчант хотя бы одного терминала компании не связан с новым логином | — |
 
     *Журнал*: `COMPANY` / `UPDATE` с перечнем изменений — `Name changed from 'X' to 'Y'.`, `Status changed
     from …`, `Provider login changed from 'X' to 'Y'.`, `Provider password changed.` (без значения пароля);
