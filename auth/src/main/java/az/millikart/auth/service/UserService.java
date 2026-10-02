@@ -305,10 +305,12 @@ public class UserService {
             int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
             log.info("User {} changed status to {}: {} refresh token(s) revoked",
                     user.getId(), user.getStatus(), revoked);
-        } else if (passwordResetByOther) {
-            // Сессии со старым паролем гасятся: сброс чаще всего делают из-за утечки.
+        } else if (passwordChanged) {
+            // Сессии со старым паролем гасятся при любой смене, как у /auth/change-password: и чужой сброс, и
+            // свой пароль меняют чаще всего из-за утечки (PATCH-SELF-PASSWORD). Своя сессия тоже кончается.
             int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
-            log.info("User {} password reset: {} refresh token(s) revoked", user.getId(), revoked);
+            log.info("User {} password {}: {} refresh token(s) revoked", user.getId(),
+                    passwordResetByOther ? "reset by another user" : "changed by its owner", revoked);
         }
         return mapToResponse(user);
     }

@@ -55,7 +55,7 @@ const EDITABLE_STATUSES = ['ACTIVE', 'BLOCKED'] as const;
 type EditForm = { fullName: string; role: string; companyId: string; status: string; password: string };
 
 export const UsersPage: React.FC = () => {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, logout } = useAuth();
   const { tObj } = useLanguage();
   // Компанию нового пользователя выбирает только SYSTEM_ADMIN; руководитель заводит людей в свою
   // компанию из токена — список `GET /companies` ему отвечает 403.
@@ -267,7 +267,8 @@ export const UsersPage: React.FC = () => {
       changes.push(`${tObj.users.status}: ${statusLabel(editing.status)} → ${statusLabel(editForm.status)}`);
     }
     if (editForm.password) {
-      changes.push(tObj.users.passwordWillChange);
+      changes.push(isSelf(editing) ? `${tObj.users.passwordWillChange}. ${tObj.users.ownPasswordSignsOut}`
+        : tObj.users.passwordWillChange);
     }
     return changes;
   };
@@ -300,6 +301,12 @@ export const UsersPage: React.FC = () => {
       if (editForm.status !== (editing.status || '')) payload.status = editForm.status;
       if (editForm.password) payload.password = editForm.password;
       const res = await apiClient.patch<UserDto>(`/api/v1/users/${editing.id}`, payload);
+      // Свой пароль сервер сменил и погасил все сессии, эту тоже (PATCH-SELF-PASSWORD): выход сейчас, а не
+      // молчаливый обрыв при следующем обновлении токена.
+      if (payload.password && isSelf(editing)) {
+        await logout();
+        return;
+      }
       setUsersList(prev => prev.map(u => (u.id === editing.id ? res.data : u)));
       setEditing(null);
       setNotice(tObj.users.updated);

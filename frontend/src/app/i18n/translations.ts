@@ -566,6 +566,8 @@ export interface TranslationDictionary {
     issuedPasswordHint: string;
     passwordChangePending: string;
     passwordWillChange: string;
+    /** Свой пароль: сервер гасит все сессии, и эту тоже — после сохранения вход заново. */
+    ownPasswordSignsOut: string;
     /** Свою роль и статус в этом окне не поменять: так себя легко лишить доступа. */
     selfHint: string;
     updated: string;
@@ -1174,6 +1176,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       issuedPasswordHint: 'The user will be asked to change this password at the first sign-in.',
       passwordChangePending: 'Password change pending',
       passwordWillChange: 'The password will be replaced',
+      ownPasswordSignsOut: 'All your sessions will end, this one too: sign in again with the new password',
       selfHint: 'You cannot change your own role or status here.',
       updated: 'User updated',
       updateFailed: 'Could not update the user',
@@ -1757,6 +1760,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       issuedPasswordHint: 'İstifadəçi ilk girişdə bu parolu dəyişməli olacaq.',
       passwordChangePending: 'Parol dəyişikliyi gözlənilir',
       passwordWillChange: 'Parol dəyişdiriləcək',
+      ownPasswordSignsOut: 'Bütün sessiyalarınız, bu da daxil olmaqla, bitəcək: yeni parolla yenidən daxil olun',
       selfHint: 'Öz rolunuzu və statusunuzu burada dəyişə bilməzsiniz.',
       updated: 'İstifadəçi yeniləndi',
       updateFailed: 'İstifadəçini yeniləmək mümkün olmadı',
@@ -2340,6 +2344,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       issuedPasswordHint: 'Пользователь сменит этот пароль при первом входе.',
       passwordChangePending: 'Ждёт смены пароля',
       passwordWillChange: 'Пароль будет заменён',
+      ownPasswordSignsOut: 'Все ваши сессии, и эта тоже, завершатся: войдите снова с новым паролем',
       selfHint: 'Свою роль и статус здесь поменять нельзя.',
       updated: 'Пользователь обновлён',
       updateFailed: 'Не удалось обновить пользователя',
