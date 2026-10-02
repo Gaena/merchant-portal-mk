@@ -1068,12 +1068,21 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // STATUS-ORACLE (Р-114): чужой заказ отвечал 403 «Access denied to terminal: N», несуществующий — 404,
+    // и перебор номеров заказов провайдера выдавал портальные заказы и номера чужих терминалов. Теперь
+    // ответы одинаковы до символа, кроме самого номера, и эквайера не спрашивают.
     @Test
-    void checkStatus_asForeignCompany_returns403() throws Exception {
+    void checkStatus_asForeignCompany_looksExactlyLikeAMissingOrder() throws Exception {
         Transaction tx = createTransaction(TERMINAL_ID, "TX-OWN");
 
-        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", tx.getId()), foreignToken))
-                .andExpect(status().isForbidden());
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", tx.getProviderOrderId()), foreignToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message", is("Transaction not found: " + tx.getProviderOrderId())));
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", "ORD-NO-SUCH-ORDER"), foreignToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message", is("Transaction not found: ORD-NO-SUCH-ORDER")));
+
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
     }
 
     @Test

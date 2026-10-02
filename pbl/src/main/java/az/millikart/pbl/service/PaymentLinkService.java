@@ -777,8 +777,32 @@ public class PaymentLinkService {
         UUID transactionId = resolveTransactionId(identifier);
         Integer terminalId = transactionRepository.findTerminalIdById(transactionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + identifier));
-        validateAccess(terminalId, principal, READ_ROLES);
+        requireStatusReadable(identifier, terminalId, principal);
         return mapToTransactionResponse(refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction());
+    }
+
+    // Номера заказов провайдера идут подряд: 403 на чужой при 404 на несуществующий выдавал перебором
+    // портальные заказы и номера чужих терминалов. Чужой — тот же 404, а отказ — в журнал без компании:
+    // под компанией актора его прочли бы руководитель и менеджер, и перебор шёл бы через журнал (Р-114).
+    private void requireStatusReadable(String identifier, Integer terminalId, UserPrincipal principal) {
+        Role role = UserPrincipal.getRole(principal);
+        if (role == null || !READ_ROLES.contains(role) || isGlobalReader(role)) {
+            validateAccess(terminalId, principal, READ_ROLES);
+            return;
+        }
+        String companyId = UserPrincipal.getCompanyId(principal);
+        boolean ownTerminal = companyId != null && terminalRepository.findById(terminalId)
+                .map(terminal -> companyId.equals(terminal.getCompanyId()))
+                .orElse(false);
+        if (!ownTerminal) {
+            log.warn("Status of transaction {} refused to company {}: terminal {} belongs to another company; "
+                    + "answered as not found", identifier, companyId, terminalId);
+            auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(terminalId), AuditAction.READ,
+                    UserPrincipal.getUsername(principal), null,
+                    "Denied: role " + role + " of company " + companyId + " asked for the status of transaction "
+                            + identifier + " on terminal " + terminalId + " of another company");
+            throw new ResourceNotFoundException("Transaction not found: " + identifier);
+        }
     }
 
     // Страница возврата плательщика: владение не проверяется — ключ случайный ridByMerchant, его не

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -233,6 +234,25 @@ class PblAuditIntegrationTest {
         assertThat(record.getCompanyId())
                 .as("filed under the actor's company, never the one they reached for")
                 .isEqualTo("test-company");
+    }
+
+    // STATUS-ORACLE (Р-114): отказ в статусе чужого заказа не ложится под компанию актора — иначе её
+    // руководитель прочёл бы в журнале номер чужого терминала и сам факт, что такой заказ есть.
+    @Test
+    void statusOfAnotherCompanysOrder_isRecordedForGlobalReadersOnly() throws Exception {
+        Transaction foreign = transaction(TransactionStatus.PENDING, PaymentType.SMS, FOREIGN_TERMINAL_ID);
+
+        mockMvc.perform(get("/api/v1/transactions/" + foreign.getProviderOrderId() + "/status")
+                        .header(HttpHeaders.AUTHORIZATION, headToken))
+                .andExpect(status().isNotFound());
+
+        AuditLog record = single("READ");
+        assertThat(record.getOutcome()).isEqualTo(AuditOutcome.DENIED);
+        assertThat(record.getEntityType()).isEqualTo("TERMINAL");
+        assertThat(record.getEntityId()).isEqualTo(String.valueOf(FOREIGN_TERMINAL_ID));
+        assertThat(record.getPerformedBy()).isEqualTo("head-user@test.com");
+        assertThat(record.getCompanyId()).as("no company: only global readers see it").isNull();
+        assertThat(record.getDetails()).contains(foreign.getProviderOrderId());
     }
 
     // 17. Ссылки

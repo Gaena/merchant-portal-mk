@@ -442,7 +442,11 @@ order id.
 ### 5.8. Get Transaction Status
 
 -   **Method:** `GET /api/v1/transactions/{identifier}/status`
--   **Access:** every role, on the transaction's terminal (§4.1).
+-   **Access:** every role, on the transaction's terminal (§4.1) — except the answer for another company's
+    transaction: `404 Transaction not found: <identifier>`, the same as for one that does not exist (Р-114).
+    Provider order ids are sequential, and a `403` would let anyone list the portal's orders and the
+    terminals of other companies. The refusal goes to the journal without a company — only `SYSTEM_ADMIN`
+    and `AUDITOR` see it.
 -   **`identifier`:** the transaction UUID or the provider order id (`providerOrderId`).
 -   **Behaviour:**
     -   `PENDING` and `AUTHORIZED` — the acquirer is polled once (`GET /order/{id}` with
@@ -460,7 +464,7 @@ order id.
 -   **Refusals:** `404 Transaction not found: <identifier>`; §4.1; `409` — the link lock is busy (§6); for a polled transaction — `400 Terminal configuration not found`,
     the credentials texts (§6), `400 Acquirer error: <description>` (the acquirer refused: `errorCode` or
     HTTP error), `400 Order status check failed: <reason>` (no answer), `503` (§6).
--   No journal record.
+-   No journal record, except the refusal above.
 
 **Response:** `200 OK`
 
