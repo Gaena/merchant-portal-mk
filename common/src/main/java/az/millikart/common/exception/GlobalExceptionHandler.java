@@ -236,6 +236,17 @@ public class GlobalExceptionHandler {
                         + " is not supported by this endpoint; send application/json", request);
     }
 
+    // Клиент не принимает JSON (Accept): ошибка клиента, 406, а не 500 «сбой у нас» — при возврате или списании
+    // метод уже выполнен, и 500 читался бы как «повторите» (NOT-ACCEPTABLE-ERROR). Тело не пишем: JSON этот
+    // клиент не примет, и запись тела упала бы снова. Значение Accept — ввод клиента, в лог не идёт.
+    @ExceptionHandler(org.springframework.web.HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<Void> handleMediaTypeNotAcceptable(
+            org.springframework.web.HttpMediaTypeNotAcceptableException ex, HttpServletRequest request) {
+        log.warn("Refused to answer {} {}: the client accepts no media type this endpoint produces",
+                request.getMethod(), request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE).build();
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUnexpected(Exception ex, HttpServletRequest request) {
         log.error("Unhandled exception processing {} {}", request.getMethod(), request.getRequestURI(), ex);

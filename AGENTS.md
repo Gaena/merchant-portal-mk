@@ -200,6 +200,7 @@ export JWT_SECRET="$(openssl rand -base64 48)"   # одно значение н�
    | `ResourceNotFoundException` | 404 |
    | `ConflictException`, `OptimisticLockingFailureException` | 409 |
    | `DataIntegrityViolationException` — ограничение базы: гонка «проверил — вставил», значение шире колонки | 400 при SQLState класса 22 (длина, формат), иначе 409; текст драйвера — ни в ответ, ни в лог |
+   | `HttpMediaTypeNotAcceptableException` — клиент не принимает JSON (`Accept`) | **406** без тела: метод уже выполнен, 500 звал бы повторить |
    | `PaymentOutcomeUnknownException` | **502** |
    | `CallNotPermittedException` — открыт circuit breaker к эквайеру, только `pbl` (`AcquirerUnavailableHandler`) | **503**: вызов не ушёл, денег не двигал (Р-103) |
 

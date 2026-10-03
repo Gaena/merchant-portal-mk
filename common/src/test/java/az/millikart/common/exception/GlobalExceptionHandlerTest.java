@@ -2,9 +2,11 @@ package az.millikart.common.exception;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -52,6 +54,14 @@ class GlobalExceptionHandlerTest {
         @PostMapping("/echo")
         Payload echo(@RequestBody Payload payload) {
             return payload;
+        }
+
+        final java.util.concurrent.atomic.AtomicInteger moneyMoved = new java.util.concurrent.atomic.AtomicInteger();
+
+        @PostMapping("/refund")
+        Payload refund() {
+            moneyMoved.incrementAndGet();
+            return new Payload(null, 1);
         }
     }
 
@@ -147,6 +157,22 @@ class GlobalExceptionHandlerTest {
         assertFalse(logged.contains("leaked@example.com"), logged);
         assertTrue(logged.contains("SQLState 23505"), logged);
         assertTrue(warnings.getFirst().getThrowableProxy() == null, "no stack trace for a client error");
+    }
+
+    // NOT-ACCEPTABLE-ERROR: клиент, не принимающий JSON, получал 500 «Unexpected server error» и ERROR со
+    // стектрейсом — уже после того, как метод выполнился: возврат прошёл, а ответ звал «повторить». Теперь 406
+    // без тела (JSON он не примет) и WARN без стектрейса.
+    @Test
+    void aClientThatAcceptsNoJson_getsNotAcceptable_afterTheMethodRan() throws Exception {
+        mockMvc.perform(post("/refund").accept(MediaType.APPLICATION_PDF))
+                .andExpect(status().isNotAcceptable())
+                .andExpect(content().string(""));
+
+        assertEquals(1, controller.moneyMoved.get());
+        assertTrue(atLevel(Level.ERROR).isEmpty(), String.valueOf(atLevel(Level.ERROR)));
+        List<ILoggingEvent> warnings = atLevel(Level.WARN);
+        assertEquals(1, warnings.size(), String.valueOf(warnings));
+        assertNull(warnings.getFirst().getThrowableProxy(), "no stack trace for a client error");
     }
 
     // Битое тело — ошибка клиента, а не 500 со стектрейсом.

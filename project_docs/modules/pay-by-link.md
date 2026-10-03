@@ -803,6 +803,7 @@ Every error is the `ErrorResponse` JSON `{ timestamp, status, error, message, pa
 | 409 | `The resource was updated concurrently, please retry` | a concurrent update of the same link (§5.2) |
 | 409 | `The request conflicts with existing data` | the database refused the row (a unique or foreign key constraint). The driver's text, which quotes the values, is not echoed |
 | 400 | `A field value is too long or has an invalid format` | the database refused a value that the body validation let through |
+| 406 | — (no body) | the `Accept` header excludes JSON. The method has already run: a capture or a refund may have moved money, check the status before any retry |
 | 415 | `Content-Type <type> is not supported by this endpoint; send application/json` | |
 | 500 | `Unexpected server error` | anything not listed here |
 | 502 | `No confirmation received from the acquirer. Check the transaction status before retrying.` | **the outcome of a capture or a refund is unknown** |
