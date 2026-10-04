@@ -3,7 +3,6 @@ package az.millikart.common.search;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-import java.util.Locale;
 import org.junit.jupiter.api.Test;
 
 // Поиск по спискам (P3-1). Экранирование — единственное, что не даёт вводу «%» вернуть всю таблицу:
@@ -35,16 +34,12 @@ class SearchTermsTest {
         assertEquals("%!!!%%", SearchTerms.toLikePattern("!%"));
     }
 
-    // Регистр — по Locale.ROOT: в турецкой локали «I» стала бы «ı», и поиск по латинице ничего бы не нашёл.
+    // SEARCH-CASE: паттерн понижался в Java, а колонка — в базе, и «İ» они понижают по-разному: «İlham» не
+    // находил «İlham …». Регистр паттерна теперь не трогаем — его понижает та же lower() базы, что и колонку.
     @Test
-    void lowerCase_doesNotDependOnTheDefaultLocale() {
-        Locale saved = Locale.getDefault();
-        try {
-            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
-            assertEquals("%info%", SearchTerms.toLikePattern("INFO"));
-        } finally {
-            Locale.setDefault(saved);
-        }
+    void theCaseIsLeftToTheDatabase() {
+        assertEquals("%İlham%", SearchTerms.toLikePattern("İlham"));
+        assertEquals("%INFO%", SearchTerms.toLikePattern("INFO"));
     }
 
     @Test

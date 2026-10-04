@@ -229,6 +229,19 @@ public class UserListPaginationTest {
                 .andExpect(jsonPath("$.content[0].username", is("acct22@comp1.com")));
     }
 
+    // SEARCH-CASE: «İ» Java и PostgreSQL понижают по-разному, и поиск «İlham» не находил «İlham …».
+    @Test
+    public void search_findsAzerbaijaniCapitals() throws Exception {
+        User ilham = seed("ilham@comp1.com", "comp-01", "ACTIVE");
+        ilham.setFullName("İlham Əliyev");
+        userRepository.saveAndFlush(ilham);
+        seed("other@comp1.com", "comp-01", "ACTIVE");
+
+        search(adminToken, "İlham")
+                .andExpect(jsonPath("$.content", hasSize(1)))
+                .andExpect(jsonPath("$.content[0].username", is("ilham@comp1.com")));
+    }
+
     @Test
     public void search_isCaseInsensitive() throws Exception {
         seed("acct22@comp1.com", "comp-01", "ACTIVE");

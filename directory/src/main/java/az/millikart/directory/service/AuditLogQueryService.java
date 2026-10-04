@@ -12,6 +12,7 @@ import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.directory.dto.AuditLogResponse;
 import az.millikart.directory.repository.AuditLogQueryRepository;
+import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Predicate;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -109,11 +110,13 @@ public class AuditLogQueryService {
                 where.add(cb.lessThanOrEqualTo(root.get("createdAt"), to));
             }
             if (searchPattern != null) {
+                // Обе стороны понижает база, как во всех поисках (SearchTerms.toLikePattern).
+                Expression<String> pattern = cb.lower(cb.literal(searchPattern));
                 where.add(cb.or(
-                        cb.like(cb.lower(root.get("performedBy")), searchPattern, SearchTerms.LIKE_ESCAPE),
-                        cb.like(cb.lower(root.get("action")), searchPattern, SearchTerms.LIKE_ESCAPE),
-                        cb.like(cb.lower(root.get("entityId")), searchPattern, SearchTerms.LIKE_ESCAPE),
-                        cb.like(cb.lower(root.get("details")), searchPattern, SearchTerms.LIKE_ESCAPE)));
+                        cb.like(cb.lower(root.get("performedBy")), pattern, SearchTerms.LIKE_ESCAPE),
+                        cb.like(cb.lower(root.get("action")), pattern, SearchTerms.LIKE_ESCAPE),
+                        cb.like(cb.lower(root.get("entityId")), pattern, SearchTerms.LIKE_ESCAPE),
+                        cb.like(cb.lower(root.get("details")), pattern, SearchTerms.LIKE_ESCAPE)));
             }
             return cb.and(where.toArray(new Predicate[0]));
         };

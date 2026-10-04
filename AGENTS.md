@@ -917,8 +917,10 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 - **Дата оплаты в списке ссылок — один запрос на страницу** (`findLastPaidAtByLinkIds`), счётчики
   платежей в `PaymentLinkSummaryResponse` не добавлять — N+1 (P2-15, P2-16).
 - **Поисковая строка — только через `SearchTerms`** (`common/search`, P3-1): `normalize` в
-  контроллере, `toLikePattern` в запросе, у каждого `LIKE` — `ESCAPE '!'`. Голый
-  `LIKE '%' || :q || '%'` — дыра: ввод `%` возвращает всю таблицу. Скоуп роли — условие запроса
+  контроллере, `toLikePattern` в запросе, у каждого `LIKE` — `ESCAPE '!'`. Регистр понижает база с обеих
+  сторон — `lower(колонка) LIKE lower(:pattern)`: Java и libc понижают «İ» по-разному (SEARCH-CASE). В JPQL —
+  `lower(cast(:pattern as string))`: пустой поиск внутри `lower()` Hibernate шлёт как `bytea`, и PostgreSQL
+  отвечает 500. Голый `LIKE '%' || :q || '%'` — дыра: ввод `%` возвращает всю таблицу. Скоуп роли — условие запроса
   рядом с поиском, никогда не пост-фильтр.
 - **Адрес клиента — только `ClientIp.resolve(request, trustedProxies.addresses())`**, в коде сервисов —
   `ClientIpHolder` (P3-Auth, Р-29, Р-36). Заголовкам верим только от адресов из `mp.trusted-proxies`;

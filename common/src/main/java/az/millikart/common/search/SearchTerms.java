@@ -1,6 +1,5 @@
 package az.millikart.common.search;
 
-import java.util.Locale;
 
 // Единственное место нормализации поиска и LIKE-паттерна (P3-1): правила экранирования не должны
 // разъехаться. LIKE '%…%' без индекса — решение: на здешних объёмах это доли миллисекунды; pg_trgm и
@@ -29,8 +28,9 @@ public final class SearchTerms {
         return trimmed.length() > MAX_LENGTH ? trimmed.substring(0, MAX_LENGTH) : trimmed;
     }
 
-    // Для lower(колонка) LIKE :pattern ESCAPE '!'; без экранирования % вернёт всю таблицу. Сначала
-    // экранируется сам '!', иначе его удвоят следующие замены.
+    // Для lower(колонка) LIKE lower(:pattern) ESCAPE '!'; без экранирования % вернёт всю таблицу. Сначала
+    // экранируется сам '!', иначе его удвоят следующие замены. Регистр понижает база с обеих сторон: Java и
+    // libc понижают «İ» по-разному, и «İlham» не находил «İlham …» (SEARCH-CASE).
     public static String toLikePattern(String term) {
         if (term == null) {
             return null;
@@ -39,6 +39,6 @@ public final class SearchTerms {
                 .replace("!", "!!")
                 .replace("%", "!%")
                 .replace("_", "!_");
-        return "%" + escaped.toLowerCase(Locale.ROOT) + "%";
+        return "%" + escaped + "%";
     }
 }

@@ -317,6 +317,28 @@ public class DirectoryListPaginationTest {
                 .andExpect(jsonPath("$.totalElements", is(2)));
     }
 
+    // SEARCH-CASE: строку поиска понижала Java, колонку — PostgreSQL, и «İ» у них разная: «İlham» не находил
+    // ни компанию, ни терминал с этим словом. Обе стороны понижает база — совпадение при любой её локали.
+    @Test
+    public void search_findsAzerbaijaniCapitals_inCompaniesAndTerminals() throws Exception {
+        seedCompany("comp-az", "İlham Ticarət MMC", "ACTIVE");
+        seedCompany("comp-b", "Other LLC", "ACTIVE");
+        seedTerminal(700901, "Şəki İlham kassası", "comp-b", TerminalStatus.ACTIVE);
+
+        mockMvc.perform(get("/api/v1/companies")
+                        .param("search", "İlham")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.content[0].id", is("comp-az")));
+        mockMvc.perform(get("/api/v1/terminals")
+                        .param("search", "İlham")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.content[0].id", is(700901)));
+    }
+
     // % не должен возвращать всю таблицу, а _ не должен работать как «любой символ»: «Parts» —
     // ловушка, неэкранированный r_s поймал бы и её, поэтому её отсутствие и есть проверка.
     @Test

@@ -305,6 +305,20 @@ public class AuditLogQueryTest {
 
     // P3-1, D.2: search, outcome и диапазон created_at
 
+    // SEARCH-CASE: поиск по журналу — Criteria, свой путь к lower(); «İlham» в details должен находиться так же.
+    @Test
+    public void search_findsAzerbaijaniCapitalsInTheDetails() throws Exception {
+        seedFull("COMPANY", "c-az", "UPDATE", "comp-01", "bob@comp1.com", "Renamed to İlham Ticarət");
+        seedFull("COMPANY", "c-other", "UPDATE", "comp-01", "bob@comp1.com", "Renamed to Phoenix");
+
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("search", "İlham")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", Matchers.is(1)))
+                .andExpect(jsonPath("$.content[0].entityId", Matchers.is("c-az")));
+    }
+
     @Test
     public void search_matchesActorActionEntityIdAndDetails_caseInsensitively() throws Exception {
         seedFull("TERMINAL", "t-1", "CREATE", "comp-01", "alice@comp1.com", "made a terminal");

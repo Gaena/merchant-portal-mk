@@ -37,10 +37,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
               AND (:companyId IS NULL OR u.company_id = :companyId)
               AND (:role IS NULL OR u.role = :role)
               AND (:search IS NULL
-                   OR lower(u.username) LIKE :search ESCAPE '!'
-                   OR lower(u.full_name) LIKE :search ESCAPE '!'
-                   OR lower(u.company_id) LIKE :search ESCAPE '!'
-                   OR lower(c.name) LIKE :search ESCAPE '!')
+                   OR lower(u.username) LIKE lower(:search) ESCAPE '!'
+                   OR lower(u.full_name) LIKE lower(:search) ESCAPE '!'
+                   OR lower(u.company_id) LIKE lower(:search) ESCAPE '!'
+                   OR lower(c.name) LIKE lower(:search) ESCAPE '!')
             ORDER BY u.username , u.id
             """,
             countQuery = """
@@ -50,10 +50,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
               AND (:companyId IS NULL OR u.company_id = :companyId)
               AND (:role IS NULL OR u.role = :role)
               AND (:search IS NULL
-                   OR lower(u.username) LIKE :search ESCAPE '!'
-                   OR lower(u.full_name) LIKE :search ESCAPE '!'
-                   OR lower(u.company_id) LIKE :search ESCAPE '!'
-                   OR lower(c.name) LIKE :search ESCAPE '!')
+                   OR lower(u.username) LIKE lower(:search) ESCAPE '!'
+                   OR lower(u.full_name) LIKE lower(:search) ESCAPE '!'
+                   OR lower(u.company_id) LIKE lower(:search) ESCAPE '!'
+                   OR lower(c.name) LIKE lower(:search) ESCAPE '!')
             """,
             nativeQuery = true)
     Page<User> search(@Param("companyId") String companyId,
