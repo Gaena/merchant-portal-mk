@@ -1,9 +1,9 @@
-package az.millikart.pbl.provider;
+package az.millikart.txpg;
 
-import az.millikart.pbl.domain.PaymentLink;
-import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
-import az.millikart.pbl.provider.dto.MoneyOperationResult;
-import az.millikart.pbl.provider.dto.TerminalCheckResult;
+import az.millikart.txpg.dto.EcomCreateOrderResponse;
+import az.millikart.txpg.dto.MoneyOperationResult;
+import az.millikart.txpg.dto.NewOrder;
+import az.millikart.txpg.dto.TerminalCheckResult;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -15,7 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 // Тестовый дублёр эквайера: любой вызов успешен, любой заказ читается как полностью оплаченный.
-// Только тестовые исходники: до 20.08.2026 это был продовый бин по pbl.provider.stub, и работающий
+// Только testFixtures, не main: до 20.08.2026 это был продовый бин по pbl.provider.stub, и работающий
 // сервис можно было уговорить отвечать «оплачено», ни разу не спросив эквайера. Существует ради
 // одного: прогон не должен зависеть от того, поднят ли тестовый стенд и в каком он состоянии.
 public class StubAcquiringClient implements AcquiringClient {
@@ -23,12 +23,12 @@ public class StubAcquiringClient implements AcquiringClient {
     private static final Logger log = LoggerFactory.getLogger(StubAcquiringClient.class);
 
     @Override
-    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
+    public EcomCreateOrderResponse createEcomOrder(NewOrder order, ProviderCredentials credentials, String terminalRid,
                                                    UUID ridByMerchant, String hppRedirectUrl) {
         long orderId = (long) (Math.random() * 1000000000L);
         // Как в контракте (§5.1): адрес страницы оплаты без query — id и пароль добавляет сервис.
         String hppUrl = "https://gateway.txpg.example.com/pay";
-        log.info("[STUB PROVIDER] createEcomOrder for ridByMerchant: {}, amount: {}, generated orderId: {}", ridByMerchant, link.getAmount(), orderId);
+        log.info("[STUB PROVIDER] createEcomOrder for ridByMerchant: {}, amount: {}, generated orderId: {}", ridByMerchant, order.amount(), orderId);
         return new EcomCreateOrderResponse(
                 new EcomCreateOrderResponse.Order(hppUrl, orderId, "Preparing", "password123")
         );

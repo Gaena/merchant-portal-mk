@@ -1,5 +1,7 @@
 package az.millikart.pbl.provider;
 
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.StubAcquiringClient;
 import org.mockito.AdditionalAnswers;
 import org.mockito.Mockito;
 import org.springframework.boot.test.context.TestConfiguration;

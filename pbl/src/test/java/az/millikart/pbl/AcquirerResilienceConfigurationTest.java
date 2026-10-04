@@ -4,9 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import az.millikart.pbl.provider.AcquirerDeclinedException;
-import az.millikart.pbl.provider.AcquiringClient;
-import az.millikart.pbl.provider.TxpgAcquiringClient;
+import az.millikart.txpg.AcquirerDeclinedException;
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.TxpgAcquiringClient;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import java.io.IOException;
 import java.lang.reflect.Method;

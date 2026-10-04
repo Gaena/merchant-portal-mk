@@ -110,7 +110,7 @@ resilience4j:
         permittedNumberOfCallsInHalfOpenState: 3
         # Отказ шлюза конкретному терминалу — не сбой шлюза: не размыкает приём платежей всем.
         ignoreExceptions:
-          - az.millikart.pbl.provider.AcquirerDeclinedException
+          - az.millikart.txpg.AcquirerDeclinedException
   retry:
     instances:
       acquiring:
@@ -118,6 +118,6 @@ resilience4j:
         waitDuration: 500ms
         # Повтор отказа даёт тот же отказ.
         ignoreExceptions:
-          - az.millikart.pbl.provider.AcquirerDeclinedException
+          - az.millikart.txpg.AcquirerDeclinedException
 
 

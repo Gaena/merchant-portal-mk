@@ -1,9 +1,9 @@
-package az.millikart.pbl.provider;
+package az.millikart.txpg;
 
-import az.millikart.pbl.domain.PaymentLink;
-import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
-import az.millikart.pbl.provider.dto.MoneyOperationResult;
-import az.millikart.pbl.provider.dto.TerminalCheckResult;
+import az.millikart.txpg.dto.EcomCreateOrderResponse;
+import az.millikart.txpg.dto.MoneyOperationResult;
+import az.millikart.txpg.dto.NewOrder;
+import az.millikart.txpg.dto.TerminalCheckResult;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.UUID;
@@ -11,7 +11,7 @@ import java.util.UUID;
 public interface AcquiringClient {
     // Все вызовы — с кредами компании терминала, а не терминала (Р-93).
     // Заказ создаётся на терминале провайдера: POST /order?terminalRid=… (Р-96).
-    EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
+    EcomCreateOrderResponse createEcomOrder(NewOrder order, ProviderCredentials credentials, String terminalRid,
                                             UUID ridByMerchant, String hppRedirectUrl);
 
     // Денежные операции возвращают результат, только если в ответе есть tran.match.ridByPmo; без него —

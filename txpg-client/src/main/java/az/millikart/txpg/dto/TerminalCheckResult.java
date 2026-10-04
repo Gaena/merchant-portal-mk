@@ -1,4 +1,4 @@
-package az.millikart.pbl.provider.dto;
+package az.millikart.txpg.dto;
 
 // Исход кнопки «Тест» (Р-103): OK — заказ заведён; INVALID_CREDENTIALS — InvalidLogin, неверные креды
 // компании; REJECTED — ответ без заказа; UNREACHABLE — нет ответа или 5xx с пустым телом: о терминале

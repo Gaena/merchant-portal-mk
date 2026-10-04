@@ -1,22 +1,17 @@
-package az.millikart.pbl.provider;
+package az.millikart.txpg;
 
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.PaymentOutcomeUnknownException;
-import az.millikart.pbl.domain.CustomerPhone;
-import az.millikart.pbl.domain.PaymentLink;
-import az.millikart.pbl.domain.PaymentType;
-import az.millikart.pbl.domain.UsageType;
-import az.millikart.pbl.provider.dto.EcomCreateOrderRequest;
-import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
-import az.millikart.pbl.provider.dto.MoneyOperationResult;
-import az.millikart.pbl.provider.dto.TerminalCheckResult;
+import az.millikart.txpg.dto.EcomCreateOrderRequest;
+import az.millikart.txpg.dto.EcomCreateOrderResponse;
+import az.millikart.txpg.dto.MoneyOperationResult;
+import az.millikart.txpg.dto.NewOrder;
+import az.millikart.txpg.dto.TerminalCheckResult;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -29,8 +24,9 @@ import java.util.Map;
 import java.util.UUID;
 
 // Единственная реализация AcquiringClient. Второй (стаба) в main не заводить: он ответил бы
-// «оплачено», не спросив эквайера. Тестовый двойник живёт в тестах (AGENTS.md §11).
-@Component
+// «оплачено», не спросив эквайера. Тестовый двойник — в testFixtures (AGENTS.md §11). Не @Component:
+// сервисы сканируют az.millikart целиком, и бин появился бы у каждого, кто подключил модуль; объявляет его
+// сервис, который ходит к провайдеру, со своими адресами (pbl — AcquiringClientConfig).
 public class TxpgAcquiringClient implements AcquiringClient {
 
     private static final Logger log = LoggerFactory.getLogger(TxpgAcquiringClient.class);
@@ -42,15 +38,13 @@ public class TxpgAcquiringClient implements AcquiringClient {
     private final String execTranPath;
     private final String getOrderPath;
 
-    // Дефолтов в @Value не заводить: выпавший ключ молча увёл бы клиента на другой хост или путь.
-    // Пути дефолтятся только в application.yaml, у адресов дефолта нет нигде (P1-10).
     public TxpgAcquiringClient(
             RestClient restClient,
-            @Value("${pbl.provider.api-base-url}") String apiBaseUrl,
-            @Value("${pbl.provider.gateway-base-url}") String gatewayBaseUrl,
-            @Value("${pbl.provider.create-order-path}") String createOrderPath,
-            @Value("${pbl.provider.exec-tran-path}") String execTranPath,
-            @Value("${pbl.provider.get-order-path}") String getOrderPath) {
+            String apiBaseUrl,
+            String gatewayBaseUrl,
+            String createOrderPath,
+            String execTranPath,
+            String getOrderPath) {
         this.restClient = restClient;
         this.apiBaseUrl = apiBaseUrl;
         this.gatewayBaseUrl = gatewayBaseUrl;
@@ -63,14 +57,14 @@ public class TxpgAcquiringClient implements AcquiringClient {
     @Override
     @CircuitBreaker(name = "acquiring")
     @Retry(name = "acquiring")
-    public EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
+    public EcomCreateOrderResponse createEcomOrder(NewOrder order, ProviderCredentials credentials, String terminalRid,
                                                    UUID ridByMerchant, String hppRedirectUrl) {
         String url = UriComponentsBuilder.fromUriString(gatewayBaseUrl)
                 .path(createOrderPath)
                 .queryParam("terminalRid", terminalRid)
                 .toUriString();
 
-        String typeRid = (link.getPaymentType() == PaymentType.DMS) ? "Order_DMS" : "Order_SMS";
+        String typeRid = order.dms() ? "Order_DMS" : "Order_SMS";
 
         EcomCreateOrderRequest.SubMerchant subMerchant = new EcomCreateOrderRequest.SubMerchant("https://millikart.az/");
 
@@ -78,20 +72,20 @@ public class TxpgAcquiringClient implements AcquiringClient {
                 new EcomCreateOrderRequest.Order(
                         typeRid,
                         ridByMerchant.toString(),
-                        link.getAmount(),
-                        link.getCurrency(),
-                        link.getDescription() != null ? link.getDescription() : "Payment via Pay-By-Link",
+                        order.amount(),
+                        order.currency(),
+                        order.description(),
                         "az",
                         hppRedirectUrl,
                         subMerchant,
-                        tdsPresetAreqOf(link)
+                        order.payer()
                 )
         );
 
         // Открытие описывает одна INFO-строка OpenLinkService; здесь — только DEBUG.
         log.debug("PROVIDER REQ [createEcomOrder] -> POST URL: {}, Login: {}, TerminalRid: {}, RidByMerchant: {}, Type: {}, Amount: {} {}",
                 ProviderPayloads.urlForLog(url), credentials.login(), terminalRid, ridByMerchant, typeRid,
-                link.getAmount(), link.getCurrency());
+                order.amount(), order.currency());
         log.debug("PROVIDER REQ BODY [createEcomOrder]: {}", request);
 
         try {
@@ -252,27 +246,6 @@ public class TxpgAcquiringClient implements AcquiringClient {
             log.warn("PROVIDER REQ [getOrderStatus] <- no answer for ProviderOrderId: {}: {}", providerOrderId, e.getMessage());
             throw new BusinessException("Order status check failed: " + e.getMessage());
         }
-    }
-
-    // Клиент для 3DS (Р-96): только у одноразовой ссылки и только заполненные поля. Телефон, который
-    // не разбирается как азербайджанский (ссылки до Р-96), не уходит.
-    private static EcomCreateOrderRequest.TdsPresetAreq tdsPresetAreqOf(PaymentLink link) {
-        if (link.getUsageType() != UsageType.SINGLE) {
-            return null;
-        }
-        String name = blankToNull(link.getCustomerName());
-        String email = blankToNull(link.getCustomerEmail());
-        EcomCreateOrderRequest.Phone phone = CustomerPhone.subscriberOf(link.getCustomerPhone())
-                .map(subscriber -> new EcomCreateOrderRequest.Phone(subscriber, CustomerPhone.COUNTRY_CODE))
-                .orElse(null);
-        if (name == null && email == null && phone == null) {
-            return null;
-        }
-        return new EcomCreateOrderRequest.TdsPresetAreq(name, email, phone);
-    }
-
-    private static String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
     }
 
     // Ответ провайдера и на неверный логин, и на неверный пароль компании (Р-93).

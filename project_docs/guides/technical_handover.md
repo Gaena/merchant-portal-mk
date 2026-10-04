@@ -109,7 +109,7 @@ graph TB
 | **Spring Data JPA** | 3.x | ORM и работа с базой данных |
 | **Liquibase** | из Spring Boot | Версионирование и миграция схемы БД |
 | **JJWT** | 0.11.5 | Выпуск и проверка JWT |
-| **Resilience4j** | 2.2.0 | Circuit breaker и повторы вызовов шлюза (сервис `pbl`) |
+| **Resilience4j** | 2.2.0 | Circuit breaker и повторы вызовов шлюза (клиент провайдера `txpg-client`, сервис `pbl`) |
 | **Caffeine** | 3.1.8 | Счётчики лимита попыток входа в памяти |
 | **SpringDoc OpenAPI** | 2.5.0 | Swagger UI документация API |
 | **Oracle JDBC** | 23.4 | Чтение базы шлюза (сервис `ecom`) |

@@ -3,7 +3,7 @@ package az.millikart.pbl.service;
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.security.CredentialCipher;
 import az.millikart.pbl.domain.Terminal;
-import az.millikart.pbl.provider.ProviderCredentials;
+import az.millikart.txpg.ProviderCredentials;
 import az.millikart.pbl.repository.CompanyCredentialsRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

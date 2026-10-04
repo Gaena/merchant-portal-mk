@@ -1,6 +1,6 @@
 package az.millikart.pbl.dto;
 
-import az.millikart.pbl.provider.dto.TerminalCheckResult;
+import az.millikart.txpg.dto.TerminalCheckResult;
 
 // message — слова провайдера, когда они есть: при отказе это и есть объяснение для администратора.
 public record TerminalCheckResponse(

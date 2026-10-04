@@ -14,7 +14,7 @@ import az.millikart.pbl.domain.Transaction;
 import az.millikart.pbl.domain.TransactionRefund;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
-import az.millikart.pbl.provider.AcquiringClient;
+import az.millikart.txpg.AcquiringClient;
 import az.millikart.pbl.provider.StubAcquirerConfig;
 import az.millikart.pbl.dto.DashboardSummaryResponse;
 import az.millikart.pbl.repository.DashboardRepository;

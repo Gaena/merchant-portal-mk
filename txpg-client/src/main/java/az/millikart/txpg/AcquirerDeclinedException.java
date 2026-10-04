@@ -1,4 +1,4 @@
-package az.millikart.pbl.provider;
+package az.millikart.txpg;
 
 import az.millikart.common.exception.BusinessException;
 

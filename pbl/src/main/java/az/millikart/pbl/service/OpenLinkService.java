@@ -11,9 +11,10 @@ import az.millikart.common.exception.ConflictException;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.common.exception.ResourceNotFoundException;
 
-import az.millikart.pbl.provider.AcquiringClient;
+import az.millikart.txpg.AcquiringClient;
 import az.millikart.pbl.provider.ProviderOrderStatus.ProviderOrderOutcome;
-import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
+import az.millikart.pbl.provider.ProviderOrders;
+import az.millikart.txpg.dto.EcomCreateOrderResponse;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
@@ -194,7 +195,7 @@ public class OpenLinkService {
 
         log.debug("Using redirect URL for provider: {}", hppRedirectUrl);
 
-        EcomCreateOrderResponse response = acquiringClient.createEcomOrder(link, providerCredentials.forTerminal(terminal),
+        EcomCreateOrderResponse response = acquiringClient.createEcomOrder(ProviderOrders.of(link), providerCredentials.forTerminal(terminal),
                 providerCredentials.terminalRidOf(terminal), ridByMerchant, hppRedirectUrl);
         if (response == null || response.order() == null) {
             log.error("Failed to register order at provider for ridByMerchant: {}", ridByMerchant);

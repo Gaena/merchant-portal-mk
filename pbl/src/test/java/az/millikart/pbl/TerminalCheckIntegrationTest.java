@@ -11,9 +11,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import az.millikart.common.security.CredentialCipher;
 import az.millikart.common.security.JwtProvider;
 import az.millikart.pbl.domain.Terminal;
-import az.millikart.pbl.provider.AcquiringClient;
-import az.millikart.pbl.provider.ProviderCredentials;
-import az.millikart.pbl.provider.dto.TerminalCheckResult;
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.ProviderCredentials;
+import az.millikart.txpg.dto.TerminalCheckResult;
 import az.millikart.pbl.repository.TerminalRepository;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;

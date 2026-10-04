@@ -3,7 +3,7 @@ package az.millikart.pbl.controller;
 import az.millikart.common.web.ClientIp;
 import az.millikart.common.web.TrustedProxies;
 import az.millikart.pbl.dto.PaymentReceiptView;
-import az.millikart.pbl.provider.ProviderPayloads;
+import az.millikart.txpg.ProviderPayloads;
 import az.millikart.pbl.service.OpenLinkService;
 import az.millikart.pbl.service.PaymentLinkService;
 import java.net.URI;

@@ -1,4 +1,4 @@
-package az.millikart.pbl;
+package az.millikart.txpg;
 
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest;
@@ -8,14 +8,11 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.PaymentOutcomeUnknownException;
-import az.millikart.pbl.domain.PaymentLink;
-import az.millikart.pbl.domain.PaymentType;
-import az.millikart.pbl.domain.UsageType;
-import az.millikart.pbl.provider.ProviderCredentials;
-import az.millikart.pbl.provider.TxpgAcquiringClient;
-import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
-import az.millikart.pbl.provider.dto.MoneyOperationResult;
-import az.millikart.pbl.provider.dto.TerminalCheckResult;
+import az.millikart.txpg.dto.EcomCreateOrderResponse;
+import az.millikart.txpg.dto.EcomCreateOrderRequest;
+import az.millikart.txpg.dto.MoneyOperationResult;
+import az.millikart.txpg.dto.NewOrder;
+import az.millikart.txpg.dto.TerminalCheckResult;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -498,14 +495,9 @@ class TxpgAcquiringClientTest {
         server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
                 .andExpect(MockRestRequestMatchers.method(HttpMethod.POST))
                 .andRespond(withSuccess(CREATED_ORDER_BODY, MediaType.APPLICATION_JSON));
-        PaymentLink link = PaymentLink.builder()
-                .paymentType(PaymentType.SMS)
-                .amount(new BigDecimal("5.00"))
-                .currency("AZN")
-                .description("P0-9 fixture")
-                .build();
+        NewOrder order = new NewOrder(false, new BigDecimal("5.00"), "AZN", "P0-9 fixture", null);
 
-        EcomCreateOrderResponse response = client.createEcomOrder(link, COMPANY_CREDENTIALS, TERMINAL_RID,
+        EcomCreateOrderResponse response = client.createEcomOrder(order, COMPANY_CREDENTIALS, TERMINAL_RID,
                 UUID.randomUUID(), "https://pay.example.com/api/v1/payment-links/redirect/x");
 
         server.verify();
@@ -515,11 +507,11 @@ class TxpgAcquiringClientTest {
         assertNoLogLineContains(ORDER_PASSWORD);
     }
 
-    // Р-96: заказ создаётся на терминале провайдера — номер в адресе. Клиент одноразовой ссылки уходит в
-    // tdsPresetAreq, телефон раздельно — код страны и номер; billingAddress, homePhone, workPhone — нет.
-    // Персональные данные в лог не попадают.
+    // Р-96: заказ создаётся на терминале провайдера — номер в адресе. Плательщик уходит в tdsPresetAreq,
+    // телефон раздельно — код страны и номер; billingAddress, homePhone, workPhone — нет. Персональные
+    // данные в лог не попадают. Кого из клиентов ссылки отправлять — ProviderOrdersTest в pbl.
     @Test
-    void createEcomOrder_sendsTheTerminalAndTheCustomerOfASingleUseLink() {
+    void createEcomOrder_sendsTheTerminalAndThePayer() {
         server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=00044558"))
                 .andExpect(MockRestRequestMatchers.content().json("""
                         {"order": {"typeRid": "Order_SMS", "tdsPresetAreq": {"cardholderName": "Test Testov",
@@ -527,13 +519,11 @@ class TxpgAcquiringClientTest {
                 .andExpect(MockRestRequestMatchers.jsonPath("$.order.billingAddress").doesNotExist())
                 .andExpect(MockRestRequestMatchers.jsonPath("$.order.tdsPresetAreq.homePhone").doesNotExist())
                 .andRespond(withSuccess(CREATED_ORDER_BODY, MediaType.APPLICATION_JSON));
-        PaymentLink link = PaymentLink.builder()
-                .paymentType(PaymentType.SMS).usageType(UsageType.SINGLE)
-                .amount(new BigDecimal("5.00")).currency("AZN").description("Р-96 fixture")
-                .customerName("Test Testov").customerEmail("test@test.az").customerPhone("+994703301025")
-                .build();
+        NewOrder order = new NewOrder(false, new BigDecimal("5.00"), "AZN", "Р-96 fixture",
+                new EcomCreateOrderRequest.TdsPresetAreq("Test Testov", "test@test.az",
+                        new EcomCreateOrderRequest.Phone("703301025", "994")));
 
-        client.createEcomOrder(link, COMPANY_CREDENTIALS, TERMINAL_RID, UUID.randomUUID(),
+        client.createEcomOrder(order, COMPANY_CREDENTIALS, TERMINAL_RID, UUID.randomUUID(),
                 "https://pay.example.com/api/v1/payment-links/redirect/x");
 
         server.verify();
@@ -541,26 +531,16 @@ class TxpgAcquiringClientTest {
         assertNoLogLineContains("703301025");
     }
 
-    // У многоразовой ссылки клиента нет, даже если он остался в базе с прошлых времён; телефон, который не
-    // разбирается как азербайджанский, не уходит, — и без полей блока нет вовсе.
+    // Без плательщика блока tdsPresetAreq нет вовсе, а DMS — это Order_DMS.
     @Test
-    void createEcomOrder_multiUseLinkOrNoUsableCustomer_sendsNoTdsPresetAreq() {
-        for (int i = 0; i < 2; i++) {
-            server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
-                    .andExpect(MockRestRequestMatchers.jsonPath("$.order.tdsPresetAreq").doesNotExist())
-                    .andRespond(withSuccess(CREATED_ORDER_BODY, MediaType.APPLICATION_JSON));
-        }
-        PaymentLink multiUse = PaymentLink.builder()
-                .paymentType(PaymentType.SMS).usageType(UsageType.MULTIPLE)
-                .amount(new BigDecimal("5.00")).currency("AZN").description("multi")
-                .customerName("Legacy Name").customerEmail("legacy@test.az").build();
-        PaymentLink oldPhoneOnly = PaymentLink.builder()
-                .paymentType(PaymentType.SMS).usageType(UsageType.SINGLE)
-                .amount(new BigDecimal("5.00")).currency("AZN").description("old phone")
-                .customerPhone("call me after six").build();
+    void createEcomOrder_withoutAPayer_sendsNoTdsPresetAreq() {
+        server.expect(requestTo("https://gateway.txpg.example.com/order?terminalRid=" + TERMINAL_RID))
+                .andExpect(MockRestRequestMatchers.jsonPath("$.order.typeRid").value("Order_DMS"))
+                .andExpect(MockRestRequestMatchers.jsonPath("$.order.tdsPresetAreq").doesNotExist())
+                .andRespond(withSuccess(CREATED_ORDER_BODY, MediaType.APPLICATION_JSON));
 
-        client.createEcomOrder(multiUse, COMPANY_CREDENTIALS, TERMINAL_RID, UUID.randomUUID(), "https://pay.example.com/r/1");
-        client.createEcomOrder(oldPhoneOnly, COMPANY_CREDENTIALS, TERMINAL_RID, UUID.randomUUID(), "https://pay.example.com/r/2");
+        client.createEcomOrder(new NewOrder(true, new BigDecimal("5.00"), "AZN", "dms", null),
+                COMPANY_CREDENTIALS, TERMINAL_RID, UUID.randomUUID(), "https://pay.example.com/r/1");
 
         server.verify();
     }

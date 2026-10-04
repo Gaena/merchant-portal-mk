@@ -24,9 +24,10 @@ Gradle-монорепо: четыре Spring Boot-сервиса, общая б�
 ```
 mp/
 ├── build.gradle        # Java 21, Spring Boot 3.2.5 (apply false), общие настройки subprojects
-├── settings.gradle     # include 'common', 'auth', 'pbl', 'directory', 'ecom'
+├── settings.gradle     # include 'common', 'auth', 'pbl', 'directory', 'ecom', 'txpg-client'
 ├── common/             # библиотека: security (JWT), журнал аудита, исключения, общие DTO, поиск;
 │                       #   testFixtures — контейнер PostgreSQL для тестов
+├── txpg-client/        # библиотека: клиент API провайдера (TXPG); testFixtures — двойник эквайера
 ├── auth/               # :8081 — вход, refresh и logout, пользователи
 ├── directory/          # :8082 — компании, терминалы, чтение журнала аудита, сверка статусов терминалов
 ├── pbl/                # :8080 — платёжные ссылки, транзакции, статистика по ссылкам, TXPG, кнопка «Тест»
@@ -72,7 +73,7 @@ Login из Auth-коллекции. Контракт эквайера — ист
 | Spring Boot | **3.2.5** | `build.gradle` |
 | Spring Security | 6.x (из BOM) | — |
 | JJWT | 0.11.5 | `common/build.gradle` |
-| Resilience4j | 2.2.0 (только `pbl`) | `pbl/build.gradle` |
+| Resilience4j | 2.2.0 — на вызовах клиента провайдера | `txpg-client/build.gradle` |
 | SpringDoc OpenAPI | 2.5.0 | `common/build.gradle` |
 | Caffeine | 3.1.8 — только счётчики лимита входа (`LoginRateLimiter`) | `common/build.gradle` |
 | Liquibase | из BOM | — |
@@ -107,7 +108,7 @@ Login из Auth-коллекции. Контракт эквайера — ист
 # --- Backend (из корня) ---
 ./gradlew build                 # сборка всех модулей
 ./gradlew test                  # все тесты; нужен запущенный Docker (§11)
-./gradlew :pbl:test             # тесты одного модуля (:common, :auth, :directory, :ecom)
+./gradlew :pbl:test             # тесты одного модуля (:common, :txpg-client, :auth, :directory, :ecom)
 ./gradlew :auth:bootRun         # запуск сервиса: auth 8081, directory 8082, pbl 8080, ecom 8083
 
 # --- Frontend ---
@@ -179,8 +180,9 @@ export JWT_SECRET="$(openssl rand -base64 48)"   # одно значение н�
    | `provider_logins` | `ecom` | `directory` читает нативным запросом: проверка логина компании (Р-94), список свободных логинов (Р-95), мерчант терминала (Р-96); `ecom` строит по нему скоуп выписки (Р-97) |
 
 3. **Разделение ответственности:** `auth` не управляет компаниями и терминалами; `directory` не
-   выдаёт JWT; к API эквайера ходит только `pbl`, к базе провайдера — только `ecom`, и только на
-   чтение. HTTP между сервисами нет: общее — через общую базу.
+   выдаёт JWT; к API эквайера — только через `txpg-client` (подключает `pbl`), к базе провайдера —
+   только `ecom`, и только на чтение. HTTP между сервисами нет: общее — через общую базу.
+   `txpg-client`, как и `common`, о сервисах не знает и бинов не объявляет (Р-122).
 4. **JWT симметричный (HS256)**, один секрет на все сервисы. Claims: `sub` = email, `userId`, `role`,
    `companyId`. Access-токен проверяется **stateless** во всех сервисах; чёрного списка нет и заводить
    его нельзя — запрос в базу на каждый вызов убьёт модель. Отзыв делается через refresh-токены
@@ -366,8 +368,9 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
 Потолок возврата — `refundableBase(tx)` = `capturedAmount`, а при `null` (SMS) — `amount`.
 Частичный capture остаётся в статусе `SUCCESS`; отдельного статуса под него нет.
 
-**Провайдер:** `AcquiringClient` с **единственной** реализацией — `TxpgAcquiringClient`, обычный
-`@Component`; стаба в боевой сборке нет, тестовый двойник живёт в тестовых исходниках (§11).
+**Провайдер:** `AcquiringClient` с **единственной** реализацией — `TxpgAcquiringClient` в модуле
+`txpg-client` (Р-122); бин с адресами объявляет `pbl` (`AcquiringClientConfig`), ссылку в заказ переводит
+`ProviderOrders`. Стаба в боевой сборке нет, тестовый двойник — в testFixtures модуля (§11).
 `@CircuitBreaker(name="acquiring")` висит на четырёх боевых методах, `@Retry(name="acquiring")` —
 только на `createEcomOrder` и `getOrderStatus`: повтор остальных превращается в деньги (P0-7).
 `checkOrderCreation` (кнопка «Тест») — без обоих (Р-70). Параметры — в
@@ -724,7 +727,7 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
   (должна молчать):
   ```bash
   grep -nE 'log\.(info|debug|warn|error)\(.*URL: \{\}", url' \
-    pbl/src/main/java/az/millikart/pbl/provider/TxpgAcquiringClient.java
+    txpg-client/src/main/java/az/millikart/txpg/TxpgAcquiringClient.java
   grep -n '"password", response.order().password()' \
     pbl/src/main/java/az/millikart/pbl/service/OpenLinkService.java
   ```
@@ -1024,9 +1027,10 @@ BCrypt в тестах `auth` — стоимость 4 (`mp.security.bcrypt-stre
   самим:** бин объявлен конфигурацией, а не `@MockBean`, и слушатель Spring его не чистит.
 - `@MockBean AcquiringClient` — где нужен отказ или задержка провайдера (`MoneyOperationsIntegrationTest`,
   `TransactionReconciliationIntegrationTest`, `OpenLinkConcurrencyTest`).
-- Двойник и конфигурация лежат в `pbl/src/test/java/.../provider/`; в `src/main` их не возвращать —
-  там это клиент, который отвечает «оплачено», не спросив эквайера. Сам `TxpgAcquiringClient`
-  проверяется на управляемом HTTP в `TxpgAcquiringClientTest` (`MockRestServiceServer`).
+- Двойник `StubAcquiringClient` — в testFixtures `txpg-client`, конфигурация `StubAcquirerConfig` — в
+  `pbl/src/test/java/.../provider/`; в `src/main` их не возвращать — там это клиент, который отвечает
+  «оплачено», не спросив эквайера. Сам `TxpgAcquiringClient` проверяется на управляемом HTTP в
+  `TxpgAcquiringClientTest` модуля (`MockRestServiceServer`), перевод ссылки в заказ — `ProviderOrdersTest`.
 
 **Фикстуры** для листингов создаются прямо через репозитории, минуя провайдера. Тесты гонок
 (`OpenLinkConcurrencyTest`, `RefreshTokenConcurrencyTest`) зовут сервисы не через MockMvc и без

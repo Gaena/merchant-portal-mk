@@ -1,4 +1,4 @@
-package az.millikart.pbl.provider.dto;
+package az.millikart.txpg.dto;
 
 import java.util.Map;
 

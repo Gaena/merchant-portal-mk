@@ -58,6 +58,7 @@ Gradle-монорепозиторий: четыре Spring Boot-сервиса, 
 ```
 mp/
 ├── common/      ← java-library: security, журнал аудита, исключения, общие DTO, поиск, логирование
+├── txpg-client/ ← java-library: клиент API провайдера (TXPG), подключает pbl (Р-122)
 ├── auth/        ← :8081 — вход, токены, пользователи
 ├── directory/   ← :8082 — компании, терминалы, чтение журнала аудита, сверка терминалов с провайдером
 ├── pbl/         ← :8080 — платёжные ссылки, операции, статистика оплат по ссылкам, TXPG, кнопка «Тест»
@@ -189,7 +190,7 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 | `controller` | `PaymentLinkController`, `OpenLinkController` (публичные открытие ссылки и страница возврата), `TransactionController` (список, карточка и статус операции, списание холда, возврат), `DashboardController` (статистика оплат по ссылкам), `TerminalCheckController` (кнопка «Тест») |
 | `service` | `PaymentLinkService` (ссылки, операции, статусы, история операции), `OpenLinkService` (открытие ссылки под блокировкой строки), `ProviderCredentialsService` (креды компании терминала и номер терминала у провайдера; нет — 400 до шлюза), `TransactionReconciliationService`, `DashboardService`, `TerminalCheckService`, `PaymentLinkMapper` |
 | `domain` | `PaymentLink`, `Transaction`, `TransactionRefund`, `Terminal` (чтение общей таблицы), `CustomerPhone` (азербайджанский телефон клиента, Р-96), перечисления `PaymentLinkStatus`, `TransactionStatus`, `PaymentType`, `UsageType`, `TerminalStatus` |
-| `provider` | `AcquiringClient` и его единственная реализация `TxpgAcquiringClient`; `ProviderCredentials` (пароль маскируется в `toString`); `AcquirerDeclinedException` — отказ шлюза, который circuit breaker и retry не считают сбоем; разборщики ответов шлюза `ProviderOrderStatus`, `ProviderOrderDetails`, `ProviderDeclineReason`, `ProviderPayloads`; `RestTemplateConfig` — бин `RestClient` для шлюза (и неиспользуемый `RestTemplate`); DTO шлюза в `provider.dto` |
+| `provider` | `AcquiringClientConfig` — бин клиента провайдера из `txpg-client` с адресами `pbl`; `ProviderOrders` — ссылка в заказ провайдера (`NewOrder`); разборщики ответов шлюза `ProviderOrderStatus`, `ProviderOrderDetails`, `ProviderDeclineReason`; `RestTemplateConfig` — бин `RestClient` для шлюза (и неиспользуемый `RestTemplate`). Сам клиент — в модуле `txpg-client` (§7.1) |
 | `exception` | `AcquirerUnavailableHandler` — 503 при открытом circuit breaker к эквайеру (Р-103) |
 | `repository` | `PaymentLinkRepository`, `TransactionRepository`, `TransactionRefundRepository`, `TerminalRepository`, `DashboardRepository`; `CompanyCredentialsRepository` — креды компании из общей таблицы `companies` (запрос, не сущность) |
 | `scheduler` | `PaymentLinkScheduler`, `TransactionReconciliationScheduler` |
@@ -493,16 +494,19 @@ erDiagram
 
 ```java
 public interface AcquiringClient {
-    EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
+    EcomCreateOrderResponse createEcomOrder(NewOrder order, ProviderCredentials credentials, String terminalRid,
                                             UUID ridByMerchant, String hppRedirectUrl);
-    MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
-    MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
+    MoneyOperationResult completeDms(String providerOrderId, ProviderCredentials credentials, BigDecimal amount);
+    MoneyOperationResult refund(String providerOrderId, ProviderCredentials credentials, BigDecimal amount);
     Map<String, Object> getOrderStatus(String providerOrderId, String password, ProviderCredentials credentials);
     TerminalCheckResult checkOrderCreation(ProviderCredentials credentials, String terminalRid);
 }
 ```
 
-Реализация одна — `TxpgAcquiringClient` поверх `RestClient`; тестовый двойник живёт только в тестах.
+Реализация одна — `TxpgAcquiringClient` поверх `RestClient`, в модуле `txpg-client` (пакет `az.millikart.txpg`):
+там же `ProviderCredentials`, `ProviderPayloads` (секреты из payload и адресов для лога), `AcquirerDeclinedException`
+(отказ шлюза, который circuit breaker и retry не считают сбоем) и DTO шлюза. Модуль бинов не объявляет: клиент с
+адресами `pbl.provider.*` создаёт `AcquiringClientConfig` в `pbl`. Тестовый двойник — в testFixtures модуля.
 
 - **Авторизация** — Basic с логином и паролем **компании** терминала (Р-93): их читает из `companies` и
   расшифровывает `ProviderCredentialsService.forTerminal`. Терминал без компании и компания без кредов —

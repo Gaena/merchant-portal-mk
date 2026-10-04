@@ -10,8 +10,8 @@ import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.pbl.domain.Terminal;
 import az.millikart.pbl.dto.TerminalCheckResponse;
-import az.millikart.pbl.provider.AcquiringClient;
-import az.millikart.pbl.provider.dto.TerminalCheckResult;
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.dto.TerminalCheckResult;
 import az.millikart.pbl.repository.TerminalRepository;
 import org.springframework.stereotype.Service;
 
