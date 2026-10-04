@@ -35,13 +35,13 @@ public class StubAcquiringClient implements AcquiringClient {
     }
 
     @Override
-    public MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount) {
+    public MoneyOperationResult completeDms(String providerOrderId, ProviderCredentials credentials, BigDecimal amount) {
         log.info("[STUB PROVIDER] completeDms for providerOrderId: {}, amount: {}", providerOrderId, amount);
         return confirmedOperation();
     }
 
     @Override
-    public MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount) {
+    public MoneyOperationResult refund(String providerOrderId, ProviderCredentials credentials, BigDecimal amount) {
         log.info("[STUB PROVIDER] refund for providerOrderId: {}, amount: {}", providerOrderId, amount);
         return confirmedOperation();
     }

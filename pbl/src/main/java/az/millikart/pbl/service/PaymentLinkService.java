@@ -555,7 +555,6 @@ public class PaymentLinkService {
         try {
             capture = acquiringClient.completeDms(
                     transaction.getProviderOrderId(),
-                    transaction.getProviderPassword(),
                     credentials,
                     request.amount()
             );
@@ -652,8 +651,7 @@ public class PaymentLinkService {
         // Возвращается только при подтверждённом возврате (tran.match.ridByPmo), иначе 502 (P1-8b).
         MoneyOperationResult result;
         try {
-            result = acquiringClient.refund(transaction.getProviderOrderId(), transaction.getProviderPassword(),
-                    credentials, request.amount());
+            result = acquiringClient.refund(transaction.getProviderOrderId(), credentials, request.amount());
         } catch (PaymentOutcomeUnknownException e) {
             // Как в completeDms (P2-14): деньги могли уйти со счёта мерчанта, а транзакция откатится.
             auditLogService.logUnresolved(AuditEntity.TRANSACTION, transactionId.toString(), AuditAction.REFUND,

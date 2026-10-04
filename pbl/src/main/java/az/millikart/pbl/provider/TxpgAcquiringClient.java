@@ -129,12 +129,9 @@ public class TxpgAcquiringClient implements AcquiringClient {
     @Override
     @CircuitBreaker(name = "acquiring")
     @SuppressWarnings("unchecked")
-    public MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount) {
-        // Пароль заказа — в query (Р-25): URL в лог только через ProviderPayloads.urlForLog (P0-9).
-        // Контракт требует его только у GET /order/{id}; из exec-tran не убирать без прогона на стенде.
+    public MoneyOperationResult completeDms(String providerOrderId, ProviderCredentials credentials, BigDecimal amount) {
         String url = UriComponentsBuilder.fromUriString(apiBaseUrl)
                 .path(execTranPath)
-                .queryParam("password", password)
                 .buildAndExpand(providerOrderId)
                 .toUriString();
 
@@ -173,10 +170,9 @@ public class TxpgAcquiringClient implements AcquiringClient {
     @Override
     @CircuitBreaker(name = "acquiring")
     @SuppressWarnings("unchecked")
-    public MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount) {
+    public MoneyOperationResult refund(String providerOrderId, ProviderCredentials credentials, BigDecimal amount) {
         String url = UriComponentsBuilder.fromUriString(apiBaseUrl)
                 .path(execTranPath)
-                .queryParam("password", password)
                 .buildAndExpand(providerOrderId)
                 .toUriString();
 

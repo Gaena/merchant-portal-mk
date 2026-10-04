@@ -15,10 +15,10 @@ public interface AcquiringClient {
                                             UUID ridByMerchant, String hppRedirectUrl);
 
     // Денежные операции возвращают результат, только если в ответе есть tran.match.ridByPmo; без него —
-    // PaymentOutcomeUnknownException (P1-8b).
-    MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
+    // PaymentOutcomeUnknownException (P1-8b). Пароля заказа нет: шлюз проводит их по номеру заказа (Р-121).
+    MoneyOperationResult completeDms(String providerOrderId, ProviderCredentials credentials, BigDecimal amount);
 
-    MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
+    MoneyOperationResult refund(String providerOrderId, ProviderCredentials credentials, BigDecimal amount);
 
     Map<String, Object> getOrderStatus(String providerOrderId, String password, ProviderCredentials credentials);
 

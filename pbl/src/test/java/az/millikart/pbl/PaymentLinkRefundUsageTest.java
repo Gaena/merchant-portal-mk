@@ -411,7 +411,7 @@ class PaymentLinkRefundUsageTest {
     // Возврат через настоящий endpoint, эквайер подтверждает (форма контракта §5.7).
     private void refundThroughApi(Transaction tx, BigDecimal amount) throws Exception {
         String tag = tx.getId().toString().substring(0, 8);
-        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
+        when(acquiringClient.refund(anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult("AC-" + tag, "TA-" + tag, "RID-" + tag,
                         Map.of("tran", Map.of("approvalCode", "AC-" + tag,
                                 "match", Map.of("tranActionId", "TA-" + tag, "ridByPmo", "RID-" + tag)))));

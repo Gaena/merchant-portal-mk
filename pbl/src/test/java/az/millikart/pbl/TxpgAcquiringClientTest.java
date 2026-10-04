@@ -43,7 +43,8 @@ import org.springframework.web.client.RestClient;
 // P0-7: как реальный клиент эквайринга классифицирует неудавшееся движение денег. Два вывода
 // не взаимозаменяемы: "шлюз отказал" — ничего не сдвинулось, повтор безопасен, HTTP 400 — и
 // "неизвестно" — могло исполниться, HTTP 502. Раньше всё сводилось к первому, и оборванный refund
-// оборачивался ручным повтором. Плюс P0-9: order password едет в query (Р-25) и в теле (§5.8.3).
+// оборачивался ручным повтором. Плюс P0-9: order password едет в query опроса статуса (Р-25) и в теле (§5.8.3),
+// в денежные вызовы — нет (Р-121).
 class TxpgAcquiringClientTest {
 
     private static final String ORDER_ID = "1234567";
@@ -176,7 +177,7 @@ class TxpgAcquiringClientTest {
                 .andRespond(withSuccess(CONFIRMED_BODY, MediaType.APPLICATION_JSON));
 
         // На входе scale 0, на выходе два знака: шлюзу уходит денежная строка, не голое целое.
-        client.completeDms(ORDER_ID, "order-password", COMPANY_CREDENTIALS,
+        client.completeDms(ORDER_ID, COMPANY_CREDENTIALS,
                 new BigDecimal("500"));
 
         server.verify();
@@ -191,7 +192,7 @@ class TxpgAcquiringClientTest {
                         .json("{\"tran\":{\"phase\":\"Single\",\"type\":\"Refund\",\"amount\":\"1000.00\"}}", true))
                 .andRespond(withSuccess(CONFIRMED_BODY, MediaType.APPLICATION_JSON));
 
-        client.refund(ORDER_ID, "order-password", COMPANY_CREDENTIALS,
+        client.refund(ORDER_ID, COMPANY_CREDENTIALS,
                 new BigDecimal("1E+3"));
 
         server.verify();
@@ -216,8 +217,8 @@ class TxpgAcquiringClientTest {
                 .andRespond(withSuccess("{\"order\":{\"id\":987654,\"password\":\"p\",\"hppUrl\":\"https://x\"}}",
                         MediaType.APPLICATION_JSON));
 
-        client.completeDms(ORDER_ID, "order-password", COMPANY_CREDENTIALS, AMOUNT);
-        client.refund(ORDER_ID, "order-password", COMPANY_CREDENTIALS, AMOUNT);
+        client.completeDms(ORDER_ID, COMPANY_CREDENTIALS, AMOUNT);
+        client.refund(ORDER_ID, COMPANY_CREDENTIALS, AMOUNT);
         client.getOrderStatus(ORDER_ID, "order-password", COMPANY_CREDENTIALS);
         client.checkOrderCreation(COMPANY_CREDENTIALS, TERMINAL_RID);
 
@@ -456,55 +457,20 @@ class TxpgAcquiringClientTest {
         assertNoLogLineContains(ORDER_PASSWORD);
     }
 
-    // Р-25 на проводе, P0-9 в логе: клиринг шлёт password и не логирует его.
+    // Р-121: шлюз проводит списание и возврат по номеру заказа и кредам компании. Адрес — ровно путь, без query:
+    // пароль заказа в денежные вызовы не уходит вовсе, и утекать ему неоткуда.
     @Test
-    void completeDms_neverLogsTheOrderPassword() {
-        server.expect(requestTo(Matchers.containsString("/order/" + ORDER_ID + "/exec-tran?password=" + ORDER_PASSWORD)))
-                .andRespond(withSuccess(CONFIRMED_BODY, MediaType.APPLICATION_JSON));
+    void moneyCalls_sendNoOrderPassword() {
+        String execTran = "https://api.txpg.example.com/order/" + ORDER_ID + "/exec-tran";
+        server.expect(requestTo(execTran)).andRespond(withSuccess(CONFIRMED_BODY, MediaType.APPLICATION_JSON));
+        server.expect(requestTo(execTran)).andRespond(withSuccess(CONFIRMED_BODY, MediaType.APPLICATION_JSON));
 
-        client.completeDms(ORDER_ID, ORDER_PASSWORD, COMPANY_CREDENTIALS, AMOUNT);
+        client.completeDms(ORDER_ID, COMPANY_CREDENTIALS, AMOUNT);
+        client.refund(ORDER_ID, COMPANY_CREDENTIALS, AMOUNT);
 
         server.verify();
-        assertNoLogLineContains(ORDER_PASSWORD);
         Assertions.assertTrue(allLogs().anyMatch(m -> m.contains("/order/" + ORDER_ID + "/exec-tran")),
                 "the address must still be logged: " + allLogs().toList());
-    }
-
-    @Test
-    void refund_neverLogsTheOrderPassword() {
-        server.expect(requestTo(Matchers.containsString("/order/" + ORDER_ID + "/exec-tran?password=" + ORDER_PASSWORD)))
-                .andRespond(withSuccess(CONFIRMED_BODY, MediaType.APPLICATION_JSON));
-
-        client.refund(ORDER_ID, ORDER_PASSWORD, COMPANY_CREDENTIALS, AMOUNT);
-
-        server.verify();
-        assertNoLogLineContains(ORDER_PASSWORD);
-    }
-
-    // Ветки отказа логируют исключение, а сообщение оборванного вызова называет URL. Spring режет
-    // там query; здесь это закреплено для денежных вызовов, чьи ERROR-строки чаще всего идут в алерт.
-    @Test
-    void refund_readTimeout_neverLogsTheOrderPassword() {
-        server.expect(requestTo(Matchers.containsString("password=" + ORDER_PASSWORD)))
-                .andRespond(request -> {
-                    throw new IOException("Read timed out");
-                });
-
-        Assertions.assertThrows(PaymentOutcomeUnknownException.class,
-                () -> client.refund(ORDER_ID, ORDER_PASSWORD, COMPANY_CREDENTIALS, AMOUNT));
-
-        assertNoLogLineContains(ORDER_PASSWORD);
-    }
-
-    @Test
-    void completeDms_serverError_neverLogsTheOrderPassword() {
-        server.expect(requestTo(Matchers.containsString("password=" + ORDER_PASSWORD)))
-                .andRespond(withServerError().body("{\"message\":\"gateway down\"}"));
-
-        Assertions.assertThrows(PaymentOutcomeUnknownException.class,
-                () -> client.completeDms(ORDER_ID, ORDER_PASSWORD, COMPANY_CREDENTIALS, AMOUNT));
-
-        assertNoLogLineContains(ORDER_PASSWORD);
     }
 
     // Строка ERROR "Full body" из P1-8b — это лог сырого тела эквайера. Контракт не кладёт password
@@ -512,12 +478,12 @@ class TxpgAcquiringClientTest {
     // логируется: строка и существует, чтобы показать расхождение формы.
     @Test
     void refund_unconfirmedResponse_fullBodyLogIsWithoutSecrets() {
-        server.expect(requestTo(Matchers.containsString("password=" + ORDER_PASSWORD)))
+        server.expect(requestTo(Matchers.containsString("/order/" + ORDER_ID + "/exec-tran")))
                 .andRespond(withSuccess("{\"tran\":{\"approvalCode\":\"340775\"},\"password\":\"" + ORDER_PASSWORD + "\"}",
                         MediaType.APPLICATION_JSON));
 
         Assertions.assertThrows(PaymentOutcomeUnknownException.class,
-                () -> client.refund(ORDER_ID, ORDER_PASSWORD, COMPANY_CREDENTIALS, AMOUNT));
+                () -> client.refund(ORDER_ID, COMPANY_CREDENTIALS, AMOUNT));
 
         assertNoLogLineContains(ORDER_PASSWORD);
         Assertions.assertTrue(errorLogs().anyMatch(m -> m.contains("NO CONFIRMATION") && m.contains("340775")),
@@ -639,11 +605,11 @@ class TxpgAcquiringClientTest {
     }
 
     private MoneyOperationResult refund() {
-        return client.refund(ORDER_ID, "order-password", COMPANY_CREDENTIALS, AMOUNT);
+        return client.refund(ORDER_ID, COMPANY_CREDENTIALS, AMOUNT);
     }
 
     private MoneyOperationResult completeDms() {
-        return client.completeDms(ORDER_ID, "order-password", COMPANY_CREDENTIALS, AMOUNT);
+        return client.completeDms(ORDER_ID, COMPANY_CREDENTIALS, AMOUNT);
     }
 
     private static Logger clientLogger() {

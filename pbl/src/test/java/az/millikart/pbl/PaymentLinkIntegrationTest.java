@@ -640,7 +640,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Access denied to terminal: " + TERMINAL_ID)));
 
-        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
+        verify(acquiringClient, never()).completeDms(anyString(), any(), any());
         verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
         Assertions.assertEquals(TransactionStatus.AUTHORIZED,
                 transactionRepository.findById(hold.getId()).orElseThrow().getStatus());
@@ -872,7 +872,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("has not been authorized by the acquirer yet")));
 
-        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
+        verify(acquiringClient, never()).completeDms(anyString(), any(), any());
         Assertions.assertEquals(TransactionStatus.PENDING,
                 transactionRepository.findById(pending.getId()).orElseThrow().getStatus());
     }

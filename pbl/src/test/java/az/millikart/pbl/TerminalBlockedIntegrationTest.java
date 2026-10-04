@@ -293,7 +293,7 @@ class TerminalBlockedIntegrationTest {
     @Test
     void refundOnBlockedTerminal_goesThrough() throws Exception {
         Transaction paid = transaction(BLOCKED_TERMINAL, TransactionStatus.SUCCESS, PaymentType.SMS, null);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("REF-1", "RRN-1", "APPR-1", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
@@ -311,7 +311,7 @@ class TerminalBlockedIntegrationTest {
     @Test
     void captureOnBlockedTerminal_goesThrough() throws Exception {
         Transaction held = transaction(BLOCKED_TERMINAL, TransactionStatus.AUTHORIZED, PaymentType.DMS, null);
-        when(acquiringClient.completeDms(any(), anyString(), any(), any()))
+        when(acquiringClient.completeDms(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("CAP-1", "RRN-2", "APPR-2", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + held.getId() + "/complete")

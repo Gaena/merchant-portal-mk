@@ -106,7 +106,7 @@ class PblAuditIntegrationTest {
     @Test
     void refund_isRecordedWithAmountAndAcquirerIdentifiers() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-77", "RID-42", "APPR-9", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
@@ -129,7 +129,7 @@ class PblAuditIntegrationTest {
     @Test
     void anAdminRefund_isRecordedForTheCompanyOfTheTerminal() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-78", "RID-44", "APPR-7", Map.of("status", "ok")));
         String adminToken = "Bearer " + jwtProvider.generateToken("admin-user", "admin@millikart.az", "SYSTEM_ADMIN", null);
 
@@ -147,7 +147,7 @@ class PblAuditIntegrationTest {
     @Test
     void capture_isRecordedWithAmountAndAcquirerIdentifiers() throws Exception {
         Transaction held = transaction(TransactionStatus.AUTHORIZED, PaymentType.DMS);
-        when(acquiringClient.completeDms(any(), anyString(), any(), any()))
+        when(acquiringClient.completeDms(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-88", "RID-43", "APPR-8", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + held.getId() + "/complete")
@@ -169,7 +169,7 @@ class PblAuditIntegrationTest {
     @Test
     void refundWithUnknownOutcome_isRecordedEvenThoughTheTransactionRolledBack() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException("No confirmation received from the acquirer"));
 
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
@@ -196,7 +196,7 @@ class PblAuditIntegrationTest {
     @Test
     void captureWithUnknownOutcome_isRecordedEvenThoughTheTransactionRolledBack() throws Exception {
         Transaction held = transaction(TransactionStatus.AUTHORIZED, PaymentType.DMS);
-        when(acquiringClient.completeDms(any(), anyString(), any(), any()))
+        when(acquiringClient.completeDms(any(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException("No confirmation received from the acquirer"));
 
         mockMvc.perform(post("/api/v1/transactions/" + held.getId() + "/complete")
@@ -306,7 +306,7 @@ class PblAuditIntegrationTest {
     @Test
     void auditFailure_doesNotBreakRefund() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-99", "RID-99", "APPR-99", Map.of("status", "ok")));
 
         parkAuditTable();
