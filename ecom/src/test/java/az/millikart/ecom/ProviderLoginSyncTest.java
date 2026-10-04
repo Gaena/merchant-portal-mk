@@ -16,8 +16,10 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.transaction.PlatformTransactionManager;
 
 // Слепок логинов мультимерчантов (Р-94): по нему directory проверяет логин компании при сохранении.
 // Сбой или пустой ответ шлюза не должны стереть слепок — иначе ни одну компанию нельзя было бы завести.
@@ -25,13 +27,15 @@ class ProviderLoginSyncTest {
 
     private ProviderLoginSource source;
     private ProviderLoginRepository repository;
+    private PlatformTransactionManager transactionManager;
     private ProviderLoginSyncService service;
 
     @BeforeEach
     void setUp() {
         source = Mockito.mock(ProviderLoginSource.class);
         repository = Mockito.mock(ProviderLoginRepository.class);
-        service = new ProviderLoginSyncService(source, repository);
+        transactionManager = Mockito.mock(PlatformTransactionManager.class);
+        service = new ProviderLoginSyncService(source, repository, transactionManager);
     }
 
     // Запрос дошёл, но таблицы нет (локальная схема без LOGIN2MERCHANT, 24.09.2026): причина — ошибка базы,
@@ -110,5 +114,25 @@ class ProviderLoginSyncTest {
 
         Assertions.assertFalse(service.sync().applied());
         verify(repository, never()).saveAll(any());
+    }
+
+    // Второй проход идёт к шлюзу только после коммита первого: без замка его удаление не видело ещё не
+    // закоммиченных строк первого, и связи задваивались до следующего прохода (ECOM-SYNC-RACE, Р-119).
+    @Test
+    void aSecondSync_waitsUntilTheFirstHasCommitted() throws Exception {
+        ConcurrentSyncs syncs = new ConcurrentSyncs();
+        when(source.fetchMultiMerchantLogins()).thenAnswer(invocation -> {
+            syncs.enterTheGateway();
+            return List.of(new ProviderLoginRow("shop@company.com", "Active", "Active", "M-1", "Shop"));
+        });
+
+        List<ProviderLoginSyncService.SyncOutcome> outcomes = syncs.run(service::sync);
+
+        Assertions.assertTrue(outcomes.stream().allMatch(ProviderLoginSyncService.SyncOutcome::applied));
+        InOrder order = Mockito.inOrder(source, transactionManager);
+        order.verify(source).fetchMultiMerchantLogins();
+        order.verify(transactionManager).commit(any());
+        order.verify(source).fetchMultiMerchantLogins();
+        order.verify(transactionManager).commit(any());
     }
 }

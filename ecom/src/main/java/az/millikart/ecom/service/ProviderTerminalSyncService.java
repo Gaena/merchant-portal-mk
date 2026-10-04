@@ -13,7 +13,8 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // Чужой сбой не должен выключить наши терминалы: неудачный и пустой опрос не применяются, терминал
 // гасится только после missingRunsBeforeDisable пропаданий подряд (Р-66).
@@ -25,13 +26,16 @@ public class ProviderTerminalSyncService {
     private final ProviderTerminalSource source;
     private final ProviderTerminalRepository repository;
     private final TxpgProperties properties;
+    private final TransactionTemplate transactionTemplate;
 
     public ProviderTerminalSyncService(ProviderTerminalSource source,
                                        ProviderTerminalRepository repository,
-                                       TxpgProperties properties) {
+                                       TxpgProperties properties,
+                                       PlatformTransactionManager transactionManager) {
         this.source = source;
         this.repository = repository;
         this.properties = properties;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     // ambiguous — мерчанты, пришедшие несколькими разными строками: не обновлены, но и не погашены.
@@ -42,8 +46,9 @@ public class ProviderTerminalSyncService {
         }
     }
 
-    @Transactional
-    public SyncOutcome sync() {
+    // Проходы — по одному, замок до коммита: два разом вставляли один и тот же новый терминал, и второй
+    // падал на первичном ключе (ECOM-SYNC-RACE, Р-119). Поэтому транзакция внутри, а не @Transactional.
+    public synchronized SyncOutcome sync() {
         List<ProviderTerminalSource.ProviderTerminalRow> rows;
         try {
             rows = source.fetchActive();
@@ -62,6 +67,13 @@ public class ProviderTerminalSyncService {
             return SyncOutcome.skipped("empty response");
         }
 
+        SyncOutcome outcome = transactionTemplate.execute(status -> apply(rows));
+        log.info("Provider terminal sync applied: {} terminals seen, {} ambiguous, {} marked inactive",
+                outcome.seen(), outcome.ambiguous(), outcome.disabled());
+        return outcome;
+    }
+
+    private SyncOutcome apply(List<ProviderTerminalSource.ProviderTerminalRow> rows) {
         // Одна строка на мерчанта (Р-67, Р-79). Одинаковые строки — это одна (например, две строки
         // terminalpmo у терминала); разные логины или названия у одного мерчанта сопоставить не с чем.
         Map<String, Set<ProviderTerminalSource.ProviderTerminalRow>> byRid = new LinkedHashMap<>();
@@ -127,9 +139,6 @@ public class ProviderTerminalSyncService {
             }
             repository.save(missing);
         }
-
-        log.info("Provider terminal sync applied: {} terminals seen, {} ambiguous, {} marked inactive",
-                seen, ambiguous, disabled);
         return new SyncOutcome(true, seen, ambiguous, disabled, null);
     }
 

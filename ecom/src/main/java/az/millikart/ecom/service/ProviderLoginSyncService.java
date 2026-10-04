@@ -10,7 +10,8 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // Слепок заменяется целиком (Р-94). Неудачный и пустой опрос не применяются: иначе недоступный шлюз
 // запретил бы заводить компании и терминалы, а выписка опустела бы у всех (Р-96, Р-97).
@@ -21,10 +22,13 @@ public class ProviderLoginSyncService {
 
     private final ProviderLoginSource source;
     private final ProviderLoginRepository repository;
+    private final TransactionTemplate transactionTemplate;
 
-    public ProviderLoginSyncService(ProviderLoginSource source, ProviderLoginRepository repository) {
+    public ProviderLoginSyncService(ProviderLoginSource source, ProviderLoginRepository repository,
+                                    PlatformTransactionManager transactionManager) {
         this.source = source;
         this.repository = repository;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     // logins — разных логинов в выгрузке, links — строк-связей с мерчантом.
@@ -35,8 +39,9 @@ public class ProviderLoginSyncService {
         }
     }
 
-    @Transactional
-    public SyncOutcome sync() {
+    // Проходы — по одному, замок до коммита: два разом стирали слепок друг друга до вставки, и связи
+    // задваивались (ECOM-SYNC-RACE, Р-119). Поэтому транзакция внутри, а не @Transactional на методе.
+    public synchronized SyncOutcome sync() {
         List<ProviderLoginSource.ProviderLoginRow> rows;
         try {
             rows = source.fetchMultiMerchantLogins();
@@ -79,8 +84,10 @@ public class ProviderLoginSyncService {
             return SyncOutcome.skipped("empty response");
         }
 
-        repository.deleteAllInBatch();
-        repository.saveAll(snapshot);
+        transactionTemplate.executeWithoutResult(status -> {
+            repository.deleteAllInBatch();
+            repository.saveAll(snapshot);
+        });
         log.info("Provider login sync applied: {} multimerchant logins, {} merchant links", logins.size(), links);
         return new SyncOutcome(true, logins.size(), links, null);
     }

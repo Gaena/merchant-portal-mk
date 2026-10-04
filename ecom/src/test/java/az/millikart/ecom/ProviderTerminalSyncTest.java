@@ -18,8 +18,10 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.transaction.PlatformTransactionManager;
 
 // Слепок терминалов провайдера: что бы ни ответил шлюз, живые терминалы не должны гаснуть от одного
 // сбоя. Выключенный терминал приостанавливает платёжные ссылки под ним, поэтому цена ошибки здесь —
@@ -28,6 +30,7 @@ class ProviderTerminalSyncTest {
 
     private ProviderTerminalSource source;
     private ProviderTerminalRepository repository;
+    private PlatformTransactionManager transactionManager;
     private ProviderTerminalSyncService service;
     private List<ProviderTerminal> stored;
 
@@ -41,7 +44,8 @@ class ProviderTerminalSyncTest {
 
         TxpgProperties properties = new TxpgProperties();
         properties.setMissingRunsBeforeDisable(3);
-        service = new ProviderTerminalSyncService(source, repository, properties);
+        transactionManager = Mockito.mock(PlatformTransactionManager.class);
+        service = new ProviderTerminalSyncService(source, repository, properties, transactionManager);
     }
 
     // Недоступный шлюз — это «спросить не удалось», а не «терминалов больше нет».
@@ -213,5 +217,25 @@ class ProviderTerminalSyncTest {
 
         Assertions.assertTrue(outcome.applied());
         Assertions.assertEquals(1, outcome.seen());
+    }
+
+    // Второй проход идёт к шлюзу только после коммита первого: без замка оба видели новый терминал
+    // неизвестным, и второй падал на первичном ключе (ECOM-SYNC-RACE, Р-119).
+    @Test
+    void aSecondSync_waitsUntilTheFirstHasCommitted() throws Exception {
+        ConcurrentSyncs syncs = new ConcurrentSyncs();
+        when(source.fetchActive()).thenAnswer(invocation -> {
+            syncs.enterTheGateway();
+            return List.of(new ProviderTerminalRow("E1120020", "BazarStore", "login-1", "login-1"));
+        });
+
+        List<ProviderTerminalSyncService.SyncOutcome> outcomes = syncs.run(service::sync);
+
+        Assertions.assertTrue(outcomes.stream().allMatch(ProviderTerminalSyncService.SyncOutcome::applied));
+        InOrder order = Mockito.inOrder(source, transactionManager);
+        order.verify(source).fetchActive();
+        order.verify(transactionManager).commit(any());
+        order.verify(source).fetchActive();
+        order.verify(transactionManager).commit(any());
     }
 }
