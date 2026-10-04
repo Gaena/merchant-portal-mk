@@ -17,9 +17,6 @@ export const PAYMENT_TYPES = ['SMS', 'DMS'] as const;
 
 export type PaymentType = (typeof PAYMENT_TYPES)[number];
 
-// Не словарь бэкенда: поля в ответе нет, значение ставит сама карточка после `/complete`.
-export type DmsStatus = 'authorized' | 'finalized';
-
 /**
  * Строгое сравнение со словарём, без приведения регистра и trim; не бросает. Подстановки по
  * умолчанию не заводить: нераспознанный статус стал бы активной ссылкой — «по ней можно платить».
@@ -91,24 +88,8 @@ export interface PaymentLink {
    */
   paidAt?: Date;
 
-  // Этих полей в API нет: из ответа они всегда `undefined`, ветки под ними на экран не попадают.
-  // Значений по умолчанию не подставлять (Р-48).
-  redirectUrl?: string;
-  note?: string;
-  dmsStatus?: DmsStatus;
-  finalizedAt?: Date;
-  cardNetwork?: string;
-  cardLast4?: string;
-  transactionId?: string;
-  payerIp?: string;
-  sentVia?: ('email' | 'whatsapp' | 'copy')[];
   /** `PaymentLinkResponse.terminal`; подпись — `utils/terminals.ts`. */
   terminalId?: number;
-  /**
-   * `PaymentLinkResponse.rid` — ссылка провайдера на саму платёжную ссылку, не `ridByMerchant`
-   * платежа (Р-69). Маппинг поле не переносит — всегда `undefined`.
-   */
-  providerReference?: string;
 }
 
 // Параметры кодируются: иначе описание «Invoice #12 & extras» обрежет тело письма на `#`.

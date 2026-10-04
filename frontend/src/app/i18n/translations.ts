@@ -226,7 +226,6 @@ export interface TranslationDictionary {
     subtitle: string;
     copyUrl: string;
     cancelLink: string;
-    finalizeDMS: string;
     /**
      * Панель у истёкшей и отменённой ссылки: кнопка открывает форму создания на странице
      * Pay by Link, заполненную полями этой ссылки (терминал — только если он активен).
@@ -868,7 +867,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       subtitle: 'Inspect payment link specifications, execution history and DMS status.',
       copyUrl: 'Copy Link URL',
       cancelLink: 'Cancel Link',
-      finalizeDMS: 'Complete DMS Payment',
       quickActions: 'Quick Actions',
       createSameLink: 'Create New Link (Same Details)',
       tabs: {
@@ -1452,7 +1450,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       subtitle: 'Ödəniş linkinin parametrlərinə, icra tarixçəsinə və DMS statusuna baxın.',
       copyUrl: 'Link URL-ni Kopyala',
       cancelLink: 'Linki Ləğv Et',
-      finalizeDMS: 'DMS Ödənişini Tamamla',
       quickActions: 'Sürətli Əməliyyatlar',
       createSameLink: 'Eyni Məlumatlarla Yeni Link Yarat',
       tabs: {
@@ -2036,7 +2033,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       subtitle: 'Просмотр спецификаций ссылки, истории ее выполнения и статуса DMS.',
       copyUrl: 'Скопировать URL',
       cancelLink: 'Отменить ссылку',
-      finalizeDMS: 'Завершить DMS платеж',
       quickActions: 'Быстрые действия',
       createSameLink: 'Создать новую ссылку с теми же данными',
       tabs: {

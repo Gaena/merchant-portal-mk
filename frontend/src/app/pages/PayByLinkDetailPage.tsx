@@ -15,7 +15,6 @@ import {
   Grid,
   Tooltip,
   Alert,
-  AlertTitle,
   Snackbar,
   LinearProgress,
   Avatar,
@@ -44,10 +43,7 @@ import {
   Receipt as ReceiptIcon,
   Loop as UsageIcon,
   Done as DoneIcon,
-  DoneAll as FinalizeIcon,
   Warning as WarningIcon,
-  Lock as AuthorizedIcon,
-  LockOpen as CaptureIcon,
 } from '@mui/icons-material';
 import {
   formatDateTime,
@@ -67,7 +63,6 @@ import { statusLabel } from '../i18n/translations';
 import type { PaymentLink } from '../utils/payByLinkData';
 import type { TerminalOptionDto } from '../types/dto';
 import { buildTerminalIndex, terminalLabel, terminalSubLabel } from '../utils/terminals';
-import { readMoneyOperationFailure, type MoneyOperationFailure } from '../utils/moneyOperationError';
 import { linkStatusLabel } from '../i18n/translations';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
@@ -105,38 +100,15 @@ const buildTimeline = (link: PaymentLink): TimelineEvent[] => {
     },
   ];
 
-  if (link.sentVia?.includes('email') && link.customerEmail) {
-    events.push({
-      label: 'Sent by Email',
-      time: formatDateTime(new Date(link.createdAt.getTime() + 2 * 60 * 1000)),
-      icon: <EmailIcon sx={{ fontSize: 16 }} />,
-      color: '#7b1fa2',
-      detail: `Delivered to ${link.customerEmail}`,
-    });
-  }
-
-  if (link.sentVia?.includes('whatsapp') && link.customerPhone) {
-    events.push({
-      label: 'Sent via WhatsApp',
-      time: formatDateTime(new Date(link.createdAt.getTime() + 4 * 60 * 1000)),
-      icon: <WhatsAppIcon sx={{ fontSize: 16 }} />,
-      color: '#2e7d32',
-      detail: `Sent to ${link.customerPhone}`,
-    });
-  }
-
   // По дате оплаты, а не по статусу: статуса `paid` у бэкенда нет (Р-33).
   if (link.paidAt) {
-    // Данных о карте API не отдаёт, суффикс пуст; подставлять `Visa ···· 4242` нельзя (Р-48).
-    const card = link.cardNetwork && link.cardLast4
-      ? ` via ${link.cardNetwork} ···· ${link.cardLast4}`
-      : '';
+    // Карту API по ссылке не отдаёт — она в операции; подставлять `Visa ···· 4242` нельзя (Р-48).
     events.push({
       label: 'Payment Received',
       time: formatDateTime(link.paidAt),
       icon: <CheckCircleIcon sx={{ fontSize: 16 }} />,
       color: '#2e7d32',
-      detail: `${formatCurrency(link.amount, link.currency)}${card}`,
+      detail: formatCurrency(link.amount, link.currency),
     });
     // «Customer Redirected» не показывается: времени у события в API нет, выдумывать нельзя (Р-48).
   }
@@ -376,17 +348,6 @@ export const PayByLinkDetailPage: React.FC = () => {
   const [snackbar, setSnackbar] = useState<{ text: string; error?: boolean } | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
-  const [finalizeDialogOpen, setFinalizeDialogOpen] = useState(false);
-  const [finalizeBusy, setFinalizeBusy] = useState(false);
-  // Отказ списания остаётся в окне, а не в снекбаре: неподтверждённый исход мерчант обязан
-  // увидеть и разобрать (Р-61).
-  const [finalizeError, setFinalizeError] = useState<MoneyOperationFailure | null>(null);
-
-  // Не по статусу ссылки: стадия DMS — отдельное поле `dmsStatus`, которого API пока не отдаёт (Р-48).
-  const isDmsAuthorized =
-    link?.paymentType === 'DMS' &&
-    link?.dmsStatus === 'authorized';
-
   if (!link) {
     return (
       <Box sx={{ textAlign: 'center', py: 10 }}>
@@ -435,31 +396,6 @@ export const PayByLinkDetailPage: React.FC = () => {
       fetchLink();
     }
   };
-
-  const handleFinalize = async () => {
-    if (!link) return;
-    const txId = link.transactionId || link.id;
-    setFinalizeBusy(true);
-    setFinalizeError(null);
-    try {
-      await apiClient.post(`/api/v1/transactions/${txId}/complete`, { amount: link.amount });
-      setLink(prev => prev ? {
-        ...prev,
-        dmsStatus: 'finalized',
-        finalizedAt: new Date(),
-      } : prev);
-      setFinalizeDialogOpen(false);
-      setSnackbar({ text: 'Payment finalized — funds captured successfully' });
-    } catch (err: unknown) {
-      setFinalizeError(readMoneyOperationFailure(err, 'Failed to complete DMS transaction on server'));
-    } finally {
-      setFinalizeBusy(false);
-    }
-  };
-
-  // Исход списания не подтверждён: повторять нельзя, а состояние холда видно по статусу
-  // транзакции в таблице связанных операций ниже.
-  const finalizeUnresolved = finalizeError?.outcome === 'unknown';
 
   return (
     <Box>
@@ -512,16 +448,6 @@ export const PayByLinkDetailPage: React.FC = () => {
               </Button>
             </span>
           </Tooltip>
-          {isDmsAuthorized && (
-            <Button
-              variant="outlined"
-              color="success"
-              startIcon={<FinalizeIcon />}
-              onClick={() => setFinalizeDialogOpen(true)}
-            >
-              {tObj.payByLinkDetail.finalizeDMS}
-            </Button>
-          )}
           {isActive && (
             <Button
               variant="outlined"
@@ -638,38 +564,8 @@ export const PayByLinkDetailPage: React.FC = () => {
                     </Box>
                   }
                 />
-                {/* Стадия DMS — только известная: без `dmsStatus` ветка «иначе» объявила бы captured
-                    холд, который висит. Настоящая стадия — статус операции в таблице ниже. */}
-                {link.paymentType === 'DMS' && link.dmsStatus && (
-                  <>
-                    <Divider sx={{ opacity: 0.5 }} />
-                    <InfoRow
-                      label="DMS Status"
-                      value={
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
-                          {link.dmsStatus === 'authorized' ? (
-                            <>
-                              <AuthorizedIcon sx={{ fontSize: 16, color: 'warning.main' }} />
-                              <Chip label="Authorized — Awaiting Capture" size="small" color="warning" sx={{ fontWeight: 600 }} />
-                            </>
-                          ) : (
-                            <>
-                              <CaptureIcon sx={{ fontSize: 16, color: 'success.main' }} />
-                              <Chip label="Finalized — Captured" size="small" color="success" sx={{ fontWeight: 600 }} />
-                            </>
-                          )}
-                        </Box>
-                      }
-                    />
-                    {link.finalizedAt && (
-                      <>
-                        <Divider sx={{ opacity: 0.5 }} />
-                        <InfoRow label="Finalized At" value={formatDateTime(link.finalizedAt)} />
-                      </>
-                    )}
-                  </>
-                )}
-                {/* Номера операции, карты и IP плательщика API по ссылке не отдаёт (Р-48): они — в таблице ниже. */}
+                {/* Стадии DMS, номера операции, карты и IP плательщика API по ссылке не отдаёт (Р-48): они — в
+                    таблице операций ниже, списание холда — с карточки операции. */}
                 <Divider sx={{ opacity: 0.5 }} />
                 <InfoRow label="Paid At" value={formatDateTime(link.paidAt)} />
                 <Divider sx={{ opacity: 0.5 }} />
@@ -759,32 +655,6 @@ export const PayByLinkDetailPage: React.FC = () => {
               <InfoRow label="Created" value={formatDateTime(link.createdAt)} />
               <Divider sx={{ opacity: 0.5 }} />
               <InfoRow label="Expires" value={formatDateTime(link.expiresAt)} />
-              {link.redirectUrl && (
-                <>
-                  <Divider sx={{ opacity: 0.5 }} />
-                  <InfoRow
-                    label="Redirect After Pay"
-                    value={
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600, color: 'primary.main', wordBreak: 'break-all' }}>
-                        {link.redirectUrl}
-                      </Typography>
-                    }
-                  />
-                </>
-              )}
-              {link.note && (
-                <>
-                  <Divider sx={{ opacity: 0.5 }} />
-                  <InfoRow
-                    label="Internal Note"
-                    value={
-                      <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'text.secondary' }}>
-                        {link.note}
-                      </Typography>
-                    }
-                  />
-                </>
-              )}
             </Paper>
 
             <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 3 }}>
@@ -954,23 +824,6 @@ export const PayByLinkDetailPage: React.FC = () => {
                   Payment received on {formatDateTime(link.paidAt)}
                 </Alert>
               )}
-              {link.paymentType === 'DMS' && link.dmsStatus === 'authorized' && (
-                <Alert severity="warning" icon={<AuthorizedIcon fontSize="small" />} sx={{ mt: 1 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 700 }}>Funds Authorized</Typography>
-                  <Typography variant="caption">
-                    {/* Кнопка — её переведённой подписью, а не зашитым «Finalize Payment» (P3-5a). */}
-                    {formatCurrency(link.amount, link.currency)} is reserved on the customer's card. Press <strong>{tObj.payByLinkDetail.finalizeDMS}</strong> to capture the funds.
-                  </Typography>
-                </Alert>
-              )}
-              {link.paymentType === 'DMS' && link.dmsStatus === 'finalized' && (
-                <Alert severity="success" icon={<FinalizeIcon fontSize="small" />} sx={{ mt: 1 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 700 }}>Payment Finalized</Typography>
-                  <Typography variant="caption">
-                    Funds captured on {link.finalizedAt ? formatDateTime(link.finalizedAt) : '—'}
-                  </Typography>
-                </Alert>
-              )}
 
               {link.status === 'EXPIRED' && (
                 <Alert severity="warning" icon={<WarningIcon fontSize="small" />} sx={{ mt: 1 }}>
@@ -1005,45 +858,6 @@ export const PayByLinkDetailPage: React.FC = () => {
         </Grid>
 
       </Grid>
-
-      {/* Сумма — в рамке, а не во фразе (P3-5a): окно одинаково здесь и на карточке операции. */}
-      <ConfirmDialog
-        open={finalizeDialogOpen}
-        maxWidth="xs"
-        title={tObj.payByLinkDetail.finalizeDMS}
-        question={tObj.transactions.detail.captureExplains}
-        confirmLabel={tObj.transactions.detail.confirmCapture}
-        confirmColor="success"
-        confirmIcon={<FinalizeIcon />}
-        busy={finalizeBusy}
-        confirmDisabled={finalizeUnresolved}
-        onConfirm={handleFinalize}
-        onCancel={() => { setFinalizeDialogOpen(false); setFinalizeError(null); }}
-      >
-        <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
-          <Typography variant="body2" color="text.secondary">
-            {tObj.payByLinkDetail.summary.shortCode}
-          </Typography>
-          <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: 'monospace' }}>
-            {link.shortCode}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            {tObj.transactions.detail.captureAmount}
-          </Typography>
-          <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            {formatCurrency(link.amount, link.currency)}
-          </Typography>
-        </Box>
-        {finalizeError && (
-          <Alert severity={finalizeUnresolved ? 'warning' : 'error'} sx={{ mt: 2 }}>
-            {finalizeUnresolved && (
-              <AlertTitle sx={{ fontWeight: 700 }}>{tObj.transactions.detail.unresolvedTitle}</AlertTitle>
-            )}
-            {finalizeError.message}
-            {finalizeUnresolved && ` ${tObj.transactions.detail.unresolvedHint}`}
-          </Alert>
-        )}
-      </ConfirmDialog>
 
       {/* То же окно, что в списке ссылок (P3-5a). */}
       <ConfirmDialog

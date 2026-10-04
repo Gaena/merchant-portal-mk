@@ -469,7 +469,7 @@ GET  /api/v1/payment-links/redirect/{tx}  → refreshByRidByMerchant(tx) → Thy
   что именно подтверждают — короткий код, id, сумму — выносится отдельной рамкой под текстом
   диалога, а сама фраза остаётся целой (P3-5a). Перед тем как заводить ключ, проверь, нет ли
   готового: до P3-5a в словаре простаивали на трёх языках `cancelLinkAction`,
-  `cancelConfirmTitle`/`Text`, `finalizeDMS`, `refundAction`/`refundTitle`/`confirmRefund`,
+  `cancelConfirmTitle`/`Text`, `refundAction`/`refundTitle`/`confirmRefund`,
   а диалоги рядом дублировали их английским текстом прямо в JSX.
 - Алиас `@` → `frontend/src` (`vite.config.ts:23`).
 
@@ -511,9 +511,9 @@ axios-клиент, shadcn/Radix, Tailwind, страницы на моках, с
 вместо имени показывается email.
 
 **Выдуманных данных на экранах нет — и не возвращать** (Р-48). Поле, которого нет в API, не
-показывается: ни прочерком с выдуманным значением, ни «умолчанием». Поля `PaymentLink`, которых API
-не отдаёт (`redirectUrl`, `note`, `dmsStatus`, `finalizedAt`, `cardNetwork`, `cardLast4`,
-`transactionId`, `payerIp`, `sentVia`), помечены в `utils/payByLinkData.ts` как всегда `undefined`.
+показывается: ни прочерком с выдуманным значением, ни «умолчанием». Полей, которых API по ссылке не
+отдаёт (адрес возврата, заметка, стадия DMS, карта, номер операции, адрес плательщика, «отправлено по
+почте»), в `PaymentLink` нет; карта и стадия DMS — у операций ссылки, списание — с карточки операции.
 `HomePage` ничего не считает сама: сводку отдаёт `GET /api/v1/ecom/dashboard/summary`, последние заказы —
 первая страница выписки за тот же период с `size: 10`. На `SettingsPage` живы только название
 компании (одиночный `GET /api/v1/companies/{id}` по `companyId` из токена) и язык. Удалённые метрики,
@@ -580,7 +580,7 @@ axios-клиент, shadcn/Radix, Tailwind, страницы на моках, с
 
 ```bash
 cd frontend/src
-grep -rn "status: 'CANCELED'\|/refund\|/complete" app/pages/*.tsx   # пять строк, все внутри окон
+grep -rn "status: 'CANCELED'\|/refund\|/complete" app/pages/*.tsx   # четыре строки, все внутри окон
 grep -rn "autoFocus" app/pages/*.tsx                                 # ничего — правило внутри компонента
 ```
 
