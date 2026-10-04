@@ -23,6 +23,7 @@ public class ProviderLoginSyncService {
     private final ProviderLoginSource source;
     private final ProviderLoginRepository repository;
     private final TransactionTemplate transactionTemplate;
+    private final SkippedSyncRuns skippedRuns = new SkippedSyncRuns(log, "Provider login sync");
 
     public ProviderLoginSyncService(ProviderLoginSource source, ProviderLoginRepository repository,
                                     PlatformTransactionManager transactionManager) {
@@ -47,12 +48,16 @@ public class ProviderLoginSyncService {
             rows = source.fetchMultiMerchantLogins();
         } catch (RuntimeException e) {
             String reason = ProviderSyncFailure.reason(e);
-            log.error("Provider login sync skipped: {}. The previous snapshot is kept as is.", reason, e);
+            if (skippedRuns.isNew(ProviderSyncFailure.kind(e), reason)) {
+                log.error("Provider login sync skipped: {}. The previous snapshot is kept as is.", reason, e);
+            }
             return SyncOutcome.skipped(reason);
         }
         if (rows == null || rows.isEmpty()) {
-            log.error("Provider login sync skipped: the gateway returned no multimerchant logins at all. "
-                    + "The previous snapshot is kept as is.");
+            if (skippedRuns.isNew("empty response", "empty response")) {
+                log.error("Provider login sync skipped: the gateway returned no multimerchant logins at all. "
+                        + "The previous snapshot is kept as is.");
+            }
             return SyncOutcome.skipped("empty response");
         }
 
@@ -80,7 +85,9 @@ public class ProviderLoginSyncService {
         }
 
         if (snapshot.isEmpty()) {
-            log.error("Provider login sync skipped: no row carried a login. The previous snapshot is kept as is.");
+            if (skippedRuns.isNew("empty response", "no row carried a login")) {
+                log.error("Provider login sync skipped: no row carried a login. The previous snapshot is kept as is.");
+            }
             return SyncOutcome.skipped("empty response");
         }
 
@@ -88,6 +95,7 @@ public class ProviderLoginSyncService {
             repository.deleteAllInBatch();
             repository.saveAll(snapshot);
         });
+        skippedRuns.applied();
         log.info("Provider login sync applied: {} multimerchant logins, {} merchant links", logins.size(), links);
         return new SyncOutcome(true, logins.size(), links, null);
     }

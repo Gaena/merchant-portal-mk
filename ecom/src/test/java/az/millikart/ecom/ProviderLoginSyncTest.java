@@ -10,15 +10,23 @@ import az.millikart.ecom.repository.ProviderLoginRepository;
 import az.millikart.ecom.service.ProviderLoginSource;
 import az.millikart.ecom.service.ProviderLoginSource.ProviderLoginRow;
 import az.millikart.ecom.service.ProviderLoginSyncService;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import java.sql.SQLException;
 import java.sql.SQLSyntaxErrorException;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.transaction.PlatformTransactionManager;
 
 // Слепок логинов мультимерчантов (Р-94): по нему directory проверяет логин компании при сохранении.
@@ -29,6 +37,8 @@ class ProviderLoginSyncTest {
     private ProviderLoginRepository repository;
     private PlatformTransactionManager transactionManager;
     private ProviderLoginSyncService service;
+    private final Logger serviceLogger = (Logger) LoggerFactory.getLogger(ProviderLoginSyncService.class);
+    private final ListAppender<ILoggingEvent> events = new ListAppender<>();
 
     @BeforeEach
     void setUp() {
@@ -36,6 +46,13 @@ class ProviderLoginSyncTest {
         repository = Mockito.mock(ProviderLoginRepository.class);
         transactionManager = Mockito.mock(PlatformTransactionManager.class);
         service = new ProviderLoginSyncService(source, repository, transactionManager);
+        events.start();
+        serviceLogger.addAppender(events);
+    }
+
+    @AfterEach
+    void releaseLogs() {
+        serviceLogger.detachAppender(events);
     }
 
     // Запрос дошёл, но таблицы нет (локальная схема без LOGIN2MERCHANT, 24.09.2026): причина — ошибка базы,
@@ -134,5 +151,32 @@ class ProviderLoginSyncTest {
         order.verify(transactionManager).commit(any());
         order.verify(source).fetchMultiMerchantLogins();
         order.verify(transactionManager).commit(any());
+    }
+
+    // Шлюз лёг на ночь: один ERROR со стектрейсом, а не каждые 15 минут, и строка, когда он вернулся
+    // (ECOM-SYNC-LOG, Р-98). Текст ошибки Oracle у каждой попытки свой — по нему не сравнивать.
+    @Test
+    void aGatewayOutage_isLoggedOnceAndWhenItEnds() {
+        when(source.fetchMultiMerchantLogins())
+                .thenThrow(gatewayUnavailable("a1"))
+                .thenThrow(gatewayUnavailable("b2"))
+                .thenThrow(gatewayUnavailable("c3"))
+                .thenReturn(List.of(new ProviderLoginRow("shop@company.com", "Active", "Active", "M-1", "Shop")));
+
+        for (int run = 0; run < 4; run++) {
+            service.sync();
+        }
+
+        List<ILoggingEvent> errors = events.list.stream().filter(event -> event.getLevel() == Level.ERROR).toList();
+        Assertions.assertEquals(1, errors.size(), errors.toString());
+        Assertions.assertNotNull(errors.get(0).getThrowableProxy());
+        Assertions.assertEquals(1, events.list.stream()
+                .filter(event -> event.getLevel() == Level.INFO && event.getFormattedMessage().contains("applied again"))
+                .count());
+    }
+
+    private static CannotGetJdbcConnectionException gatewayUnavailable(String connectionId) {
+        return new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection", new SQLException(
+                "IO Error: The Network Adapter could not establish the connection (CONNECTION_ID=" + connectionId + ")"));
     }
 }
