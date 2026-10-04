@@ -632,7 +632,8 @@ sequenceDiagram
   оплаты картой по всем мерчантам логина компании за период, теми же правилами, что итоги выписки.
   Статистика оплат по платёжным ссылкам — вкладка Pay by Link, сводка `pbl`.
 - **Экран.** Вкладка `/transactions/ecommerce` — выписка на API `ecom`: фильтры и итоги считает сервер,
-  страница курсорная («показать ещё»), карточка заказа — `/transactions/ecommerce/:orderId`. Форма
+  страница курсорная («показать ещё»), карточка заказа — панелью поверх выписки (Р-120) и страницей
+  `/transactions/ecommerce/:orderId` для главной и прямых ссылок. Форма
   заведения терминала у системного администратора выбирает терминал из справочника провайдера среди
   мерчантов логина выбранной компании.
 
@@ -672,7 +673,8 @@ frontend/src/
     ├── hooks/                ← useDebounced (задержка строки поиска)
     ├── layouts/              ← MainLayout
     ├── components/           ← Header, Sidebar, ConfirmDialog, StatusPage, DashboardParts (общие куски
-    │                           главной и статистики по ссылкам), LinkPaymentsStats (вкладка «Статистика»)
+    │                           главной и статистики по ссылкам), LinkPaymentsStats (вкладка «Статистика»),
+    │                           EcomOrderDetails (карточка заказа выписки: панель и страница)
     ├── pages/                ← HomePage, LoginPage (вход и смена пароля), TransactionDetailPage,
     │                           EcommerceTransactionListPage, EcommerceOrderDetailPage, PayByLinkPage,
     │                           PayByLinkDetailPage, CompaniesPage, TerminalsPage, UsersPage, AuditLogsPage,

@@ -389,6 +389,7 @@ export interface TranslationDictionary {
     };
     detail: {
       back: string;
+      openInNewTab: string;
       title: string;
       notFound: string;
       loadFailed: string;
@@ -1021,6 +1022,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       detail: {
         back: 'Back to statement',
+        openInNewTab: 'Open in a new tab',
         title: 'Order',
         notFound: 'Order not found: it does not exist, belongs to another merchant or is not finished yet.',
         loadFailed: 'Could not load the order.',
@@ -1604,6 +1606,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       detail: {
         back: 'Çıxarışa qayıt',
+        openInNewTab: 'Yeni tabda aç',
         title: 'Sifariş',
         notFound: 'Sifariş tapılmadı: mövcud deyil, başqa merçanta aiddir və ya hələ tamamlanmayıb.',
         loadFailed: 'Sifarişi yükləmək mümkün olmadı.',
@@ -2187,6 +2190,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       detail: {
         back: 'К выписке',
+        openInNewTab: 'Открыть в новой вкладке',
         title: 'Заказ',
         notFound: 'Заказ не найден: его нет, он принадлежит другому мерчанту или ещё не завершён.',
         loadFailed: 'Не удалось загрузить заказ.',

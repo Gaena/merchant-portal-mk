@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import {
   Alert,
   Box,
@@ -8,6 +8,8 @@ import {
   Checkbox,
   Chip,
   CircularProgress,
+  Drawer,
+  IconButton,
   InputAdornment,
   ListItemText,
   MenuItem,
@@ -23,10 +25,13 @@ import {
   Typography,
 } from '@mui/material';
 import {
+  Close as CloseIcon,
   FileDownload as FileDownloadIcon,
+  OpenInNew as OpenInNewIcon,
   Refresh as RefreshIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
+import { EcomOrderDetails } from '../components/EcomOrderDetails';
 import { useLanguage } from '../context/LanguageContext';
 import {
   ECOM_PAYMENT_TYPES,
@@ -121,6 +126,8 @@ const serverMessage = (err: unknown): string | null =>
 export const EcommerceTransactionListPage: React.FC = () => {
   const { tObj } = useLanguage();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const t = tObj.ecommerce;
 
   // Поля ниже — черновик; запросы идут только по `applied`. При открытии страницы оба совпадают,
@@ -197,6 +204,32 @@ export const EcommerceTransactionListPage: React.FC = () => {
     () => new Map(terminals.map(terminal => [terminal.merchantRid, terminal])),
     [terminals]
   );
+
+  // Заказ — панелью поверх выписки, его номер — в адресе: «Назад» браузера закрывает панель, а фильтры и
+  // подгруженные строки остаются на месте, без нового прохода по базе шлюза.
+  const openOrderId = searchParams.get('order') || null;
+  // Номер держится и на время закрытия, иначе панель уезжала бы пустой.
+  const lastOrderId = useRef<string | null>(null);
+  if (openOrderId) lastOrderId.current = openOrderId;
+  const drawerOrderId = openOrderId ?? lastOrderId.current;
+
+  const openOrder = (orderId: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('order', orderId);
+    setSearchParams(next, { state: { orderFromList: true } });
+  };
+
+  // Открытую отсюда панель закрывает шаг назад: иначе «Назад» браузера открыл бы её снова. Открытую по
+  // ссылке — замена адреса.
+  const closeOrder = () => {
+    if ((location.state as { orderFromList?: boolean } | null)?.orderFromList) {
+      navigate(-1);
+      return;
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('order');
+    setSearchParams(next, { replace: true });
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -525,7 +558,7 @@ export const EcommerceTransactionListPage: React.FC = () => {
             <TableBody>
               {orders.map(order => {
                 const terminal = ecomTerminalLabel(order, terminalIndex);
-                const open = () => navigate(`/transactions/ecommerce/${encodeURIComponent(order.orderId)}`);
+                const open = () => openOrder(order.orderId);
                 return (
                   <TableRow
                     key={order.orderId}
@@ -600,6 +633,36 @@ export const EcommerceTransactionListPage: React.FC = () => {
           </Box>
         )}
       </Paper>
+
+      <Drawer
+        anchor="right"
+        open={openOrderId !== null}
+        onClose={closeOrder}
+        slotProps={{ paper: { sx: { width: { xs: '100%', md: 'min(1100px, 92vw)' }, p: { xs: 2, md: 3 } } } }}
+      >
+        {drawerOrderId && (
+          <EcomOrderDetails
+            orderId={drawerOrderId}
+            knownTerminals={terminals}
+            actions={
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+                <Button
+                  component={Link}
+                  to={`/transactions/ecommerce/${encodeURIComponent(drawerOrderId)}`}
+                  target="_blank"
+                  rel="noopener"
+                  startIcon={<OpenInNewIcon />}
+                >
+                  {t.detail.openInNewTab}
+                </Button>
+                <IconButton aria-label={tObj.common.close} onClick={closeOrder}>
+                  <CloseIcon />
+                </IconButton>
+              </Box>
+            }
+          />
+        )}
+      </Drawer>
     </Box>
   );
 };
