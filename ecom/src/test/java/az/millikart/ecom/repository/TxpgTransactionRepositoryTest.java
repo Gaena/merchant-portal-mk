@@ -68,7 +68,9 @@ class TxpgTransactionRepositoryTest {
             Assertions.assertTrue(sql.contains("and m.rid in (:merchant_rids)"), sql);
             Assertions.assertTrue(sql.contains("join TXPG.merchant m on m.id = o.merchantid and m.id = tr.merchantid"), sql);
             Assertions.assertFalse(sql.contains("login"), sql);
-            Assertions.assertTrue(sql.contains("o.status not in (:unfinished_statuses)"), sql);
+            // Пустой статус — незнакомый (Р-71): без is null NULL not in (…) прятал заказ из страницы, итогов и
+            // карточки (ECOM-NULL-STATUS).
+            Assertions.assertTrue(sql.contains("and (o.status is null or o.status not in (:unfinished_statuses) or "), sql);
             // Р-76: исключение для Authorized со списанием — во всех трёх, иначе итоги разойдутся со страницей.
             Assertions.assertTrue(sql.contains("o.status = 'Authorized'"), sql);
             Assertions.assertEquals(MERCHANTS, query.params().getValue("merchant_rids"));
@@ -203,7 +205,7 @@ class TxpgTransactionRepositoryTest {
         repository.findOrderIds(filter(Instant.parse("2026-09-01T00:00:00Z"), NOW), null, 26);
 
         String sql = capturedQueries().get(0).sql().replaceAll("\\s+", " ");
-        Assertions.assertTrue(sql.contains("and (o.status not in (:unfinished_statuses) or (o.status = 'Authorized' "
+        Assertions.assertTrue(sql.contains("o.status not in (:unfinished_statuses) or (o.status = 'Authorized' "
                 + "and exists (select 1 from TXPG.tran c where c.orderid = o.id "
                 + "and ((c.trantype = 'Purchase' and c.phase = 'Clearing') or (c.trantype = 'Capture' and c.phase = 'Charge')) "
                 + "and c.voidkind is null and c.pmoresultcode = 'Approved')))"), sql);
