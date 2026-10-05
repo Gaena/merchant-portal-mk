@@ -46,10 +46,10 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
 
   const [langAnchor, setLangAnchor] = useState<null | HTMLElement>(null);
 
-  const langLabels: Record<Language, { label: string; flag: string }> = {
-    en: { label: 'English', flag: '🇬🇧' },
-    az: { label: 'Azərbaycan', flag: '🇦🇿' },
-    ru: { label: 'Русский', flag: '🇷🇺' },
+  const langLabels: Record<Language, string> = {
+    en: 'English',
+    az: 'Azərbaycan',
+    ru: 'Русский',
   };
 
   return (
@@ -77,7 +77,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
               startIcon={<LanguageIcon />}
               sx={{ textTransform: 'none', fontWeight: 600, px: 1.5 }}
             >
-              {langLabels[language]?.flag} {language.toUpperCase()}
+              {language.toUpperCase()}
             </Button>
           </Tooltip>
 
@@ -109,11 +109,8 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
               setLangAnchor(null);
             }}
           >
-            <Typography variant="body2" sx={{ mr: 1.5, fontSize: '1.2rem' }}>
-              {langLabels[lang].flag}
-            </Typography>
             <Typography variant="body2" sx={{ fontWeight: language === lang ? 700 : 400 }}>
-              {langLabels[lang].label}
+              {langLabels[lang]}
             </Typography>
           </MenuItem>
         ))}
