@@ -15,7 +15,6 @@ import {
   Button,
 } from '@mui/material';
 import {
-  AccountBalance as AccountBalanceIcon,
   Menu as MenuIcon,
   Logout as LogoutIcon,
   Language as LanguageIcon,
@@ -25,6 +24,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Language } from '../i18n/translations';
+import markUrl from '../assets/millikart-mark.png';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -62,7 +62,20 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
           <MenuIcon />
         </IconButton>
 
-        <AccountBalanceIcon sx={{ mr: 2, fontSize: 32 }} />
+        {/* Знак сине-серый и на синей шапке теряется — подложка белая. */}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            bgcolor: 'common.white',
+            borderRadius: 1,
+            px: 0.75,
+            py: 0.5,
+            mr: 2,
+          }}
+        >
+          <Box component="img" src={markUrl} alt="MilliKart" sx={{ display: 'block', height: 24, width: 'auto' }} />
+        </Box>
         <Typography variant="h6" component="div" sx={{ flexGrow: 0, mr: 3 }}>
           {tObj.header.title}
         </Typography>
