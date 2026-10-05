@@ -442,8 +442,8 @@ DB_URL=jdbc:postgresql://localhost:5432/merchant_portal
 DB_USERNAME=postgres
 DB_PASSWORD=ВАШ_ПАРОЛЬ_БАЗЫ_ДАННЫХ
 PBL_BASE_URL=https://ВАШ_ДОМЕН/
-PBL_PROVIDER_GATEWAY_BASE_URL=АДРЕС_ШЛЮЗА_ОТ_MILLIKART
-PBL_PROVIDER_API_BASE_URL=АДРЕС_API_ОТ_MILLIKART
+PROVIDER_GATEWAY_BASE_URL=АДРЕС_ШЛЮЗА_ОТ_MILLIKART
+PROVIDER_API_BASE_URL=АДРЕС_API_ОТ_MILLIKART
 ECOM_TXPG_URL=jdbc:oracle:thin:@//АДРЕС_БАЗЫ_ШЛЮЗА:ПОРТ/СЕРВИС
 ECOM_TXPG_USERNAME=ПОЛЬЗОВАТЕЛЬ_ТОЛЬКО_НА_ЧТЕНИЕ
 ECOM_TXPG_PASSWORD=ПАРОЛЬ
@@ -488,7 +488,7 @@ sudo grep JWT_SECRET /opt/merchant-portal/config/mp.env
 > отказ стартовать с инструкцией (§20.4); не-HTTPS адрес на любом хосте, кроме
 > `localhost`/`127.0.0.1`/`[::1]`, — WARN в рамке.
 >
-> `PBL_PROVIDER_GATEWAY_BASE_URL` и `PBL_PROVIDER_API_BASE_URL` — адреса шлюза и API эквайера,
+> `PROVIDER_GATEWAY_BASE_URL` и `PROVIDER_API_BASE_URL` — адреса шлюза и API эквайера, одни на `pbl` и `ecom`,
 > их выдаёт MilliKart, и у тестового стенда и прода они разные. Если адрес API у эквайера пока только
 > `http://`, сервис стартует, но пишет WARN: по этому каналу уходит Basic-авторизация с логином и паролем
 > компании. Это разговор с MilliKart о HTTPS, а не правка конфигурации.
@@ -500,7 +500,7 @@ sudo grep JWT_SECRET /opt/merchant-portal/config/mp.env
 
 > [!WARNING]
 > `CREDENTIALS_ENCRYPTION_KEY` — ключ, которым зашифрованы пароли компаний к провайдеру (Р-93):
-> `directory` шифрует, `pbl` расшифровывает, значение одно. Его **нельзя терять и менять**: с другим
+> `directory` шифрует, `pbl` и `ecom` расшифровывают, значение одно. Его **нельзя терять и менять**: с другим
 > ключом сохранённые пароли не расшифровываются, и каждой компании пароль придётся ввести заново.
 > Храните копию ключа отдельно от бэкапов базы (§16).
 
@@ -1697,12 +1697,12 @@ sudo systemctl restart mp-auth
 
 | Переменная | auth | directory | pbl | ecom | По умолчанию и смысл |
 |---|:---:|:---:|:---:|:---:|---|
-| `CREDENTIALS_ENCRYPTION_KEY` | — | **обяз.** | **обяз.** | — | нет — ключ AES-256 паролей компаний к провайдеру, 32 байта в base64, одно значение в `directory` и `pbl` (Р-93). Не терять и не менять (§8.3, §16) |
+| `CREDENTIALS_ENCRYPTION_KEY` | — | **обяз.** | **обяз.** | **обяз.** | нет — ключ AES-256 паролей компаний к провайдеру, 32 байта в base64, одно значение в `directory`, `pbl` и `ecom` (Р-93, Р-124). Не терять и не менять (§8.3, §16) |
 | `DIRECTORY_TERMINAL_RECONCILIATION_ENABLED`, `DIRECTORY_TERMINAL_RECONCILIATION_CRON` | — | + | — | — | `true`, `0 */15 * * * *` — сверка статусов терминалов со справочником провайдера |
 | `PBL_BASE_URL` | — | — | **обяз.** | — | нет — публичный адрес портала, уходит эквайеру как адрес возврата плательщика (P1-10, §8.3) |
-| `PBL_PROVIDER_GATEWAY_BASE_URL` | — | — | **обяз.** | — | нет — адрес шлюза эквайера (страница оплаты), выдаёт MilliKart; не-HTTPS даёт WARN |
-| `PBL_PROVIDER_API_BASE_URL` | — | — | **обяз.** | — | нет — адрес e-commerce API эквайера, выдаёт MilliKart; не-HTTPS даёт WARN |
-| `PBL_PROVIDER_CREATE_ORDER_PATH`, `PBL_PROVIDER_EXEC_TRAN_PATH`, `PBL_PROVIDER_GET_ORDER_PATH` | — | — | + | — | `/order`, `/order/{orderId}/exec-tran`, `/order/{orderId}` — пути протокола эквайера, менять не нужно |
+| `PROVIDER_GATEWAY_BASE_URL` | — | — | **обяз.** | **обяз.** | нет — адрес шлюза эквайера (страница оплаты), выдаёт MilliKart; не-HTTPS даёт WARN |
+| `PROVIDER_API_BASE_URL` | — | — | **обяз.** | **обяз.** | нет — адрес e-commerce API эквайера, выдаёт MilliKart; не-HTTPS даёт WARN |
+| `PROVIDER_CREATE_ORDER_PATH`, `PROVIDER_EXEC_TRAN_PATH`, `PROVIDER_GET_ORDER_PATH` | — | — | + | + | `/order`, `/order/{orderId}/exec-tran`, `/order/{orderId}` — пути протокола эквайера, менять не нужно |
 | `PBL_API_TOKEN_ENABLED` | — | — | + | — | `false` — статический токен с ролью `SYSTEM_ADMIN` без пароля; не включать |
 | `PBL_API_TOKEN` | — | — | **обяз.** при включённом флаге | — | пусто |
 | `PBL_DASHBOARD_ZONE` | — | — | + | — | `Asia/Baku` — часовой пояс статистики оплат по ссылкам (вкладка «Статистика» страницы Pay by Link). Пояс главной и выписки — `ECOM_TXPG_ZONE` |
@@ -1807,7 +1807,7 @@ sudo -u postgres psql -d merchant_portal -c "UPDATE users SET status = 'ACTIVE',
 | `The environment variable JWT_SECRET is not set` | Переменной нет в окружении процесса | Задать её; для systemd — проверить `EnvironmentFile=` в юните |
 | `JWT signing secret is not set` | Переменная есть, но пустая (`JWT_SECRET=`) | Записать ключ: `openssl rand -base64 48` (§8.3) |
 | `The environment variable DB_PASSWORD is not set` | То же для пароля БД | Задать её |
-| `The environment variable CREDENTIALS_ENCRYPTION_KEY is not set` | Нет ключа паролей компаний (`directory`, `pbl`) | Задать: `openssl rand -base64 32`, одно значение на оба сервиса. Если пароли компаний уже сохранены — вернуть прежний ключ (§16) |
+| `The environment variable CREDENTIALS_ENCRYPTION_KEY is not set` | Нет ключа паролей компаний (`directory`, `pbl`, `ecom`) | Задать: `openssl rand -base64 32`, одно значение на все три сервиса. Если пароли компаний уже сохранены — вернуть прежний ключ (§16) |
 | `Credentials encryption key is not set` | Переменная есть, но пустая | То же |
 | `Credentials encryption key is not valid base64` | Значение испорчено: обрезано, лишние символы | Вернуть исходное значение; новый ключ — только на установке без сохранённых паролей компаний |
 | `Credentials encryption key is N bytes, AES-256 requires exactly 32` | Ключ не той длины | Сгенерировать заново: `openssl rand -base64 32` |
@@ -1817,7 +1817,7 @@ sudo -u postgres psql -d merchant_portal -c "UPDATE users SET status = 'ACTIVE',
 | `BOOTSTRAP_ADMIN_USERNAME must be an email address` | Логин администратора — не адрес почты | Задать адрес почты: с другим логином войти нельзя |
 | `auth.bootstrap.enabled is true but BOOTSTRAP_ADMIN_USERNAME and/or BOOTSTRAP_ADMIN_PASSWORD is not set` | Флаг включён, а данных администратора нет | Задать обе переменные либо выключить флаг |
 | `pbl.security.api-token-enabled is true but pbl.security.api-token is empty` | Включён статический токен без значения | Выключить `PBL_API_TOKEN_ENABLED` (обычно это и нужно) |
-| `The environment variable PBL_BASE_URL is not set` (то же для `PBL_PROVIDER_GATEWAY_BASE_URL`, `PBL_PROVIDER_API_BASE_URL`) | Адреса нет в окружении `pbl` | Задать её в `mp.env` (§8.3); дефолта нет намеренно |
+| `The environment variable PBL_BASE_URL is not set` (то же для `PROVIDER_GATEWAY_BASE_URL`, `PROVIDER_API_BASE_URL`) | Адреса нет в окружении `pbl` | Задать её в `mp.env` (§8.3); дефолта нет намеренно |
 | `The environment variable PBL_BASE_URL (property pbl.base-url) is empty` / `has leading or trailing whitespace` / `is not a valid URL` / `must be an absolute URL` / `has a host part that is not a valid host name` / `must use http or https` | Переменная есть, но значение не годится (пусто, пробел или CRLF на конце, незаменённый `ВАШ_ДОМЕН`, относительный путь, `ftp://`) | Задать абсолютный `https://` адрес без лишних пробелов, например `https://ВАШ_ДОМЕН/` с реальным доменом |
 | `The environment variable ECOM_TXPG_URL is not set: ecom has no address for the provider gateway database` (то же для `ECOM_TXPG_USERNAME` — `user name`, `ECOM_TXPG_PASSWORD` — `password`) | Нет доступа к базе шлюза в окружении `ecom` | Задать переменные в `mp.env` (§8.3); значения выдаёт MilliKart |
 | `Migration failed for changeset …002-ecom-terminal-status-source…` с причиной `relation "terminals" does not exist` | `ecom` запущен на пустой базе раньше `directory` и `pbl` | Запустить `mp-directory`, затем снова `mp-ecom`: `sudo systemctl reset-failed mp-ecom && sudo systemctl start mp-ecom` (§9.5) |

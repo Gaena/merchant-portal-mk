@@ -59,12 +59,12 @@ pbl:
   provider:
     # No defaults on purpose (P1-10): a test-stand fallback in production routes payments to the test
     # acquirer. gateway — payment page and createEcomOrder; api — exec-tran and order status.
-    gateway-base-url: ${PBL_PROVIDER_GATEWAY_BASE_URL}
-    api-base-url: ${PBL_PROVIDER_API_BASE_URL}
+    gateway-base-url: ${PROVIDER_GATEWAY_BASE_URL}
+    api-base-url: ${PROVIDER_API_BASE_URL}
     # Protocol constants, so defaults are fine. Quoted: a bare `{` starts a YAML flow mapping.
-    create-order-path: "${PBL_PROVIDER_CREATE_ORDER_PATH:/order}"
-    exec-tran-path: "${PBL_PROVIDER_EXEC_TRAN_PATH:/order/{orderId}/exec-tran}"
-    get-order-path: "${PBL_PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
+    create-order-path: "${PROVIDER_CREATE_ORDER_PATH:/order}"
+    exec-tran-path: "${PROVIDER_EXEC_TRAN_PATH:/order/{orderId}/exec-tran}"
+    get-order-path: "${PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
 
 mp:
   # Forwarding headers are believed only from these addresses — nginx on loopback (P2-10).

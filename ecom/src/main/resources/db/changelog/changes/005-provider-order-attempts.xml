@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Р-124: возврат или списание заказа выписки, исход которого ещё не записан, — как money_operation_attempts
+      у pbl (Р-123). Своей строки у заказа выписки в нашей базе нет, поэтому эта строка и замок, и след: пишется
+      до отправки эквайеру, удаляется, когда исход известен и окончателен; без ответа остаётся с state UNKNOWN,
+      пока SYSTEM_ADMIN не отметит итог. Ключ — номер заказа у провайдера: идущая операция у заказа одна.
+    -->
+    <changeSet id="005-ecom-provider-order-attempts" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="provider_order_attempts"/>
+            </not>
+        </preConditions>
+        <createTable tableName="provider_order_attempts">
+            <column name="order_id" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- CAPTURE или REFUND -->
+            <column name="kind" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="amount" type="numeric(19,2)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- IN_PROGRESS или UNKNOWN; IN_PROGRESS старше 5 минут читается как UNKNOWN -->
+            <column name="state" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="started_by" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="started_at" type="TIMESTAMP WITH TIME ZONE">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+</databaseChangeLog>

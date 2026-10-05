@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import az.millikart.common.security.Role;
 import az.millikart.pbl.domain.MoneyOperationAttempt;
 import az.millikart.pbl.domain.TransactionStatus;
-import az.millikart.pbl.dto.TransactionActions;
+import az.millikart.common.money.OperationActions;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -23,7 +23,7 @@ class MoneyActionsTest {
 
     @Test
     void aPaidOperation_isRefundableUpToWhatIsLeft() {
-        TransactionActions actions = decide(facts(TransactionStatus.PARTIALLY_REFUNDED, false).refunded("30.00"));
+        OperationActions actions = decide(facts(TransactionStatus.PARTIALLY_REFUNDED, false).refunded("30.00"));
 
         assertTrue(actions.refund().enabled());
         assertEquals(0, new BigDecimal("70.00").compareTo(actions.refund().maxAmount()));
@@ -34,7 +34,7 @@ class MoneyActionsTest {
     // P0-8: у DMS потолок — списанное, не авторизованное.
     @Test
     void aPartlyCapturedHold_isRefundableUpToTheCapturedAmount() {
-        TransactionActions actions = decide(facts(TransactionStatus.SUCCESS, true)
+        OperationActions actions = decide(facts(TransactionStatus.SUCCESS, true)
                 .amounts("1500.00", "500.00", "0.00"));
 
         assertEquals(0, new BigDecimal("500.00").compareTo(actions.refund().maxAmount()));
@@ -43,7 +43,7 @@ class MoneyActionsTest {
 
     @Test
     void aHold_isCapturable_andItsRefundWaitsForTheCapture() {
-        TransactionActions actions = decide(facts(TransactionStatus.AUTHORIZED, true));
+        OperationActions actions = decide(facts(TransactionStatus.AUTHORIZED, true));
 
         assertTrue(actions.capture().enabled());
         assertEquals(0, HUNDRED.compareTo(actions.capture().maxAmount()));
@@ -53,7 +53,7 @@ class MoneyActionsTest {
     // Копия PENDING могла отстать от холда: списание сначала спросит эквайера (P0-2). Возврата у неё нет.
     @Test
     void aPendingDmsPayment_offersOnlyTheCapture() {
-        TransactionActions actions = decide(facts(TransactionStatus.PENDING, true));
+        OperationActions actions = decide(facts(TransactionStatus.PENDING, true));
 
         assertTrue(actions.capture().enabled());
         assertNull(actions.refund());
@@ -62,7 +62,7 @@ class MoneyActionsTest {
     @Test
     void aFailedOrPendingSmsPayment_hasNoButtonsAtAll() {
         for (TransactionStatus status : new TransactionStatus[] {TransactionStatus.FAILED, TransactionStatus.PENDING}) {
-            TransactionActions actions = decide(facts(status, false));
+            OperationActions actions = decide(facts(status, false));
             assertNull(actions.refund(), status.name());
             assertNull(actions.capture(), status.name());
         }
@@ -77,10 +77,10 @@ class MoneyActionsTest {
     // Р-123, ответ 4: роли без права кнопку видят, но выключенной — и это первая причина, раньше всех прочих.
     @Test
     void rolesWithoutTheRight_seeTheButtonsDisabled() {
-        TransactionActions employee = decide(facts(TransactionStatus.SUCCESS, false).role(Role.COMPANY_EMPLOYEE));
+        OperationActions employee = decide(facts(TransactionStatus.SUCCESS, false).role(Role.COMPANY_EMPLOYEE));
         assertEquals("NO_RIGHTS", employee.refund().reason());
 
-        TransactionActions auditor = decide(facts(TransactionStatus.AUTHORIZED, true).role(Role.AUDITOR)
+        OperationActions auditor = decide(facts(TransactionStatus.AUTHORIZED, true).role(Role.AUDITOR)
                 .attempt(MoneyOperationAttempt.State.UNKNOWN, Duration.ofMinutes(1)));
         assertEquals("NO_RIGHTS", auditor.capture().reason());
         assertEquals("NO_RIGHTS", auditor.refund().reason());
@@ -100,26 +100,26 @@ class MoneyActionsTest {
     // Строка попытки старше пяти минут — неизвестный исход; разрешает его только SYSTEM_ADMIN.
     @Test
     void anOpenAttempt_disablesBothButtons_andOnlyAStaleOneIsResolvable() {
-        TransactionActions fresh = decide(facts(TransactionStatus.SUCCESS, true).role(Role.SYSTEM_ADMIN)
+        OperationActions fresh = decide(facts(TransactionStatus.SUCCESS, true).role(Role.SYSTEM_ADMIN)
                 .attempt(MoneyOperationAttempt.State.IN_PROGRESS, Duration.ofMinutes(4)));
         assertEquals("IN_PROGRESS", fresh.refund().reason());
         assertEquals("IN_PROGRESS", fresh.capture().reason());
         assertEquals("IN_PROGRESS", fresh.unresolved().state());
         assertFalse(fresh.unresolved().resolvable());
 
-        TransactionActions stale = decide(facts(TransactionStatus.SUCCESS, true).role(Role.SYSTEM_ADMIN)
+        OperationActions stale = decide(facts(TransactionStatus.SUCCESS, true).role(Role.SYSTEM_ADMIN)
                 .attempt(MoneyOperationAttempt.State.IN_PROGRESS, Duration.ofMinutes(6)));
         assertEquals("OUTCOME_UNKNOWN", stale.refund().reason());
         assertEquals("UNKNOWN", stale.unresolved().state());
         assertTrue(stale.unresolved().resolvable());
 
-        TransactionActions head = decide(facts(TransactionStatus.SUCCESS, true)
+        OperationActions head = decide(facts(TransactionStatus.SUCCESS, true)
                 .attempt(MoneyOperationAttempt.State.UNKNOWN, Duration.ofMinutes(1)));
         assertEquals("OUTCOME_UNKNOWN", head.refund().reason());
         assertFalse(head.unresolved().resolvable());
     }
 
-    private static TransactionActions decide(Fixture fixture) {
+    private static OperationActions decide(Fixture fixture) {
         return MoneyActions.decide(fixture.build());
     }
 

@@ -277,7 +277,20 @@ after dateFrom`; `400 The requested period exceeds the maximum of N days`.
 ### 2.7. `GET /api/v1/ecom/transactions/{orderId}`
 
 Карточка заказа — тот же объект, что строка выписки (§2.4), с полной историей операций. Период не
-нужен.
+нужен. В строках выписки два поля ниже — `null`, в карточке они заполнены (Р-124):
+
+- `portalTransactionId` — заказ завёл портал (Pay by Link): номер операции портала с тем же номером заказа
+  (`transactions.provider_order_id`). Возврат и списание такого заказа проводит `pbl` по этой операции
+  (`pay-by-link.md` §5.8–5.10), поэтому `actions` у него `null`.
+- `actions` — кнопки возврата и списания, та же форма и те же коды причин, что у операции портала
+  (`pay-by-link.md` §5.8): `refund`, `capture` и `unresolved`. Возврат есть у `SUCCESS`, `PARTIALLY_PAID`,
+  `PARTIALLY_REFUNDED`, `REFUNDED` и `AUTHORIZED` (у холда — `CAPTURE_FIRST`); списание — у DMS (в операциях
+  есть авторизация или списание): у `AUTHORIZED` активно, у оплаченных — `ALREADY_CAPTURED`. У `PENDING`,
+  `FAILED` и `CANCELED` кнопок нет. Мерчанта заказа нет среди терминалов портала (`terminals.merchant_rid`) —
+  `TERMINAL_NOT_IN_PORTAL`; у компании терминала нет кредов к провайдеру — `NO_PROVIDER_CREDENTIALS`. Потолок
+  возврата — списано минус возвращено (§2.3), списания — сумма заказа минус списанное. Права — те же, что у
+  операций портала (`MoneyActionRoles`): возврат — `SYSTEM_ADMIN`, `COMPANY_HEAD`, `COMPANY_MANAGER`,
+  списание — все, кроме `AUDITOR`.
 
 *Отказы*: `403` — §2.1; `404` — заказа нет, он чужой, не завершён (§2.2) или номер не число. Все четыре
 случая неотличимы: подобранный номер не должен подтверждать, что такой заказ у провайдера есть. Текст —

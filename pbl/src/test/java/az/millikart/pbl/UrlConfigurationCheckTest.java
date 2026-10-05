@@ -60,7 +60,7 @@ class UrlConfigurationCheckTest {
         Assertions.assertEquals(1, warnings.size(), () -> "expected exactly one WARN, got: " + warnings);
         String message = warnings.get(0).getFormattedMessage();
         Assertions.assertTrue(message.contains(insecureApi), "the WARN must name the address: " + message);
-        Assertions.assertTrue(message.contains("PBL_PROVIDER_API_BASE_URL"),
+        Assertions.assertTrue(message.contains("PROVIDER_API_BASE_URL"),
                 "the WARN must name the environment variable: " + message);
         Assertions.assertTrue(message.contains("Basic authentication"),
                 "the WARN must say what travels over the channel: " + message);
@@ -76,7 +76,7 @@ class UrlConfigurationCheckTest {
         Assertions.assertEquals(1, warnings.size(), () -> "expected exactly one WARN, got: " + warnings);
         String message = warnings.getFirst().getFormattedMessage();
         Assertions.assertTrue(message.contains(insecureGateway), "the WARN must name the address: " + message);
-        Assertions.assertTrue(message.contains("PBL_PROVIDER_GATEWAY_BASE_URL"),
+        Assertions.assertTrue(message.contains("PROVIDER_GATEWAY_BASE_URL"),
                 "the WARN must name the environment variable: " + message);
     }
 
@@ -150,7 +150,7 @@ class UrlConfigurationCheckTest {
         IllegalStateException thrown = Assertions.assertThrows(IllegalStateException.class,
                 () -> new UrlConfigurationCheck(HTTPS_BASE, HTTPS_GATEWAY, "http://api txpg.example.com/"));
 
-        Assertions.assertTrue(thrown.getMessage().contains("PBL_PROVIDER_API_BASE_URL"), thrown.getMessage());
+        Assertions.assertTrue(thrown.getMessage().contains("PROVIDER_API_BASE_URL"), thrown.getMessage());
     }
 
     // Потребители берут значение без trim, поэтому хвостовой пробел прошёл бы проверку по
@@ -160,7 +160,7 @@ class UrlConfigurationCheckTest {
     void surroundingWhitespace_refusesToStartAndShowsIt() {
         IllegalStateException trailingSpace = Assertions.assertThrows(IllegalStateException.class,
                 () -> new UrlConfigurationCheck(HTTPS_BASE, HTTPS_GATEWAY, "https://api.txpg.example.com/ "));
-        Assertions.assertTrue(trailingSpace.getMessage().contains("PBL_PROVIDER_API_BASE_URL"), trailingSpace.getMessage());
+        Assertions.assertTrue(trailingSpace.getMessage().contains("PROVIDER_API_BASE_URL"), trailingSpace.getMessage());
         Assertions.assertTrue(trailingSpace.getMessage().contains("whitespace"), trailingSpace.getMessage());
 
         IllegalStateException crlf = Assertions.assertThrows(IllegalStateException.class,
@@ -187,7 +187,7 @@ class UrlConfigurationCheckTest {
         IllegalStateException thrown = Assertions.assertThrows(IllegalStateException.class,
                 () -> new UrlConfigurationCheck(HTTPS_BASE, "   ", HTTPS_API));
 
-        Assertions.assertTrue(thrown.getMessage().contains("PBL_PROVIDER_GATEWAY_BASE_URL"), thrown.getMessage());
+        Assertions.assertTrue(thrown.getMessage().contains("PROVIDER_GATEWAY_BASE_URL"), thrown.getMessage());
     }
 
     private List<ILoggingEvent> warnings() {

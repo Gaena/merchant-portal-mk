@@ -9,5 +9,6 @@
     <include file="changes/002-terminal-status-source.xml" relativeToChangelogFile="true"/>
     <include file="changes/003-provider-logins.xml" relativeToChangelogFile="true"/>
     <include file="changes/004-provider-terminal-rid.xml" relativeToChangelogFile="true"/>
+    <include file="changes/005-provider-order-attempts.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

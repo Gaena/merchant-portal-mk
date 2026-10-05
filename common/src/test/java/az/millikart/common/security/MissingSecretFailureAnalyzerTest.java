@@ -20,7 +20,7 @@ class MissingSecretFailureAnalyzerTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"JWT_SECRET", "DB_PASSWORD", "PBL_API_TOKEN", "PBL_BASE_URL",
-            "PBL_PROVIDER_GATEWAY_BASE_URL", "PBL_PROVIDER_API_BASE_URL", "CREDENTIALS_ENCRYPTION_KEY"})
+            "PROVIDER_GATEWAY_BASE_URL", "PROVIDER_API_BASE_URL", "CREDENTIALS_ENCRYPTION_KEY"})
     void aMissingVariable_isNamedWithTheCommandThatSetsIt(String variable) {
         FailureAnalysis analysis = analyzer.analyze(unresolved(variable));
 

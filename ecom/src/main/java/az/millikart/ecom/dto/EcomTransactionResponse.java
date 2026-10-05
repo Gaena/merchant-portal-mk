@@ -1,5 +1,6 @@
 package az.millikart.ecom.dto;
 
+import az.millikart.common.money.OperationActions;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -29,6 +30,16 @@ public record EcomTransactionResponse(
         String rrn,
         // Код ответа провайдера по последней операции — только когда одобренных не было.
         String declineCode,
-        List<EcomOperationResponse> operations
+        List<EcomOperationResponse> operations,
+        // Кнопки возврата и списания (Р-124) — только в карточке заказа, в строках выписки null.
+        OperationActions actions,
+        // Заказ заведён порталом: проводит его pbl по этой операции, своих кнопок у заказа нет (Р-124).
+        String portalTransactionId
 ) {
+
+    public EcomTransactionResponse withActions(OperationActions actions, String portalTransactionId) {
+        return new EcomTransactionResponse(orderId, merchantRid, merchantTitle, ridByMerchant, status, providerStatus,
+                providerPrevStatus, amount, capturedAmount, refundedAmount, currency, description, createdAt,
+                lastOperationAt, cardMask, rrn, declineCode, operations, actions, portalTransactionId);
+    }
 }

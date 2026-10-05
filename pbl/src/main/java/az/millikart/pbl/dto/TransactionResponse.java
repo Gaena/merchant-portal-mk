@@ -1,5 +1,6 @@
 package az.millikart.pbl.dto;
 
+import az.millikart.common.money.OperationActions;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -35,7 +36,7 @@ public record TransactionResponse(
         // Причина отказа словами эквайера (контракт §5.8.7, Р-24); только у FAILED.
         String failureReason,
         // Кнопки возврата и списания (Р-123); только у одной операции, в списках null.
-        TransactionActions actions
+        OperationActions actions
 ) {
 
     // status — состояние ПОСЛЕ события, из словаря TransactionStatus. amount и acquirerReference

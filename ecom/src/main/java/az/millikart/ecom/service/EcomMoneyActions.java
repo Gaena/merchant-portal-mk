@@ -1,4 +1,4 @@
-package az.millikart.pbl.service;
+package az.millikart.ecom.service;
 
 import static az.millikart.common.money.MoneyActionReason.ALREADY_CAPTURED;
 import static az.millikart.common.money.MoneyActionReason.CAPTURE_FIRST;
@@ -13,35 +13,32 @@ import az.millikart.common.money.MoneyActionRoles;
 import az.millikart.common.money.OperationActions;
 import az.millikart.common.money.OperationActions.Action;
 import az.millikart.common.security.Role;
-import az.millikart.pbl.domain.MoneyOperationAttempt;
-import az.millikart.pbl.domain.TransactionStatus;
+import az.millikart.ecom.domain.ProviderOrderAttempt;
+import az.millikart.ecom.service.EcomStatusResolver.EcomStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.Set;
 
-// Правила кнопок возврата и списания (Р-123): видна по смыслу, активна — когда сервис примет действие, иначе —
-// причина. refund и completeDms проверяют то же самое ещё раз; меняешь проверку там — меняй и здесь.
-final class MoneyActions {
+// Правила кнопок заказа выписки (Р-124) — те же, что у операции портала (pbl MoneyActions, Р-123), на статусах
+// выписки. Деньги — по правилам выписки (EcomOrderAssembler.money): captured уже за вычетом реверсалов.
+final class EcomMoneyActions {
 
-    // Возврат имеет смысл у оплаченного и у холда (тогда — «сначала спишите»); у неоплаченного и отклонённого нет.
-    private static final Set<TransactionStatus> REFUND_VISIBLE = EnumSet.of(TransactionStatus.SUCCESS,
-            TransactionStatus.PARTIALLY_REFUNDED, TransactionStatus.REFUNDED, TransactionStatus.AUTHORIZED);
+    // Возврат имеет смысл у оплаченного (и частично) и у холда — тогда «сначала спишите».
+    private static final Set<EcomStatus> REFUND_VISIBLE = EnumSet.of(EcomStatus.SUCCESS, EcomStatus.PARTIALLY_PAID,
+            EcomStatus.PARTIALLY_REFUNDED, EcomStatus.REFUNDED, EcomStatus.AUTHORIZED);
 
-    // Списание — только у DMS. PENDING — тоже: копия может отставать от холда, списание сначала спросит эквайера (P0-2).
-    private static final Set<TransactionStatus> CAPTURE_VISIBLE = EnumSet.of(TransactionStatus.PENDING,
-            TransactionStatus.AUTHORIZED, TransactionStatus.SUCCESS, TransactionStatus.PARTIALLY_REFUNDED,
-            TransactionStatus.REFUNDED);
+    // Списание — только у DMS. Холд — AUTHORIZED: у DMS со списанием статус идёт по деньгам (Р-92).
+    private static final Set<EcomStatus> CAPTURE_VISIBLE = EnumSet.of(EcomStatus.AUTHORIZED, EcomStatus.SUCCESS,
+            EcomStatus.PARTIALLY_PAID, EcomStatus.PARTIALLY_REFUNDED, EcomStatus.REFUNDED);
 
-    private static final Set<TransactionStatus> CAPTURABLE = EnumSet.of(TransactionStatus.PENDING, TransactionStatus.AUTHORIZED);
-
-    private MoneyActions() {
+    private EcomMoneyActions() {
     }
 
-    // terminalKnown — терминал операции заведён в портале; credentialsPresent — у его компании есть креды (Р-93).
-    record Facts(TransactionStatus status, boolean dms, BigDecimal amount, BigDecimal capturedAmount,
-                 BigDecimal refundedAmount, Role role, boolean terminalKnown, boolean credentialsPresent,
-                 MoneyOperationAttempt attempt, Instant now) {
+    // terminalKnown — мерчант заказа заведён терминалом портала; credentialsPresent — у компании терминала есть креды.
+    record Facts(EcomStatus status, boolean dms, BigDecimal amount, BigDecimal captured, BigDecimal refunded,
+                 Role role, boolean terminalKnown, boolean credentialsPresent, ProviderOrderAttempt attempt,
+                 Instant now) {
     }
 
     static OperationActions decide(Facts facts) {
@@ -58,11 +55,10 @@ final class MoneyActions {
         if (facts.attempt() != null) {
             return Action.disabled(facts.attempt().outcomeUnknown(facts.now()) ? OUTCOME_UNKNOWN : IN_PROGRESS);
         }
-        if (facts.status() == TransactionStatus.AUTHORIZED) {
+        if (facts.status() == EcomStatus.AUTHORIZED) {
             return Action.disabled(CAPTURE_FIRST);
         }
-        BigDecimal base = facts.capturedAmount() != null ? facts.capturedAmount() : facts.amount();
-        BigDecimal left = base.subtract(facts.refundedAmount() != null ? facts.refundedAmount() : BigDecimal.ZERO);
+        BigDecimal left = orZero(facts.captured()).subtract(orZero(facts.refunded()));
         if (left.signum() <= 0) {
             return Action.disabled(FULLY_REFUNDED);
         }
@@ -80,11 +76,11 @@ final class MoneyActions {
         if (facts.attempt() != null) {
             return Action.disabled(facts.attempt().outcomeUnknown(facts.now()) ? OUTCOME_UNKNOWN : IN_PROGRESS);
         }
-        if (!CAPTURABLE.contains(facts.status())) {
+        if (facts.status() != EcomStatus.AUTHORIZED || facts.amount() == null) {
             return Action.disabled(ALREADY_CAPTURED);
         }
         Action unreachable = providerUnreachable(facts);
-        return unreachable != null ? unreachable : Action.enabled(facts.amount());
+        return unreachable != null ? unreachable : Action.enabled(facts.amount().subtract(orZero(facts.captured())));
     }
 
     private static Action providerUnreachable(Facts facts) {
@@ -98,13 +94,17 @@ final class MoneyActions {
     }
 
     private static OperationActions.Unresolved unresolved(Facts facts) {
-        MoneyOperationAttempt attempt = facts.attempt();
+        ProviderOrderAttempt attempt = facts.attempt();
         if (attempt == null) {
             return null;
         }
         boolean unknown = attempt.outcomeUnknown(facts.now());
         return new OperationActions.Unresolved(attempt.getKind().name(), attempt.getAmount(),
-                (unknown ? MoneyOperationAttempt.State.UNKNOWN : MoneyOperationAttempt.State.IN_PROGRESS).name(),
+                (unknown ? ProviderOrderAttempt.State.UNKNOWN : ProviderOrderAttempt.State.IN_PROGRESS).name(),
                 attempt.getStartedAt(), attempt.getStartedBy(), unknown && facts.role() == Role.SYSTEM_ADMIN);
+    }
+
+    private static BigDecimal orZero(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
     }
 }

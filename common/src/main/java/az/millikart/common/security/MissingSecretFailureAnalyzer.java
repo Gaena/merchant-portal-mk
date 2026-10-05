@@ -47,40 +47,40 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
                     + "For a local run: export PBL_BASE_URL='http://localhost:8080/'\n"
                     + "See .env.example and project_docs/guides/deployment_guide.md, section 8.3.";
 
-    private static final String PBL_PROVIDER_GATEWAY_BASE_URL_ACTION =
+    private static final String PROVIDER_GATEWAY_BASE_URL_ACTION =
             """
                     Export the address of the acquiring (TXPG) gateway that hosts the payment page:
-                    \texport PBL_PROVIDER_GATEWAY_BASE_URL='https://<gateway host>:<port>/'
+                    \texport PROVIDER_GATEWAY_BASE_URL='https://<gateway host>:<port>/'
                     The value comes from MilliKart and differs between the test stand and production.
                     See .env.example and project_docs/guides/deployment_guide.md, section 8.3.""";
 
-    private static final String PBL_PROVIDER_API_BASE_URL_ACTION =
+    private static final String PROVIDER_API_BASE_URL_ACTION =
             """
                     Export the address of the acquirer's e-commerce API (order status, capture, refund):
-                    \texport PBL_PROVIDER_API_BASE_URL='https://<api host>:<port>/'
+                    \texport PROVIDER_API_BASE_URL='https://<api host>:<port>/'
                     The value comes from MilliKart and differs between the test stand and production.
                     See .env.example and project_docs/guides/deployment_guide.md, section 8.3.""";
 
     private static final String CREDENTIALS_ENCRYPTION_KEY_ACTION =
             "Generate an AES-256 key and export it before starting the service:\n"
                     + "\texport CREDENTIALS_ENCRYPTION_KEY=\"$(openssl rand -base64 32)\"\n"
-                    + "The same value must be set for directory and pbl: directory encrypts company passwords "
-                    + "to the acquirer, pbl decrypts them. A new key makes stored passwords unreadable.\n"
+                    + "The same value must be set for directory, pbl and ecom: directory encrypts company passwords "
+                    + "to the acquirer, pbl and ecom decrypt them. A new key makes stored passwords unreadable.\n"
                     + "See .env.example and project_docs/guides/deployment_guide.md, section 8.3.";
 
     private static final Map<String, String> ACTIONS_BY_VARIABLE = new LinkedHashMap<>();
 
     // Адреса, а не секреты: механизм тот же, причина другая — description() объясняет их отдельно.
     private static final Set<String> ADDRESS_VARIABLES = Set.of(
-            "PBL_BASE_URL", "PBL_PROVIDER_GATEWAY_BASE_URL", "PBL_PROVIDER_API_BASE_URL");
+            "PBL_BASE_URL", "PROVIDER_GATEWAY_BASE_URL", "PROVIDER_API_BASE_URL");
 
     static {
         ACTIONS_BY_VARIABLE.put("JWT_SECRET", JWT_SECRET_ACTION);
         ACTIONS_BY_VARIABLE.put("DB_PASSWORD", DB_PASSWORD_ACTION);
         ACTIONS_BY_VARIABLE.put("PBL_API_TOKEN", PBL_API_TOKEN_ACTION);
         ACTIONS_BY_VARIABLE.put("PBL_BASE_URL", PBL_BASE_URL_ACTION);
-        ACTIONS_BY_VARIABLE.put("PBL_PROVIDER_GATEWAY_BASE_URL", PBL_PROVIDER_GATEWAY_BASE_URL_ACTION);
-        ACTIONS_BY_VARIABLE.put("PBL_PROVIDER_API_BASE_URL", PBL_PROVIDER_API_BASE_URL_ACTION);
+        ACTIONS_BY_VARIABLE.put("PROVIDER_GATEWAY_BASE_URL", PROVIDER_GATEWAY_BASE_URL_ACTION);
+        ACTIONS_BY_VARIABLE.put("PROVIDER_API_BASE_URL", PROVIDER_API_BASE_URL_ACTION);
         ACTIONS_BY_VARIABLE.put("CREDENTIALS_ENCRYPTION_KEY", CREDENTIALS_ENCRYPTION_KEY_ACTION);
     }
 

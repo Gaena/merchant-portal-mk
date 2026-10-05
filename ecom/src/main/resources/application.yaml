@@ -44,6 +44,15 @@ ecom:
         maximum-pool-size: ${ECOM_TXPG_POOL_SIZE:4}
         connection-timeout: 10000
 
+  provider:
+    # Те же переменные, что у pbl (Р-124): адрес провайдера один на портал. Без умолчаний (P1-10): чужой
+    # контур по ошибке — деньги на чужом стенде. Пути — константы протокола.
+    gateway-base-url: ${PROVIDER_GATEWAY_BASE_URL}
+    api-base-url: ${PROVIDER_API_BASE_URL}
+    create-order-path: "${PROVIDER_CREATE_ORDER_PATH:/order}"
+    exec-tran-path: "${PROVIDER_EXEC_TRAN_PATH:/order/{orderId}/exec-tran}"
+    get-order-path: "${PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
+
   terminal-sync:
     # Расписанием, а не при входе администратора: иначе аутентификация зависела бы от чужой базы.
     enabled: ${ECOM_TERMINAL_SYNC_ENABLED:true}
@@ -59,6 +68,10 @@ pbl:
 
 mp:
   trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
+  credentials:
+    # Ключ AES-256 паролей компаний к провайдеру (Р-93) — то же значение, что в directory и pbl: ecom
+    # расшифровывает пароль компании для возврата и списания заказа выписки (Р-124). Без умолчания.
+    encryption-key: ${CREDENTIALS_ENCRYPTION_KEY}
 
 server:
   port: ${SERVER_PORT:8083}
@@ -83,3 +96,23 @@ springdoc:
   swagger-ui:
     enabled: ${SWAGGER_ENABLED:false}
     path: /swagger-ui.html
+
+# Как в pbl: предохранитель клиента провайдера, у каждого сервиса свой (Р-122).
+resilience4j:
+  circuitbreaker:
+    instances:
+      acquiring:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10000ms
+        permittedNumberOfCallsInHalfOpenState: 3
+        # Отказ шлюза конкретному терминалу — не сбой шлюза: не размыкает вызовы всем.
+        ignoreExceptions:
+          - az.millikart.txpg.AcquirerDeclinedException
+  retry:
+    instances:
+      acquiring:
+        maxAttempts: 3
+        waitDuration: 500ms
+        ignoreExceptions:
+          - az.millikart.txpg.AcquirerDeclinedException

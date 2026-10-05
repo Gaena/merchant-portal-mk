@@ -58,7 +58,7 @@ Gradle-монорепозиторий: четыре Spring Boot-сервиса, 
 ```
 mp/
 ├── common/      ← java-library: security, журнал аудита, исключения, общие DTO, поиск, логирование
-├── txpg-client/ ← java-library: клиент API провайдера (TXPG), подключает pbl (Р-122)
+├── txpg-client/ ← java-library: клиент API провайдера (TXPG), подключают pbl и ecom (Р-122)
 ├── auth/        ← :8081 — вход, токены, пользователи
 ├── directory/   ← :8082 — компании, терминалы, чтение журнала аудита, сверка терминалов с провайдером
 ├── pbl/         ← :8080 — платёжные ссылки, операции, статистика оплат по ссылкам, TXPG, кнопка «Тест»
@@ -204,11 +204,11 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 
 | Пакет | Что внутри |
 |:---|:---|
-| `config` | `TxpgDataSourceConfig` — второй источник данных (база шлюза, только чтение) рядом с основной PostgreSQL; без `ECOM_TXPG_URL`, `ECOM_TXPG_USERNAME` и `ECOM_TXPG_PASSWORD` сервис не стартует (`requireGatewaySettings`); `TxpgProperties` — схема шлюза, таймаут, потолки периода и страницы, пояс дат шлюза |
+| `config` | `TxpgDataSourceConfig` — второй источник данных (база шлюза, только чтение) рядом с основной PostgreSQL; без `ECOM_TXPG_URL`, `ECOM_TXPG_USERNAME` и `ECOM_TXPG_PASSWORD` сервис не стартует (`requireGatewaySettings`); `TxpgProperties` — схема шлюза, таймаут, потолки периода и страницы, пояс дат шлюза; `AcquiringClientConfig` — клиент провайдера из `txpg-client` (возврат и списание заказов выписки, Р-124), `CredentialCipherConfig` — бин шифра паролей компаний |
 | `controller` | `EcomTransactionController` (выписка, итоги периода, терминалы для фильтра, карточка заказа), `EcomDashboardController` (сводка главной, Р-91), `ProviderTerminalController` (справочник терминалов провайдера и ручное обновление обоих слепков) |
-| `service` | `EcomTransactionService` (выписка, итоги, карточка заказа, сводка главной), `EcomScopeService` и `EcomScope` (чьи платежи видит пользователь: мерчанты логина компании, Р-97), `EcomOrderAssembler` (строки шлюза → заказы и их деньги), `EcomOperationKind` (словарь пар операций), `EcomPaymentType` (SMS или DMS по операциям заказа, Р-87), `EcomStatusResolver` (статус заказа, Р-92), `EcomStatsAccumulator` (итоги периода), `EcomDashboardAccumulator` (сводка главной), `ProviderTerminalSyncService` и `ProviderTerminalSource`, `ProviderLoginSyncService` и `ProviderLoginSource`, `ProviderSyncFailure` (причина неудачного опроса) |
-| `repository` | SQL к базе шлюза — `TxpgTransactionRepository` (строки `TxpgStatementRow`), `TxpgProviderTerminalSource`, `TxpgProviderLoginSource`; в PostgreSQL — `ProviderTerminalRepository`, `ProviderLoginRepository`, `CompanyLoginRepository` (логины компаний, нативный запрос, только чтение) |
-| `domain` | `ProviderTerminal`, `ProviderLogin` |
+| `service` | `EcomTransactionService` (выписка, итоги, карточка заказа с кнопками возврата и списания, сводка главной), `EcomMoneyActions` (правила этих кнопок, Р-124), `EcomScopeService` и `EcomScope` (чьи платежи видит пользователь: мерчанты логина компании, Р-97), `EcomOrderAssembler` (строки шлюза → заказы и их деньги), `EcomOperationKind` (словарь пар операций), `EcomPaymentType` (SMS или DMS по операциям заказа, Р-87), `EcomStatusResolver` (статус заказа, Р-92), `EcomStatsAccumulator` (итоги периода), `EcomDashboardAccumulator` (сводка главной), `ProviderTerminalSyncService` и `ProviderTerminalSource`, `ProviderLoginSyncService` и `ProviderLoginSource`, `ProviderSyncFailure` (причина неудачного опроса) |
+| `repository` | SQL к базе шлюза — `TxpgTransactionRepository` (строки `TxpgStatementRow`), `TxpgProviderTerminalSource`, `TxpgProviderLoginSource`; в PostgreSQL — `ProviderTerminalRepository`, `ProviderLoginRepository`, `CompanyLoginRepository` (логины компаний, нативный запрос, только чтение); к портальным таблицам — `PortalPaymentsRepository` (терминал мерчанта, креды компании, операция портала по номеру заказа) и `SharedTables`; `ProviderOrderAttemptRepository` |
+| `domain` | `ProviderTerminal`, `ProviderLogin`, `ProviderOrderAttempt` (Р-124) |
 | `scheduler` | `ProviderTerminalSyncScheduler` — оба слепка |
 
 Контракты — [`ecom.md`](../modules/ecom.md).
@@ -236,6 +236,7 @@ erDiagram
     terminals |o--o| provider_terminals : "merchant_rid = rid, без внешнего ключа"
     companies |o--o{ provider_logins : "provider_login = MultiMerchantSys/ + login, без внешнего ключа"
     provider_logins }o--o| provider_terminals : "merchant_rid = rid, без внешнего ключа"
+    provider_order_attempts }o--o| transactions : "order_id = provider_order_id, без внешнего ключа; у такого заказа строк нет"
 
     companies {
         varchar id PK "Задаёт администратор, например COMP-001"
@@ -318,6 +319,15 @@ erDiagram
         varchar merchant_rid "merchant.rid; пусто у логина без связей"
         varchar merchant_title
         timestamptz synced_at
+    }
+
+    provider_order_attempts {
+        varchar order_id PK "Номер заказа у провайдера; одна попытка на заказ"
+        varchar kind "CAPTURE или REFUND"
+        numeric amount
+        varchar state "IN_PROGRESS или UNKNOWN; IN_PROGRESS старше 5 минут — неизвестный исход"
+        varchar started_by
+        timestamptz started_at
     }
 
     audit_logs {
@@ -456,6 +466,7 @@ erDiagram
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет; таблица `terminals` уже должна быть (§4.2) |
 | `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам — и индекс по `login` (Р-94) |
 | `ecom` | `004-provider-terminal-rid.xml` | `provider_terminals.terminal_rid` (Р-96) |
+| `ecom` | `005-provider-order-attempts.xml` | `provider_order_attempts` — возврат или списание заказа выписки, исход которого ещё не записан (Р-124) |
 
 ### 4.4. Начальные данные
 
@@ -523,10 +534,10 @@ public interface AcquiringClient {
   расшифровывает `ProviderCredentialsService.forTerminal`. Терминал без компании и компания без кредов —
   400 до шлюза.
 - **Заказ** создаётся на терминале провайдера: `POST /order?terminalRid=<terminals.terminal_rid>` на
-  адрес шлюза `PBL_PROVIDER_GATEWAY_BASE_URL` (Р-96). Номер отдаёт `ProviderCredentialsService.terminalRidOf`;
+  адрес шлюза `PROVIDER_GATEWAY_BASE_URL` (Р-96). Номер отдаёт `ProviderCredentialsService.terminalRidOf`;
   терминал без `terminal_rid` — 400 до шлюза. Клиент одноразовой ссылки уходит в `order.tdsPresetAreq`
   (`AGENTS.md` §7).
-- **Списание, возврат и статус** — на адрес API `PBL_PROVIDER_API_BASE_URL`: `POST /order/{id}/exec-tran`
+- **Списание, возврат и статус** — на адрес API `PROVIDER_API_BASE_URL`: `POST /order/{id}/exec-tran`
   и `GET /order/{id}`.
 
 ### 7.2. Устойчивость

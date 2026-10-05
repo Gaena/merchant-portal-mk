@@ -25,7 +25,7 @@ class ConfigurationExternalizationTest {
 
         Assertions.assertFalse(yaml.contains("millikart.az"),
                 "pbl/src/main/resources/application.yaml must not contain a MilliKart address: the acquirer "
-                        + "addresses come from PBL_PROVIDER_GATEWAY_BASE_URL / PBL_PROVIDER_API_BASE_URL "
+                        + "addresses come from PROVIDER_GATEWAY_BASE_URL / PROVIDER_API_BASE_URL "
                         + "with no default (P1-10, Р-18)");
     }
 
@@ -47,8 +47,8 @@ class ConfigurationExternalizationTest {
         String yaml = read();
 
         assertExactPlaceholder(yaml, "base-url", "PBL_BASE_URL");
-        assertExactPlaceholder(yaml, "gateway-base-url", "PBL_PROVIDER_GATEWAY_BASE_URL");
-        assertExactPlaceholder(yaml, "api-base-url", "PBL_PROVIDER_API_BASE_URL");
+        assertExactPlaceholder(yaml, "gateway-base-url", "PROVIDER_GATEWAY_BASE_URL");
+        assertExactPlaceholder(yaml, "api-base-url", "PROVIDER_API_BASE_URL");
     }
 
     // Пути протокола — константы шлюза, у них боевые умолчания. Тестовый yaml заменяет боевой целиком и обязан

@@ -4,6 +4,8 @@ plugins {
 
 dependencies {
     implementation project(':common')
+    // Возврат и списание заказов выписки (Р-124); resilience4j и AOP приходят вместе с ним.
+    implementation project(':txpg-client')
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     // Две базы: своя PostgreSQL под привязки мерчантов и журнал аудита (JPA) и чужая Oracle,

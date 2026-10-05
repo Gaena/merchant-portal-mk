@@ -4,7 +4,8 @@ import az.millikart.pbl.domain.CustomerPhone;
 import java.util.function.Supplier;
 import az.millikart.common.exception.ConflictException;
 import az.millikart.pbl.repository.MoneyOperationAttemptRepository;
-import az.millikart.pbl.dto.TransactionActions;
+import az.millikart.common.money.MoneyActionRoles;
+import az.millikart.common.money.OperationActions;
 import az.millikart.pbl.domain.PaymentType;
 import az.millikart.pbl.domain.MoneyOperationAttempt;
 import az.millikart.pbl.domain.PaymentLink;
@@ -514,7 +515,7 @@ public class PaymentLinkService {
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
-        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES).getCompanyId();
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, MoneyActionRoles.CAPTURE).getCompanyId();
         requireNoOpenAttempt(transactionId);
 
         // Повторное списание SUCCESS дважды сняло бы деньги с держателя карты (P0-8).
@@ -625,7 +626,7 @@ public class PaymentLinkService {
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
-        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, REFUND_ROLES).getCompanyId();
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, MoneyActionRoles.REFUND).getCompanyId();
         requireNoOpenAttempt(transactionId);
 
         if (transaction.getStatus() != TransactionStatus.SUCCESS && transaction.getStatus() != TransactionStatus.PARTIALLY_REFUNDED) {
@@ -823,7 +824,7 @@ public class PaymentLinkService {
     public TransactionResponse resolveOutcome(UUID transactionId, boolean executed, UserPrincipal principal) {
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
-        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, RESOLVE_ROLES).getCompanyId();
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, MoneyActionRoles.RESOLVE).getCompanyId();
         MoneyOperationAttempt attempt = attemptRepository.findById(transactionId)
                 .orElseThrow(() -> new ConflictException("This transaction has no money operation awaiting resolution"));
         Instant now = Instant.now();
@@ -1310,7 +1311,7 @@ public class PaymentLinkService {
     }
 
     // Кнопки карточки (Р-123): терминал, креды его компании и строка попытки — только для одной операции.
-    private TransactionActions actionsOf(Transaction tx, UserPrincipal principal) {
+    private OperationActions actionsOf(Transaction tx, UserPrincipal principal) {
         PaymentLink link = tx.getLink();
         Optional<Terminal> terminal = link != null ? terminalRepository.findById(link.getTerminalId()) : Optional.empty();
         return MoneyActions.decide(new MoneyActions.Facts(
@@ -1326,7 +1327,7 @@ public class PaymentLinkService {
                 Instant.now()));
     }
 
-    private TransactionResponse mapToTransactionResponse(Transaction tx, TransactionActions actions) {
+    private TransactionResponse mapToTransactionResponse(Transaction tx, OperationActions actions) {
         Map<String, Object> resp = tx.getProviderResponse();
         TransactionFacts facts = ProviderOrderDetails.read(resp);
 
@@ -1455,16 +1456,10 @@ public class PaymentLinkService {
     // не должно (AGENTS §12, п. 8).
     public static final Set<Role> READ_ROLES = EnumSet.allOf(Role.class);
 
-    // Создание и правка ссылок, списание DMS-холда.
-    static final Set<Role> LINK_WRITE_ROLES =
+    // Создание и правка ссылок; списание холда — MoneyActionRoles.CAPTURE, тот же набор.
+    private static final Set<Role> LINK_WRITE_ROLES =
             EnumSet.of(Role.SYSTEM_ADMIN, Role.COMPANY_HEAD, Role.COMPANY_MANAGER, Role.COMPANY_EMPLOYEE);
 
-    // Без COMPANY_EMPLOYEE: возврат двигает деньги обратно.
-    static final Set<Role> REFUND_ROLES =
-            EnumSet.of(Role.SYSTEM_ADMIN, Role.COMPANY_HEAD, Role.COMPANY_MANAGER);
-
-    // Разрешить неизвестный исход — только администратор, после сверки с провайдером (Р-123).
-    private static final Set<Role> RESOLVE_ROLES = EnumSet.of(Role.SYSTEM_ADMIN);
 
     // Читают через все компании (Р-1).
     public static boolean isGlobalReader(Role role) {
