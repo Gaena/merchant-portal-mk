@@ -4,6 +4,7 @@ import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LinkPaymentsStats } from '../components/LinkPaymentsStats';
+import { LinkQrCode } from '../components/LinkQrCode';
 import type { PeriodKey } from '../components/DashboardParts';
 import {
   Box,
@@ -933,6 +934,8 @@ export const PayByLinkPage: React.FC = () => {
                   </Typography>
                 </Stack>
               </Paper>
+
+              <LinkQrCode url={selectedLink.url} shortCode={selectedLink.shortCode} size={180} />
 
               <Button
                 fullWidth

@@ -12,6 +12,10 @@ import {
   Chip,
   Stack,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   Grid,
   Tooltip,
   Alert,
@@ -65,6 +69,7 @@ import type { TerminalOptionDto } from '../types/dto';
 import { buildTerminalIndex, terminalLabel, terminalSubLabel } from '../utils/terminals';
 import { linkStatusLabel } from '../i18n/translations';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { LinkQrCode } from '../components/LinkQrCode';
 
 const InfoRow: React.FC<{ label: string; value: React.ReactNode; mono?: boolean }> = ({ label, value, mono }) => (
   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', py: 1.25, gap: 2 }}>
@@ -347,6 +352,7 @@ export const PayByLinkDetailPage: React.FC = () => {
 
   const [snackbar, setSnackbar] = useState<{ text: string; error?: boolean } | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   if (!link) {
     return (
@@ -448,6 +454,14 @@ export const PayByLinkDetailPage: React.FC = () => {
               </Button>
             </span>
           </Tooltip>
+          <Button
+            variant="outlined"
+            startIcon={<QrCodeIcon />}
+            disabled={!isActive}
+            onClick={() => setQrOpen(true)}
+          >
+            {tObj.payByLink.qrCode}
+          </Button>
           {isActive && (
             <Button
               variant="outlined"
@@ -767,15 +781,6 @@ export const PayByLinkDetailPage: React.FC = () => {
                         >
                           Copy Link
                         </Button>
-                        <Button
-                          fullWidth
-                          variant="outlined"
-                          size="small"
-                          startIcon={<QrCodeIcon />}
-                          onClick={() => setSnackbar({ text: 'QR code feature coming soon' })}
-                        >
-                          Generate QR Code
-                        </Button>
                       </Stack>
                     </>
                   )}
@@ -858,6 +863,23 @@ export const PayByLinkDetailPage: React.FC = () => {
         </Grid>
 
       </Grid>
+
+      <Dialog open={qrOpen} onClose={() => setQrOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>{tObj.payByLink.qrCode} · {link.shortCode}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2}>
+            <LinkQrCode url={link.url} shortCode={link.shortCode} />
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'primary.main', wordBreak: 'break-all', textAlign: 'center' }}>
+              {link.url}
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setQrOpen(false)} variant="contained" fullWidth>
+            {tObj.common.close}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* То же окно, что в списке ссылок (P3-5a). */}
       <ConfirmDialog
