@@ -25,6 +25,7 @@ import {
 } from '@mui/icons-material';
 
 import { useLanguage } from '../context/LanguageContext';
+import logoUrl from '../assets/millikart-logo.png';
 
 // Без «Forgot password» и 2FA: бэкенд их не умеет, а выдуманного на экранах не бывает (Р-48).
 export const LoginPage: React.FC = () => {
@@ -151,20 +152,11 @@ export const LoginPage: React.FC = () => {
       >
         <Box sx={{ textAlign: 'center', mb: 4 }}>
           <Box
-            sx={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 72,
-              height: 72,
-              borderRadius: '50%',
-              bgcolor: 'primary.main',
-              mb: 2,
-              boxShadow: '0 8px 24px rgba(25, 118, 210, 0.3)'
-            }}
-          >
-            <LockIcon sx={{ fontSize: 40, color: 'white' }} />
-          </Box>
+            component="img"
+            src={logoUrl}
+            alt="MilliKart group"
+            sx={{ display: 'block', width: 180, height: 'auto', mx: 'auto', mb: 3 }}
+          />
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 1, color: 'text.primary' }}>
             {tObj.header.title}
           </Typography>

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { Alert, AlertTitle, Box, Button, Paper, Stack, Tooltip, Typography } from '@mui/material';
+import { Alert, AlertTitle, Box, Button, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material';
 import { Cancel as CancelIcon, DoneAll as CompleteIcon } from '@mui/icons-material';
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
@@ -43,6 +43,8 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
   const d = tObj.transactions.detail;
 
   const [dialog, setDialog] = useState<'refund' | 'capture' | null>(null);
+  // Причина возврата — необязательная, только в журнал аудита (Р-126); бэкенд принимает до 255 символов.
+  const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<'refund' | 'capture' | null>(null);
   // Отказ остаётся в окне — туда смотрит мерчант (Р-61); после 502 повтор из этого окна закрыт сразу.
@@ -68,9 +70,11 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
     setBusy(true);
     try {
       const url = kind === 'refund' ? `${baseUrl}/refund` : `${baseUrl}/complete`;
-      await apiClient.post(url, { amount: action.maxAmount });
+      const body = kind === 'refund' && reason.trim() ? { amount: action.maxAmount, reason: reason.trim() } : { amount: action.maxAmount };
+      await apiClient.post(url, body);
       setDone(kind);
       setDialog(null);
+      setReason('');
     } catch (err: unknown) {
       setFailure(readMoneyOperationFailure(err, kind === 'refund' ? 'Refund failed' : 'Capture failed'));
     } finally {
@@ -219,6 +223,18 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
         onCancel={() => setDialog(null)}
       >
         {frame(d.refundAmount, refund?.maxAmount)}
+        <TextField
+          label={d.refundReason}
+          helperText={d.refundReasonHint}
+          value={reason}
+          onChange={event => setReason(event.target.value)}
+          disabled={busy}
+          fullWidth
+          multiline
+          minRows={2}
+          slotProps={{ htmlInput: { maxLength: 255 } }}
+          sx={{ mt: 2 }}
+        />
         {failureNotice}
       </ConfirmDialog>
 

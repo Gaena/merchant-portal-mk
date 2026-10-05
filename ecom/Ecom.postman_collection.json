@@ -210,7 +210,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"amount\": 25.00\n}",
+							"raw": "{\n  \"amount\": 25.00,\n  \"reason\": \"Goods returned by the customer\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -231,7 +231,7 @@
 								"refund"
 							]
 						},
-						"description": "Refunds a statement order (ecom.md §2.7a, Р-125): up to actions.refund.maxAmount of the order card; SYSTEM_ADMIN, COMPANY_HEAD, COMPANY_MANAGER within the company's merchants. A disabled button is the same refusal and never reaches the provider. 409 for an order the portal created - refund its portal transaction instead."
+						"description": "Refunds a statement order (ecom.md §2.7a, Р-125): up to actions.refund.maxAmount of the order card; SYSTEM_ADMIN, COMPANY_HEAD, COMPANY_MANAGER within the company's merchants. A disabled button is the same refusal and never reaches the provider. 409 for an order the portal created - refund its portal transaction instead. `reason` is optional, at most 255 characters: it goes to the audit journal only (Р-126)."
 					},
 					"response": []
 				},

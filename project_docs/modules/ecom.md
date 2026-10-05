@@ -300,7 +300,8 @@ after dateFrom`; `400 The requested period exceeds the maximum of N days`.
 ### 2.7a. `POST /api/v1/ecom/transactions/{orderId}/refund` и `…/complete`
 
 Возврат и списание холда заказа выписки (Р-125). Тело — `{ "amount": 25.00 }`: сумма > 0, не больше двух знаков и
-не больше `actions.<refund|capture>.maxAmount` карточки (§2.7). Права — как у кнопок: возврат — `SYSTEM_ADMIN`,
+не больше `actions.<refund|capture>.maxAmount` карточки (§2.7). У возврата ещё необязательная `reason` — до 255
+символов, без пробелов по краям уходит в запись журнала (`; reason: <текст>`, Р-126); провайдеру не уходит. Права — как у кнопок: возврат — `SYSTEM_ADMIN`,
 `COMPANY_HEAD`, `COMPANY_MANAGER`, списание — все, кроме `AUDITOR`; заказ — в пределах компании (§2.1).
 
 Три шага, как у операций портала (`pay-by-link.md` §5.9): проверки по карточке и строка `provider_order_attempts`

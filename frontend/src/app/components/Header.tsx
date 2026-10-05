@@ -15,7 +15,6 @@ import {
   Button,
 } from '@mui/material';
 import {
-  AccountBalance as AccountBalanceIcon,
   Menu as MenuIcon,
   Logout as LogoutIcon,
   Language as LanguageIcon,
@@ -25,6 +24,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Language } from '../i18n/translations';
+import markUrl from '../assets/millikart-mark.png';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -46,10 +46,10 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
 
   const [langAnchor, setLangAnchor] = useState<null | HTMLElement>(null);
 
-  const langLabels: Record<Language, { label: string; flag: string }> = {
-    en: { label: 'English', flag: '🇬🇧' },
-    az: { label: 'Azərbaycan', flag: '🇦🇿' },
-    ru: { label: 'Русский', flag: '🇷🇺' },
+  const langLabels: Record<Language, string> = {
+    en: 'English',
+    az: 'Azərbaycan',
+    ru: 'Русский',
   };
 
   return (
@@ -62,7 +62,20 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
           <MenuIcon />
         </IconButton>
 
-        <AccountBalanceIcon sx={{ mr: 2, fontSize: 32 }} />
+        {/* Знак сине-серый и на синей шапке теряется — подложка белая. */}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            bgcolor: 'common.white',
+            borderRadius: 1,
+            px: 0.75,
+            py: 0.5,
+            mr: 2,
+          }}
+        >
+          <Box component="img" src={markUrl} alt="MilliKart" sx={{ display: 'block', height: 24, width: 'auto' }} />
+        </Box>
         <Typography variant="h6" component="div" sx={{ flexGrow: 0, mr: 3 }}>
           {tObj.header.title}
         </Typography>
@@ -77,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
               startIcon={<LanguageIcon />}
               sx={{ textTransform: 'none', fontWeight: 600, px: 1.5 }}
             >
-              {langLabels[language]?.flag} {language.toUpperCase()}
+              {language.toUpperCase()}
             </Button>
           </Tooltip>
 
@@ -109,11 +122,8 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
               setLangAnchor(null);
             }}
           >
-            <Typography variant="body2" sx={{ mr: 1.5, fontSize: '1.2rem' }}>
-              {langLabels[lang].flag}
-            </Typography>
             <Typography variant="body2" sx={{ fontWeight: language === lang ? 700 : 400 }}>
-              {langLabels[lang].label}
+              {langLabels[lang]}
             </Typography>
           </MenuItem>
         ))}

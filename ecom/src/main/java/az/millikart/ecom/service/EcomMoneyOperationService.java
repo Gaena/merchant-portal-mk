@@ -54,16 +54,18 @@ public class EcomMoneyOperationService {
         this.auditLogService = auditLogService;
     }
 
-    public EcomMoneyOperationResponse refund(String orderId, BigDecimal amount, UserPrincipal principal) {
-        return operate(orderId, ProviderOrderAttempt.Kind.REFUND, amount, principal);
+    // reason — необязательная причина возврата, только в журнал (Р-126).
+    public EcomMoneyOperationResponse refund(String orderId, BigDecimal amount, String reason, UserPrincipal principal) {
+        return operate(orderId, ProviderOrderAttempt.Kind.REFUND, amount, reason, principal);
     }
 
     public EcomMoneyOperationResponse capture(String orderId, BigDecimal amount, UserPrincipal principal) {
-        return operate(orderId, ProviderOrderAttempt.Kind.CAPTURE, amount, principal);
+        return operate(orderId, ProviderOrderAttempt.Kind.CAPTURE, amount, null, principal);
     }
 
     private EcomMoneyOperationResponse operate(String orderId, ProviderOrderAttempt.Kind kind, BigDecimal amount,
-                                               UserPrincipal principal) {
+                                               String rawReason, UserPrincipal principal) {
+        String reasonSuffix = rawReason == null || rawReason.isBlank() ? "" : "; reason: " + rawReason.strip();
         log.info("Request to {} order {}: amount={}", verb(kind), orderId, amount);
         // Карточка — скоуп (чужой заказ — 404) и кнопки по тем же правилам, что видит экран.
         EcomTransactionResponse order = orders.order(orderId, principal);
@@ -107,7 +109,7 @@ public class EcomMoneyOperationService {
             auditLogService.logUnresolved(AuditEntity.PROVIDER_ORDER, orderId, auditAction(kind), actor, companyId,
                     capitalized(kind) + " of " + amount + " " + order.currency() + " left unconfirmed by the acquirer: "
                             + e.getMessage() + ". Outcome unknown — a system administrator must reconcile it with the "
-                            + "provider and resolve it before another money operation.");
+                            + "provider and resolve it before another money operation." + reasonSuffix);
             throw e;
         } catch (RuntimeException e) {
             release(orderId);
@@ -117,7 +119,8 @@ public class EcomMoneyOperationService {
         try {
             attempts.finish(orderId, AuditEvent.of(AuditEntity.PROVIDER_ORDER, orderId, auditAction(kind), actor, companyId,
                     pastTense(kind) + " " + amount + " " + order.currency() + " (ridByPmo " + result.ridByPmo()
-                            + ", tranActionId " + result.tranActionId() + ", approvalCode " + result.approvalCode() + ")"));
+                            + ", tranActionId " + result.tranActionId() + ", approvalCode " + result.approvalCode() + ")"
+                            + reasonSuffix));
         } catch (RuntimeException e) {
             // Деньги ушли и подтверждены; строка останется и снимется сама, когда выписка покажет операцию.
             log.error("The acquirer confirmed the {} of {} on order {}, but releasing the order failed: {}",

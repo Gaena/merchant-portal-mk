@@ -4,6 +4,7 @@ import az.millikart.common.security.UserPrincipal;
 import az.millikart.ecom.dto.CursorPage;
 import az.millikart.ecom.dto.EcomMoneyOperationResponse;
 import az.millikart.ecom.dto.EcomMoneyRequest;
+import az.millikart.ecom.dto.EcomRefundRequest;
 import az.millikart.ecom.dto.EcomResolveRequest;
 import az.millikart.ecom.dto.EcomStatsResponse;
 import az.millikart.ecom.dto.EcomTerminalResponse;
@@ -78,9 +79,9 @@ public class EcomTransactionController {
     // Возврат и списание заказа выписки (Р-125): права и причины — как у кнопок карточки.
     @PostMapping("/{orderId}/refund")
     public EcomMoneyOperationResponse refund(@PathVariable String orderId,
-                                             @Valid @RequestBody EcomMoneyRequest request,
+                                             @Valid @RequestBody EcomRefundRequest request,
                                              @AuthenticationPrincipal UserPrincipal principal) {
-        return moneyOperations.refund(orderId, request.amount(), principal);
+        return moneyOperations.refund(orderId, request.amount(), request.reason(), principal);
     }
 
     @PostMapping("/{orderId}/complete")
