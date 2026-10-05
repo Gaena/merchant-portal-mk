@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Р-128: плательщик отправил карту — у провайдера есть запись операции по заказу (order.trans[]).
+      Шаг «начата оплата» воронки ссылок: брошенная и отклонённая банком попытки обе FAILED, и различает
+      их только эта отметка. Ставит её опрос статуса и не снимает.
+    -->
+    <changeSet id="16-pbl-transaction-card-submitted" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="transactions" columnName="card_submitted"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="transactions">
+            <column name="card_submitted" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <!-- Отметка по уже сохранённым ответам провайдера: опрос кладёт order целиком, и trans[] лежит в корне
+         provider_response (ProviderOrderDetails.hasCardOperation). Только PostgreSQL: разбор JSON у H2
+         другой, а в тестовой H2 размечать нечего. Повторный запуск ничего не меняет. -->
+    <changeSet id="16-pbl-backfill-transaction-card-submitted" author="millikart">
+        <sql dbms="postgresql">
+            UPDATE transactions
+               SET card_submitted = TRUE
+             WHERE card_submitted = FALSE
+               AND jsonb_typeof(CAST(provider_response AS jsonb) -> 'trans') = 'array'
+               AND jsonb_array_length(CAST(provider_response AS jsonb) -> 'trans') > 0
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

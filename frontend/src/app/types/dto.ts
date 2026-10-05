@@ -120,6 +120,23 @@ export interface DashboardSummary {
     byUsageType: { usageType: string; count: number }[];
     byStatus: { status: string; count: number }[];
   };
+  /** Ссылки, созданные в периоде, и докуда они дошли (Р-128): когорта, недавний период ещё дорастает. */
+  linkFunnel: { created: number; opened: number; paymentStarted: number; paid: number };
+  /** Одноразовые ссылки периода: от создания до начала оплаченной попытки. Медианы нет — null, не ноль. */
+  timeToPay: {
+    paidLinks: number;
+    medianSeconds: number | null;
+    buckets: { range: string; count: number }[];
+  };
+}
+
+/** Интервалы времени до оплаты в порядке ответа сервера (`DashboardService.TimeToPayRange`). */
+export type TimeToPayRange = 'UP_TO_1_HOUR' | 'UP_TO_1_DAY' | 'UP_TO_7_DAYS' | 'OVER_7_DAYS';
+
+const TIME_TO_PAY_RANGES: readonly TimeToPayRange[] = ['UP_TO_1_HOUR', 'UP_TO_1_DAY', 'UP_TO_7_DAYS', 'OVER_7_DAYS'];
+
+export function parseTimeToPayRange(value: string): TimeToPayRange | null {
+  return (TIME_TO_PAY_RANGES as readonly string[]).includes(value) ? (value as TimeToPayRange) : null;
 }
 
 export interface DashboardCurrencyTotals {

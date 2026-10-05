@@ -1210,6 +1210,10 @@ public class PaymentLinkService {
         if (holdReleased) {
             stored.put(DECLINE_REASON_KEY, "Authorization released by the acquirer without capture");
         }
+        // Только ставится: опрос без ответа или с урезанным payload не отменяет уже увиденную карту (Р-128).
+        if (ProviderOrderDetails.hasCardOperation(orderDetails)) {
+            tx.setCardSubmitted(true);
+        }
         tx.setProviderResponse(stored);
         tx = transactionRepository.save(tx);
         // Опрос без перемены — не событие: сверка делает их сотнями в день.

@@ -470,7 +470,7 @@
 								}
 							]
 						},
-						"description": "Payment link statistics over a window, counted by the database (pay-by-link.md §5.13): payments made through payment links only, money per currency, refunds counted by refund date. Days and hours are cut in PBL_DASHBOARD_ZONE (Asia/Baku). A role without a company gets zeros. 400 when `from` is after `to` or the window exceeds 92 days."
+						"description": "Payment link statistics over a window, counted by the database (pay-by-link.md §5.13): payments made through payment links only, money per currency, refunds counted by refund date. Days and hours are cut in PBL_DASHBOARD_ZONE (Asia/Baku). Also the funnel of the links created in the window (created, opened, card submitted, paid) and the time to payment of single-use links. A role without a company gets zeros. 400 when `from` is after `to` or the window exceeds 92 days."
 					},
 					"response": []
 				}

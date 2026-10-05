@@ -1,6 +1,8 @@
 package az.millikart.pbl.repository;
 
 import az.millikart.pbl.domain.Transaction;
+import az.millikart.pbl.domain.TransactionStatus;
+import az.millikart.pbl.domain.UsageType;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
@@ -83,6 +85,48 @@ public interface DashboardRepository extends Repository<Transaction, UUID> {
                                      @Param("to") Instant to,
                                      @Param("unscoped") boolean unscoped,
                                      @Param("terminalIds") Collection<Integer> terminalIds);
+
+    // Р-128: [создано, открыто, начата оплата, оплачено] по ссылкам, созданным в окне, — когорта: попытки
+    // считаются любые, и после окна тоже. Открыта — есть попытка: её заводит только открытие, дошедшее до
+    // провайдера. Оплата начата, если карта отправлена или деньги взяты: старые строки могли не попасть
+    // под разметку pbl/016. Пустое окно даёт null в суммах.
+    @Query("""
+            SELECT COUNT(pl),
+                   SUM(CASE WHEN EXISTS (SELECT 1 FROM Transaction opened WHERE opened.link = pl)
+                            THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN EXISTS (SELECT 1 FROM Transaction started WHERE started.link = pl
+                                         AND (started.cardSubmitted = TRUE OR started.status IN :paidStatuses))
+                            THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN EXISTS (SELECT 1 FROM Transaction paid WHERE paid.link = pl
+                                         AND paid.status IN :paidStatuses)
+                            THEN 1 ELSE 0 END)
+            FROM PaymentLink pl
+            WHERE pl.createdAt >= :from AND pl.createdAt < :to
+              AND (:unscoped = TRUE OR pl.terminalId IN :terminalIds)
+            """)
+    List<Object[]> linkFunnel(@Param("from") Instant from,
+                              @Param("to") Instant to,
+                              @Param("unscoped") boolean unscoped,
+                              @Param("terminalIds") Collection<Integer> terminalIds,
+                              @Param("paidStatuses") Collection<TransactionStatus> paidStatuses);
+
+    // Р-128: [создание ссылки, начало оплаченной попытки] по ссылкам типа :usageType из окна. Момента
+    // оплаты у нас нет — начало оплаченной попытки отстаёт от него на минуты сессии плательщика.
+    @Query("""
+            SELECT pl.createdAt, MIN(t.createdAt)
+            FROM Transaction t JOIN t.link pl
+            WHERE pl.usageType = :usageType
+              AND t.status IN :paidStatuses
+              AND pl.createdAt >= :from AND pl.createdAt < :to
+              AND (:unscoped = TRUE OR pl.terminalId IN :terminalIds)
+            GROUP BY pl.id, pl.createdAt
+            """)
+    List<Object[]> paidLinkTimes(@Param("from") Instant from,
+                                 @Param("to") Instant to,
+                                 @Param("unscoped") boolean unscoped,
+                                 @Param("terminalIds") Collection<Integer> terminalIds,
+                                 @Param("usageType") UsageType usageType,
+                                 @Param("paidStatuses") Collection<TransactionStatus> paidStatuses);
 
     // [статус ссылки, тип платежа, тип использования, число ссылок]. Одна группировка на три
     // разбиения: комбинаций не больше двух десятков, сворачивает их сервис.

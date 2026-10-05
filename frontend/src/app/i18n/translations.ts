@@ -118,6 +118,18 @@ export interface TranslationDictionary {
       terminals: string;
       links: string;
       linksHint: string;
+      /** Воронка — по ссылкам, созданным в периоде (Р-128): оплаты после периода тоже засчитываются. */
+      funnel: string;
+      funnelHint: string;
+      funnelSteps: { created: string; opened: string; paymentStarted: string; paid: string };
+      timeToPay: string;
+      timeToPayHint: string;
+      median: string;
+      paidLinks: string;
+      noPaidLinks: string;
+      timeToPayRanges: { UP_TO_1_HOUR: string; UP_TO_1_DAY: string; UP_TO_7_DAYS: string; OVER_7_DAYS: string };
+      /** Единицы для «2 ч 15 мин»: число и единица ставятся рядом, фраз с подстановкой нет. */
+      units: { lessThanMinute: string; minute: string; hour: string; day: string };
     };
   };
   settings: {
@@ -793,6 +805,16 @@ export const translations: Record<Language, TranslationDictionary> = {
         terminals: 'Terminals by revenue',
         links: 'Payment links created',
         linksHint: 'Current status of the links created in the period',
+        funnel: 'Link funnel',
+        funnelHint: 'Links created in the period and how far they got. Payments made after the period count too, so a recent period can still grow. Paid means charged or held.',
+        funnelSteps: { created: 'Created', opened: 'Opened', paymentStarted: 'Card submitted', paid: 'Paid' },
+        timeToPay: 'Time to payment',
+        timeToPayHint: 'Single-use links of the period: from creating the link to the start of the paid attempt.',
+        median: 'Median',
+        paidLinks: 'Paid links',
+        noPaidLinks: 'No paid single-use links in the period',
+        timeToPayRanges: { UP_TO_1_HOUR: 'Under 1 hour', UP_TO_1_DAY: '1–24 hours', UP_TO_7_DAYS: '1–7 days', OVER_7_DAYS: 'Over 7 days' },
+        units: { lessThanMinute: '< 1 min', minute: 'min', hour: 'h', day: 'd' },
       },
     },
     settings: {
@@ -1406,6 +1428,16 @@ export const translations: Record<Language, TranslationDictionary> = {
         terminals: 'Gəlirə görə terminallar',
         links: 'Yaradılmış ödəniş linkləri',
         linksHint: 'Dövrdə yaradılmış linklərin cari statusu',
+        funnel: 'Linklərin ödəniş hunisi',
+        funnelHint: 'Dövrdə yaradılmış linklər və onların hansı mərhələyə çatdığı. Dövrdən sonra edilən ödənişlər də sayılır, ona görə son dövrün rəqəmləri hələ arta bilər. Ödənilib — məbləğ kartdan tutulub və ya bloklanıb.',
+        funnelSteps: { created: 'Yaradılıb', opened: 'Açılıb', paymentStarted: 'Kart göndərilib', paid: 'Ödənilib' },
+        timeToPay: 'Ödənişə qədər vaxt',
+        timeToPayHint: 'Dövrün birdəfəlik linkləri: linkin yaradılmasından ödənilmiş cəhdin başlanmasına qədər.',
+        median: 'Median',
+        paidLinks: 'Ödənilmiş linklər',
+        noPaidLinks: 'Dövrdə ödənilmiş birdəfəlik link yoxdur',
+        timeToPayRanges: { UP_TO_1_HOUR: '1 saatdan az', UP_TO_1_DAY: '1–24 saat', UP_TO_7_DAYS: '1–7 gün', OVER_7_DAYS: '7 gündən çox' },
+        units: { lessThanMinute: '< 1 dəq', minute: 'dəq', hour: 'saat', day: 'gün' },
       },
     },
     settings: {
@@ -2019,6 +2051,16 @@ export const translations: Record<Language, TranslationDictionary> = {
         terminals: 'Терминалы по выручке',
         links: 'Созданные платёжные ссылки',
         linksHint: 'Текущий статус ссылок, созданных за период',
+        funnel: 'Воронка ссылок',
+        funnelHint: 'Ссылки, созданные за период, и докуда они дошли. Оплаты после периода тоже засчитываются, поэтому цифры недавнего периода ещё растут. Оплачена — списание или холд.',
+        funnelSteps: { created: 'Создана', opened: 'Открыта', paymentStarted: 'Карта отправлена', paid: 'Оплачена' },
+        timeToPay: 'Время до оплаты',
+        timeToPayHint: 'Одноразовые ссылки периода: от создания ссылки до начала оплаченной попытки.',
+        median: 'Медиана',
+        paidLinks: 'Оплачено ссылок',
+        noPaidLinks: 'За период нет оплаченных одноразовых ссылок',
+        timeToPayRanges: { UP_TO_1_HOUR: 'До 1 часа', UP_TO_1_DAY: '1–24 часа', UP_TO_7_DAYS: '1–7 дней', OVER_7_DAYS: 'Больше 7 дней' },
+        units: { lessThanMinute: '< 1 мин', minute: 'мин', hour: 'ч', day: 'д' },
       },
     },
     settings: {

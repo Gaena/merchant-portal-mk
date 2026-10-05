@@ -731,6 +731,12 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
     "byPaymentType": [ { "paymentType": "SMS", "count": 40 } ],
     "byUsageType": [ { "usageType": "SINGLE", "count": 50 } ],
     "byStatus": [ { "status": "ACTIVE", "count": 12 } ]
+  },
+  "linkFunnel": { "created": 57, "opened": 44, "paymentStarted": 38, "paid": 33 },
+  "timeToPay": {
+    "paidLinks": 29, "medianSeconds": 5400,
+    "buckets": [ { "range": "UP_TO_1_HOUR", "count": 11 }, { "range": "UP_TO_1_DAY", "count": 14 },
+                 { "range": "UP_TO_7_DAYS", "count": 4 }, { "range": "OVER_7_DAYS", "count": 0 } ]
   }
 }
 ```
@@ -757,7 +763,20 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
     three are `null` when the terminal row is gone.
 -   `paymentLinks` — links **created** in the window, by their current status, payment type and usage
     type; every value is listed, zeros included.
--   With nothing in scope `totals`, `dailyTotals` and `topTerminals` are empty arrays, the breakdowns are zeros.
+-   `linkFunnel` (Р-128) — the same links **created** in the window and how far each got, counting its
+    attempts whenever they happened (a cohort: a recent window keeps growing as links get paid). Each link
+    counts once per step: `created`; `opened` — it has an attempt (only an opening that reached the provider
+    creates one; refused openings are not recorded); `paymentStarted` — an attempt with a card submitted
+    (`transactions.card_submitted`: the provider's order carried a record in `trans[]` — paid, declined or cut
+    off at 3-D Secure) or with money taken; `paid` — an attempt in `SUCCESS`, `REFUNDED`,
+    `PARTIALLY_REFUNDED` or `AUTHORIZED` (a hold: the payer has done their part).
+-   `timeToPay` (Р-128) — **single-use** links created in the window that got paid (same paid statuses):
+    from the link's creation to the start of its paid attempt — the moment of payment itself is not stored
+    and trails it by the payer's session. `medianSeconds` is `null` when `paidLinks` is 0; `buckets` always
+    lists `UP_TO_1_HOUR`, `UP_TO_1_DAY`, `UP_TO_7_DAYS` (upper bounds exclusive) and `OVER_7_DAYS`, in that
+    order, zeros included. Multi-use links are left out: their time would mix with how long they stay live.
+-   With nothing in scope `totals`, `dailyTotals` and `topTerminals` are empty arrays, the breakdowns and
+    `linkFunnel` are zeros, `timeToPay.medianSeconds` is `null`.
 
 ### 5.14. Terminal Check
 

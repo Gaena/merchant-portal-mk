@@ -90,4 +90,9 @@ public class Transaction {
     // Когда сверка последний раз брала строку в пакет (Р-110); пишет только её отметка.
     @Column(name = "last_reconciled_at")
     private Instant lastReconciledAt;
+
+    // Плательщик отправил карту: у провайдера есть запись операции по заказу (Р-128). Ставит опрос
+    // статуса и не снимает — шаг «начата оплата» воронки ссылок.
+    @Column(name = "card_submitted", nullable = false)
+    private boolean cardSubmitted;
 }

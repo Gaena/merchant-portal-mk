@@ -74,6 +74,21 @@ class ProviderOrderDetailsTest {
         assertFalse(ProviderOrderDetails.isReleasedAuthorization(null));
     }
 
+    // Р-128: карта отправлена — в order.trans[] есть запись. Брошенный до ввода карты заказ записей не
+    // несёт; пустой список, его отсутствие или не-список — «не отправлена», а не падение.
+    @Test
+    void cardOperation_isAnyRecordInTrans() {
+        assertTrue(ProviderOrderDetails.hasCardOperation(order("Rejected", "Preparing", List.of(tran(null)))));
+        assertTrue(ProviderOrderDetails.hasCardOperation(order("FullyPaid", "Preparing", List.of(tran("100.00")))));
+
+        assertFalse(ProviderOrderDetails.hasCardOperation(order("Preparing", null, List.of())));
+        assertFalse(ProviderOrderDetails.hasCardOperation(order("Expired", "Preparing", null)));
+        Map<String, Object> malformed = order("Rejected", "Preparing", null);
+        malformed.put("trans", "not-a-list");
+        assertFalse(ProviderOrderDetails.hasCardOperation(malformed));
+        assertFalse(ProviderOrderDetails.hasCardOperation(null));
+    }
+
     private static Map<String, Object> order(String status, String prevStatus, List<Map<String, Object>> trans) {
         Map<String, Object> order = new LinkedHashMap<>();
         order.put("status", status);

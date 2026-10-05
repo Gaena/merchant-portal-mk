@@ -53,6 +53,15 @@ public final class ProviderOrderDetails {
                 ProviderPayloads.scalarText(record.get("approvalCode")));
     }
 
+    // Плательщик отправил карту: в order.trans[] есть запись операции — оплата, отказ банка, оборванный
+    // 3-D Secure (Р-128). Список приходит при tranDetailLevel=2, его шлёт каждый опрос; брошенный до ввода
+    // карты заказ записей не несёт. Тот же признак размечает старые строки (миграция pbl/016).
+    public static boolean hasCardOperation(Map<String, Object> orderPayload) {
+        return orderPayload != null
+                && orderPayload.get("trans") instanceof List<?> trans
+                && !trans.isEmpty();
+    }
+
     // Closed после Authorized без списаний — холд снял банк (Р-75). Списание — положительный clearAmount
     // (§5.8.8), у авторизации он 0. Нет списка, пустой или нечитаемая сумма — «не доказано», ручной разбор.
     public static boolean isReleasedAuthorization(Map<String, Object> orderPayload) {
