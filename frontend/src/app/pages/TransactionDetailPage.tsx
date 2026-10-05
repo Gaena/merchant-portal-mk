@@ -12,7 +12,8 @@ import {
   Alert,
   AlertTitle,
   Stack,
-  CircularProgress
+  CircularProgress,
+  Tooltip
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -28,7 +29,7 @@ import {
   Security as SecurityIcon,
   Laptop as LaptopIcon,
 } from '@mui/icons-material';
-import type { StatusHistoryEntry, Transaction } from '../types/transaction';
+import type { MoneyAction, StatusHistoryEntry } from '../types/transaction';
 import { formatCurrency, formatDateTime, getPaymentMethodLabel } from '../utils/format';
 import { getStatusColorScheme } from '../utils/statusColors';
 import { buildTerminalIndex, terminalLabel, terminalSubLabel } from '../utils/terminals';
@@ -37,28 +38,8 @@ import { readMoneyOperationFailure, type MoneyOperationFailure } from '../utils/
 import type { TerminalOptionDto } from '../types/dto';
 
 import { useLanguage } from '../context/LanguageContext';
-import { useAuth } from '../context/AuthContext';
-import { canRefund, canWriteLinks } from '../auth/actionAccess';
 import { statusLabel, type TranslationDictionary } from '../i18n/translations';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-
-/**
- * Остаток к возврату — правила `PaymentLinkService.refund` (Р-62): только `SUCCESS` и
- * `PARTIALLY_REFUNDED` (`isRefundable`), потолок — `capturedAmount`, у SMS и несписанных холдов
- * `amount`, минус уже возвращённое. Меняется правило на бэкенде — меняется и здесь.
- */
-const refundableLeftOf = (tx: Transaction): number =>
-  Math.max(0, toMinorUnits(tx.capturedAmount ?? tx.amount) - toMinorUnits(tx.refundedAmount ?? 0)) / 100;
-
-// Копейки: `10.10 - 9.80` в double — `0.29999999999999893`, и бэкенд такой возврат отвергает.
-const toMinorUnits = (amount: unknown): number => Math.round(Number(amount ?? 0) * 100);
-
-// Неподтверждённый исход объясняет только движение денег: по операции в терминальном статусе бэкенд
-// эквайера не спрашивает, а «всё ещё AUTHORIZED» не отличить от «не спросили».
-const moneyMoved = (before: Transaction, after: Transaction): boolean =>
-  before.status !== after.status
-  || toMinorUnits(before.refundedAmount) !== toMinorUnits(after.refundedAmount)
-  || toMinorUnits(before.capturedAmount) !== toMinorUnits(after.capturedAmount);
 
 // Денежное событие подписано действием (списание, возврат): состояние после него видно по цвету.
 const eventLabel = (tObj: TranslationDictionary, entry: StatusHistoryEntry): string => {
@@ -68,18 +49,12 @@ const eventLabel = (tObj: TranslationDictionary, entry: StatusHistoryEntry): str
   return statusLabel(tObj, entry.status, entry.statusRaw);
 };
 
-const isRefundable = (tx: Transaction): boolean =>
-  (tx.status === 'SUCCESS' || tx.status === 'PARTIALLY_REFUNDED') && refundableLeftOf(tx) > 0;
-
 export const TransactionDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const { tObj } = useLanguage();
-  const { user } = useAuth();
-  // Кнопки денежных действий — только ролям, которым бэкенд их примет (Р-62).
-  const mayRefund = canRefund(user?.role);
-  const mayCapture = canWriteLinks(user?.role);
+  const d = tObj.transactions.detail;
 
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -92,8 +67,10 @@ export const TransactionDetailPage: React.FC = () => {
   const [statusChecked, setStatusChecked] = useState(false);
   /** Сбой самой проверки статуса. Не исход денежной операции — `actionError` не трогает. */
   const [checkError, setCheckError] = useState<string | null>(null);
-  /** Перечитали, а операция не изменилась: неподтверждённый исход так и остался неподтверждённым. */
-  const [stillUnresolved, setStillUnresolved] = useState(false);
+  /** Итог неподтверждённой операции, который отмечает администратор: `true` — прошла, `false` — нет (Р-123). */
+  const [resolveTarget, setResolveTarget] = useState<boolean | null>(null);
+  const [resolveBusy, setResolveBusy] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
   // Ответ `GET /transactions/{id}` — единственный источник карточки (Р-65). Разбор — в `useMemo`:
   // подпись терминала подтягивается с индексом терминалов без второго запроса операции.
   const [rawTx, setRawTx] = useState<unknown>(null);
@@ -109,8 +86,8 @@ export const TransactionDetailPage: React.FC = () => {
   // Прямой заход по адресу истории не имеет — тогда «назад» ведёт на главную.
   const goBack = () => (location.key === 'default' ? navigate('/') : navigate(-1));
 
-  // Пока исход не подтверждён, повтор закрыт: эквайер мог операцию уже выполнить. Запрет снимает
-  // только проверка статуса, в которой видно движение денег (`moneyMoved`).
+  // Ответ 502 в открытом окне: повтор из этого окна закрыт сразу, дальше запрет держит сервер (Р-123) —
+  // карточка перечитывается и показывает его в `actions`.
   const outcomeUnresolved = actionError?.outcome === 'unknown';
 
   // В `options` есть и заблокированные (Р-45): платёж через снятый терминал сохраняет подпись.
@@ -161,8 +138,9 @@ export const TransactionDetailPage: React.FC = () => {
     setActionError(null);
     setCancelBusy(true);
     try {
+      // Возвращается весь остаток; потолок — с сервера, а не своим расчётом (Р-123).
       await apiClient.post(`/api/v1/transactions/${transaction.id}/refund`, {
-        amount: refundableLeftOf(transaction),
+        amount: transaction.actions?.refund?.maxAmount,
         reason: 'Merchant refund request'
       });
       setCancelSuccess(true);
@@ -170,6 +148,7 @@ export const TransactionDetailPage: React.FC = () => {
       await reload();
     } catch (err: unknown) {
       setActionError(readMoneyOperationFailure(err, 'Failed to refund transaction on server'));
+      await reload();
     } finally {
       setCancelBusy(false);
     }
@@ -181,49 +160,62 @@ export const TransactionDetailPage: React.FC = () => {
     setCompleteBusy(true);
     try {
       await apiClient.post(`/api/v1/transactions/${transaction.id}/complete`, {
-        amount: Number(transaction.amount) || 0
+        amount: transaction.actions?.capture?.maxAmount
       });
       setCompleteSuccess(true);
       setCompleteDialogOpen(false);
       await reload();
     } catch (err: unknown) {
       setActionError(readMoneyOperationFailure(err, 'Failed to complete DMS transaction on server'));
+      await reload();
     } finally {
       setCompleteBusy(false);
     }
   };
 
-  // Запрет на повтор снимает не любой ответ 200, а только движение денег (`moneyMoved`): по операции
-  // в терминальном статусе бэкенд отвечает, не спрашивая эквайера. Сбой проверки — свой `checkError`,
-  // не исход операции: `actionError` он не трогает.
+  // Свежий статус у эквайера. Запрет на повтор после неподтверждённого исхода он не снимает — это делает
+  // администратор (Р-123); сбой самой проверки — свой `checkError`, не исход операции.
   const handleCheckStatus = async () => {
     if (!transaction) return;
-    const before = transaction;
     setCheckingStatus(true);
     setStatusChecked(false);
-    setStillUnresolved(false);
     setCheckError(null);
     try {
       const res = await apiClient.get(`/api/v1/transactions/${transaction.id}/status`);
       if (!res.data) {
-        setCheckError(tObj.transactions.detail.checkStatusFailed);
+        setCheckError(d.checkStatusFailed);
         return;
       }
-      const after = mapTransaction(res.data, terminalIndex);
       setRawTx(res.data);
-      if (outcomeUnresolved && !moneyMoved(before, after)) {
-        setStillUnresolved(true);
-        return;
-      }
       setActionError(null);
       setStatusChecked(true);
     } catch (err: unknown) {
       const serverMessage = axios.isAxiosError(err) ? err.response?.data?.message : undefined;
       setCheckError(typeof serverMessage === 'string' && serverMessage
         ? serverMessage
-        : tObj.transactions.detail.checkStatusFailed);
+        : d.checkStatusFailed);
     } finally {
       setCheckingStatus(false);
+    }
+  };
+
+  // Итог сверки с провайдером — только администратор (сервер проверит роль сам). Ответ — перечитанная операция.
+  const handleResolve = async () => {
+    if (!transaction || resolveTarget === null) return;
+    setResolveBusy(true);
+    setResolveError(null);
+    try {
+      const res = await apiClient.post(`/api/v1/transactions/${transaction.id}/resolve-outcome`, {
+        executed: resolveTarget,
+      });
+      if (res.data) setRawTx(res.data);
+      setActionError(null);
+      setResolveTarget(null);
+    } catch (err: unknown) {
+      const serverMessage = axios.isAxiosError(err) ? err.response?.data?.message : undefined;
+      setResolveError(typeof serverMessage === 'string' && serverMessage ? serverMessage : d.resolveFailed);
+    } finally {
+      setResolveBusy(false);
     }
   };
 
@@ -255,14 +247,12 @@ export const TransactionDetailPage: React.FC = () => {
     );
   }
 
-  // Значения разобраны на границе — сравниваем напрямую, без `toUpperCase()` (P2-12).
-  const isCompletableDms =
-    mayCapture &&
-    transaction.paymentMethod === 'DMS' &&
-    (transaction.status === 'PENDING' || transaction.status === 'AUTHORIZED');
-
-  const refundableLeft = refundableLeftOf(transaction);
-  const refundable = mayRefund && isRefundable(transaction);
+  // Кнопки — как решил сервер (Р-123): null — кнопки нет, выключенная — с причиной. Своих правил здесь нет.
+  const refundAction = transaction.actions?.refund ?? null;
+  const captureAction = transaction.actions?.capture ?? null;
+  const unresolved = transaction.actions?.unresolved ?? null;
+  const reasonOf = (action: MoneyAction): string => (action.reason ? d.moneyReasons[action.reason] : d.moneyReasons.other);
+  const refundableLeft = refundAction?.enabled ? refundAction.maxAmount : undefined;
   const refundedSoFar = Number(transaction.refundedAmount ?? 0);
 
   const failureNotice = actionError && (
@@ -304,11 +294,6 @@ export const TransactionDetailPage: React.FC = () => {
           )}
           {actionError.message}
           {outcomeUnresolved && ` ${tObj.transactions.detail.unresolvedHint}`}
-          {stillUnresolved && (
-            <Typography variant="body2" sx={{ mt: 1, fontWeight: 600 }}>
-              {tObj.transactions.detail.statusStillUnresolved}
-            </Typography>
-          )}
         </Alert>
       )}
 
@@ -775,69 +760,83 @@ export const TransactionDetailPage: React.FC = () => {
         </Box>
       </Paper>
 
-      {/* Действия видны, только когда бэкенд их примет (Р-62): `isRefundable`, `isCompletableDms`. */}
-      {(refundable || isCompletableDms || outcomeUnresolved) && (
+      {/* Кнопка видна по смыслу и активна по правилам сервера; выключенная говорит почему (Р-123). */}
+      {(refundAction || captureAction || unresolved) && (
         <Paper elevation={2} sx={{ p: 3, mb: 3, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 3 }}>
-            <Box sx={{ flex: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 3, flexWrap: 'wrap' }}>
+            <Box sx={{ flex: 1, minWidth: 260 }}>
               <Typography variant="h6" sx={{ mb: 1, fontWeight: 600, color: 'text.primary' }}>
                 Transaction Actions
               </Typography>
-              {isCompletableDms && (
+              {captureAction?.enabled && (
                 <Typography variant="body2" color="text.secondary">
                   This DMS transaction has funds authorized on the customer's card. Complete it to capture the funds, or cancel to release the hold.
                 </Typography>
               )}
-              {!isCompletableDms && refundable && (
+              {!captureAction?.enabled && refundAction?.enabled && (
                 <Typography variant="body2" color="text.secondary">
                   Cancel this transaction and initiate a refund to the customer. The amount will be reversed within 3-5 business days.
                 </Typography>
               )}
               {/* После частичного возврата остаток назван здесь, а не только в окне подтверждения. */}
-              {refundable && transaction.status === 'PARTIALLY_REFUNDED' && (
+              {refundableLeft !== undefined && transaction.status === 'PARTIALLY_REFUNDED' && (
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  {tObj.transactions.detail.refundableLeft}:{' '}
+                  {d.refundableLeft}:{' '}
                   <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
                     {formatCurrency(refundableLeft, transaction.currency)}
                   </Box>
                 </Typography>
               )}
-              {/* Кнопки погашены — экран обязан сказать почему, иначе это выглядит поломкой. */}
-              {outcomeUnresolved && (
-                <Typography variant="body2" color="warning.dark" sx={{ mt: 1, fontWeight: 600 }}>
-                  {stillUnresolved ? tObj.transactions.detail.statusStillUnresolved : tObj.transactions.detail.unresolvedHint}
-                </Typography>
+              {unresolved && (
+                <Alert severity="warning" sx={{ mt: 1.5 }}>
+                  <AlertTitle sx={{ fontWeight: 700 }}>
+                    {unresolved.state === 'IN_PROGRESS' ? d.unresolvedInProgressTitle : d.unresolvedTitle}
+                  </AlertTitle>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {unresolved.kind === 'CAPTURE' ? d.unresolvedKindCapture : unresolved.kind === 'REFUND' ? d.unresolvedKindRefund : '—'}
+                    {': '}{formatCurrency(unresolved.amount, transaction.currency)}
+                  </Typography>
+                  <Typography variant="body2">
+                    {d.unresolvedStartedAt}: {unresolved.startedAt ? formatDateTime(unresolved.startedAt) : '—'}
+                    {' · '}{d.unresolvedStartedBy}: {unresolved.startedBy || '—'}
+                  </Typography>
+                  <Typography variant="body2" sx={{ mt: 0.5 }}>
+                    {unresolved.state === 'IN_PROGRESS' ? d.unresolvedInProgressHint : d.unresolvedHint}
+                  </Typography>
+                  {unresolved.resolvable && (
+                    <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+                      <Button size="small" variant="outlined" color="success" onClick={() => setResolveTarget(true)}>
+                        {d.resolveExecuted}
+                      </Button>
+                      <Button size="small" variant="outlined" color="inherit" onClick={() => setResolveTarget(false)}>
+                        {d.resolveNotExecuted}
+                      </Button>
+                    </Stack>
+                  )}
+                </Alert>
               )}
             </Box>
             <Stack direction="row" spacing={1.5}>
-              {/* Пока исход не выяснен, доступно только спросить эквайера — кнопка рядом с погашенными. */}
-              {outcomeUnresolved && (
-                <Button
-                  variant="contained"
-                  color="warning"
-                  startIcon={<RefreshIcon />}
-                  disabled={checkingStatus}
-                  onClick={handleCheckStatus}
-                  sx={{ py: 1.5, px: 3 }}
-                >
-                  {checkingStatus ? tObj.common.loading : tObj.transactions.detail.checkStatusAction}
-                </Button>
-              )}
-              {isCompletableDms && !completeSuccess && (
-                <Button
-                  variant="outlined"
-                  color="success"
-                  startIcon={<CompleteIcon />}
-                  disabled={outcomeUnresolved}
-                  onClick={() => setCompleteDialogOpen(true)}
-                  sx={{
-                    py: 1.5,
-                    px: 3,
-                    '&:hover': { bgcolor: 'success.light', color: 'success.dark' }
-                  }}
-                >
-                  {tObj.transactions.detail.completeAction}
-                </Button>
+              {captureAction && !completeSuccess && (
+                // Подсказка на выключенной кнопке — через обёртку: выключенная кнопка событий мыши не получает.
+                <Tooltip title={captureAction.enabled ? '' : reasonOf(captureAction)}>
+                  <span>
+                    <Button
+                      variant="outlined"
+                      color="success"
+                      startIcon={<CompleteIcon />}
+                      disabled={!captureAction.enabled || outcomeUnresolved}
+                      onClick={() => setCompleteDialogOpen(true)}
+                      sx={{
+                        py: 1.5,
+                        px: 3,
+                        '&:hover': { bgcolor: 'success.light', color: 'success.dark' }
+                      }}
+                    >
+                      {d.completeAction}
+                    </Button>
+                  </span>
+                </Tooltip>
               )}
               {completeSuccess && (
                 <Chip
@@ -847,21 +846,25 @@ export const TransactionDetailPage: React.FC = () => {
                   sx={{ fontWeight: 600, py: 2 }}
                 />
               )}
-              {refundable && (
-                <Button
-                  variant="outlined"
-                  color="warning"
-                  startIcon={<CancelIcon />}
-                  disabled={outcomeUnresolved}
-                  onClick={() => setCancelDialogOpen(true)}
-                  sx={{
-                    py: 1.5,
-                    px: 3,
-                    '&:hover': { bgcolor: 'warning.light', color: 'warning.dark' }
-                  }}
-                >
-                  {tObj.transactions.detail.refundAction}
-                </Button>
+              {refundAction && (
+                <Tooltip title={refundAction.enabled ? '' : reasonOf(refundAction)}>
+                  <span>
+                    <Button
+                      variant="outlined"
+                      color="warning"
+                      startIcon={<CancelIcon />}
+                      disabled={!refundAction.enabled || outcomeUnresolved}
+                      onClick={() => setCancelDialogOpen(true)}
+                      sx={{
+                        py: 1.5,
+                        px: 3,
+                        '&:hover': { bgcolor: 'warning.light', color: 'warning.dark' }
+                      }}
+                    >
+                      {d.refundAction}
+                    </Button>
+                  </span>
+                </Tooltip>
               )}
             </Stack>
           </Box>
@@ -964,7 +967,7 @@ export const TransactionDetailPage: React.FC = () => {
         confirmColor="success"
         confirmIcon={<CompleteIcon />}
         busy={completeBusy}
-        confirmDisabled={outcomeUnresolved}
+        confirmDisabled={outcomeUnresolved || !captureAction?.enabled}
         onConfirm={handleCompleteTransaction}
         onCancel={() => setCompleteDialogOpen(false)}
       >
@@ -976,7 +979,7 @@ export const TransactionDetailPage: React.FC = () => {
             {tObj.transactions.detail.ridByMerchant}: {transaction.ridByMerchant || '—'}
           </Typography>
           <Typography variant="body2">
-            {tObj.transactions.detail.captureAmount}: {formatCurrency(transaction.amount, transaction.currency)}
+            {d.captureAmount}: {formatCurrency(captureAction?.maxAmount ?? transaction.amount, transaction.currency)}
           </Typography>
         </Box>
         {failureNotice}
@@ -989,7 +992,7 @@ export const TransactionDetailPage: React.FC = () => {
         cancelLabel={tObj.transactions.detail.keepTransaction}
         confirmLabel={tObj.transactions.detail.confirmRefund}
         busy={cancelBusy}
-        confirmDisabled={outcomeUnresolved}
+        confirmDisabled={outcomeUnresolved || !refundAction?.enabled}
         onConfirm={handleCancelTransaction}
         onCancel={() => setCancelDialogOpen(false)}
       >
@@ -1001,10 +1004,38 @@ export const TransactionDetailPage: React.FC = () => {
             {tObj.transactions.detail.ridByMerchant}: {transaction.ridByMerchant || '—'}
           </Typography>
           <Typography variant="body2">
-            {tObj.transactions.detail.refundAmount}: {formatCurrency(refundableLeft, transaction.currency)}
+            {d.refundAmount}: {formatCurrency(refundableLeft, transaction.currency)}
           </Typography>
         </Box>
         {failureNotice}
+      </ConfirmDialog>
+
+      {/* Итог неподтверждённой операции (Р-123): что именно отмечают — вид, сумма и кто отправил — в рамке. */}
+      <ConfirmDialog
+        open={resolveTarget !== null && unresolved !== null}
+        title={resolveTarget ? d.resolveExecutedTitle : d.resolveNotExecutedTitle}
+        question={resolveTarget ? d.resolveExecutedQuestion : d.resolveNotExecutedQuestion}
+        confirmLabel={resolveTarget ? d.resolveExecuted : d.resolveNotExecuted}
+        confirmColor={resolveTarget ? 'success' : 'warning'}
+        busy={resolveBusy}
+        onConfirm={handleResolve}
+        onCancel={() => { setResolveTarget(null); setResolveError(null); }}
+      >
+        {unresolved && (
+          <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {d.providerOrderId}: {transaction.providerOrderId || '—'}
+            </Typography>
+            <Typography variant="body2">
+              {unresolved.kind === 'CAPTURE' ? d.unresolvedKindCapture : unresolved.kind === 'REFUND' ? d.unresolvedKindRefund : '—'}
+              {': '}{formatCurrency(unresolved.amount, transaction.currency)}
+            </Typography>
+            <Typography variant="body2">
+              {d.unresolvedStartedBy}: {unresolved.startedBy || '—'}
+            </Typography>
+          </Box>
+        )}
+        {resolveError && <Alert severity="error" sx={{ mt: 2 }}>{resolveError}</Alert>}
       </ConfirmDialog>
     </Box>
   );

@@ -1,6 +1,12 @@
 package az.millikart.pbl.service;
 
 import az.millikart.pbl.domain.CustomerPhone;
+import java.util.function.Supplier;
+import az.millikart.common.exception.ConflictException;
+import az.millikart.pbl.repository.MoneyOperationAttemptRepository;
+import az.millikart.pbl.dto.TransactionActions;
+import az.millikart.pbl.domain.PaymentType;
+import az.millikart.pbl.domain.MoneyOperationAttempt;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentLinkStatus;
 import az.millikart.pbl.domain.Terminal;
@@ -88,6 +94,7 @@ public class PaymentLinkService {
     private final PaymentLinkRepository paymentLinkRepository;
     private final TransactionRepository transactionRepository;
     private final TransactionRefundRepository transactionRefundRepository;
+    private final MoneyOperationAttemptRepository attemptRepository;
     private final TerminalRepository terminalRepository;
     private final AcquiringClient acquiringClient;
     private final ProviderCredentialsService providerCredentials;
@@ -102,6 +109,7 @@ public class PaymentLinkService {
     public PaymentLinkService(PaymentLinkRepository paymentLinkRepository,
                                TransactionRepository transactionRepository,
                                TransactionRefundRepository transactionRefundRepository,
+                               MoneyOperationAttemptRepository attemptRepository,
                                TerminalRepository terminalRepository,
                                AcquiringClient acquiringClient,
                                ProviderCredentialsService providerCredentials,
@@ -115,6 +123,7 @@ public class PaymentLinkService {
         this.paymentLinkRepository = paymentLinkRepository;
         this.transactionRepository = transactionRepository;
         this.transactionRefundRepository = transactionRefundRepository;
+        this.attemptRepository = attemptRepository;
         this.terminalRepository = terminalRepository;
         this.acquiringClient = acquiringClient;
         this.providerCredentials = providerCredentials;
@@ -492,14 +501,21 @@ public class PaymentLinkService {
     }
 
     // Блокировку терминала не проверять (Р-38): отказ оставил бы холд висеть на карте держателя — Void
-    // у нас нет, и мерчант не смог бы ни списать его, ни отменить.
-    @Transactional
+    // у нас нет, и мерчант не смог бы ни списать его, ни отменить. Три шага — PreparedOperation (Р-123).
     public PaymentLinkResponse completeDms(UUID transactionId, CompleteDmsRequest request, UserPrincipal principal) {
         log.info("Request to complete DMS: transactionId={}, amount={}", transactionId, request.amount());
+        PreparedOperation operation = txTemplate.execute(status -> prepareCapture(transactionId, request, principal));
+        MoneyOperationResult capture = callAcquirer(operation,
+                () -> acquiringClient.completeDms(operation.providerOrderId(), operation.credentials(), operation.amount()));
+        return recordOutcome(operation, () -> recordConfirmedCapture(operation, capture));
+    }
+
+    private PreparedOperation prepareCapture(UUID transactionId, CompleteDmsRequest request, UserPrincipal principal) {
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
         String terminalCompanyId = validateAccess(link.getTerminalId(), principal, LINK_WRITE_ROLES).getCompanyId();
+        requireNoOpenAttempt(transactionId);
 
         // Повторное списание SUCCESS дважды сняло бы деньги с держателя карты (P0-8).
         if (transaction.getStatus() == TransactionStatus.SUCCESS) {
@@ -540,55 +556,46 @@ public class PaymentLinkService {
             throw new BusinessException("Capture amount exceeds the authorized amount");
         }
 
-        Terminal terminal = terminalRepository.findById(link.getTerminalId())
-                .orElseThrow(() -> {
-                    log.error("Terminal {} configuration missing for transaction {}", link.getTerminalId(), transactionId);
-                    return new BusinessException("Terminal configuration not found");
-                });
+        return prepare(transaction, MoneyOperationAttempt.Kind.CAPTURE, request.amount(), principal, terminalCompanyId);
+    }
 
-        // Креды — до отправки и вне try: их отсутствие — отказ (400), а не неизвестный исход (Р-93).
-        ProviderCredentials credentials = providerCredentials.forTerminal(terminal);
-        log.info("Sending DMS Clearing capture request to provider for providerOrderId: {}, amount: {}", transaction.getProviderOrderId(), request.amount());
+    private PaymentLinkResponse recordConfirmedCapture(PreparedOperation operation, MoneyOperationResult capture) {
+        Transaction transaction = lockLinkAndLoadTransaction(operation.transactionId(), true);
+        PaymentLink link = transaction.getLink();
+        // Свидетельство списания — под своим ключом: в споре нужны идентификаторы эквайера.
+        PaymentLink savedLink = applyCapture(transaction, link, operation.amount(), capture.raw(),
+                moneyOperationRecord(capture, operation.amount(), Instant.now()));
+        attemptRepository.deleteById(operation.transactionId());
+        log.info("Transaction {} captured successfully for {} of the authorized {} and transitioned to SUCCESS.",
+                operation.transactionId(), operation.amount(), transaction.getAmount());
 
-        // Возвращается только при подтверждённом клиринге (tran.match.ridByPmo), иначе 502 (P1-8b).
-        MoneyOperationResult capture;
-        try {
-            capture = acquiringClient.completeDms(
-                    transaction.getProviderOrderId(),
-                    credentials,
-                    request.amount()
-            );
-        } catch (PaymentOutcomeUnknownException e) {
-            // Транзакция откатится, и событие через eventPublisher пропало бы; logUnresolved пишет своей
-            // транзакцией — единственный след попытки (P2-14). 502 велит проверить статус перед повтором.
-            auditLogService.logUnresolved(AuditEntity.TRANSACTION, transactionId.toString(), AuditAction.CAPTURE,
-                    UserPrincipal.getUsername(principal), terminalCompanyId,
-                    "Capture of " + request.amount() + " " + link.getCurrency()
-                            + " left unconfirmed by the acquirer (providerOrderId "
-                            + transaction.getProviderOrderId() + "): " + e.getMessage()
-                            + ". Outcome unknown — reconcile before retrying.");
-            throw e;
-        }
+        eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, operation.transactionId().toString(),
+                AuditAction.CAPTURE, operation.actor(), operation.terminalCompanyId(),
+                "Captured " + operation.amount() + " " + operation.currency() + " of the authorized "
+                        + transaction.getAmount() + " (ridByPmo " + capture.ridByPmo()
+                        + ", tranActionId " + capture.tranActionId()
+                        + ", approvalCode " + capture.approvalCode() + ")"));
 
-        // Свидетельство списания — под своим ключом: в споре нужны идентификаторы эквайера. Сырое тело —
-        // только через ProviderPayloads.withoutSecrets (P0-9).
+        return mapper.toResponse(savedLink, savedLink.getCurrentPaymentsCount(), refundedCount(savedLink.getId()),
+                lastPaidAt(savedLink.getId()));
+    }
+
+    // amount остаётся авторизованной суммой; потолок возврата читает capturedAmount (P0-8). Частичное
+    // списание — тоже SUCCESS. Сырое тело — только через ProviderPayloads.withoutSecrets (P0-9).
+    private PaymentLink applyCapture(Transaction transaction, PaymentLink link, BigDecimal amount,
+                                     Map<String, Object> raw, Map<String, Object> evidence) {
         Map<String, Object> mergedResponse = new HashMap<>();
         if (transaction.getProviderResponse() != null) {
             mergedResponse.putAll(transaction.getProviderResponse());
         }
-        if (capture.raw() != null) {
-            mergedResponse.putAll(ProviderPayloads.withoutSecrets(capture.raw()));
+        if (raw != null) {
+            mergedResponse.putAll(ProviderPayloads.withoutSecrets(raw));
         }
-        mergedResponse.put(CAPTURE_KEY, moneyOperationRecord(capture, request.amount(), Instant.now()));
+        mergedResponse.put(CAPTURE_KEY, evidence);
         transaction.setProviderResponse(mergedResponse);
-
-        // amount остаётся авторизованной суммой; потолок возврата читает capturedAmount (P0-8).
-        transaction.setCapturedAmount(request.amount());
-        // Частичное списание — тоже SUCCESS, отдельного статуса нет.
+        transaction.setCapturedAmount(amount);
         transaction.setStatus(TransactionStatus.SUCCESS);
         transactionRepository.save(transaction);
-        log.info("Transaction {} captured successfully for {} of the authorized {} and transitioned to SUCCESS.",
-                transactionId, request.amount(), transaction.getAmount());
 
         // Использования, а не строки SUCCESS (P2-16): возвращённый платёж держит свой слот. В колонку —
         // то же число, что в API.
@@ -601,28 +608,25 @@ public class PaymentLinkService {
             log.info("Multi-use link {} reached max payments limit. Transitioned to COMPLETED.", link.getId());
             link.setStatus(PaymentLinkStatus.COMPLETED);
         }
-        PaymentLink savedLink = paymentLinkRepository.save(link);
-
-        eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, transactionId.toString(),
-                AuditAction.CAPTURE, UserPrincipal.getUsername(principal), terminalCompanyId,
-                "Captured " + request.amount() + " " + link.getCurrency() + " of the authorized "
-                        + transaction.getAmount() + " (ridByPmo " + capture.ridByPmo()
-                        + ", tranActionId " + capture.tranActionId()
-                        + ", approvalCode " + capture.approvalCode() + ")"));
-
-        return mapper.toResponse(savedLink, (int) usedCount, refundedCount(savedLink.getId()),
-                lastPaidAt(savedLink.getId()));
+        return paymentLinkRepository.save(link);
     }
 
     // Блокировку терминала не проверять (Р-38): покупатель не получил бы возврат, пока терминал
-    // не разблокируют.
-    @Transactional
+    // не разблокируют. Три шага — PreparedOperation (Р-123).
     public RefundResponse refund(UUID transactionId, RefundRequest request, UserPrincipal principal) {
         log.info("Request to refund transaction: transactionId={}, amount={}", transactionId, request.amount());
+        PreparedOperation operation = txTemplate.execute(status -> prepareRefund(transactionId, request, principal));
+        MoneyOperationResult result = callAcquirer(operation,
+                () -> acquiringClient.refund(operation.providerOrderId(), operation.credentials(), operation.amount()));
+        return recordOutcome(operation, () -> recordConfirmedRefund(operation, result));
+    }
+
+    private PreparedOperation prepareRefund(UUID transactionId, RefundRequest request, UserPrincipal principal) {
         Transaction transaction = lockLinkAndLoadTransaction(transactionId);
         PaymentLink link = transaction.getLink();
 
         String terminalCompanyId = validateAccess(link.getTerminalId(), principal, REFUND_ROLES).getCompanyId();
+        requireNoOpenAttempt(transactionId);
 
         if (transaction.getStatus() != TransactionStatus.SUCCESS && transaction.getStatus() != TransactionStatus.PARTIALLY_REFUNDED) {
             log.warn("Cannot refund transaction. Current status: {}", transaction.getStatus());
@@ -632,83 +636,33 @@ public class PaymentLinkService {
         assertCapturableScale(request.amount(), "Refund");
 
         BigDecimal refundableBase = refundableBase(transaction);
-        BigDecimal newRefundedAmount = transaction.getRefundedAmount().add(request.amount());
-        if (newRefundedAmount.compareTo(refundableBase) > 0) {
+        if (transaction.getRefundedAmount().add(request.amount()).compareTo(refundableBase) > 0) {
             log.warn("Refund amount {} exceeds the remaining captured amount of transaction {} (captured {}, already refunded {}).",
                     request.amount(), transactionId, refundableBase, transaction.getRefundedAmount());
             throw new BusinessException("Refund amount exceeds the captured amount of the transaction");
         }
 
-        Terminal terminal = terminalRepository.findById(link.getTerminalId())
-                .orElseThrow(() -> {
-                    log.error("Terminal {} configuration missing for transaction {}", link.getTerminalId(), transactionId);
-                    return new BusinessException("Terminal configuration not found");
-                });
+        return prepare(transaction, MoneyOperationAttempt.Kind.REFUND, request.amount(), principal, terminalCompanyId);
+    }
 
-        ProviderCredentials credentials = providerCredentials.forTerminal(terminal);
-        log.info("Sending refund request to provider for providerOrderId: {}, amount: {}", transaction.getProviderOrderId(), request.amount());
-
-        // Возвращается только при подтверждённом возврате (tran.match.ridByPmo), иначе 502 (P1-8b).
-        MoneyOperationResult result;
-        try {
-            result = acquiringClient.refund(transaction.getProviderOrderId(), credentials, request.amount());
-        } catch (PaymentOutcomeUnknownException e) {
-            // Как в completeDms (P2-14): деньги могли уйти со счёта мерчанта, а транзакция откатится.
-            auditLogService.logUnresolved(AuditEntity.TRANSACTION, transactionId.toString(), AuditAction.REFUND,
-                    UserPrincipal.getUsername(principal), terminalCompanyId,
-                    "Refund of " + request.amount() + " " + link.getCurrency()
-                            + " left unconfirmed by the acquirer (providerOrderId "
-                            + transaction.getProviderOrderId() + "): " + e.getMessage()
-                            + ". Outcome unknown — reconcile before retrying.");
-            throw e;
-        }
+    private RefundResponse recordConfirmedRefund(PreparedOperation operation, MoneyOperationResult result) {
+        Transaction transaction = lockLinkAndLoadTransaction(operation.transactionId(), true);
 
         // Нет tranActionId — нет и refundId: выдуманный номер возврата в споре хуже никакого (§5.7).
         if (result.tranActionId() == null) {
             log.warn("Acquirer confirmed the refund of transaction {} (ridByPmo {}) without a tranActionId; "
-                    + "the refund response will carry no refundId", transactionId, result.ridByPmo());
-        }
-
-        // Возвраты копятся списком под REFUNDS_KEY: частичных бывает несколько. Сырое тело — через
-        // withoutSecrets (P0-9).
-        Map<String, Object> mergedResponse = new HashMap<>();
-        if (transaction.getProviderResponse() != null) {
-            mergedResponse.putAll(transaction.getProviderResponse());
-        }
-        if (result.raw() != null) {
-            mergedResponse.putAll(ProviderPayloads.withoutSecrets(result.raw()));
-        }
-        List<Object> refunds = new ArrayList<>();
-        if (mergedResponse.get(REFUNDS_KEY) instanceof List<?> previous) {
-            refunds.addAll(previous);
+                    + "the refund response will carry no refundId", operation.transactionId(), result.ridByPmo());
         }
         // Один момент на свидетельство и строку возврата: статистика и история операции не расходятся (Р-89).
         Instant refundedAt = Instant.now();
-        refunds.add(moneyOperationRecord(result, request.amount(), refundedAt));
-        mergedResponse.put(REFUNDS_KEY, refunds);
-        transaction.setProviderResponse(mergedResponse);
+        applyRefund(transaction, operation.amount(), refundedAt, result.ridByPmo(), result.raw(),
+                moneyOperationRecord(result, operation.amount(), refundedAt));
+        attemptRepository.deleteById(operation.transactionId());
 
-        transaction.setRefundedAmount(newRefundedAmount);
-        if (newRefundedAmount.compareTo(refundableBase) == 0) {
-            log.info("Transaction {} fully refunded.", transactionId);
-            transaction.setStatus(TransactionStatus.REFUNDED);
-        } else {
-            log.info("Transaction {} partially refunded. Total refunded: {}", transactionId, newRefundedAmount);
-            transaction.setStatus(TransactionStatus.PARTIALLY_REFUNDED);
-        }
-        transactionRepository.save(transaction);
-        // По refunded_at статистика по ссылкам вычитает возвраты периода (Р-89).
-        transactionRefundRepository.save(TransactionRefund.builder()
-                .transaction(transaction)
-                .amount(request.amount())
-                .refundedAt(refundedAt)
-                .ridByPmo(result.ridByPmo())
-                .build());
-
-        eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, transactionId.toString(),
-                AuditAction.REFUND, UserPrincipal.getUsername(principal), terminalCompanyId,
-                "Refunded " + request.amount() + " " + link.getCurrency() + " of " + refundableBase
-                        + "; refunded so far " + newRefundedAmount + ", transaction now "
+        eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, operation.transactionId().toString(),
+                AuditAction.REFUND, operation.actor(), operation.terminalCompanyId(),
+                "Refunded " + operation.amount() + " " + operation.currency() + " of " + refundableBase(transaction)
+                        + "; refunded so far " + transaction.getRefundedAmount() + ", transaction now "
                         + transaction.getStatus() + " (ridByPmo " + result.ridByPmo()
                         + ", tranActionId " + result.tranActionId()
                         + ", approvalCode " + result.approvalCode() + ")"));
@@ -716,23 +670,216 @@ public class PaymentLinkService {
         return new RefundResponse(
                 transaction.getId(),
                 transaction.getStatus().name(),
-                request.amount(),
+                operation.amount(),
                 result.tranActionId(),
                 result.ridByPmo(),
                 result.approvalCode()
         );
     }
 
+    // Возвраты копятся списком под REFUNDS_KEY: частичных бывает несколько. По refunded_at статистика по
+    // ссылкам вычитает возвраты периода (Р-89).
+    private void applyRefund(Transaction transaction, BigDecimal amount, Instant refundedAt, String ridByPmo,
+                             Map<String, Object> raw, Map<String, Object> evidence) {
+        Map<String, Object> mergedResponse = new HashMap<>();
+        if (transaction.getProviderResponse() != null) {
+            mergedResponse.putAll(transaction.getProviderResponse());
+        }
+        if (raw != null) {
+            mergedResponse.putAll(ProviderPayloads.withoutSecrets(raw));
+        }
+        List<Object> refunds = new ArrayList<>();
+        if (mergedResponse.get(REFUNDS_KEY) instanceof List<?> previous) {
+            refunds.addAll(previous);
+        }
+        refunds.add(evidence);
+        mergedResponse.put(REFUNDS_KEY, refunds);
+        transaction.setProviderResponse(mergedResponse);
+
+        BigDecimal refundableBase = refundableBase(transaction);
+        BigDecimal newRefundedAmount = transaction.getRefundedAmount().add(amount);
+        transaction.setRefundedAmount(newRefundedAmount);
+        if (newRefundedAmount.compareTo(refundableBase) == 0) {
+            log.info("Transaction {} fully refunded.", transaction.getId());
+            transaction.setStatus(TransactionStatus.REFUNDED);
+        } else {
+            log.info("Transaction {} partially refunded. Total refunded: {}", transaction.getId(), newRefundedAmount);
+            transaction.setStatus(TransactionStatus.PARTIALLY_REFUNDED);
+        }
+        transactionRepository.save(transaction);
+        transactionRefundRepository.save(TransactionRefund.builder()
+                .transaction(transaction)
+                .amount(amount)
+                .refundedAt(refundedAt)
+                .ridByPmo(ridByPmo)
+                .build());
+    }
+
+    // Денежная операция — три шага (Р-123). 1: под замком ссылки (NOWAIT) проверки и строка попытки — она и
+    // держит операцию на время вызова: второй возврат или списание — 409. 2: вызов эквайера без транзакции и
+    // замка — соединение пула не ждёт эквайера. 3: под ждущим замком итог по перечитанной операции и удаление
+    // строки. Строка без итога — исход неизвестен: её снимает только SYSTEM_ADMIN (resolveOutcome).
+    private record PreparedOperation(UUID transactionId, MoneyOperationAttempt.Kind kind, BigDecimal amount,
+                                     String providerOrderId, ProviderCredentials credentials, String currency,
+                                     String actor, String terminalCompanyId) {
+    }
+
+    private PreparedOperation prepare(Transaction transaction, MoneyOperationAttempt.Kind kind, BigDecimal amount,
+                                      UserPrincipal principal, String terminalCompanyId) {
+        PaymentLink link = transaction.getLink();
+        Terminal terminal = terminalRepository.findById(link.getTerminalId())
+                .orElseThrow(() -> {
+                    log.error("Terminal {} configuration missing for transaction {}", link.getTerminalId(), transaction.getId());
+                    return new BusinessException("Terminal configuration not found");
+                });
+        // Креды — до строки попытки: их отсутствие — отказ (400), а не неизвестный исход (Р-93).
+        ProviderCredentials credentials = providerCredentials.forTerminal(terminal);
+        String actor = UserPrincipal.getUsername(principal);
+        attemptRepository.save(MoneyOperationAttempt.builder()
+                .transactionId(transaction.getId())
+                .kind(kind)
+                .amount(amount)
+                .state(MoneyOperationAttempt.State.IN_PROGRESS)
+                .startedBy(actor)
+                .startedAt(Instant.now())
+                .build());
+        log.info("Sending {} of {} to the acquirer for providerOrderId: {}", kind, amount, transaction.getProviderOrderId());
+        return new PreparedOperation(transaction.getId(), kind, amount, transaction.getProviderOrderId(), credentials,
+                link.getCurrency(), actor, terminalCompanyId);
+    }
+
+    // Пока исход прошлой операции не записан, новая не уходит: та могла уже двинуть деньги (Р-123).
+    private void requireNoOpenAttempt(UUID transactionId) {
+        attemptRepository.findById(transactionId).ifPresent(attempt -> {
+            boolean unknown = attempt.outcomeUnknown(Instant.now());
+            log.warn("Refusing a money operation on transaction {}: an earlier {} of {} is {}", transactionId,
+                    attempt.getKind(), attempt.getAmount(), unknown ? "of unknown outcome" : "still in progress");
+            throw new ConflictException(unknown
+                    ? "An earlier " + attempt.getKind().name().toLowerCase() + " of this transaction has an unknown "
+                            + "outcome; a system administrator must resolve it before another money operation"
+                    : "Another money operation on this transaction is in progress");
+        });
+    }
+
+    // Возвращается только подтверждённый результат (tran.match.ridByPmo), иначе 502 (P1-8b).
+    private MoneyOperationResult callAcquirer(PreparedOperation operation, Supplier<MoneyOperationResult> call) {
+        try {
+            return call.get();
+        } catch (PaymentOutcomeUnknownException e) {
+            markAttemptUnknown(operation.transactionId());
+            auditLogService.logUnresolved(AuditEntity.TRANSACTION, operation.transactionId().toString(),
+                    auditActionOf(operation.kind()), operation.actor(), operation.terminalCompanyId(),
+                    capitalized(operation.kind()) + " of " + operation.amount() + " " + operation.currency()
+                            + " left unconfirmed by the acquirer (providerOrderId " + operation.providerOrderId()
+                            + "): " + e.getMessage() + ". Outcome unknown — a system administrator must reconcile "
+                            + "it with the provider and resolve it before another money operation.");
+            throw e;
+        } catch (RuntimeException e) {
+            // Отказ эквайера или разомкнутый breaker: деньги не двигались, запрет снимается.
+            releaseAttempt(operation.transactionId());
+            throw e;
+        }
+    }
+
+    // Эквайер подтвердил, а записать не вышло: деньги ушли, итога у нас нет. Не 500 — исход для мерчанта
+    // неизвестен, строка попытки остаётся и держит запрет до разрешения исхода.
+    private <T> T recordOutcome(PreparedOperation operation, Supplier<T> record) {
+        try {
+            return txTemplate.execute(status -> record.get());
+        } catch (RuntimeException e) {
+            // Стектрейс напечатает GlobalExceptionHandler под маркером PAYMENT_OUTCOME_UNKNOWN — здесь без него (Р-98).
+            log.error("The acquirer confirmed the {} of {} on transaction {}, but recording it failed: {}",
+                    operation.kind(), operation.amount(), operation.transactionId(), e.getMessage());
+            markAttemptUnknown(operation.transactionId());
+            throw new PaymentOutcomeUnknownException("The acquirer confirmed the " + operation.kind().name().toLowerCase()
+                    + ", but the portal failed to record it; a system administrator must resolve the outcome", e);
+        }
+    }
+
+    private void markAttemptUnknown(UUID transactionId) {
+        try {
+            txTemplate.executeWithoutResult(status -> attemptRepository.findById(transactionId).ifPresent(attempt -> {
+                attempt.setState(MoneyOperationAttempt.State.UNKNOWN);
+                attemptRepository.save(attempt);
+            }));
+        } catch (RuntimeException e) {
+            // Строка останется IN_PROGRESS и через STALE_AFTER всё равно прочтётся как неизвестная.
+            log.error("Could not mark the money operation on transaction {} as of unknown outcome", transactionId, e);
+        }
+    }
+
+    private void releaseAttempt(UUID transactionId) {
+        try {
+            txTemplate.executeWithoutResult(status -> attemptRepository.deleteById(transactionId));
+        } catch (RuntimeException e) {
+            log.error("Could not release the money operation on transaction {}; it will read as of unknown outcome "
+                    + "after {} and need resolving", transactionId, MoneyOperationAttempt.STALE_AFTER, e);
+        }
+    }
+
+    // Итог сверки SYSTEM_ADMIN с провайдером (Р-123): executed — операция записывается как подтверждённая, но
+    // без идентификаторов эквайера; иначе запрет просто снимается. «Идёт» моложе STALE_AFTER не разрешается.
+    @Transactional
+    public TransactionResponse resolveOutcome(UUID transactionId, boolean executed, UserPrincipal principal) {
+        Transaction transaction = lockLinkAndLoadTransaction(transactionId);
+        PaymentLink link = transaction.getLink();
+        String terminalCompanyId = validateAccess(link.getTerminalId(), principal, RESOLVE_ROLES).getCompanyId();
+        MoneyOperationAttempt attempt = attemptRepository.findById(transactionId)
+                .orElseThrow(() -> new ConflictException("This transaction has no money operation awaiting resolution"));
+        Instant now = Instant.now();
+        if (!attempt.outcomeUnknown(now)) {
+            throw new ConflictException("The money operation on this transaction is still in progress");
+        }
+        String admin = UserPrincipal.getUsername(principal);
+        if (executed) {
+            Map<String, Object> evidence = new HashMap<>();
+            evidence.put("amount", attempt.getAmount().setScale(2, RoundingMode.UNNECESSARY).toPlainString());
+            evidence.put("at", attempt.getStartedAt().toString());
+            evidence.put("resolvedBy", admin);
+            evidence.put("resolvedAt", now.toString());
+            if (attempt.getKind() == MoneyOperationAttempt.Kind.CAPTURE) {
+                applyCapture(transaction, link, attempt.getAmount(), null, evidence);
+            } else {
+                if (transaction.getRefundedAmount().add(attempt.getAmount()).compareTo(refundableBase(transaction)) > 0) {
+                    throw new ConflictException("Recording this refund would exceed the captured amount of the transaction");
+                }
+                applyRefund(transaction, attempt.getAmount(), attempt.getStartedAt(), null, null, evidence);
+            }
+        }
+        attemptRepository.delete(attempt);
+        log.info("Unknown {} of {} on transaction {} resolved by {} as {}", attempt.getKind(), attempt.getAmount(),
+                transactionId, admin, executed ? "executed" : "not executed");
+        eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TRANSACTION, transactionId.toString(),
+                AuditAction.RESOLVE, admin, terminalCompanyId,
+                "Unknown " + attempt.getKind().name().toLowerCase() + " of " + attempt.getAmount() + " "
+                        + link.getCurrency() + " started by " + attempt.getStartedBy() + " at " + attempt.getStartedAt()
+                        + " resolved as " + (executed ? "executed: recorded without acquirer references"
+                        : "not executed: nothing recorded")));
+        return mapToTransactionResponse(transaction, actionsOf(transaction, principal));
+    }
+
+    private static String auditActionOf(MoneyOperationAttempt.Kind kind) {
+        return kind == MoneyOperationAttempt.Kind.CAPTURE ? AuditAction.CAPTURE : AuditAction.REFUND;
+    }
+
+    private static String capitalized(MoneyOperationAttempt.Kind kind) {
+        return kind == MoneyOperationAttempt.Kind.CAPTURE ? "Capture" : "Refund";
+    }
+
     // Блокировка ссылки — ДО чтения транзакции и похода к эквайеру: иначе два возврата пройдут потолок
     // на одном снимке, два списания уйдут в шлюз, а конфликт @Version на коммите откатит подтверждённое
     // списание. Порядок «ссылка, потом транзакция» — как у открытия: взаимной блокировки нет.
     private Transaction lockLinkAndLoadTransaction(UUID transactionId) {
+        return lockLinkAndLoadTransaction(transactionId, false);
+    }
+
+    private Transaction lockLinkAndLoadTransaction(UUID transactionId, boolean waitForLock) {
         UUID linkId = transactionRepository.findLinkIdById(transactionId)
                 .orElseThrow(() -> {
                     log.warn("Transaction not found for a money operation: {}", transactionId);
                     return new ResourceNotFoundException("Transaction not found: " + transactionId);
                 });
-        paymentLinkRepository.findWithLockById(linkId)
+        (waitForLock ? paymentLinkRepository.findWithWaitingLockById(linkId) : paymentLinkRepository.findWithLockById(linkId))
                 .orElseThrow(() -> new ResourceNotFoundException("Payment link not found: " + linkId));
         return transactionRepository.findById(transactionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + transactionId));
@@ -776,7 +923,8 @@ public class PaymentLinkService {
         Integer terminalId = transactionRepository.findTerminalIdById(transactionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + identifier));
         requireStatusReadable(identifier, terminalId, principal);
-        return mapToTransactionResponse(refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction());
+        Transaction refreshed = refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction();
+        return mapToTransactionResponse(refreshed, actionsOf(refreshed, principal));
     }
 
     // Номера заказов провайдера идут подряд: 403 на чужой при 404 на несуществующий выдавал перебором
@@ -1127,7 +1275,7 @@ public class PaymentLinkService {
                     return new ResourceNotFoundException("Transaction not found: " + id);
                 });
         validateAccess(tx.getLink().getTerminalId(), principal, READ_ROLES);
-        return mapToTransactionResponse(tx);
+        return mapToTransactionResponse(tx, actionsOf(tx, principal));
     }
 
     // Узкая проекция для страницы плательщика: только то, что плательщик и так знает.
@@ -1158,6 +1306,27 @@ public class PaymentLinkService {
     // Маска карты, RRN и код авторизации — на лету из providerResponse через ProviderOrderDetails (P1-16).
     // Своих колонок нет намеренно: payload транзакции в финальном статусе опрос не переписывает.
     private TransactionResponse mapToTransactionResponse(Transaction tx) {
+        return mapToTransactionResponse(tx, null);
+    }
+
+    // Кнопки карточки (Р-123): терминал, креды его компании и строка попытки — только для одной операции.
+    private TransactionActions actionsOf(Transaction tx, UserPrincipal principal) {
+        PaymentLink link = tx.getLink();
+        Optional<Terminal> terminal = link != null ? terminalRepository.findById(link.getTerminalId()) : Optional.empty();
+        return MoneyActions.decide(new MoneyActions.Facts(
+                tx.getStatus(),
+                link != null && link.getPaymentType() == PaymentType.DMS,
+                tx.getAmount(),
+                tx.getCapturedAmount(),
+                tx.getRefundedAmount(),
+                UserPrincipal.getRole(principal),
+                terminal.isPresent(),
+                terminal.map(providerCredentials::hasCredentials).orElse(false),
+                attemptRepository.findById(tx.getId()).orElse(null),
+                Instant.now()));
+    }
+
+    private TransactionResponse mapToTransactionResponse(Transaction tx, TransactionActions actions) {
         Map<String, Object> resp = tx.getProviderResponse();
         TransactionFacts facts = ProviderOrderDetails.read(resp);
 
@@ -1185,7 +1354,8 @@ public class PaymentLinkService {
                 tx.getUserAgent(),
                 tx.getProviderOrderId(),
                 statusHistoryOf(tx, resp),
-                failureReasonOf(resp)
+                failureReasonOf(resp),
+                actions
         );
     }
 
@@ -1286,12 +1456,15 @@ public class PaymentLinkService {
     public static final Set<Role> READ_ROLES = EnumSet.allOf(Role.class);
 
     // Создание и правка ссылок, списание DMS-холда.
-    private static final Set<Role> LINK_WRITE_ROLES =
+    static final Set<Role> LINK_WRITE_ROLES =
             EnumSet.of(Role.SYSTEM_ADMIN, Role.COMPANY_HEAD, Role.COMPANY_MANAGER, Role.COMPANY_EMPLOYEE);
 
     // Без COMPANY_EMPLOYEE: возврат двигает деньги обратно.
-    private static final Set<Role> REFUND_ROLES =
+    static final Set<Role> REFUND_ROLES =
             EnumSet.of(Role.SYSTEM_ADMIN, Role.COMPANY_HEAD, Role.COMPANY_MANAGER);
+
+    // Разрешить неизвестный исход — только администратор, после сверки с провайдером (Р-123).
+    private static final Set<Role> RESOLVE_ROLES = EnumSet.of(Role.SYSTEM_ADMIN);
 
     // Читают через все компании (Р-1).
     public static boolean isGlobalReader(Role role) {

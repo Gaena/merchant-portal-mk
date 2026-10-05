@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Р-123: возврат или списание, исход которого ещё не записан. Строка пишется до отправки эквайеру своей
+      транзакцией и удаляется вместе с записью итога; ответа не было — остаётся с state UNKNOWN, пока
+      SYSTEM_ADMIN не разрешит исход. Пока строка есть, второй возврат или списание той же операции — 409.
+      Ключ — операция: идущая попытка у неё одна. Каскад — как у transaction_refunds (010).
+    -->
+    <changeSet id="15-pbl-create-money-operation-attempts" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="money_operation_attempts"/>
+            </not>
+        </preConditions>
+        <createTable tableName="money_operation_attempts">
+            <column name="transaction_id" type="uuid">
+                <constraints primaryKey="true" nullable="false"
+                             foreignKeyName="fk_money_operation_attempts_transaction"
+                             referencedTableName="transactions" referencedColumnNames="id"
+                             deleteCascade="true"/>
+            </column>
+            <!-- CAPTURE или REFUND -->
+            <column name="kind" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="amount" type="numeric(19,2)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- IN_PROGRESS или UNKNOWN; IN_PROGRESS старше 5 минут читается как UNKNOWN -->
+            <column name="state" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="started_by" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="started_at" type="TIMESTAMP WITH TIME ZONE">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+</databaseChangeLog>

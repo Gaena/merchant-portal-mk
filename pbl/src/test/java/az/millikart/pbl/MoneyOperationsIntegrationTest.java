@@ -22,6 +22,8 @@ import az.millikart.common.exception.PaymentOutcomeUnknownException;
 import az.millikart.common.security.JwtProvider;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.pbl.dto.CompleteDmsRequest;
+import az.millikart.pbl.dto.RefundRequest;
+import az.millikart.pbl.repository.MoneyOperationAttemptRepository;
 import az.millikart.pbl.service.PaymentLinkService;
 import az.millikart.pbl.domain.PaymentLink;
 import az.millikart.pbl.domain.PaymentLinkStatus;
@@ -127,6 +129,9 @@ class MoneyOperationsIntegrationTest {
 
     @Autowired
     private PaymentLinkService paymentLinkService;
+
+    @Autowired
+    private MoneyOperationAttemptRepository attemptRepository;
 
     @MockBean
     private AcquiringClient acquiringClient;
@@ -853,11 +858,11 @@ class MoneyOperationsIntegrationTest {
 
     // --- опрос статуса под тем же замком (Р-109) --------------------------------------
 
-    // Списание уже у эквайера, а /status пришёл в эти секунды. Без замка опрос прочитал бы AUTHORIZED и после
-    // коммита списания записал бы его обратно — с пустым capturedAmount и без mpCapture, и кнопка списания
-    // вернулась бы. С замком опрос сразу получает 409 и к эквайеру не идёт, а списание сохраняется целиком.
+    // Списание у эквайера, а /status пришёл в эти секунды. Замок ссылки на время вызова снят (Р-123), и опрос
+    // проходит, — но итог списания пишется по операции, перечитанной под замком, поэтому снимок опроса его не
+    // затирает: списание сохраняется целиком, с capturedAmount и mpCapture.
     @Test
-    void aStatusCheckDuringACapture_isRefused_andTheCaptureIsKeptWhole() throws Exception {
+    void aStatusCheckDuringACapture_doesNotOverwriteTheCapture() throws Exception {
         Transaction held = transaction("RACE-CAPTURE", TransactionStatus.AUTHORIZED);
         CountDownLatch captureAtTheAcquirer = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -875,8 +880,9 @@ class MoneyOperationsIntegrationTest {
             Assertions.assertTrue(captureAtTheAcquirer.await(10, TimeUnit.SECONDS), "the capture never reached the acquirer");
 
             mockMvc.perform(statusCheck(held))
-                    .andExpect(status().isConflict())
-                    .andExpect(jsonPath("$.message", is("The resource is being changed by another request, please retry")));
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status", is("AUTHORIZED")))
+                    .andExpect(jsonPath("$.actions.capture.reason", is("IN_PROGRESS")));
 
             release.countDown();
             capture.get(10, TimeUnit.SECONDS);
@@ -885,11 +891,11 @@ class MoneyOperationsIntegrationTest {
             pool.shutdownNow();
         }
 
-        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
         Transaction captured = reload(held);
         Assertions.assertEquals(TransactionStatus.SUCCESS, captured.getStatus());
         Assertions.assertEquals(0, AMOUNT.compareTo(captured.getCapturedAmount()));
         Assertions.assertNotNull(captured.getProviderResponse().get("mpCapture"));
+        Assertions.assertTrue(attemptRepository.findById(held.getId()).isEmpty());
     }
 
     // На запертой ссылке ни один опрос к эквайеру не идёт: /status — 409, страница возврата плательщика рисует
@@ -918,6 +924,201 @@ class MoneyOperationsIntegrationTest {
         mockMvc.perform(statusCheck(pending))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("SUCCESS")));
+    }
+
+    // --- неподтверждённый исход (Р-123) ----------------------------------------------------
+
+    // Главный тест Р-123: после 502 запрет на повтор держит сервер, а не память карточки. Раньше перезагрузка
+    // страницы его снимала, и второй возврат уходил к эквайеру поверх, возможно, прошедшего первого.
+    @Test
+    void afterAnUnknownOutcome_anotherMoneyOperationIs409_andTheCardSaysWhy() throws Exception {
+        Transaction settled = transaction("UNKNOWN-REFUND", TransactionStatus.SUCCESS);
+        when(acquiringClient.refund(anyString(), any(), any()))
+                .thenThrow(new PaymentOutcomeUnknownException("Read timed out"));
+
+        mockMvc.perform(refund(settled, new BigDecimal("40.00"))).andExpect(status().isBadGateway());
+        mockMvc.perform(refund(settled, new BigDecimal("40.00")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", containsString("unknown outcome")));
+
+        verify(acquiringClient, times(1)).refund(anyString(), any(), any());
+        mockMvc.perform(card(settled, headToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actions.refund.enabled", is(false)))
+                .andExpect(jsonPath("$.actions.refund.reason", is("OUTCOME_UNKNOWN")))
+                .andExpect(jsonPath("$.actions.unresolved.kind", is("REFUND")))
+                .andExpect(jsonPath("$.actions.unresolved.state", is("UNKNOWN")))
+                .andExpect(jsonPath("$.actions.unresolved.resolvable", is(false)));
+        mockMvc.perform(card(settled, adminToken()))
+                .andExpect(jsonPath("$.actions.unresolved.resolvable", is(true)));
+    }
+
+    // Пока возврат у эквайера, замок ссылки снят — вызов идёт без транзакции, — и операцию держит строка
+    // попытки: второй возврат сразу 409 и к эквайеру не идёт. Ловит удаление requireNoOpenAttempt.
+    @Test
+    void aSecondOperationWhileTheFirstIsAtTheAcquirer_is409() throws Exception {
+        Transaction settled = transaction("IN-FLIGHT", TransactionStatus.SUCCESS);
+        CountDownLatch atTheAcquirer = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(acquiringClient.refund(anyString(), any(), any())).thenAnswer(invocation -> {
+            atTheAcquirer.countDown();
+            Assertions.assertTrue(release.await(10, TimeUnit.SECONDS), "the refund was not released in time");
+            return confirmed("FIRST");
+        });
+
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> first = pool.submit(() -> paymentLinkService.refund(settled.getId(),
+                    new RefundRequest(new BigDecimal("40.00"), "first"), head()));
+            Assertions.assertTrue(atTheAcquirer.await(10, TimeUnit.SECONDS), "the refund never reached the acquirer");
+
+            mockMvc.perform(refund(settled, new BigDecimal("10.00")))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.message", is("Another money operation on this transaction is in progress")));
+            mockMvc.perform(card(settled, headToken))
+                    .andExpect(jsonPath("$.actions.refund.reason", is("IN_PROGRESS")))
+                    .andExpect(jsonPath("$.actions.unresolved.state", is("IN_PROGRESS")));
+
+            release.countDown();
+            first.get(10, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+
+        verify(acquiringClient, times(1)).refund(anyString(), any(), any());
+        Assertions.assertEquals(0, new BigDecimal("40.00").compareTo(reload(settled).getRefundedAmount()));
+        Assertions.assertTrue(attemptRepository.findById(settled.getId()).isEmpty(),
+                "a recorded outcome releases the transaction");
+    }
+
+    // Отказ эквайера — деньги не двигались: строка попытки снимается, и повтор доходит до эквайера.
+    @Test
+    void aDeclinedOperation_releasesTheTransaction() throws Exception {
+        Transaction settled = transaction("DECLINED", TransactionStatus.SUCCESS);
+        when(acquiringClient.refund(anyString(), any(), any()))
+                .thenThrow(new BusinessException("Acquirer error: Not enough funds"));
+
+        mockMvc.perform(refund(settled, new BigDecimal("40.00"))).andExpect(status().isBadRequest());
+        mockMvc.perform(refund(settled, new BigDecimal("40.00"))).andExpect(status().isBadRequest());
+
+        verify(acquiringClient, times(2)).refund(anyString(), any(), any());
+        Assertions.assertTrue(attemptRepository.findById(settled.getId()).isEmpty());
+    }
+
+    // Сервис упал посреди вызова, и строка осталась «идёт». Пять минут она держит запрет как идущая операция,
+    // дальше читается как неизвестный исход, и только тогда её может разрешить администратор.
+    @Test
+    void anAttemptLeftInProgress_readsAsUnknownAfterFiveMinutes() throws Exception {
+        Transaction fresh = transaction("FRESH", TransactionStatus.SUCCESS);
+        Transaction stale = transaction("STALE", TransactionStatus.SUCCESS);
+        insertAttempt(fresh, "IN_PROGRESS", Instant.now().minus(Duration.ofMinutes(1)));
+        insertAttempt(stale, "IN_PROGRESS", Instant.now().minus(Duration.ofMinutes(6)));
+
+        mockMvc.perform(card(fresh, adminToken()))
+                .andExpect(jsonPath("$.actions.refund.reason", is("IN_PROGRESS")))
+                .andExpect(jsonPath("$.actions.unresolved.resolvable", is(false)));
+        mockMvc.perform(resolve(fresh, false, adminToken()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", is("The money operation on this transaction is still in progress")));
+
+        mockMvc.perform(card(stale, adminToken()))
+                .andExpect(jsonPath("$.actions.refund.reason", is("OUTCOME_UNKNOWN")))
+                .andExpect(jsonPath("$.actions.unresolved.state", is("UNKNOWN")))
+                .andExpect(jsonPath("$.actions.unresolved.resolvable", is(true)));
+        mockMvc.perform(refund(stale, new BigDecimal("10.00"))).andExpect(status().isConflict());
+
+        verify(acquiringClient, never()).refund(anyString(), any(), any());
+    }
+
+    // Администратор сверился с провайдером: возврат прошёл. Он записывается, как подтверждённый, — сумма,
+    // статус, строка для статистики (Р-89) и свидетельство с тем, кто разрешил, — но без идентификаторов
+    // эквайера: выдумывать их нельзя.
+    @Test
+    void resolvingAnUnknownRefundAsExecuted_recordsItWithoutAcquirerReferences() throws Exception {
+        Transaction settled = transaction("RESOLVE-YES", TransactionStatus.SUCCESS);
+        when(acquiringClient.refund(anyString(), any(), any()))
+                .thenThrow(new PaymentOutcomeUnknownException("Read timed out"));
+        mockMvc.perform(refund(settled, new BigDecimal("40.00"))).andExpect(status().isBadGateway());
+
+        mockMvc.perform(resolve(settled, true, adminToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("PARTIALLY_REFUNDED")))
+                .andExpect(jsonPath("$.actions.refund.enabled", is(true)))
+                .andExpect(jsonPath("$.actions.unresolved").doesNotExist());
+
+        Transaction recorded = reload(settled);
+        Assertions.assertEquals(TransactionStatus.PARTIALLY_REFUNDED, recorded.getStatus());
+        Assertions.assertEquals(0, new BigDecimal("40.00").compareTo(recorded.getRefundedAmount()));
+        List<TransactionRefund> rows = transactionRefundRepository.findAll().stream()
+                .filter(row -> row.getTransaction().getId().equals(settled.getId()))
+                .toList();
+        Assertions.assertEquals(1, rows.size());
+        Assertions.assertNull(rows.get(0).getRidByPmo());
+        Map<String, Object> evidence = refundsOf(settled).get(0);
+        Assertions.assertEquals("admin@test.com", evidence.get("resolvedBy"));
+        Assertions.assertNull(evidence.get("ridByPmo"));
+        Assertions.assertTrue(attemptRepository.findById(settled.getId()).isEmpty());
+        Assertions.assertEquals(List.of("RESOLVE"), jdbcTemplate.queryForList(
+                "SELECT action FROM audit_logs WHERE entity_id = ? AND action = 'RESOLVE'",
+                String.class, settled.getId().toString()));
+    }
+
+    // Списание не прошло: снимается только запрет — холд остаётся холдом, и списание можно повторить.
+    @Test
+    void resolvingAnUnknownCaptureAsNotExecuted_onlyLiftsTheBan() throws Exception {
+        Transaction held = transaction("RESOLVE-NO", TransactionStatus.AUTHORIZED);
+        when(acquiringClient.completeDms(anyString(), any(), any()))
+                .thenThrow(new PaymentOutcomeUnknownException("Read timed out"));
+        mockMvc.perform(capture(held, AMOUNT)).andExpect(status().isBadGateway());
+
+        mockMvc.perform(resolve(held, false, adminToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("AUTHORIZED")))
+                .andExpect(jsonPath("$.actions.capture.enabled", is(true)));
+        Transaction untouched = reload(held);
+        Assertions.assertNull(untouched.getCapturedAmount());
+        Assertions.assertNull(untouched.getProviderResponse() == null ? null : untouched.getProviderResponse().get("mpCapture"));
+
+        org.mockito.Mockito.doReturn(confirmed("RETRY")).when(acquiringClient).completeDms(anyString(), any(), any());
+        mockMvc.perform(capture(held, AMOUNT)).andExpect(status().isOk());
+        verify(acquiringClient, times(2)).completeDms(anyString(), any(), any());
+    }
+
+    // Разрешить исход — только SYSTEM_ADMIN: это запись денег без подтверждения эквайера.
+    @Test
+    void onlyTheSystemAdminResolvesAnUnknownOutcome() throws Exception {
+        Transaction settled = transaction("RESOLVE-DENIED", TransactionStatus.SUCCESS);
+        insertAttempt(settled, "UNKNOWN", Instant.now().minus(Duration.ofMinutes(1)));
+
+        mockMvc.perform(resolve(settled, true, headToken)).andExpect(status().isForbidden());
+
+        Assertions.assertTrue(attemptRepository.findById(settled.getId()).isPresent());
+        Assertions.assertEquals(0, BigDecimal.ZERO.compareTo(reload(settled).getRefundedAmount()));
+    }
+
+    private MockHttpServletRequestBuilder card(Transaction tx, String token) {
+        return get("/api/v1/transactions/{id}", tx.getId()).header(HttpHeaders.AUTHORIZATION, token);
+    }
+
+    private MockHttpServletRequestBuilder resolve(Transaction tx, boolean executed, String token) throws Exception {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("executed", executed);
+        return post("/api/v1/transactions/{id}/resolve-outcome", tx.getId())
+                .header(HttpHeaders.AUTHORIZATION, token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body));
+    }
+
+    private String adminToken() {
+        return "Bearer " + jwtProvider.generateToken("admin-user", "admin@test.com", "SYSTEM_ADMIN", null);
+    }
+
+    // Строка попытки мимо сервиса — как её оставил бы упавший посреди вызова процесс.
+    private void insertAttempt(Transaction tx, String state, Instant startedAt) {
+        jdbcTemplate.update("INSERT INTO money_operation_attempts (transaction_id, kind, amount, state, started_by, started_at) "
+                        + "VALUES (?, 'REFUND', 40.00, ?, 'head-user@test.com', ?)",
+                tx.getId(), state, java.time.OffsetDateTime.ofInstant(startedAt, java.time.ZoneOffset.UTC));
     }
 
     private JsonNode historyOf(Transaction tx) throws Exception {

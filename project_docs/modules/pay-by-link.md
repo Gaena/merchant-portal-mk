@@ -41,6 +41,7 @@
 | 12 | `GET /api/v1/transactions/{id}` — one transaction, no acquirer call | JWT | §5.12 |
 | 13 | `GET /api/v1/dashboard/summary` — payment link statistics | JWT | §5.13 |
 | 14 | `POST /api/v1/acquiring/terminal-checks/{terminalId}` — terminal check | JWT | §5.14 |
+| 15 | `POST /api/v1/transactions/{transactionId}/resolve-outcome` — record the outcome of an unconfirmed capture or refund | JWT | §5.15 |
 
 ---
 
@@ -459,8 +460,9 @@ order id.
     -   Any other `SETTLED_OTHER` or unknown status leaves the transaction as it was, for a person to check.
     -   `SUCCESS`, `FAILED`, `REFUNDED`, `PARTIALLY_REFUNDED` — returned from the database, the acquirer is
         not asked. A refund or reversal made outside the portal is therefore not seen (`../../AGENTS.md` §10).
-    -   The poll takes the link lock, like a capture or a refund (Р-109): while one of them is running, the
-        answer is `409` at once and the acquirer is not asked.
+    -   The poll takes the link lock, like a capture or a refund (Р-109): while one of them holds it, the
+        answer is `409` at once and the acquirer is not asked. A capture or a refund holds it only to check
+        and to record its outcome, not during the acquirer call (Р-123).
 -   **Refusals:** `404 Transaction not found: <identifier>`; §4.1; `409` — the link lock is busy (§6); for a polled transaction — `400 Terminal configuration not found`,
     the credentials texts (§6), `400 Acquirer error: <description>` (the acquirer refused: `errorCode` or
     HTTP error), `400 Order status check failed: <reason>` (no answer), `503` (§6).
@@ -496,11 +498,17 @@ order id.
     { "at": "2026-09-29T13:15:00Z", "type": "CREATED", "status": "PENDING", "amount": null, "acquirerReference": null },
     { "at": "2026-09-30T08:02:44Z", "type": "REFUNDED", "status": "PARTIALLY_REFUNDED", "amount": 500.00, "acquirerReference": "845120993" }
   ],
-  "failureReason": null
+  "failureReason": null,
+  "actions": {
+    "refund": { "enabled": true, "reason": null, "maxAmount": 1000.50 },
+    "capture": null,
+    "unresolved": null
+  }
 }
 ```
 
-The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `null`.
+The same payload is returned by §5.7, §5.11 and §5.12; `actions` only by §5.8, §5.12 and §5.15 — lists carry
+`null`. Empty fields come as `null`.
 
 -   `status` — `PENDING`, `AUTHORIZED`, `SUCCESS`, `FAILED`, `REFUNDED` or `PARTIALLY_REFUNDED`.
 -   `amount` — the authorised amount, never changed by a capture; `capturedAmount` — what a DMS capture
@@ -526,6 +534,19 @@ The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `
     purchase record of `order.trans[]` (`order.lastTran` when the list is absent) — not a reversal and not
     a refund, the earliest by `regTime` (`../external/TXPG-client-side-integration.md` §5.8.3–5.8.6).
     `null` while the order has no card operation, after a decline, or when the acquirer did not send the field.
+-   `actions` (Р-123) — the refund and capture buttons of this transaction, for the caller. `null` for an
+    action — no such button at all: a refund exists for `SUCCESS`, `PARTIALLY_REFUNDED`, `REFUNDED` and
+    `AUTHORIZED`, a capture for DMS in `PENDING`, `AUTHORIZED`, `SUCCESS`, `PARTIALLY_REFUNDED` and
+    `REFUNDED`. Otherwise `enabled`; a disabled one names the first reason, in this order: `NO_RIGHTS` (the
+    role may not do it: refund — §5.10, capture — §5.9), `OUTCOME_UNKNOWN` or `IN_PROGRESS` (see `unresolved`),
+    `CAPTURE_FIRST` (a refund of a hold), `FULLY_REFUNDED`, `ALREADY_CAPTURED`, `TERMINAL_NOT_IN_PORTAL`,
+    `NO_PROVIDER_CREDENTIALS` (the terminal's company has no provider credentials, Р-93). `maxAmount` — only
+    when enabled: what is left to refund, or the authorised amount for a capture.
+-   `actions.unresolved` — a capture or refund whose outcome is not recorded: `kind` (`CAPTURE`, `REFUND`),
+    `amount`, `state`, `startedAt`, `startedBy`, `resolvable`. `IN_PROGRESS` — the acquirer has not answered
+    yet; `UNKNOWN` — it did not answer (`502`), or the operation has been in progress for over 5 minutes (the
+    service died in the middle). While it exists, both buttons are disabled and §5.9 and §5.10 answer `409`.
+    `resolvable` is `true` only for `SYSTEM_ADMIN` and only when `UNKNOWN` (§5.15).
 
 ### 5.9. Complete DMS Payment
 
@@ -541,7 +562,10 @@ The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `
 }
 ```
 
--   The link is locked (`NOWAIT`) before the transaction is read, as in §5.5.
+-   Three steps (Р-123): under the link lock (`NOWAIT`) the checks and an attempt record
+    (`money_operation_attempts`); the acquirer call without a transaction or lock; under the lock again the
+    outcome, on the transaction re-read, and the attempt record removed. A declined call removes the record;
+    an unanswered one (`502`) leaves it, and another capture or refund is `409` until §5.15.
 -   `AUTHORIZED` is captured. `PENDING` is polled at the acquirer once first (§5.8), and the capture
     proceeds only if the acquirer reports it authorised.
 -   **Partial capture** (P0-8): `amount` may be lower than the authorised amount, and exactly that is
@@ -563,6 +587,8 @@ The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `
 | 404 | `Transaction not found: <id>` |
 | 409 | `The resource is being changed by another request, please retry` — the link lock is busy |
 | 403, 404 | §4.1 |
+| 409 | `Another money operation on this transaction is in progress` |
+| 409 | `An earlier capture of this transaction has an unknown outcome; a system administrator must resolve it before another money operation` (or `refund`) — §5.15 |
 | 400 | `Transaction has already been captured` — `SUCCESS`, or a `PENDING` the acquirer reports as settled |
 | 400 | `Transaction is in status <STATUS>. Only PENDING or AUTHORIZED transactions can be completed.` |
 | 400 | the poll of a `PENDING` transaction failed: `Acquirer error: <description>`, `Order status check failed: <reason>` (§5.8) |
@@ -598,7 +624,7 @@ The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `
 -   Only `SUCCESS` and `PARTIALLY_REFUNDED` transactions are refunded. The ceiling is the **captured**
     amount — `captured_amount` after a DMS capture, `amount` when there was none (every SMS payment) —
     minus what was already refunded (P0-8).
--   The link is locked (`NOWAIT`) before the transaction is read. `exec-tran` with
+-   Three steps, as in §5.9 (Р-123). `exec-tran` with
     `{"tran": {"phase": "Single", "type": "Refund", "amount": "500.00"}}`; success is confirmed only by
     `tran.match.ridByPmo` (P1-8b). The call is **never retried**: a repeated refund pays twice (P0-7).
 -   A confirmed refund is recorded twice with the same moment: under `mpRefunds` in the transaction's
@@ -637,6 +663,7 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
 | 404 | `Transaction not found: <id>` |
 | 409 | `The resource is being changed by another request, please retry` — the link lock is busy |
 | 403, 404 | §4.1 |
+| 409 | `Another money operation on this transaction is in progress`; the unknown-outcome text of §5.9 |
 | 400 | `Only successful or partially refunded transactions can be refunded` |
 | 400 | `Refund amount must not have more than two decimal places` |
 | 400 | `Refund amount exceeds the captured amount of the transaction` |
@@ -660,7 +687,7 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
 -   **Method:** `GET /api/v1/transactions/{id}`
 -   **Access:** every role, on the transaction's terminal (§4.1).
 -   **Behaviour:** a plain read — **the acquirer is not polled**; for a fresh outcome use §5.8.
--   **Response:** `200 OK`, the payload of §5.8.
+-   **Response:** `200 OK`, the payload of §5.8, with `actions`.
 -   **Refusals:** `400 Parameter 'id' has an invalid value` (not a UUID); `404 Transaction not found: <id>`; §4.1.
 
 ### 5.13. Dashboard Summary
@@ -779,6 +806,25 @@ no order, its text is passed on; `UNREACHABLE` — nothing is known about the te
 details, under the terminal's company. The password is never logged or recorded.
 
 ---
+
+### 5.15. Resolve an Unknown Outcome
+
+-   **Method:** `POST /api/v1/transactions/{transactionId}/resolve-outcome`
+-   **Access:** `SYSTEM_ADMIN` only (Р-123): it records money without the acquirer's confirmation.
+-   **Request Body:** `{ "executed": true }` — the outcome found when reconciling with the provider.
+-   **Behaviour:** under the link lock, for the attempt of `actions.unresolved` in state `UNKNOWN`:
+    -   `executed: true` — recorded as a confirmed capture or refund (amounts, status, `transaction_refunds`
+        with the time it was sent, `mpCapture` / `mpRefunds` with `resolvedBy` and `resolvedAt`), but without
+        the acquirer's references — there are none to record;
+    -   `executed: false` — nothing changes on the transaction.
+
+    The attempt record is removed either way, and a capture or a refund is possible again.
+-   **Response:** `200 OK`, the payload of §5.8 with `actions`.
+-   **Refusals:** `400 executed is required`; `404 Transaction not found: <id>`; `403` for any other
+    role; `409 This transaction has no money operation awaiting resolution`; `409 The money operation on this
+    transaction is still in progress` — less than 5 minutes old; `409 Recording this refund would exceed the
+    captured amount of the transaction`; `409` — the link lock is busy.
+-   **Audit journal:** `TRANSACTION` / `RESOLVE`.
 
 ## 6. Error Handling
 

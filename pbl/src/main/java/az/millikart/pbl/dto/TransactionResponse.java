@@ -33,7 +33,9 @@ public record TransactionResponse(
         // Только записанные события, по возрастанию времени (PaymentLinkService.statusHistoryOf, Р-63).
         List<TransactionEvent> statusHistory,
         // Причина отказа словами эквайера (контракт §5.8.7, Р-24); только у FAILED.
-        String failureReason
+        String failureReason,
+        // Кнопки возврата и списания (Р-123); только у одной операции, в списках null.
+        TransactionActions actions
 ) {
 
     // status — состояние ПОСЛЕ события, из словаря TransactionStatus. amount и acquirerReference

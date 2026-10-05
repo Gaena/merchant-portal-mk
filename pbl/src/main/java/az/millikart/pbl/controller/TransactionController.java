@@ -37,6 +37,14 @@ public class TransactionController {
         return paymentLinkService.refund(transactionId, request, principal);
     }
 
+    // Только SYSTEM_ADMIN, после сверки с провайдером: executed — прошла ли неподтверждённая операция (Р-123).
+    @PostMapping("/{transactionId}/resolve-outcome")
+    public TransactionResponse resolveOutcome(@PathVariable UUID transactionId,
+                                              @Valid @RequestBody ResolveOutcomeRequest request,
+                                              @AuthenticationPrincipal UserPrincipal principal) {
+        return paymentLinkService.resolveOutcome(transactionId, request.executed(), principal);
+    }
+
     @GetMapping("/{id}")
     public TransactionResponse get(@PathVariable UUID id,
                                    @AuthenticationPrincipal UserPrincipal principal) {

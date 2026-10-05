@@ -1,5 +1,11 @@
-import type { StatusHistoryEntry, Transaction } from '../types/transaction';
-import { parsePaymentMethod, parseTransactionStatus } from '../types/transaction';
+import type { MoneyAction, StatusHistoryEntry, Transaction, TransactionActions } from '../types/transaction';
+import {
+  parseMoneyActionReason,
+  parseMoneyOperationKind,
+  parseMoneyOperationState,
+  parsePaymentMethod,
+  parseTransactionStatus,
+} from '../types/transaction';
 import type { TerminalOptionDto } from '../types/dto';
 
 // Единственный разбор операции из ответа `/transactions*` (AGENTS §9): второй копии не заводить.
@@ -19,6 +25,37 @@ const mapStatusHistory = (raw: unknown): StatusHistoryEntry[] => {
       amount: event.amount === null || event.amount === undefined ? undefined : Number(event.amount),
       acquirerReference: event.acquirerReference ?? undefined,
     }));
+};
+
+// Активна только при явном `enabled: true`: кривой ответ выключает кнопку, а не включает.
+const mapMoneyAction = (raw: any): MoneyAction | null => {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  return {
+    enabled: raw.enabled === true,
+    reason: parseMoneyActionReason(raw.reason),
+    maxAmount: raw.maxAmount === null || raw.maxAmount === undefined ? undefined : Number(raw.maxAmount),
+  };
+};
+
+const mapActions = (raw: any): TransactionActions | undefined => {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+  const unresolved = raw.unresolved && typeof raw.unresolved === 'object' ? raw.unresolved : null;
+  return {
+    refund: mapMoneyAction(raw.refund),
+    capture: mapMoneyAction(raw.capture),
+    unresolved: unresolved && {
+      kind: parseMoneyOperationKind(unresolved.kind),
+      amount: Number(unresolved.amount),
+      state: parseMoneyOperationState(unresolved.state),
+      startedAt: unresolved.startedAt ? new Date(unresolved.startedAt) : undefined,
+      startedBy: typeof unresolved.startedBy === 'string' ? unresolved.startedBy : '',
+      resolvable: unresolved.resolvable === true,
+    },
+  };
 };
 
 const optionalText = (value: unknown): string | undefined =>
@@ -64,5 +101,6 @@ export const mapTransaction = (
     userAgent: optionalText(raw.userAgent),
     failureReason: optionalText(raw.failureReason),
     statusHistory: mapStatusHistory(raw.statusHistory),
+    actions: mapActions(raw.actions),
   };
 };

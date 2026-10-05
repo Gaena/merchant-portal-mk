@@ -49,6 +49,76 @@ export const parsePaymentMethod = (raw: unknown): PaymentMethod | null => {
 };
 
 /**
+ * Почему кнопка возврата или списания выключена — ровно `MoneyActionReason` из `pbl` (Р-123). Новое значение
+ * там — сюда и во все три языка (`transactions.detail.moneyReasons`); незнакомое разбирается в `null`.
+ */
+export const MONEY_ACTION_REASONS = [
+  'NO_RIGHTS',
+  'TERMINAL_NOT_IN_PORTAL',
+  'NO_PROVIDER_CREDENTIALS',
+  'FULLY_REFUNDED',
+  'CAPTURE_FIRST',
+  'ALREADY_CAPTURED',
+  'OUTCOME_UNKNOWN',
+  'IN_PROGRESS',
+] as const;
+
+export type MoneyActionReason = (typeof MONEY_ACTION_REASONS)[number];
+
+const parseFrom = <T extends string>(values: readonly T[], raw: unknown, what: string): T | null => {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  if ((values as readonly string[]).includes(raw)) {
+    return raw as T;
+  }
+  console.warn(`[transactions] неизвестный ${what}: "${raw}"`);
+  return null;
+};
+
+export const parseMoneyActionReason = (raw: unknown): MoneyActionReason | null =>
+  parseFrom(MONEY_ACTION_REASONS, raw, 'код причины');
+
+export const MONEY_OPERATION_KINDS = ['CAPTURE', 'REFUND'] as const;
+export type MoneyOperationKind = (typeof MONEY_OPERATION_KINDS)[number];
+export const parseMoneyOperationKind = (raw: unknown): MoneyOperationKind | null =>
+  parseFrom(MONEY_OPERATION_KINDS, raw, 'вид денежной операции');
+
+export const MONEY_OPERATION_STATES = ['IN_PROGRESS', 'UNKNOWN'] as const;
+export type MoneyOperationState = (typeof MONEY_OPERATION_STATES)[number];
+export const parseMoneyOperationState = (raw: unknown): MoneyOperationState | null =>
+  parseFrom(MONEY_OPERATION_STATES, raw, 'состояние денежной операции');
+
+/**
+ * Кнопка денежного действия (Р-123): сервер решает, активна ли она, и называет причину, если нет. Экран
+ * правил не повторяет. `reason === null` у выключенной — код незнакомый, подсказка общая.
+ */
+export interface MoneyAction {
+  enabled: boolean;
+  reason: MoneyActionReason | null;
+  /** Потолок суммы; только у активной. */
+  maxAmount?: number;
+}
+
+/** Возврат или списание, исход которого не записан: пока он есть, обе кнопки выключены. */
+export interface UnresolvedMoneyOperation {
+  kind: MoneyOperationKind | null;
+  amount: number;
+  state: MoneyOperationState | null;
+  startedAt?: Date;
+  startedBy: string;
+  /** Может ли смотрящий отметить итог — только `SYSTEM_ADMIN` и только при неизвестном исходе. */
+  resolvable: boolean;
+}
+
+/** `null` у кнопки — её нет по смыслу (у SMS нет списания, у отклонённой операции нет ничего). */
+export interface TransactionActions {
+  refund: MoneyAction | null;
+  capture: MoneyAction | null;
+  unresolved: UnresolvedMoneyOperation | null;
+}
+
+/**
  * Событие из `statusHistory` (`PaymentLinkService.statusHistoryOf`, Р-63) — только записанное:
  * заведение, списание холда, каждый возврат и текущее состояние, если оно ими не объяснено.
  */
@@ -109,4 +179,6 @@ export interface Transaction {
   failureReason?: string;
   statusHistory: StatusHistoryEntry[];
   terminalName?: string;
+  /** Только у одной операции (`GET /transactions/{id}`, `/status`); в списках не приходит. */
+  actions?: TransactionActions;
 }

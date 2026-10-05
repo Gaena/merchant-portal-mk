@@ -19,5 +19,6 @@
     <include file="changes/012-terminal-rid.xml" relativeToChangelogFile="true"/>
     <include file="changes/013-transaction-rid-index.xml" relativeToChangelogFile="true"/>
     <include file="changes/014-transaction-last-reconciled.xml" relativeToChangelogFile="true"/>
+    <include file="changes/015-money-operation-attempts.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

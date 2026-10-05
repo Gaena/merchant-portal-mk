@@ -27,6 +27,12 @@ public interface PaymentLinkRepository extends JpaRepository<PaymentLink, UUID> 
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "0"))
     Optional<PaymentLink> findWithLockById(UUID id);
 
+    // Ждущий замок — только для записи итога денежной операции, уже проведённой эквайером (Р-123): NOWAIT
+    // отказал бы после того, как деньги ушли. Ждёт держателя, а держатели ходят к эквайеру с таймаутом.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT pl FROM PaymentLink pl WHERE pl.id = :id")
+    Optional<PaymentLink> findWithWaitingLockById(@Param("id") UUID id);
+
     @Query("""
             SELECT pl FROM PaymentLink pl
             WHERE (:terminal IS NULL OR pl.terminalId = :terminal)

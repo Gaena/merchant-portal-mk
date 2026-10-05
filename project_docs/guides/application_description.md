@@ -232,6 +232,7 @@ erDiagram
     terminals ||--o{ payment_links : "terminal_id"
     payment_links ||--o{ transactions : "link_id"
     transactions ||--o{ transaction_refunds : "transaction_id, каскад на удаление"
+    transactions ||--o| money_operation_attempts : "transaction_id, каскад на удаление"
     terminals |o--o| provider_terminals : "merchant_rid = rid, без внешнего ключа"
     companies |o--o{ provider_logins : "provider_login = MultiMerchantSys/ + login, без внешнего ключа"
     provider_logins }o--o| provider_terminals : "merchant_rid = rid, без внешнего ключа"
@@ -380,6 +381,15 @@ erDiagram
         timestamptz refunded_at "Время возврата; по нему статистика вычитает возвраты (Р-89)"
         varchar rid_by_pmo "Ссылка эквайера на возврат"
     }
+
+    money_operation_attempts {
+        uuid transaction_id PK "→ transactions.id; одна попытка на операцию"
+        varchar kind "CAPTURE или REFUND"
+        numeric amount
+        varchar state "IN_PROGRESS или UNKNOWN; IN_PROGRESS старше 5 минут — неизвестный исход"
+        varchar started_by "Логин отправившего"
+        timestamptz started_at
+    }
 ```
 
 Индексы и уникальные ограничения — в таблице миграций (§4.3). Строка `provider_logins` — одна связь
@@ -441,6 +451,7 @@ erDiagram
 | `pbl` | `012-terminal-rid.xml` | `terminals.terminal_rid`, если его ещё нет (Р-96) |
 | `pbl` | `013-transaction-rid-index.xml` | уникальный индекс `transactions (rid_by_merchant)` — по нему ищет публичная страница возврата |
 | `pbl` | `014-transaction-last-reconciled.xml` | `transactions.last_reconciled_at`, если её ещё нет: очередь сверки (Р-110) |
+| `pbl` | `015-money-operation-attempts.xml` | `money_operation_attempts` — возврат или списание, исход которого ещё не записан (Р-123) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` и индекс по `login`; без преконтроля |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет; таблица `terminals` уже должна быть (§4.2) |
 | `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам — и индекс по `login` (Р-94) |
@@ -591,7 +602,10 @@ sequenceDiagram
 ```
 
 Нет `ridByPmo`, таймаут или 5xx — операция не записывается, ответ 502 и запись `UNRESOLVED` в
-журнале. Частичное списание не отменяет остаток холда: Void не реализован. Поле `reason` запроса
+журнале. Каждое списание и возврат — три шага (Р-123): под замком ссылки проверки и строка
+`money_operation_attempts`, вызов эквайера без транзакции, под замком запись итога и удаление строки. Без
+итога строка остаётся и запрещает повтор, пока `SYSTEM_ADMIN` не отметит, прошла ли операция
+(`POST /api/v1/transactions/{id}/resolve-outcome`). Частичное списание не отменяет остаток холда: Void не реализован. Поле `reason` запроса
 возврата принимается и никуда не попадает (задача REFUND-REASON).
 
 ### 7.5. Проверка терминала
