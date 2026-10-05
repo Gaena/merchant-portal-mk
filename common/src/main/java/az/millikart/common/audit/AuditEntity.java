@@ -15,9 +15,11 @@ public final class AuditEntity {
     public static final String PAYMENT_LINK = "PAYMENT_LINK";
     public static final String TRANSACTION = "TRANSACTION";
     public static final String AUDIT_LOG = "AUDIT_LOG";
+    // Заказ выписки провайдера, которого нет среди операций портала (Р-125): entityId — номер заказа.
+    public static final String PROVIDER_ORDER = "PROVIDER_ORDER";
 
     private static final Set<String> KNOWN =
-            Set.of(USER, AUTH, COMPANY, TERMINAL, PAYMENT_LINK, TRANSACTION, AUDIT_LOG);
+            Set.of(USER, AUTH, COMPANY, TERMINAL, PAYMENT_LINK, TRANSACTION, AUDIT_LOG, PROVIDER_ORDER);
 
     private AuditEntity() {
     }

@@ -2,18 +2,14 @@ package az.millikart.directory.repository;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.Instant;
-import java.util.Locale;
-import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
 // Пишет в payment_links модуля pbl — осознанный долг (Р-39, AGENTS.md §10). Не entity: второй
-// JPA-маппинг чужой таблицы молча разойдётся с ней.
+// JPA-маппинг чужой таблицы молча разойдётся с ней. Каждый UPDATE поднимает version (@Version в pbl): иначе
+// pbl, прочитавший ссылку раньше, сохранил бы её целиком и вернул прежний статус.
 @Repository
 public class PaymentLinkStatusRepository {
 
@@ -26,13 +22,16 @@ public class PaymentLinkStatusRepository {
 
     private static final String TABLE = "payment_links";
 
+    // NULL у строк, вставленных мимо Hibernate: NULL + 1 остался бы NULL.
+    private static final String BUMP_VERSION = "version = COALESCE(version, 0) + 1 ";
+
     @PersistenceContext
     private EntityManager entityManager;
 
-    private final DataSource dataSource;
+    private final SharedTables sharedTables;
 
-    public PaymentLinkStatusRepository(DataSource dataSource) {
-        this.dataSource = dataSource;
+    public PaymentLinkStatusRepository(SharedTables sharedTables) {
+        this.sharedTables = sharedTables;
     }
 
     // Только ACTIVE: остальные статусы — факты о прошлом ссылки, иначе разблокировка не узнает,
@@ -42,7 +41,7 @@ public class PaymentLinkStatusRepository {
             return 0;
         }
         return entityManager.createNativeQuery(
-                        "UPDATE payment_links SET status = :suspended "
+                        "UPDATE payment_links SET status = :suspended, " + BUMP_VERSION
                                 + "WHERE terminal_id = :terminalId AND status = :active")
                 .setParameter("suspended", SUSPENDED)
                 .setParameter("terminalId", terminalId)
@@ -56,7 +55,7 @@ public class PaymentLinkStatusRepository {
             return 0;
         }
         return entityManager.createNativeQuery(
-                        "UPDATE payment_links SET status = :active "
+                        "UPDATE payment_links SET status = :active, " + BUMP_VERSION
                                 + "WHERE terminal_id = :terminalId AND status = :suspended "
                                 + "AND (expires_at IS NULL OR expires_at > :now)")
                 .setParameter("active", ACTIVE)
@@ -73,7 +72,7 @@ public class PaymentLinkStatusRepository {
             return 0;
         }
         return entityManager.createNativeQuery(
-                        "UPDATE payment_links SET status = :expired "
+                        "UPDATE payment_links SET status = :expired, " + BUMP_VERSION
                                 + "WHERE terminal_id = :terminalId AND status = :suspended "
                                 + "AND expires_at IS NOT NULL AND expires_at <= :now")
                 .setParameter("expired", EXPIRED)
@@ -86,23 +85,11 @@ public class PaymentLinkStatusRepository {
     // Таблицы нет, пока pbl ни разу не мигрировал: ссылок нет, и блокировка обязана пройти, а не
     // дать 500 (P1-2). Проверка на каждый вызов: кэш «нет таблицы» протух бы при выкате pbl.
     private boolean linksTableMissing() {
-        try (Connection connection = dataSource.getConnection()) {
-            if (tableExists(connection, TABLE) || tableExists(connection, TABLE.toUpperCase(Locale.ROOT))) {
-                return false;
-            }
-        } catch (SQLException e) {
-            // Не «отсутствует», а «неизвестно»: если база правда недоступна, транзакция упадёт сама.
-            log.warn("Could not determine whether {} exists; attempting the update anyway", TABLE, e);
+        if (!sharedTables.missing(TABLE)) {
             return false;
         }
         log.warn("Table {} is absent from this database: no payment links to move. "
                 + "Expected only where pbl has never migrated against it.", TABLE);
         return true;
-    }
-
-    private static boolean tableExists(Connection connection, String name) throws SQLException {
-        try (ResultSet tables = connection.getMetaData().getTables(null, null, name, null)) {
-            return tables.next();
-        }
     }
 }

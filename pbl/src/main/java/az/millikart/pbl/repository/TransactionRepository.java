@@ -11,23 +11,30 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public interface TransactionRepository extends JpaRepository<Transaction, UUID> {
-    Optional<Transaction> findByProviderOrderId(String providerOrderId);
 
-    // Скаляр, а не сущность: денежная операция сначала берёт блокировку ссылки, потом читает транзакцию.
-    // Загруженная до блокировки сущность осталась бы в persistence context старой.
+    // Скаляры, а не сущности: денежная операция и опрос статуса сначала берут блокировку ссылки, потом
+    // читают транзакцию. Загруженная до блокировки сущность осталась бы в persistence context старой.
     @Query("SELECT t.link.id FROM Transaction t WHERE t.id = :id")
     Optional<UUID> findLinkIdById(@Param("id") UUID id);
 
-    // Ключ публичной страницы возврата: случайный ridByMerchant, в отличие от providerOrderId, не
-    // перебрать. Граф — ленивый link, из которого чек.
-    @EntityGraph(attributePaths = "link")
-    Optional<Transaction> findByRidByMerchant(UUID ridByMerchant);
+    @Query("SELECT t.link.terminalId FROM Transaction t WHERE t.id = :id")
+    Optional<Integer> findTerminalIdById(@Param("id") UUID id);
+
+    @Query("SELECT t.id FROM Transaction t WHERE t.providerOrderId = :providerOrderId")
+    Optional<UUID> findIdByProviderOrderId(@Param("providerOrderId") String providerOrderId);
+
+    // Ключ публичной страницы возврата: случайный ridByMerchant, в отличие от providerOrderId, не перебрать.
+    @Query("SELECT t.id FROM Transaction t WHERE t.ridByMerchant = :ridByMerchant")
+    Optional<UUID> findIdByRidByMerchant(@Param("ridByMerchant") UUID ridByMerchant);
 
     // Использования ссылки считаются только здесь и набором PAID_STATUSES (Р-49); AUTHORIZED под слоты
     // добавляет OpenLinkService (P1-6). countByLinkIdAndStatus не заводить (P2-16): с ним возврат
@@ -36,6 +43,9 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     boolean existsByLinkIdAndStatusIn(UUID linkId, Collection<TransactionStatus> statuses);
     Optional<Transaction> findFirstByLinkIdAndStatusInOrderByCreatedAtDesc(UUID linkId, Collection<TransactionStatus> statuses);
+    // Свежие попытки, новые первыми: открытие одноразовой ссылки спрашивает эквайера о каждой (OPEN-DOUBLE-PAY).
+    List<Transaction> findByLinkIdAndStatusInAndCreatedAtAfterOrderByCreatedAtDesc(
+            UUID linkId, Collection<TransactionStatus> statuses, Instant createdAfter);
     java.util.List<Transaction> findByLinkIdOrderByCreatedAtDesc(UUID linkId);
 
     // Граф на link: маппер трогает его на каждой строке страницы, иначе N+1.
@@ -45,11 +55,25 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     @EntityGraph(attributePaths = "link")
     Page<Transaction> findByLink_TerminalIdIn(Collection<Integer> terminalIds, Pageable pageable);
 
-    // Пакет сверки, старые первыми. Окно (P1-8a): createdAfter = now - give-up-age, createdBefore =
-    // now - min-age; строки старше окна живы, но автоматика их не трогает.
+    // Пакет сверки: давно не опрашиваемые первыми, среди равных — старые (Р-110). Иначе строки, которые сверка
+    // закрыть не может, каждый проход занимали бы весь пакет. Окно (P1-8a): createdAfter = now - give-up-age,
+    // createdBefore = now - min-age; строки старше окна живы, но автоматика их не трогает.
     @EntityGraph(attributePaths = "link")
-    List<Transaction> findByStatusAndCreatedAtBetweenOrderByCreatedAtAsc(
-            TransactionStatus status, Instant createdAfter, Instant createdBefore, Pageable pageable);
+    @Query("SELECT t FROM Transaction t WHERE t.status = :status "
+            + "AND t.createdAt BETWEEN :createdAfter AND :createdBefore "
+            + "ORDER BY t.lastReconciledAt ASC NULLS FIRST, t.createdAt ASC, t.id ASC")
+    List<Transaction> findReconciliationBatch(@Param("status") TransactionStatus status,
+                                              @Param("createdAfter") Instant createdAfter,
+                                              @Param("createdBefore") Instant createdBefore,
+                                              Pageable pageable);
+
+    // Отметка «взята в пакет» — до опроса: строка уходит в конец очереди, чем бы ни кончился опрос. Своя
+    // транзакция обязательна: внутри прохода сверки (read-only) замок строк держался бы до его конца, а
+    // reconcileOne пишет те же строки в REQUIRES_NEW и ждал бы сам себя.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Modifying
+    @Query("UPDATE Transaction t SET t.lastReconciledAt = :at WHERE t.id IN :ids")
+    int markTakenForReconciliation(@Param("ids") Collection<UUID> ids, @Param("at") Instant at);
 
     // [linkId, maxCreatedAt] одним запросом на страницу ссылок, а не на строку (P2-15).
     // С пустой коллекцией не вызывать — IN () невалидный SQL.

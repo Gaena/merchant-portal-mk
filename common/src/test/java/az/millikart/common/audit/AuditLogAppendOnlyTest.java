@@ -5,9 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.hibernate.annotations.Immutable;
 
 // Р-42: журнал append-only, и первая половина правила держится в Java — у репозитория нет
 // способа удалить или заменить запись, у сущности нет способа изменить прочитанную. Вторая
@@ -16,10 +16,7 @@ import org.junit.jupiter.api.Test;
 @DisplayName("the audit journal cannot be edited or deleted from the application (Р-42)")
 class AuditLogAppendOnlyTest {
 
-    // Всё, чем можно удалить запись или переписать её.
-    private static final List<String> FORBIDDEN_PREFIXES =
-            List.of("delete", "remove", "update", "set", "truncate", "saveall", "flush");
-
+    // Ровно один метод: любое наследование (CrudRepository, JpaRepository) добавило бы delete*, saveAll, flush.
     @Test
     void repositoryExposesNothingButSave() {
         List<String> methods = Arrays.stream(AuditLogRepository.class.getMethods())
@@ -29,20 +26,6 @@ class AuditLogAppendOnlyTest {
         assertThat(methods)
                 .as("the write side needs exactly one method, and it adds a row")
                 .containsExactly("save");
-    }
-
-    @Test
-    void repositoryHasNoInheritedWayToRemoveOrRewriteRecords() {
-        List<String> offenders = Arrays.stream(AuditLogRepository.class.getMethods())
-                .map(Method::getName)
-                .filter(name -> FORBIDDEN_PREFIXES.stream()
-                        .anyMatch(prefix -> name.toLowerCase(Locale.ROOT).startsWith(prefix)))
-                .filter(name -> !"save".equals(name))
-                .toList();
-
-        assertThat(offenders)
-                .as("extending CrudRepository/JpaRepository would silently add these")
-                .isEmpty();
     }
 
     // Прочитанную запись нельзя изменять. Без этого Setter вернулся бы в AuditLog при рефакторинге,
@@ -56,5 +39,21 @@ class AuditLogAppendOnlyTest {
                 .toList();
 
         assertThat(setters).isEmpty();
+    }
+
+    // Единственный save пишущей стороны на записи с id существующей делает merge — и переписывает её.
+    // Поэтому id и время не задаются снаружи, а @Immutable не даёт Hibernate выпустить UPDATE вовсе.
+    @Test
+    void builderCannotChooseTheIdOrTheTime() {
+        List<String> builderMethods = Arrays.stream(AuditLog.AuditLogBuilder.class.getMethods())
+                .map(Method::getName)
+                .toList();
+
+        assertThat(builderMethods).doesNotContain("id", "createdAt");
+    }
+
+    @Test
+    void entityIsImmutableForHibernate() {
+        assertThat(AuditLog.class.isAnnotationPresent(Immutable.class)).isTrue();
     }
 }

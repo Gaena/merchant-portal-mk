@@ -397,6 +397,42 @@
 						"description": "Refunds a SUCCESS or PARTIALLY_REFUNDED transaction (pay-by-link.md §5.10). SYSTEM_ADMIN, COMPANY_HEAD and COMPANY_MANAGER only.\n\n`reason` is accepted and NOT USED: it is not stored, not written to the audit journal and not sent to the acquirer (open task REFUND-REASON).\n\nThe ceiling is the captured amount, not the authorized one: `captured_amount` after a DMS capture, `amount` when there was no capture (every SMS payment), minus what was already refunded. Refunding exactly the rest moves the transaction to REFUNDED; less leaves it PARTIALLY_REFUNDED. The response carries the acquirer's own identifiers from its exec-tran answer: `acquirerReference` (tran.match.ridByPmo - never null on 200), `refundId` (tran.match.tranActionId, may be null) and `approvalCode` (may be null). 502 means the outcome is unknown: check the status before retrying - a repeated refund pays twice."
 					},
 					"response": []
+				},
+				{
+					"name": "Resolve Unknown Outcome",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"executed\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}/resolve-outcome",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"transactions",
+								"{{transactionId}}",
+								"resolve-outcome"
+							]
+						},
+						"description": "Records the outcome of a capture or refund the acquirer did not confirm (pay-by-link.md §5.15, Р-123). SYSTEM_ADMIN only, after reconciling it with the provider; only for actions.unresolved in state UNKNOWN. executed=true records it as confirmed without acquirer references, executed=false only lifts the lock. Returns the transaction with actions."
+					},
+					"response": []
 				}
 			]
 		},

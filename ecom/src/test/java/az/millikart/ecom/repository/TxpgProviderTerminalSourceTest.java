@@ -50,4 +50,20 @@ class TxpgProviderTerminalSourceTest {
         Assertions.assertEquals(new ProviderTerminalRow("223456789054322", "BazarStore eCommerce", "BS00002", "BS00002"),
                 mapper.getValue().mapRow(rs, 0));
     }
+
+    // Р-79: выключенный у провайдера логин или терминал пропадает из выгрузки — так и гаснет наш терминал
+    // (Р-66). Сними фильтр — и выключенные у провайдера терминалы останутся живыми у нас. Колонки — из белого
+    // списка схемы шлюза.
+    @Test
+    void onlyActiveLoginsAndTerminalsAreRead() {
+        NamedParameterJdbcTemplate jdbc = mock(NamedParameterJdbcTemplate.class);
+        when(jdbc.query(anyString(), any(SqlParameterSource.class), any(RowMapper.class))).thenReturn(List.of());
+        new TxpgProviderTerminalSource(jdbc, new TxpgProperties()).fetchActive();
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(sql.capture(), any(SqlParameterSource.class), any(RowMapper.class));
+
+        String text = sql.getValue().replaceAll("\\s+", " ");
+        Assertions.assertTrue(text.contains("and l.status = 'Active' and t.status = 'Active'"), text);
+        TxpgColumns.assertOnlyProviderColumns(sql.getValue());
+    }
 }

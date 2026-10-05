@@ -11,9 +11,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import az.millikart.common.security.CredentialCipher;
 import az.millikart.common.security.JwtProvider;
 import az.millikart.pbl.domain.Terminal;
-import az.millikart.pbl.provider.AcquiringClient;
-import az.millikart.pbl.provider.ProviderCredentials;
-import az.millikart.pbl.provider.dto.TerminalCheckResult;
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.ProviderCredentials;
+import az.millikart.txpg.dto.TerminalCheckResult;
 import az.millikart.pbl.repository.TerminalRepository;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,6 +63,10 @@ class TerminalCheckIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        // Общая H2: терминалы других классов держат ссылки и операции, без них deleteAll падает на FK.
+        jdbcTemplate.update("DELETE FROM transaction_refunds");
+        jdbcTemplate.update("DELETE FROM transactions");
+        jdbcTemplate.update("DELETE FROM payment_links");
         terminalRepository.deleteAll();
         CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "comp-01");
         terminalRepository.save(Terminal.builder()

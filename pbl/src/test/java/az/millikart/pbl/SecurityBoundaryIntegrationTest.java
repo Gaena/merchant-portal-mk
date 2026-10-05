@@ -1,24 +1,15 @@
 package az.millikart.pbl;
 
-import az.millikart.common.security.CredentialCipher;
-import org.springframework.jdbc.core.JdbcTemplate;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import az.millikart.common.security.JwtProvider;
-import az.millikart.pbl.domain.Terminal;
-import az.millikart.pbl.repository.PaymentLinkRepository;
-import az.millikart.pbl.repository.TerminalRepository;
-import az.millikart.pbl.repository.TransactionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +31,7 @@ import org.springframework.test.web.servlet.ResultActions;
 // если PublicEndpoints не сказал иного». Раньше стоял anyRequest().permitAll(), и единственной
 // преградой была проверка префикса внутри JwtAuthFilter: всё вне /api/v1/, включая actuator и
 // swagger, было публичным. Верни permitAll обратно — первый тест этого класса покраснеет.
+// StubAcquirerConfig здесь не нужен, но оставлен: с ним класс делит Spring-контекст с PaymentLinkIntegrationTest.
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(StubAcquirerConfig.class)
@@ -54,40 +46,10 @@ class SecurityBoundaryIntegrationTest {
     @Autowired
     private JwtProvider jwtProvider;
 
-    @Autowired
-    private TerminalRepository terminalRepository;
-
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
-
-    @Autowired
-    private CredentialCipher credentialCipher;
-
-    @Autowired
-    private PaymentLinkRepository paymentLinkRepository;
-
-    @Autowired
-    private TransactionRepository transactionRepository;
-
-    // Свой диапазон, чтобы фикстуры не сталкивались с другими интеграционными тестами.
-    private static final int TERMINAL_ID = 770101;
-
     private String headToken;
 
     @BeforeEach
     void setUp() {
-        transactionRepository.deleteAll();
-        paymentLinkRepository.deleteAll();
-        terminalRepository.deleteAll();
-        CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "boundary-company");
-
-        terminalRepository.save(Terminal.builder()
-                .id(TERMINAL_ID)
-                .name("Security Boundary Terminal")
-                .login("TerminalSys/Boundary").terminalRid("TID-Boundary")
-                .companyId("boundary-company")
-                .build());
-
         headToken = "Bearer " + jwtProvider.generateToken(
                 "boundary-head", "boundary-head@test.com", "COMPANY_HEAD", "boundary-company");
     }
@@ -119,25 +81,7 @@ class SecurityBoundaryIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    // Actuator недоступен на публичном порту
-
-    @Test
-    void actuatorHealth_onMainPort_isNotExposed() throws Exception {
-        mockMvc.perform(get("/actuator/health"))
-                .andExpect(status().isNotFound());
-    }
-
-    @Test
-    void actuatorMetrics_onMainPort_isNotExposed() throws Exception {
-        mockMvc.perform(get("/actuator/metrics"))
-                .andExpect(status().isNotFound());
-    }
-
-    @Test
-    void actuatorInfo_onMainPort_isNotExposed() throws Exception {
-        mockMvc.perform(get("/actuator/info"))
-                .andExpect(status().isNotFound());
-    }
+    // Actuator на публичном порту проверяет ManagementPortIntegrationTest — на настоящем порту, а не под MockMvc.
 
     // Swagger выключен, пока не поднят флаг
 
@@ -160,16 +104,8 @@ class SecurityBoundaryIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    // Публичные пути продолжают работать
-
-    @Test
-    void openPaymentLink_withoutToken_stillRedirectsToProvider() throws Exception {
-        UUID id = createLink();
-
-        mockMvc.perform(get("/api/v1/payment-links/{id}/open", id))
-                .andExpect(status().isFound())
-                .andExpect(header().string("Location", containsString("rid=")));
-    }
+    // Публичные пути продолжают работать. Открытие ссылки без токена сверяет адресом целиком
+    // PaymentLinkIntegrationTest.openPaymentLink_redirectsToProvider.
 
     @Test
     void redirectPage_withoutToken_stillRenders() throws Exception {
@@ -231,24 +167,6 @@ class SecurityBoundaryIntegrationTest {
     }
 
     // Хелперы
-
-    private UUID createLink() throws Exception {
-        ObjectNode request = objectMapper.createObjectNode();
-        request.put("merchantOrderId", "ORDER-BOUNDARY-1");
-        request.put("terminal", TERMINAL_ID);
-        request.put("amount", new BigDecimal("10.00"));
-        request.put("currency", "AZN");
-        request.put("paymentType", "SMS");
-        request.put("usageType", "SINGLE");
-
-        String response = mockMvc.perform(post("/api/v1/payment-links")
-                        .header(HttpHeaders.AUTHORIZATION, headToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(objectMapper.readTree(response).get("id").asText());
-    }
 
     private JsonNode body(ResultActions actions) throws Exception {
         return objectMapper.readTree(actions.andReturn().getResponse().getContentAsString());

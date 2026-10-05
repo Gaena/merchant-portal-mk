@@ -68,7 +68,9 @@ class TxpgTransactionRepositoryTest {
             Assertions.assertTrue(sql.contains("and m.rid in (:merchant_rids)"), sql);
             Assertions.assertTrue(sql.contains("join TXPG.merchant m on m.id = o.merchantid and m.id = tr.merchantid"), sql);
             Assertions.assertFalse(sql.contains("login"), sql);
-            Assertions.assertTrue(sql.contains("o.status not in (:unfinished_statuses)"), sql);
+            // Пустой статус — незнакомый (Р-71): без is null NULL not in (…) прятал заказ из страницы, итогов и
+            // карточки (ECOM-NULL-STATUS).
+            Assertions.assertTrue(sql.contains("and (o.status is null or o.status not in (:unfinished_statuses) or "), sql);
             // Р-76: исключение для Authorized со списанием — во всех трёх, иначе итоги разойдутся со страницей.
             Assertions.assertTrue(sql.contains("o.status = 'Authorized'"), sql);
             Assertions.assertEquals(MERCHANTS, query.params().getValue("merchant_rids"));
@@ -135,24 +137,65 @@ class TxpgTransactionRepositoryTest {
         Assertions.assertFalse(queries.get(1).sql().contains("TXPG.tran pt"), queries.get(1).sql());
     }
 
-    // Одна отсутствующая в схеме колонка роняет всю выписку (ORA-00904). Читаем только то, что есть
-    // в SQL провайдера; пароль заказа не выбирается никогда.
+    // Одна отсутствующая в схеме колонка роняет всю выписку (ORA-00904). Каждая ссылка alias.колонка во всех
+    // ветках запросов сверяется с белым списком TxpgColumns; пароль заказа не выбирается никогда.
     @Test
     void onlyColumnsFromTheProviderQueryAreRead() {
         EcomTransactionFilter filter = filter(Instant.parse("2026-09-01T00:00:00Z"), NOW);
+        EcomTransactionFilter everyBranch = new EcomTransactionFilter(List.of("M-1"),
+                Instant.parse("2026-07-01T00:00:00Z"), Instant.parse("2026-08-01T00:00:00Z"),
+                BigDecimal.ONE, BigDecimal.TEN, "175533", EcomPaymentType.DMS);
 
-        repository.findOrderIds(new EcomTransactionFilter(List.of("M-1"), filter.dateFrom(), filter.dateTo(),
-                BigDecimal.ONE, BigDecimal.TEN, "175533", null), 175600L, 26);
+        repository.findOrderIds(everyBranch, 175600L, 26);
+        repository.findRows(List.of(175533L), MERCHANTS, filter.dateFrom());
+        repository.streamPeriodRows(everyBranch, row -> { });
+        repository.streamPeriodRows(filter, row -> { });
+
+        List<Captured> queries = capturedQueries();
+        Assertions.assertEquals(4, queries.size());
+        for (Captured query : queries) {
+            TxpgColumns.assertOnlyProviderColumns(query.sql());
+            Assertions.assertFalse(query.sql().toLowerCase().contains("password"), query.sql());
+        }
+    }
+
+    // Сам белый список: опечатка в колонке, чужая колонка и чужая функция — отказ, а не молчание.
+    @Test
+    void theColumnWhitelistCatchesATypo() {
+        TxpgColumns.assertOnlyProviderColumns("select tr.ridbyacq from TXPG.tran tr");
+        for (String broken : List.of("select tr.ridbyaqc from TXPG.tran tr",
+                "select tr.terminalid from TXPG.tran tr",
+                "select o.password from TXPG.order_ o",
+                "select TXPG.RDX_Action.getHighIdForTime(sysdate) from dual")) {
+            Assertions.assertThrows(AssertionError.class, () -> TxpgColumns.assertOnlyProviderColumns(broken), broken);
+        }
+    }
+
+    // Р-97: операция того же мерчанта, что и заказ, — в каждом join мерчанта, а не хотя бы в одном. В итогах
+    // их два: без условия во внешнем запросе операция чужого мерчанта попала бы в итоги своего заказа.
+    @Test
+    void everyMerchantJoinTiesTheOperationToTheOrdersMerchant() {
+        EcomTransactionFilter filter = filter(Instant.parse("2026-09-01T00:00:00Z"), NOW);
+
+        repository.findOrderIds(filter, null, 26);
         repository.findRows(List.of(175533L), MERCHANTS, null);
         repository.streamPeriodRows(filter, row -> { });
 
         for (Captured query : capturedQueries()) {
-            String sql = query.sql().toLowerCase();
-            for (String unconfirmed : List.of("terminalid", "ridbypmo", "srcemail", "srcmobile",
-                    "gethighidfortime", "password")) {
-                Assertions.assertFalse(sql.contains(unconfirmed), unconfirmed + " in " + query.sql());
-            }
+            String sql = query.sql().replaceAll("\\s+", " ");
+            Assertions.assertEquals(occurrences(sql, "join TXPG.merchant m on"),
+                    occurrences(sql, "join TXPG.merchant m on m.id = o.merchantid and m.id = tr.merchantid"), sql);
         }
+    }
+
+    // Итоги считаются по потоку: аккумулятор закрывает заказ, когда номер сменился. Без order by o.id строки
+    // одного заказа пришли бы вразбивку, и заказ посчитался бы несколько раз.
+    @Test
+    void thePeriodStreamKeepsTheRowsOfAnOrderTogether() {
+        repository.streamPeriodRows(filter(Instant.parse("2026-09-01T00:00:00Z"), NOW), row -> { });
+
+        String sql = capturedQueries().get(0).sql().replaceAll("\\s+", " ").trim();
+        Assertions.assertTrue(sql.endsWith("order by o.id desc, tr.origtime, tr.ridbyacq"), sql);
     }
 
     // Р-76: при мультиклиринге заказ после списания остаётся Authorized. Скрыт только Authorized без
@@ -162,7 +205,7 @@ class TxpgTransactionRepositoryTest {
         repository.findOrderIds(filter(Instant.parse("2026-09-01T00:00:00Z"), NOW), null, 26);
 
         String sql = capturedQueries().get(0).sql().replaceAll("\\s+", " ");
-        Assertions.assertTrue(sql.contains("and (o.status not in (:unfinished_statuses) or (o.status = 'Authorized' "
+        Assertions.assertTrue(sql.contains("o.status not in (:unfinished_statuses) or (o.status = 'Authorized' "
                 + "and exists (select 1 from TXPG.tran c where c.orderid = o.id "
                 + "and ((c.trantype = 'Purchase' and c.phase = 'Clearing') or (c.trantype = 'Capture' and c.phase = 'Charge')) "
                 + "and c.voidkind is null and c.pmoresultcode = 'Approved')))"), sql);

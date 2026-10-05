@@ -1,20 +1,28 @@
 package az.millikart.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import az.millikart.auth.domain.Company;
+import az.millikart.auth.domain.RefreshToken;
 import az.millikart.auth.domain.User;
 import az.millikart.auth.dto.CreateUserRequest;
 import az.millikart.auth.dto.LoginRequest;
+import az.millikart.auth.dto.RefreshRequest;
 import az.millikart.auth.dto.UpdateUserRequest;
 import az.millikart.auth.repository.CompanyRepository;
+import az.millikart.auth.repository.RefreshTokenRepository;
 import az.millikart.auth.repository.UserRepository;
 import az.millikart.common.audit.AuditLog;
 import az.millikart.common.audit.AuditOutcome;
+import az.millikart.common.security.JwtProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,6 +69,12 @@ public class AuthAuditIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private RefreshTokenRepository refreshTokenRepository;
+
+    @Autowired
+    private JwtProvider jwtProvider;
 
     private String adminToken;
 
@@ -147,6 +161,156 @@ public class AuthAuditIntegrationTest {
         assertThat(everyDetail()).noneMatch(details -> details.contains("BrandNewSecret123!"));
     }
 
+    @Test
+    public void deletingUser_isRecordedWithTheLoginAndRoleOfTheDeleted() throws Exception {
+        UUID userId = createUser("clerk@comp1.com", "COMPANY_EMPLOYEE");
+        auditLogs.deleteAll();
+
+        mockMvc.perform(delete("/api/v1/users/" + userId).header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isNoContent());
+
+        AuditLog record = single("DELETE");
+        assertThat(record.getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
+        assertThat(record.getEntityType()).isEqualTo("USER");
+        assertThat(record.getEntityId()).isEqualTo(userId.toString());
+        assertThat(record.getPerformedBy()).isEqualTo(ADMIN);
+        assertThat(record.getCompanyId()).isEqualTo("comp-01");
+        assertThat(record.getDetails()).contains("clerk@comp1.com", "COMPANY_EMPLOYEE");
+    }
+
+    // Отказы USER из словаря (technical_handover §4.4): руководитель выдаёт роль выше своей, правит и удаляет
+    // руководителя той же компании. companyId отказа — компания актора, а не названная в запросе.
+    @Test
+    public void headOverstepping_isRecordedAsDenied() throws Exception {
+        UUID otherHead = createUser("second.head@comp1.com", "COMPANY_HEAD");
+        String headToken = "Bearer " + jwtProvider.generateToken(
+                UUID.randomUUID().toString(), "head@comp1.com", "COMPANY_HEAD", "comp-01");
+        auditLogs.deleteAll();
+
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateUserRequest("boss@comp1.com", USER_PASSWORD, "Boss", "SYSTEM_ADMIN", "comp-01"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/v1/users/" + otherHead)
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest("Renamed", null, null, null, null))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/v1/users/" + otherHead).header(HttpHeaders.AUTHORIZATION, headToken))
+                .andExpect(status().isForbidden());
+
+        AuditLog create = single("CREATE");
+        assertThat(create.getEntityId()).isEqualTo("boss@comp1.com");
+        assertThat(create.getDetails()).contains("attempted to create a user with role SYSTEM_ADMIN");
+        assertThat(single("UPDATE").getDetails()).contains("attempted UPDATE of user " + otherHead + " with role COMPANY_HEAD");
+        assertThat(single("DELETE").getDetails()).contains("attempted DELETE of user " + otherHead + " with role COMPANY_HEAD");
+        assertThat(auditLogs.findAll()).allSatisfy(record -> {
+            assertThat(record.getOutcome()).isEqualTo(AuditOutcome.DENIED);
+            assertThat(record.getPerformedBy()).isEqualTo("head@comp1.com");
+            assertThat(record.getCompanyId()).isEqualTo("comp-01");
+        });
+    }
+
+    // Роль без права на пользователей: отказ в заведении и в списке — записи, как у компаний и терминалов.
+    @Test
+    public void aRoleWithoutUserRights_isRecordedAsDenied() throws Exception {
+        String employeeToken = "Bearer " + jwtProvider.generateToken(
+                UUID.randomUUID().toString(), "clerk@comp1.com", "COMPANY_EMPLOYEE", "comp-01");
+
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, employeeToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateUserRequest("friend@comp1.com", USER_PASSWORD, "Friend", "COMPANY_EMPLOYEE", "comp-01"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/users").header(HttpHeaders.AUTHORIZATION, employeeToken))
+                .andExpect(status().isForbidden());
+
+        AuditLog create = single("CREATE");
+        assertThat(create.getEntityId()).isEqualTo("friend@comp1.com");
+        assertThat(create.getDetails()).isEqualTo("Denied: role COMPANY_EMPLOYEE attempted to create a user");
+        AuditLog list = single("LIST");
+        assertThat(list.getEntityId()).isEqualTo("ALL");
+        assertThat(list.getDetails()).isEqualTo("Denied: role COMPANY_EMPLOYEE attempted to list users");
+        assertThat(auditLogs.findAll()).allSatisfy(record -> {
+            assertThat(record.getOutcome()).isEqualTo(AuditOutcome.DENIED);
+            assertThat(record.getPerformedBy()).isEqualTo("clerk@comp1.com");
+            assertThat(record.getCompanyId()).isEqualTo("comp-01");
+        });
+    }
+
+    // Руководитель чужой компании: заведение в неё, чтение, правка и удаление её пользователя. Компания цели в
+    // записи не называется — руководитель читает журнал своей компании и узнал бы, чей это UUID.
+    @Test
+    public void aHeadReachingIntoAnotherCompany_isRecordedAsDenied() throws Exception {
+        UUID clerk = createUser("clerk@comp1.com", "COMPANY_EMPLOYEE");
+        String foreignHead = "Bearer " + jwtProvider.generateToken(
+                UUID.randomUUID().toString(), "head@comp2.com", "COMPANY_HEAD", "comp-02");
+        auditLogs.deleteAll();
+
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, foreignHead)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateUserRequest("mole@comp1.com", USER_PASSWORD, "Mole", "COMPANY_EMPLOYEE", "comp-01"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/users/" + clerk).header(HttpHeaders.AUTHORIZATION, foreignHead))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/v1/users/" + clerk)
+                        .header(HttpHeaders.AUTHORIZATION, foreignHead)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/v1/users/" + clerk).header(HttpHeaders.AUTHORIZATION, foreignHead))
+                .andExpect(status().isForbidden());
+
+        assertThat(single("CREATE").getDetails())
+                .isEqualTo("Denied: role COMPANY_HEAD attempted to create a user in company comp-01");
+        for (String action : List.of("READ", "UPDATE", "DELETE")) {
+            AuditLog record = single(action);
+            assertThat(record.getEntityId()).isEqualTo(clerk.toString());
+            assertThat(record.getDetails())
+                    .isEqualTo("Denied: role COMPANY_HEAD of company comp-02 attempted " + action
+                            + " of user " + clerk + " outside its company");
+        }
+        assertThat(auditLogs.findAll()).allSatisfy(record -> {
+            assertThat(record.getOutcome()).isEqualTo(AuditOutcome.DENIED);
+            assertThat(record.getPerformedBy()).isEqualTo("head@comp2.com");
+            assertThat(record.getCompanyId()).isEqualTo("comp-02");
+        });
+    }
+
+    // Access-токен живёт после блокировки до 15 минут; отказ заблокированному актору — тоже запись.
+    @Test
+    public void aBlockedActorWithALiveToken_isRecordedAsDenied() throws Exception {
+        UUID target = createUser("clerk@comp1.com", "COMPANY_EMPLOYEE");
+        User blocked = userRepository.save(User.builder()
+                .username("blocked.admin@millikart.az")
+                .passwordHash(passwordEncoder.encode(ADMIN_PASSWORD))
+                .fullName("Blocked Admin")
+                .role("SYSTEM_ADMIN")
+                .status("BLOCKED")
+                .build());
+        String blockedToken = "Bearer " + jwtProvider.generateToken(
+                blocked.getId().toString(), blocked.getUsername(), "SYSTEM_ADMIN", null);
+        auditLogs.deleteAll();
+
+        mockMvc.perform(patch("/api/v1/users/" + target)
+                        .header(HttpHeaders.AUTHORIZATION, blockedToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null))))
+                .andExpect(status().isForbidden());
+
+        AuditLog record = single("UPDATE");
+        assertThat(record.getOutcome()).isEqualTo(AuditOutcome.DENIED);
+        assertThat(record.getEntityId()).isEqualTo(target.toString());
+        assertThat(record.getPerformedBy()).isEqualTo("blocked.admin@millikart.az");
+        assertThat(record.getDetails()).isEqualTo("Denied: actor account is BLOCKED");
+    }
+
+    // 6-9. Логины
     // 6-9. Логины
 
     @Test
@@ -250,6 +414,30 @@ public class AuthAuditIntegrationTest {
                 .isEmpty();
     }
 
+    // Повтор ротированного refresh-токена вне окна снисхождения — признак кражи (P1-12): семья гасится,
+    // запись несёт логин владельца и ни токена, ни его части.
+    @Test
+    public void reusingARotatedRefreshToken_isRecordedWithoutTheToken() throws Exception {
+        String stolen = refreshTokenOf(login(ADMIN, ADMIN_PASSWORD, "203.0.113.5"));
+        refresh(stolen).andExpect(status().isOk());
+        // Ротация «час назад»: окно (10 с) прошло без sleep.
+        RefreshToken rotated = refreshTokenRepository.findAll().stream()
+                .filter(RefreshToken::isRotated)
+                .findFirst().orElseThrow();
+        rotated.setRotatedAt(Instant.now().minus(1, ChronoUnit.HOURS));
+        refreshTokenRepository.save(rotated);
+        auditLogs.deleteAll();
+
+        refresh(stolen).andExpect(status().isUnauthorized());
+
+        AuditLog record = single("TOKEN_REUSE");
+        assertThat(record.getOutcome()).isEqualTo(AuditOutcome.DENIED);
+        assertThat(record.getEntityType()).isEqualTo("AUTH");
+        assertThat(record.getEntityId()).isEqualTo(ADMIN);
+        assertThat(record.getPerformedBy()).isEqualTo(ADMIN);
+        assertThat(record.getDetails()).contains("reused", "revoked").doesNotContain(stolen);
+    }
+
     // 10. Лимит по адресу пишет одну запись на окно, а не на каждую попытку.
 
     // Лимитер намеренно не ходит в базу — этим он и дёшев под флудом. Запись в журнал на каждую
@@ -282,13 +470,13 @@ public class AuthAuditIntegrationTest {
 
     // 12. Сбой журнала не должен стоить кому-то входа.
 
-    // Таблица аудита удаляется на время попытки — это самое грубое "журнал сломан". Вход обязан
+    // Таблицы аудита нет на время попытки — это самое грубое "журнал сломан". Вход обязан
     // пройти: запись в аудит, способная отказать во входе, — это рубильник отказа в обслуживании.
     @Test
     public void auditFailure_doesNotBreakLogin() throws Exception {
         auditLogs.deleteAll();
         try {
-            dropAuditTable();
+            parkAuditTable();
 
             login(ADMIN, ADMIN_PASSWORD, "203.0.113.9").andExpect(status().isOk());
             login(ADMIN, "WrongPassword123!", "203.0.113.9").andExpect(status().isBadRequest());
@@ -331,6 +519,12 @@ public class AuthAuditIntegrationTest {
         return mockMvc.perform(request);
     }
 
+    private org.springframework.test.web.servlet.ResultActions refresh(String refreshToken) throws Exception {
+        return mockMvc.perform(post("/api/v1/auth/refresh")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RefreshRequest(refreshToken))));
+    }
+
     private String tokenOf(org.springframework.test.web.servlet.ResultActions actions) throws Exception {
         String body = actions.andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).get("token").asText();
@@ -357,24 +551,13 @@ public class AuthAuditIntegrationTest {
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
-    private void dropAuditTable() {
-        jdbcTemplate.execute("DROP TABLE audit_logs");
+    // Журнал ломается переименованием, а не DROP: база общая на все классы модуля, и таблица должна
+    // вернуться ровно той, что была, — с индексами и умолчаниями, а не рукописной копией.
+    private void parkAuditTable() {
+        jdbcTemplate.execute("ALTER TABLE audit_logs RENAME TO audit_logs_parked");
     }
 
     private void restoreAuditTable() {
-        jdbcTemplate.execute("""
-                CREATE TABLE audit_logs (
-                    id uuid NOT NULL,
-                    entity_type varchar(50) NOT NULL,
-                    entity_id varchar(255) NOT NULL,
-                    action varchar(50) NOT NULL,
-                    performed_by varchar(255) NOT NULL,
-                    company_id varchar(255),
-                    details varchar(4000),
-                    client_ip varchar(45),
-                    outcome varchar(16) DEFAULT 'SUCCESS' NOT NULL,
-                    created_at timestamp,
-                    CONSTRAINT pk_audit_logs PRIMARY KEY (id)
-                )""");
+        jdbcTemplate.execute("ALTER TABLE audit_logs_parked RENAME TO audit_logs");
     }
 }

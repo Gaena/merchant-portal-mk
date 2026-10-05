@@ -7,10 +7,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import az.millikart.auth.AuditLogTestRepository;
 import az.millikart.auth.domain.User;
 import az.millikart.auth.dto.ChangePasswordRequest;
 import az.millikart.auth.dto.LoginRequest;
 import az.millikart.auth.repository.UserRepository;
+import az.millikart.common.audit.AuditLog;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -46,6 +48,9 @@ public class AdminBootstrapIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private AuditLogTestRepository auditLogs;
+
     @Test
     @DisplayName("the migration seeds nobody; the bootstrap runner creates the single admin")
     void bootstrap_createsExactlyOneSystemAdmin() {
@@ -58,6 +63,25 @@ public class AdminBootstrapIntegrationTest {
         assertEquals("ACTIVE", admin.getStatus());
         assertNull(admin.getCompanyId());
         assertTrue(admin.getPasswordHash().startsWith("$2"), "password must be stored as a BCrypt hash");
+    }
+
+    // Первого администратора заводит сам сервис: актор — system, компании нет, пароля в записи нет.
+    @Test
+    @DisplayName("the bootstrap leaves a CREATE record by system")
+    void bootstrap_isRecordedAgainstTheSystem() {
+        String adminId = userRepository.findByUsername(ADMIN_USERNAME).orElseThrow().getId().toString();
+
+        List<AuditLog> records = auditLogs.findAll().stream()
+                .filter(record -> "CREATE".equals(record.getAction()))
+                .toList();
+
+        assertEquals(1, records.size(), String.valueOf(records));
+        AuditLog record = records.getFirst();
+        assertEquals(adminId, record.getEntityId());
+        assertEquals("USER", record.getEntityType());
+        assertEquals("system", record.getPerformedBy());
+        assertNull(record.getCompanyId());
+        assertEquals("Admin bootstrap created the first SYSTEM_ADMIN " + ADMIN_USERNAME, record.getDetails());
     }
 
     // Пароль из переменной окружения знает тот, кто ставил систему: при первом входе его меняют (Р-100),

@@ -9,6 +9,8 @@ public record TerminalResponse(
         String login,
         // Номер терминала у провайдера — им терминал подписан на экранах (Р-96); пусто — подпись логином.
         String terminalRid,
+        // Связан со справочником провайдера: название — провайдера, правкой не меняется (Р-67).
+        boolean providerLinked,
         String companyId,
         TerminalStatus status,
         String createdBy,

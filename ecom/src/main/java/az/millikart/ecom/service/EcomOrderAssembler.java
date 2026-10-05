@@ -137,7 +137,9 @@ public final class EcomOrderAssembler {
                 history.stream().map(TxpgStatementRow::rrn).filter(rrn -> rrn != null && !rrn.isBlank())
                         .findFirst().orElse(null),
                 anyApproved ? null : last.resultCode(),
-                history.stream().map(EcomOrderAssembler::toOperation).toList());
+                history.stream().map(EcomOrderAssembler::toOperation).toList(),
+                null,
+                null);
     }
 
     private static EcomOperationResponse toOperation(TxpgStatementRow row) {

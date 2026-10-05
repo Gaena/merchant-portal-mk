@@ -9,20 +9,21 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
-import lombok.AllArgsConstructor;
+import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Immutable;
 
 // Строка журнала, общая для всех сервисов (Р-41). Только дозапись (Р-42): сеттеров нет, у
-// AuditLogRepository только save. Собирать записи — только через AuditLogService.
+// AuditLogRepository только save, @Immutable не даёт Hibernate выпустить UPDATE, а билдер не задаёт id —
+// иначе save с id существующей записи сделал бы merge и переписал её. Собирать — только через AuditLogService.
 @Entity
+@Immutable
 @Table(name = "audit_logs")
 @Getter
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class AuditLog {
 
     @Id
@@ -54,10 +55,22 @@ public class AuditLog {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "outcome", nullable = false, length = 16)
-    @Builder.Default
     private AuditOutcome outcome = AuditOutcome.SUCCESS;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
+
+    @Builder
+    private AuditLog(String entityType, String entityId, String action, String performedBy, String companyId,
+                     String details, String clientIp, AuditOutcome outcome) {
+        this.entityType = entityType;
+        this.entityId = entityId;
+        this.action = action;
+        this.performedBy = performedBy;
+        this.companyId = companyId;
+        this.details = details;
+        this.clientIp = clientIp;
+        this.outcome = outcome != null ? outcome : AuditOutcome.SUCCESS;
+    }
 }

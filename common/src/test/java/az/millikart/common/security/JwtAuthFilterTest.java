@@ -2,6 +2,7 @@ package az.millikart.common.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import ch.qos.logback.classic.Level;
@@ -19,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 // Что фильтр обещает логам. Истёкший токен — штатный поток раз в 15 минут у каждого вошедшего, и он не
 // пишется ни ERROR, ни WARN: раньше каждый давал ERROR со стектрейсом. Поддельный — WARN без стектрейса.
@@ -73,6 +75,22 @@ class JwtAuthFilterTest {
         assertNull(warnings.getFirst().getThrowableProxy(), "no stack trace for a refused token");
     }
 
+    // JWT-DEFAULTS: подписанный токен без роли получал COMPANY_EMPLOYEE, без логина — имя system, которым в
+    // журнале подписаны автоматические действия. Против fail-closed (AGENTS §6): теперь такой токен — 401.
+    @Test
+    void aSignedTokenWithoutRoleOrSubject_isRefused() throws Exception {
+        for (String token : new String[] {
+                provider.generateToken("1", "head@comp1.com", null, "comp-01"),
+                provider.generateToken("1", "head@comp1.com", "", "comp-01"),
+                provider.generateToken("1", null, "COMPANY_HEAD", "comp-01")}) {
+            MockHttpServletResponse response = run(token, (request, ignored) -> {
+                throw new AssertionError("a token without role or subject must not reach the controller");
+            });
+
+            assertEquals(401, response.getStatus());
+        }
+    }
+
     @Test
     void theSignedInLogin_isInTheMdcForTheRequestOnly() throws Exception {
         AtomicReference<String> seen = new AtomicReference<>();
@@ -85,9 +103,57 @@ class JwtAuthFilterTest {
         assertNull(MDC.get(JwtAuthFilter.MDC_USER_KEY), "the login must not outlive the request on this thread");
     }
 
+    // Статический токен даёт SYSTEM_ADMIN без пароля. Включённый флаг без значения — отказ старта:
+    // иначе пустой Bearer или любая строка совпали бы с пустым токеном.
+    @Test
+    void staticTokenEnabledWithoutAValue_refusesToStart() {
+        for (String empty : new String[] {"", "   ", null}) {
+            assertThrows(IllegalStateException.class, () -> filter(empty, true));
+        }
+    }
+
+    // Выключенный флаг — значение токена ничего не открывает, даже если оно задано: это просто кривой JWT.
+    @Test
+    void staticToken_whenDisabled_isRefusedLikeAnyInvalidToken() throws Exception {
+        MockHttpServletResponse response = run(filter("static-integration-token", false), "static-integration-token",
+                (request, ignored) -> {
+                    throw new AssertionError("a disabled static token must not reach the controller");
+                });
+
+        assertEquals(401, response.getStatus());
+    }
+
+    // Включённый флаг: верный токен — администратор без компании, неверный — 401. Ловит сравнение,
+    // пропускающее префикс или пустую строку, и компанию, подставленную статическому входу.
+    @Test
+    void staticToken_whenEnabled_signsInAnAdminWithoutACompany_andOnlyForTheExactValue() throws Exception {
+        JwtAuthFilter filter = filter("static-integration-token", true);
+        AtomicReference<UserPrincipal> seen = new AtomicReference<>();
+
+        MockHttpServletResponse accepted = run(filter, "static-integration-token", (request, ignored) ->
+                seen.set((UserPrincipal) SecurityContextHolder.getContext().getAuthentication().getPrincipal()));
+        assertEquals(200, accepted.getStatus());
+        assertEquals(Role.SYSTEM_ADMIN, UserPrincipal.getRole(seen.get()));
+        assertNull(UserPrincipal.getCompanyId(seen.get()));
+
+        for (String wrong : new String[] {"static-integration", "static-integration-token-x", "STATIC-INTEGRATION-TOKEN"}) {
+            MockHttpServletResponse refused = run(filter, wrong, (request, ignored) -> {
+                throw new AssertionError("a wrong static token must not reach the controller: " + wrong);
+            });
+            assertEquals(401, refused.getStatus(), wrong);
+        }
+    }
+
     private MockHttpServletResponse run(String token, FilterChain chain) throws Exception {
-        JwtAuthFilter filter = new JwtAuthFilter(provider,
-                new SecurityErrorResponder(new ObjectMapper().findAndRegisterModules()), "", false, false);
+        return run(filter("", false), token, chain);
+    }
+
+    private JwtAuthFilter filter(String staticToken, boolean staticTokenEnabled) {
+        return new JwtAuthFilter(provider, new SecurityErrorResponder(new ObjectMapper().findAndRegisterModules()),
+                staticToken, staticTokenEnabled, false);
+    }
+
+    private MockHttpServletResponse run(JwtAuthFilter filter, String token, FilterChain chain) throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", SECURE_PATH);
         request.addHeader("Authorization", "Bearer " + token);
         MockHttpServletResponse response = new MockHttpServletResponse();

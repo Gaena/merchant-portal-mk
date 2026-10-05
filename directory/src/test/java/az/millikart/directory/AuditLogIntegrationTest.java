@@ -4,8 +4,7 @@ import static az.millikart.directory.DirectoryTestFixtures.company;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -17,7 +16,6 @@ import az.millikart.common.security.UserPrincipal;
 import az.millikart.common.audit.AuditLog;
 import az.millikart.common.audit.AuditOutcome;
 import az.millikart.directory.dto.UpdateCompanyRequest;
-import az.millikart.common.audit.AuditLogRepository;
 import az.millikart.directory.repository.CompanyRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.common.audit.AuditLogService;
@@ -36,13 +34,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.SpyBean;
-import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 // Р-35: успех попадает в журнал только после коммита, откат не оставляет записи, отказ пишется
@@ -63,9 +61,6 @@ public class AuditLogIntegrationTest {
 
     @Autowired
     private TerminalRepository terminalRepository;
-
-    @SpyBean
-    private AuditLogRepository auditLogRepository;
 
     // Чтение и очистка: репозиторий приложения умеет только добавлять строки (Р-42).
     @Autowired
@@ -189,7 +184,7 @@ public class AuditLogIntegrationTest {
         assertThat(auditLogs.findAll()).extracting(AuditLog::getAction)
                 .containsExactlyInAnyOrder("UPDATE", "UNBLOCK");
 
-        // Повтор уже установленного статуса — не блокировка, выдумывать событие нельзя.
+        // Повтор уже установленного статуса — не блокировка и вообще не событие (Р-108): ни BLOCK, ни UPDATE.
         auditLogs.deleteAll();
         mockMvc.perform(patch("/api/v1/companies/comp-01")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
@@ -197,7 +192,7 @@ public class AuditLogIntegrationTest {
                         .content(objectMapper.writeValueAsString(
                                 new UpdateCompanyRequest(null, "ACTIVE", null, null))))
                 .andExpect(status().isOk());
-        assertThat(auditLogs.findAll()).extracting(AuditLog::getAction).containsExactly("UPDATE");
+        assertThat(auditLogs.findAll()).isEmpty();
     }
 
     // 2. Откатанная операция не оставляет записи — ядро Р-35
@@ -217,22 +212,28 @@ public class AuditLogIntegrationTest {
                 .isEmpty();
     }
 
-    // Тот же откат, но как в P2-8: транзакция падает на коммите, когда метод сервиса вместе с
-    // вызовом аудита уже вернулся. Простой REQUIRES_NEW внутри logAction записал бы это
-    // несостоявшееся создание.
+    // Тот же откат, но как в P2-8: транзакция падает на самом коммите, когда метод сервиса вместе с
+    // публикацией события уже вернулся. Запись журнала без ожидания коммита (REQUIRES_NEW внутри
+    // сервиса) описала бы несостоявшееся создание. Сбой коммита — синхронизацией, а не переполнением
+    // колонки: оно падает на flush ещё внутри сервиса, до публикации (Р-103).
     @Test
-    public void commitTimeFailure_afterAuditEventPublished_leavesNoAuditRecord() throws Exception {
-        // Проходит @NotBlank, но переполняет колонку varchar(255) на flush, то есть на коммите.
-        String overlongName = "X".repeat(300);
-        mockMvc.perform(post("/api/v1/companies")
-                        .header(HttpHeaders.AUTHORIZATION, adminToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                company("comp-long", overlongName))))
-                .andExpect(status().is5xxServerError());
+    public void commitTimeFailure_afterAuditEventPublished_leavesNoAuditRecord() {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
 
-        assertThat(companyRepository.existsById("comp-long")).isFalse();
-        assertThat(auditLogs.findAll()).isEmpty();
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            companyService.createCompany(company("comp-long", "Late Failure LLC"), adminPrincipal());
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void beforeCommit(boolean readOnly) {
+                    throw new IllegalStateException("commit refused after the audit event was published");
+                }
+            });
+        })).isInstanceOf(IllegalStateException.class);
+
+        assertThat(companyRepository.existsById("comp-long")).as("the commit failed").isFalse();
+        assertThat(auditLogs.findAll())
+                .as("the journal must not describe a creation that was never committed")
+                .isEmpty();
     }
 
     // 3. Отказ записывается, а операция остаётся отклонённой
@@ -295,18 +296,13 @@ public class AuditLogIntegrationTest {
     }
 
     // Строки записи об отказе контролирует вызывающий, а колонки ограничены (details
-    // varchar(4000), entity_id varchar(255)), и выше по стеку их не режет никто. Без обрезки
-    // вставка падает, отказ превращается в 500, и запись, ради которой всё делалось, не пишется:
-    // любой аутентифицированный пользователь выключал бы аудит отказов набивкой поля.
+    // varchar(4000), entity_id varchar(255)). Без обрезки вставка падает, отказ превращается в 500, и
+    // запись, ради которой всё делалось, не пишется: любой аутентифицированный пользователь выключал бы
+    // аудит отказов набивкой поля. Тело ограничивает @Size (DB-CONSTRAINT-500), id в адресе — нет.
     @Test
-    public void deniedCreate_withOversizedInput_stillReturns403AndIsRecorded() throws Exception {
-        String overlongName = "X".repeat(5000);
-
-        mockMvc.perform(post("/api/v1/companies")
-                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                company("Z".repeat(400), overlongName))))
+    public void deniedDelete_withOversizedId_stillReturns403AndIsRecorded() throws Exception {
+        mockMvc.perform(delete("/api/v1/companies/{id}", "Z".repeat(5000))
+                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
                 .andExpect(status().isForbidden());
 
         List<AuditLog> records = auditLogs.findAll();
@@ -390,15 +386,17 @@ public class AuditLogIntegrationTest {
 
     @Test
     public void auditWriteFailure_doesNotBreakBusinessOperation() throws Exception {
-        doThrow(new DataAccessResourceFailureException("audit storage is down"))
-                .when(auditLogRepository).save(any(AuditLog.class));
-
-        mockMvc.perform(post("/api/v1/companies")
-                        .header(HttpHeaders.AUTHORIZATION, adminToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                company("comp-01", "MilliKart LLC"))))
-                .andExpect(status().isCreated());
+        parkAuditTable();
+        try {
+            mockMvc.perform(post("/api/v1/companies")
+                            .header(HttpHeaders.AUTHORIZATION, adminToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(
+                                    company("comp-01", "MilliKart LLC"))))
+                    .andExpect(status().isCreated());
+        } finally {
+            restoreAuditTable();
+        }
 
         assertThat(companyRepository.existsById("comp-01"))
                 .as("the operation itself must have committed")
@@ -414,15 +412,17 @@ public class AuditLogIntegrationTest {
     // поэтому вылетевшее исключение подменило бы законный 403 на 500.
     @Test
     public void auditWriteFailure_onDeniedPath_stillReturns403() throws Exception {
-        doThrow(new DataAccessResourceFailureException("audit storage is down"))
-                .when(auditLogRepository).save(any(AuditLog.class));
-
-        mockMvc.perform(post("/api/v1/companies")
-                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                company("comp-01", "MilliKart LLC"))))
-                .andExpect(status().isForbidden());
+        parkAuditTable();
+        try {
+            mockMvc.perform(post("/api/v1/companies")
+                            .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(
+                                    company("comp-01", "MilliKart LLC"))))
+                    .andExpect(status().isForbidden());
+        } finally {
+            restoreAuditTable();
+        }
 
         assertThat(serviceLogAppender.list)
                 .as("the lost denial must be reported with the monitoring marker")
@@ -491,5 +491,15 @@ public class AuditLogIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(company(id, name))))
                 .andExpect(status().isCreated());
+    }
+
+    // Журнал ломается переименованием таблицы, а не @SpyBean: шпион дал бы классу свой Spring-контекст, а
+    // таблица возвращается ровно той, что была.
+    private void parkAuditTable() {
+        jdbcTemplate.execute("ALTER TABLE audit_logs RENAME TO audit_logs_parked");
+    }
+
+    private void restoreAuditTable() {
+        jdbcTemplate.execute("ALTER TABLE audit_logs_parked RENAME TO audit_logs");
     }
 }

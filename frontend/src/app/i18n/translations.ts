@@ -226,7 +226,6 @@ export interface TranslationDictionary {
     subtitle: string;
     copyUrl: string;
     cancelLink: string;
-    finalizeDMS: string;
     /**
      * Панель у истёкшей и отменённой ссылки: кнопка открывает форму создания на странице
      * Pay by Link, заполненную полями этой ссылки (терминал — только если он активен).
@@ -317,12 +316,38 @@ export interface TranslationDictionary {
       /** Спросить эквайера о судьбе операции — единственный верный следующий шаг. */
       checkStatusAction: string;
       statusChecked: string;
-      /** Перечитанная операция не изменилась: повтор закрыт, снимает запрет только движение денег. */
-      statusStillUnresolved: string;
       /** Сбой самой проверки — не исход денежной операции, запрет не трогает. */
       checkStatusFailed: string;
       /** Вернуть можно только остаток. */
       refundableLeft: string;
+      /** Заголовок блока возврата и списания — общий у карточки операции и панели заказа выписки. */
+      actionsTitle: string;
+      /** Причина выключенной кнопки (Р-123) — ровно `MoneyActionReason` бэкенда; `other` — код незнакомый. */
+      moneyReasons: {
+        NO_RIGHTS: string;
+        TERMINAL_NOT_IN_PORTAL: string;
+        NO_PROVIDER_CREDENTIALS: string;
+        FULLY_REFUNDED: string;
+        CAPTURE_FIRST: string;
+        ALREADY_CAPTURED: string;
+        OUTCOME_UNKNOWN: string;
+        IN_PROGRESS: string;
+        other: string;
+      };
+      /** Неподтверждённая операция, которую помнит сервер (Р-123); итог отмечает только администратор. */
+      unresolvedInProgressTitle: string;
+      unresolvedInProgressHint: string;
+      unresolvedKindRefund: string;
+      unresolvedKindCapture: string;
+      unresolvedStartedAt: string;
+      unresolvedStartedBy: string;
+      resolveExecuted: string;
+      resolveNotExecuted: string;
+      resolveExecutedTitle: string;
+      resolveExecutedQuestion: string;
+      resolveNotExecutedTitle: string;
+      resolveNotExecutedQuestion: string;
+      resolveFailed: string;
       /** Денежные события называют действие, а не состояние: рядом с суммой «возврат» понятнее. */
       eventCreated: string;
       eventCaptured: string;
@@ -390,6 +415,7 @@ export interface TranslationDictionary {
     };
     detail: {
       back: string;
+      openInNewTab: string;
       title: string;
       notFound: string;
       loadFailed: string;
@@ -468,6 +494,7 @@ export interface TranslationDictionary {
     searchPlaceholder: string;
     /** Пояснение к выбору компании в формах; виден только тем, кто выбирает (SYSTEM_ADMIN). */
     companyHint: string;
+    nameFromProvider: string;
     formIncomplete: string;
     created: string;
     createFailed: string;
@@ -565,6 +592,8 @@ export interface TranslationDictionary {
     issuedPasswordHint: string;
     passwordChangePending: string;
     passwordWillChange: string;
+    /** Свой пароль: сервер гасит все сессии, и эту тоже — после сохранения вход заново. */
+    ownPasswordSignsOut: string;
     /** Свою роль и статус в этом окне не поменять: так себя легко лишить доступа. */
     selfHint: string;
     updated: string;
@@ -865,7 +894,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       subtitle: 'Inspect payment link specifications, execution history and DMS status.',
       copyUrl: 'Copy Link URL',
       cancelLink: 'Cancel Link',
-      finalizeDMS: 'Complete DMS Payment',
       quickActions: 'Quick Actions',
       createSameLink: 'Create New Link (Same Details)',
       tabs: {
@@ -942,12 +970,36 @@ export const translations: Record<Language, TranslationDictionary> = {
         technicalInfo: 'Technical Gateway Info',
         approvalCode: 'Approval Code',
         unresolvedTitle: 'Outcome not confirmed by the acquirer',
-        unresolvedHint: 'The operation may already have gone through. Do not send it again — check the transaction status first.',
+        unresolvedHint: 'The operation may already have gone through. It stays locked until a system administrator reconciles it with the provider and records the outcome.',
         checkStatusAction: 'Check status',
         statusChecked: 'Transaction status refreshed.',
-        statusStillUnresolved: 'The re-read shows no change: the outcome is still unconfirmed and the operation stays locked. Review it in the audit log before retrying.',
         checkStatusFailed: 'Could not check the status. Try again.',
         refundableLeft: 'Left to refund',
+        actionsTitle: 'Actions',
+        moneyReasons: {
+          NO_RIGHTS: 'Your role does not allow this action',
+          TERMINAL_NOT_IN_PORTAL: 'The terminal of this operation is not registered in the portal',
+          NO_PROVIDER_CREDENTIALS: 'The terminal\'s company has no provider login',
+          FULLY_REFUNDED: 'Fully refunded',
+          CAPTURE_FIRST: 'Capture the hold first',
+          ALREADY_CAPTURED: 'The hold is already captured',
+          OUTCOME_UNKNOWN: 'The outcome of the previous operation is unknown',
+          IN_PROGRESS: 'Another operation on this payment is in progress',
+          other: 'This action is not available',
+        },
+        unresolvedInProgressTitle: 'An operation is in progress',
+        unresolvedInProgressHint: 'The acquirer\'s answer has not been recorded yet. Wait a moment and reload the page.',
+        unresolvedKindRefund: 'Refund',
+        unresolvedKindCapture: 'Capture',
+        unresolvedStartedAt: 'Sent',
+        unresolvedStartedBy: 'By',
+        resolveExecuted: 'It went through',
+        resolveNotExecuted: 'It did not go through',
+        resolveExecutedTitle: 'Record the operation as executed?',
+        resolveExecutedQuestion: 'It will be recorded as confirmed, without the acquirer\'s references. Do this only after reconciling it with the provider.',
+        resolveNotExecutedTitle: 'Record the operation as not executed?',
+        resolveNotExecutedQuestion: 'The lock is lifted and nothing changes on the payment. Do this only after reconciling it with the provider.',
+        resolveFailed: 'Could not record the outcome',
         eventCreated: 'Transaction opened',
         eventCaptured: 'Hold captured',
         eventRefunded: 'Refund confirmed',
@@ -1020,6 +1072,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       detail: {
         back: 'Back to statement',
+        openInNewTab: 'Open in a new tab',
         title: 'Order',
         notFound: 'Order not found: it does not exist, belongs to another merchant or is not finished yet.',
         loadFailed: 'Could not load the order.',
@@ -1089,6 +1142,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editNothingChanged: 'Nothing changed — no request was sent.',
       searchPlaceholder: 'Search terminals by name, ID or login...',
       companyHint: 'The company that owns the terminal',
+      nameFromProvider: 'The name comes from the provider directory: rename the terminal at the provider',
       formIncomplete: 'Fill in every required field',
       created: 'Terminal registered',
       createFailed: 'Could not register the terminal',
@@ -1172,6 +1226,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       issuedPasswordHint: 'The user will be asked to change this password at the first sign-in.',
       passwordChangePending: 'Password change pending',
       passwordWillChange: 'The password will be replaced',
+      ownPasswordSignsOut: 'All your sessions will end, this one too: sign in again with the new password',
       selfHint: 'You cannot change your own role or status here.',
       updated: 'User updated',
       updateFailed: 'Could not update the user',
@@ -1447,7 +1502,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       subtitle: 'Ödəniş linkinin parametrlərinə, icra tarixçəsinə və DMS statusuna baxın.',
       copyUrl: 'Link URL-ni Kopyala',
       cancelLink: 'Linki Ləğv Et',
-      finalizeDMS: 'DMS Ödənişini Tamamla',
       quickActions: 'Sürətli Əməliyyatlar',
       createSameLink: 'Eyni Məlumatlarla Yeni Link Yarat',
       tabs: {
@@ -1524,12 +1578,36 @@ export const translations: Record<Language, TranslationDictionary> = {
         technicalInfo: 'Texniki Əlaqə Məlumatı',
         approvalCode: 'Təsdiq Kodu (Approval Code)',
         unresolvedTitle: 'Nəticə ekvayer tərəfindən təsdiqlənmədi',
-        unresolvedHint: 'Əməliyyat artıq keçmiş ola bilər. Təkrar göndərməyin — əvvəlcə əməliyyatın statusunu yoxlayın.',
+        unresolvedHint: 'Əməliyyat artıq keçmiş ola bilər. Sistem administratoru onu provayderlə tutuşdurub nəticəni qeyd edənə qədər əməliyyat bağlı qalır.',
         checkStatusAction: 'Statusu yoxla',
         statusChecked: 'Əməliyyatın statusu yeniləndi.',
-        statusStillUnresolved: 'Yenidən oxuma dəyişiklik göstərmir: nəticə hələ də təsdiqlənməyib, əməliyyat bağlı qalır. Təkrarlamazdan əvvəl audit jurnalında yoxlayın.',
         checkStatusFailed: 'Statusu yoxlamaq mümkün olmadı. Yenidən cəhd edin.',
         refundableLeft: 'Qaytarıla bilən qalıq',
+        actionsTitle: 'Əməliyyatlar',
+        moneyReasons: {
+          NO_RIGHTS: 'Rolunuz bu əməliyyata icazə vermir',
+          TERMINAL_NOT_IN_PORTAL: 'Bu əməliyyatın terminalı portalda qeydiyyatda deyil',
+          NO_PROVIDER_CREDENTIALS: 'Terminalın şirkətinin provayder loqini yoxdur',
+          FULLY_REFUNDED: 'Tam qaytarılıb',
+          CAPTURE_FIRST: 'Əvvəlcə holdu silin',
+          ALREADY_CAPTURED: 'Hold artıq silinib',
+          OUTCOME_UNKNOWN: 'Əvvəlki əməliyyatın nəticəsi məlum deyil',
+          IN_PROGRESS: 'Bu ödəniş üzrə başqa əməliyyat gedir',
+          other: 'Bu əməliyyat əlçatan deyil',
+        },
+        unresolvedInProgressTitle: 'Əməliyyat gedir',
+        unresolvedInProgressHint: 'Ekvayerin cavabı hələ qeyd olunmayıb. Bir az gözləyin və səhifəni yeniləyin.',
+        unresolvedKindRefund: 'Qaytarma',
+        unresolvedKindCapture: 'Silinmə',
+        unresolvedStartedAt: 'Göndərilib',
+        unresolvedStartedBy: 'Kim',
+        resolveExecuted: 'Keçib',
+        resolveNotExecuted: 'Keçməyib',
+        resolveExecutedTitle: 'Əməliyyat keçmiş kimi qeyd edilsin?',
+        resolveExecutedQuestion: 'Əməliyyat ekvayerin identifikatorları olmadan təsdiqlənmiş kimi yazılacaq. Bunu yalnız provayderlə tutuşdurduqdan sonra edin.',
+        resolveNotExecutedTitle: 'Əməliyyat keçməmiş kimi qeyd edilsin?',
+        resolveNotExecutedQuestion: 'Təkrar qadağası götürülür, ödənişdə heç nə dəyişmir. Bunu yalnız provayderlə tutuşdurduqdan sonra edin.',
+        resolveFailed: 'Nəticəni qeyd etmək alınmadı',
         eventCreated: 'Əməliyyat açıldı',
         eventCaptured: 'Blok məbləği silindi',
         eventRefunded: 'Qaytarma təsdiqləndi',
@@ -1602,6 +1680,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       detail: {
         back: 'Çıxarışa qayıt',
+        openInNewTab: 'Yeni tabda aç',
         title: 'Sifariş',
         notFound: 'Sifariş tapılmadı: mövcud deyil, başqa merçanta aiddir və ya hələ tamamlanmayıb.',
         loadFailed: 'Sifarişi yükləmək mümkün olmadı.',
@@ -1671,6 +1750,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editNothingChanged: 'Dəyişiklik yoxdur — sorğu göndərilmədi.',
       searchPlaceholder: 'Ad, ID və ya login üzrə axtarış...',
       companyHint: 'Terminalın aid olduğu şirkət',
+      nameFromProvider: 'Ad provayderin kataloqundan gəlir: terminalın adını provayderdə dəyişin',
       formIncomplete: 'Bütün məcburi sahələri doldurun',
       created: 'Terminal qeydiyyatdan keçdi',
       createFailed: 'Terminalı qeydiyyatdan keçirmək mümkün olmadı',
@@ -1754,6 +1834,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       issuedPasswordHint: 'İstifadəçi ilk girişdə bu parolu dəyişməli olacaq.',
       passwordChangePending: 'Parol dəyişikliyi gözlənilir',
       passwordWillChange: 'Parol dəyişdiriləcək',
+      ownPasswordSignsOut: 'Bütün sessiyalarınız, bu da daxil olmaqla, bitəcək: yeni parolla yenidən daxil olun',
       selfHint: 'Öz rolunuzu və statusunuzu burada dəyişə bilməzsiniz.',
       updated: 'İstifadəçi yeniləndi',
       updateFailed: 'İstifadəçini yeniləmək mümkün olmadı',
@@ -2029,7 +2110,6 @@ export const translations: Record<Language, TranslationDictionary> = {
       subtitle: 'Просмотр спецификаций ссылки, истории ее выполнения и статуса DMS.',
       copyUrl: 'Скопировать URL',
       cancelLink: 'Отменить ссылку',
-      finalizeDMS: 'Завершить DMS платеж',
       quickActions: 'Быстрые действия',
       createSameLink: 'Создать новую ссылку с теми же данными',
       tabs: {
@@ -2106,12 +2186,36 @@ export const translations: Record<Language, TranslationDictionary> = {
         technicalInfo: 'Техническая информация шлюза',
         approvalCode: 'Код одобрения (Approval Code)',
         unresolvedTitle: 'Эквайер не подтвердил исход',
-        unresolvedHint: 'Операция могла уже пройти. Не отправляйте её повторно — сначала проверьте статус операции.',
+        unresolvedHint: 'Операция могла уже пройти. Повтор закрыт, пока системный администратор не сверит её с провайдером и не отметит итог.',
         checkStatusAction: 'Проверить статус',
         statusChecked: 'Статус операции обновлён.',
-        statusStillUnresolved: 'Перечитывание ничего не изменило: исход по-прежнему не подтверждён, операция остаётся закрытой для повтора. Разберите её по журналу аудита.',
         checkStatusFailed: 'Не удалось проверить статус. Попробуйте ещё раз.',
         refundableLeft: 'Остаток к возврату',
+        actionsTitle: 'Действия',
+        moneyReasons: {
+          NO_RIGHTS: 'Ваша роль не позволяет это действие',
+          TERMINAL_NOT_IN_PORTAL: 'Терминала этой операции нет в системе портала',
+          NO_PROVIDER_CREDENTIALS: 'У компании терминала нет логина к провайдеру',
+          FULLY_REFUNDED: 'Возвращена полностью',
+          CAPTURE_FIRST: 'Сначала спишите холд',
+          ALREADY_CAPTURED: 'Холд уже списан',
+          OUTCOME_UNKNOWN: 'Исход прошлой операции неизвестен',
+          IN_PROGRESS: 'По этому платежу уже идёт операция',
+          other: 'Действие недоступно',
+        },
+        unresolvedInProgressTitle: 'Операция ещё идёт',
+        unresolvedInProgressHint: 'Ответ эквайера ещё не записан. Подождите и обновите страницу.',
+        unresolvedKindRefund: 'Возврат',
+        unresolvedKindCapture: 'Списание',
+        unresolvedStartedAt: 'Отправлена',
+        unresolvedStartedBy: 'Кто отправил',
+        resolveExecuted: 'Прошла',
+        resolveNotExecuted: 'Не прошла',
+        resolveExecutedTitle: 'Отметить операцию как прошедшую?',
+        resolveExecutedQuestion: 'Операция будет записана как подтверждённая — без идентификаторов эквайера. Делайте это только после сверки с провайдером.',
+        resolveNotExecutedTitle: 'Отметить операцию как не прошедшую?',
+        resolveNotExecutedQuestion: 'Запрет на повтор будет снят, у платежа ничего не изменится. Делайте это только после сверки с провайдером.',
+        resolveFailed: 'Не удалось отметить итог',
         eventCreated: 'Операция заведена',
         eventCaptured: 'Холд списан',
         eventRefunded: 'Возврат подтверждён',
@@ -2184,6 +2288,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       },
       detail: {
         back: 'К выписке',
+        openInNewTab: 'Открыть в новой вкладке',
         title: 'Заказ',
         notFound: 'Заказ не найден: его нет, он принадлежит другому мерчанту или ещё не завершён.',
         loadFailed: 'Не удалось загрузить заказ.',
@@ -2253,6 +2358,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       editNothingChanged: 'Изменений нет — запрос не отправлялся.',
       searchPlaceholder: 'Поиск по названию, ID или логину...',
       companyHint: 'Компания, которой принадлежит терминал',
+      nameFromProvider: 'Название приходит из справочника провайдера: переименуйте терминал у провайдера',
       formIncomplete: 'Заполните все обязательные поля',
       created: 'Терминал заведён',
       createFailed: 'Не удалось завести терминал',
@@ -2336,6 +2442,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       issuedPasswordHint: 'Пользователь сменит этот пароль при первом входе.',
       passwordChangePending: 'Ждёт смены пароля',
       passwordWillChange: 'Пароль будет заменён',
+      ownPasswordSignsOut: 'Все ваши сессии, и эта тоже, завершатся: войдите снова с новым паролем',
       selfHint: 'Свою роль и статус здесь поменять нельзя.',
       updated: 'Пользователь обновлён',
       updateFailed: 'Не удалось обновить пользователя',

@@ -6,6 +6,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.Instant;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -27,6 +28,12 @@ public class Terminal {
     @Id
     @Column(name = "id", nullable = false)
     private Integer id;
+
+    // Сверка и ручной PATCH пишут строку целиком: без версии поздний затирал ранний (TERMINAL-LOST-UPDATE).
+    // null у нового терминала — save его вставляет, а не сливает по заданному номеру (Р-81).
+    @Version
+    @Column(name = "version")
+    private Long version;
 
     @Column(name = "name", nullable = false)
     private String name;

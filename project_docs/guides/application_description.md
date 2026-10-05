@@ -58,6 +58,7 @@ Gradle-монорепозиторий: четыре Spring Boot-сервиса, 
 ```
 mp/
 ├── common/      ← java-library: security, журнал аудита, исключения, общие DTO, поиск, логирование
+├── txpg-client/ ← java-library: клиент API провайдера (TXPG), подключают pbl и ecom (Р-122)
 ├── auth/        ← :8081 — вход, токены, пользователи
 ├── directory/   ← :8082 — компании, терминалы, чтение журнала аудита, сверка терминалов с провайдером
 ├── pbl/         ← :8080 — платёжные ссылки, операции, статистика оплат по ссылкам, TXPG, кнопка «Тест»
@@ -189,7 +190,7 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 | `controller` | `PaymentLinkController`, `OpenLinkController` (публичные открытие ссылки и страница возврата), `TransactionController` (список, карточка и статус операции, списание холда, возврат), `DashboardController` (статистика оплат по ссылкам), `TerminalCheckController` (кнопка «Тест») |
 | `service` | `PaymentLinkService` (ссылки, операции, статусы, история операции), `OpenLinkService` (открытие ссылки под блокировкой строки), `ProviderCredentialsService` (креды компании терминала и номер терминала у провайдера; нет — 400 до шлюза), `TransactionReconciliationService`, `DashboardService`, `TerminalCheckService`, `PaymentLinkMapper` |
 | `domain` | `PaymentLink`, `Transaction`, `TransactionRefund`, `Terminal` (чтение общей таблицы), `CustomerPhone` (азербайджанский телефон клиента, Р-96), перечисления `PaymentLinkStatus`, `TransactionStatus`, `PaymentType`, `UsageType`, `TerminalStatus` |
-| `provider` | `AcquiringClient` и его единственная реализация `TxpgAcquiringClient`; `ProviderCredentials` (пароль маскируется в `toString`); `AcquirerDeclinedException` — отказ шлюза, который circuit breaker и retry не считают сбоем; разборщики ответов шлюза `ProviderOrderStatus`, `ProviderOrderDetails`, `ProviderDeclineReason`, `ProviderPayloads`; `RestTemplateConfig` — бин `RestClient` для шлюза (и неиспользуемый `RestTemplate`); DTO шлюза в `provider.dto` |
+| `provider` | `AcquiringClientConfig` — бин клиента провайдера из `txpg-client` с адресами `pbl`; `ProviderOrders` — ссылка в заказ провайдера (`NewOrder`); разборщики ответов шлюза `ProviderOrderStatus`, `ProviderOrderDetails`, `ProviderDeclineReason`; `RestTemplateConfig` — бин `RestClient` для шлюза (и неиспользуемый `RestTemplate`). Сам клиент — в модуле `txpg-client` (§7.1) |
 | `exception` | `AcquirerUnavailableHandler` — 503 при открытом circuit breaker к эквайеру (Р-103) |
 | `repository` | `PaymentLinkRepository`, `TransactionRepository`, `TransactionRefundRepository`, `TerminalRepository`, `DashboardRepository`; `CompanyCredentialsRepository` — креды компании из общей таблицы `companies` (запрос, не сущность) |
 | `scheduler` | `PaymentLinkScheduler`, `TransactionReconciliationScheduler` |
@@ -203,11 +204,11 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 
 | Пакет | Что внутри |
 |:---|:---|
-| `config` | `TxpgDataSourceConfig` — второй источник данных (база шлюза, только чтение) рядом с основной PostgreSQL; без `ECOM_TXPG_URL`, `ECOM_TXPG_USERNAME` и `ECOM_TXPG_PASSWORD` сервис не стартует (`requireGatewaySettings`); `TxpgProperties` — схема шлюза, таймаут, потолки периода и страницы, пояс дат шлюза |
+| `config` | `TxpgDataSourceConfig` — второй источник данных (база шлюза, только чтение) рядом с основной PostgreSQL; без `ECOM_TXPG_URL`, `ECOM_TXPG_USERNAME` и `ECOM_TXPG_PASSWORD` сервис не стартует (`requireGatewaySettings`); `TxpgProperties` — схема шлюза, таймаут, потолки периода и страницы, пояс дат шлюза; `AcquiringClientConfig` — клиент провайдера из `txpg-client` (возврат и списание заказов выписки, Р-124), `CredentialCipherConfig` — бин шифра паролей компаний |
 | `controller` | `EcomTransactionController` (выписка, итоги периода, терминалы для фильтра, карточка заказа), `EcomDashboardController` (сводка главной, Р-91), `ProviderTerminalController` (справочник терминалов провайдера и ручное обновление обоих слепков) |
-| `service` | `EcomTransactionService` (выписка, итоги, карточка заказа, сводка главной), `EcomScopeService` и `EcomScope` (чьи платежи видит пользователь: мерчанты логина компании, Р-97), `EcomOrderAssembler` (строки шлюза → заказы и их деньги), `EcomOperationKind` (словарь пар операций), `EcomPaymentType` (SMS или DMS по операциям заказа, Р-87), `EcomStatusResolver` (статус заказа, Р-92), `EcomStatsAccumulator` (итоги периода), `EcomDashboardAccumulator` (сводка главной), `ProviderTerminalSyncService` и `ProviderTerminalSource`, `ProviderLoginSyncService` и `ProviderLoginSource`, `ProviderSyncFailure` (причина неудачного опроса) |
-| `repository` | SQL к базе шлюза — `TxpgTransactionRepository` (строки `TxpgStatementRow`), `TxpgProviderTerminalSource`, `TxpgProviderLoginSource`; в PostgreSQL — `ProviderTerminalRepository`, `ProviderLoginRepository`, `CompanyLoginRepository` (логины компаний, нативный запрос, только чтение) |
-| `domain` | `ProviderTerminal`, `ProviderLogin` |
+| `service` | `EcomTransactionService` (выписка, итоги, карточка заказа с кнопками возврата и списания, сводка главной), `EcomMoneyActions` (правила этих кнопок, Р-124), `EcomMoneyOperationService` (возврат и списание заказа выписки, Р-125), `ProviderOrderAttemptService` (строка попытки и снятие неизвестного исхода по выписке), `EcomScopeService` и `EcomScope` (чьи платежи видит пользователь: мерчанты логина компании, Р-97), `EcomOrderAssembler` (строки шлюза → заказы и их деньги), `EcomOperationKind` (словарь пар операций), `EcomPaymentType` (SMS или DMS по операциям заказа, Р-87), `EcomStatusResolver` (статус заказа, Р-92), `EcomStatsAccumulator` (итоги периода), `EcomDashboardAccumulator` (сводка главной), `ProviderTerminalSyncService` и `ProviderTerminalSource`, `ProviderLoginSyncService` и `ProviderLoginSource`, `ProviderSyncFailure` (причина неудачного опроса) |
+| `repository` | SQL к базе шлюза — `TxpgTransactionRepository` (строки `TxpgStatementRow`), `TxpgProviderTerminalSource`, `TxpgProviderLoginSource`; в PostgreSQL — `ProviderTerminalRepository`, `ProviderLoginRepository`, `CompanyLoginRepository` (логины компаний, нативный запрос, только чтение); к портальным таблицам — `PortalPaymentsRepository` (терминал мерчанта, креды компании, операция портала по номеру заказа) и `SharedTables`; `ProviderOrderAttemptRepository` |
+| `domain` | `ProviderTerminal`, `ProviderLogin`, `ProviderOrderAttempt` (Р-124) |
 | `scheduler` | `ProviderTerminalSyncScheduler` — оба слепка |
 
 Контракты — [`ecom.md`](../modules/ecom.md).
@@ -231,9 +232,11 @@ erDiagram
     terminals ||--o{ payment_links : "terminal_id"
     payment_links ||--o{ transactions : "link_id"
     transactions ||--o{ transaction_refunds : "transaction_id, каскад на удаление"
+    transactions ||--o| money_operation_attempts : "transaction_id, каскад на удаление"
     terminals |o--o| provider_terminals : "merchant_rid = rid, без внешнего ключа"
     companies |o--o{ provider_logins : "provider_login = MultiMerchantSys/ + login, без внешнего ключа"
     provider_logins }o--o| provider_terminals : "merchant_rid = rid, без внешнего ключа"
+    provider_order_attempts }o--o| transactions : "order_id = provider_order_id, без внешнего ключа; у такого заказа строк нет"
 
     companies {
         varchar id PK "Задаёт администратор, например COMP-001"
@@ -293,6 +296,7 @@ erDiagram
         timestamp created_at
         varchar updated_by
         timestamp updated_at
+        bigint version "Версия строки: сверка и ручная правка не затирают друг друга (Р-115)"
     }
 
     provider_terminals {
@@ -315,6 +319,15 @@ erDiagram
         varchar merchant_rid "merchant.rid; пусто у логина без связей"
         varchar merchant_title
         timestamptz synced_at
+    }
+
+    provider_order_attempts {
+        varchar order_id PK "Номер заказа у провайдера; одна попытка на заказ"
+        varchar kind "CAPTURE или REFUND"
+        numeric amount
+        varchar state "IN_PROGRESS или UNKNOWN; IN_PROGRESS старше 5 минут — неизвестный исход"
+        varchar started_by
+        timestamptz started_at
     }
 
     audit_logs {
@@ -368,6 +381,7 @@ erDiagram
         varchar user_agent "Плательщика"
         timestamp created_at
         timestamp updated_at
+        timestamp last_reconciled_at "Когда сверка последний раз брала в пакет (Р-110)"
     }
 
     transaction_refunds {
@@ -376,6 +390,15 @@ erDiagram
         numeric amount "Подтверждённый возврат"
         timestamptz refunded_at "Время возврата; по нему статистика вычитает возвраты (Р-89)"
         varchar rid_by_pmo "Ссылка эквайера на возврат"
+    }
+
+    money_operation_attempts {
+        uuid transaction_id PK "→ transactions.id; одна попытка на операцию"
+        varchar kind "CAPTURE или REFUND"
+        numeric amount
+        varchar state "IN_PROGRESS или UNKNOWN; IN_PROGRESS старше 5 минут — неизвестный исход"
+        varchar started_by "Логин отправившего"
+        timestamptz started_at
     }
 ```
 
@@ -423,6 +446,7 @@ erDiagram
 | `directory` | `007-terminal-id-sequence.xml` | последовательность `terminals_id_seq` — номера терминалов выдаёт база, продолжая после наибольшего существующего; она же — значение `terminals.id` по умолчанию (Р-81) |
 | `directory` | `008-company-provider-credentials.xml` | `companies.provider_login` и `provider_password`, уникальный индекс `ux_companies_provider_login`; удаление `terminals.password` (Р-93) |
 | `directory` | `009-terminal-rid.xml` | `terminals.terminal_rid` — номер терминала у провайдера (Р-96) |
+| `directory` | `010-terminal-version.xml` | `terminals.version`, если её ещё нет, с умолчанием 0 — для `@Version` (Р-115) |
 | `pbl` | `001-initial-schema.xml` | `terminals`, если ещё нет (исходный вид: с `password`, без аудит-колонок); `payment_links`, `transactions` (колонка `merchant_rid`, её переименовывает `009`), внешние ключи `payment_links → terminals` и `transactions → payment_links` |
 | `pbl` | `002-add-indexes.xml` | индексы `payment_links (terminal_id, status)`, `payment_links (status, expires_at)`, `transactions (provider_order_id)` |
 | `pbl` | `003-add-client-ip-and-user-agent.xml` | `transactions.client_ip`, `user_agent` |
@@ -435,10 +459,14 @@ erDiagram
 | `pbl` | `010-transaction-refunds.xml` | `transaction_refunds` с индексами по `refunded_at` и `transaction_id`; на PostgreSQL — перенос подтверждённых возвратов из `provider_response.mpRefunds` (Р-89) |
 | `pbl` | `011-company-provider-credentials.xml` | `companies`, если ещё нет (в виде `auth/002`), колонки кредов, если их нет; удаление `terminals.password` (Р-93) |
 | `pbl` | `012-terminal-rid.xml` | `terminals.terminal_rid`, если его ещё нет (Р-96) |
+| `pbl` | `013-transaction-rid-index.xml` | уникальный индекс `transactions (rid_by_merchant)` — по нему ищет публичная страница возврата |
+| `pbl` | `014-transaction-last-reconciled.xml` | `transactions.last_reconciled_at`, если её ещё нет: очередь сверки (Р-110) |
+| `pbl` | `015-money-operation-attempts.xml` | `money_operation_attempts` — возврат или списание, исход которого ещё не записан (Р-123) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` и индекс по `login`; без преконтроля |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет; таблица `terminals` уже должна быть (§4.2) |
 | `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам — и индекс по `login` (Р-94) |
 | `ecom` | `004-provider-terminal-rid.xml` | `provider_terminals.terminal_rid` (Р-96) |
+| `ecom` | `005-provider-order-attempts.xml` | `provider_order_attempts` — возврат или списание заказа выписки, исход которого ещё не записан (Р-124) |
 
 ### 4.4. Начальные данные
 
@@ -488,25 +516,28 @@ erDiagram
 
 ```java
 public interface AcquiringClient {
-    EcomCreateOrderResponse createEcomOrder(PaymentLink link, ProviderCredentials credentials, String terminalRid,
+    EcomCreateOrderResponse createEcomOrder(NewOrder order, ProviderCredentials credentials, String terminalRid,
                                             UUID ridByMerchant, String hppRedirectUrl);
-    MoneyOperationResult completeDms(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
-    MoneyOperationResult refund(String providerOrderId, String password, ProviderCredentials credentials, BigDecimal amount);
+    MoneyOperationResult completeDms(String providerOrderId, ProviderCredentials credentials, BigDecimal amount);
+    MoneyOperationResult refund(String providerOrderId, ProviderCredentials credentials, BigDecimal amount);
     Map<String, Object> getOrderStatus(String providerOrderId, String password, ProviderCredentials credentials);
     TerminalCheckResult checkOrderCreation(ProviderCredentials credentials, String terminalRid);
 }
 ```
 
-Реализация одна — `TxpgAcquiringClient` поверх `RestClient`; тестовый двойник живёт только в тестах.
+Реализация одна — `TxpgAcquiringClient` поверх `RestClient`, в модуле `txpg-client` (пакет `az.millikart.txpg`):
+там же `ProviderCredentials`, `ProviderPayloads` (секреты из payload и адресов для лога), `AcquirerDeclinedException`
+(отказ шлюза, который circuit breaker и retry не считают сбоем) и DTO шлюза. Модуль бинов не объявляет: клиент с
+адресами `pbl.provider.*` создаёт `AcquiringClientConfig` в `pbl`. Тестовый двойник — в testFixtures модуля.
 
 - **Авторизация** — Basic с логином и паролем **компании** терминала (Р-93): их читает из `companies` и
   расшифровывает `ProviderCredentialsService.forTerminal`. Терминал без компании и компания без кредов —
   400 до шлюза.
 - **Заказ** создаётся на терминале провайдера: `POST /order?terminalRid=<terminals.terminal_rid>` на
-  адрес шлюза `PBL_PROVIDER_GATEWAY_BASE_URL` (Р-96). Номер отдаёт `ProviderCredentialsService.terminalRidOf`;
+  адрес шлюза `PROVIDER_GATEWAY_BASE_URL` (Р-96). Номер отдаёт `ProviderCredentialsService.terminalRidOf`;
   терминал без `terminal_rid` — 400 до шлюза. Клиент одноразовой ссылки уходит в `order.tdsPresetAreq`
   (`AGENTS.md` §7).
-- **Списание, возврат и статус** — на адрес API `PBL_PROVIDER_API_BASE_URL`: `POST /order/{id}/exec-tran`
+- **Списание, возврат и статус** — на адрес API `PROVIDER_API_BASE_URL`: `POST /order/{id}/exec-tran`
   и `GET /order/{id}`.
 
 ### 7.2. Устойчивость
@@ -582,7 +613,10 @@ sequenceDiagram
 ```
 
 Нет `ridByPmo`, таймаут или 5xx — операция не записывается, ответ 502 и запись `UNRESOLVED` в
-журнале. Частичное списание не отменяет остаток холда: Void не реализован. Поле `reason` запроса
+журнале. Каждое списание и возврат — три шага (Р-123): под замком ссылки проверки и строка
+`money_operation_attempts`, вызов эквайера без транзакции, под замком запись итога и удаление строки. Без
+итога строка остаётся и запрещает повтор, пока `SYSTEM_ADMIN` не отметит, прошла ли операция
+(`POST /api/v1/transactions/{id}/resolve-outcome`). Частичное списание не отменяет остаток холда: Void не реализован. Поле `reason` запроса
 возврата принимается и никуда не попадает (задача REFUND-REASON).
 
 ### 7.5. Проверка терминала
@@ -627,7 +661,8 @@ sequenceDiagram
   оплаты картой по всем мерчантам логина компании за период, теми же правилами, что итоги выписки.
   Статистика оплат по платёжным ссылкам — вкладка Pay by Link, сводка `pbl`.
 - **Экран.** Вкладка `/transactions/ecommerce` — выписка на API `ecom`: фильтры и итоги считает сервер,
-  страница курсорная («показать ещё»), карточка заказа — `/transactions/ecommerce/:orderId`. Форма
+  страница курсорная («показать ещё»), карточка заказа — панелью поверх выписки (Р-120) и страницей
+  `/transactions/ecommerce/:orderId` для главной и прямых ссылок. Форма
   заведения терминала у системного администратора выбирает терминал из справочника провайдера среди
   мерчантов логина выбранной компании.
 
@@ -639,7 +674,7 @@ sequenceDiagram
 
 | Сервис | Планировщик | Расписание (cron) | Что делает | Выключатель |
 |:---|:---|:---|:---|:---|
-| `pbl` | `PaymentLinkScheduler` | `0 */5 * * * *` | активные ссылки с истёкшим сроком → `EXPIRED` | — |
+| `pbl` | `PaymentLinkScheduler` | `0 */5 * * * *` | активные ссылки с истёкшим сроком → `EXPIRED` | `pbl.link-expiry.enabled` |
 | `pbl` | `TransactionReconciliationScheduler` | `0 */2 * * * *` | сверка зависших `PENDING` со шлюзом | `pbl.reconciliation.enabled` |
 | `auth` | `RefreshTokenCleanupScheduler` | `0 30 3 * * *` | удаление истёкших refresh-токенов | `auth.refresh.cleanup-enabled` |
 | `auth` | `InactiveAccountScheduler` | `0 45 3 * * *` | блокировка учёток без активности дольше 90 дней (PCI DSS 8.2.6, Р-101) | `auth.inactivity.enabled` |
@@ -667,7 +702,8 @@ frontend/src/
     ├── hooks/                ← useDebounced (задержка строки поиска)
     ├── layouts/              ← MainLayout
     ├── components/           ← Header, Sidebar, ConfirmDialog, StatusPage, DashboardParts (общие куски
-    │                           главной и статистики по ссылкам), LinkPaymentsStats (вкладка «Статистика»)
+    │                           главной и статистики по ссылкам), LinkPaymentsStats (вкладка «Статистика»),
+    │                           EcomOrderDetails (карточка заказа выписки: панель и страница)
     ├── pages/                ← HomePage, LoginPage (вход и смена пароля), TransactionDetailPage,
     │                           EcommerceTransactionListPage, EcommerceOrderDetailPage, PayByLinkPage,
     │                           PayByLinkDetailPage, CompaniesPage, TerminalsPage, UsersPage, AuditLogsPage,

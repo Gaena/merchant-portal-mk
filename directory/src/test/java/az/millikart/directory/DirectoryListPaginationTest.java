@@ -1,6 +1,6 @@
 package az.millikart.directory;
 
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -23,9 +23,6 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -37,9 +34,7 @@ import org.springframework.test.web.servlet.ResultActions;
 // Сортировка строк в PostgreSQL зависит от локали базы, а H2 сравнивает побайтово: порядок
 // страниц и результат поиска через LIKE — ровно те вопросы, на которые эмуляция отвечает
 // за себя, а не за прод.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
-@AutoConfigureMockMvc
+@PostgresIntegrationTest
 public class DirectoryListPaginationTest {
 
     // MAX_PAGE_SIZE из контроллеров — общий потолок для всех постраничных списков.
@@ -320,6 +315,28 @@ public class DirectoryListPaginationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements", is(2)));
+    }
+
+    // SEARCH-CASE: строку поиска понижала Java, колонку — PostgreSQL, и «İ» у них разная: «İlham» не находил
+    // ни компанию, ни терминал с этим словом. Обе стороны понижает база — совпадение при любой её локали.
+    @Test
+    public void search_findsAzerbaijaniCapitals_inCompaniesAndTerminals() throws Exception {
+        seedCompany("comp-az", "İlham Ticarət MMC", "ACTIVE");
+        seedCompany("comp-b", "Other LLC", "ACTIVE");
+        seedTerminal(700901, "Şəki İlham kassası", "comp-b", TerminalStatus.ACTIVE);
+
+        mockMvc.perform(get("/api/v1/companies")
+                        .param("search", "İlham")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.content[0].id", is("comp-az")));
+        mockMvc.perform(get("/api/v1/terminals")
+                        .param("search", "İlham")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.content[0].id", is(700901)));
     }
 
     // % не должен возвращать всю таблицу, а _ не должен работать как «любой символ»: «Parts» —

@@ -21,7 +21,8 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     List<User> findByStatusAndLastActivityAtBefore(String status, Instant threshold);
 
     // FOR UPDATE: без блокировки параллельные попытки теряют приращения счётчика неудач, и локаут
-    // Р-28 наступает позже шестой. Держится на время BCrypt одного входа.
+    // Р-28 наступает позже шестой. Держится на время BCrypt одного входа; вторую попытку в тот же логин сюда
+    // не пускает LoginRateLimiter, чтобы она не ждала замок с соединением пула (Р-118).
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT u FROM User u WHERE u.username = :username")
     Optional<User> findForLoginByUsername(@Param("username") String username);
@@ -36,10 +37,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
               AND (:companyId IS NULL OR u.company_id = :companyId)
               AND (:role IS NULL OR u.role = :role)
               AND (:search IS NULL
-                   OR lower(u.username) LIKE :search ESCAPE '!'
-                   OR lower(u.full_name) LIKE :search ESCAPE '!'
-                   OR lower(u.company_id) LIKE :search ESCAPE '!'
-                   OR lower(c.name) LIKE :search ESCAPE '!')
+                   OR lower(u.username) LIKE lower(:search) ESCAPE '!'
+                   OR lower(u.full_name) LIKE lower(:search) ESCAPE '!'
+                   OR lower(u.company_id) LIKE lower(:search) ESCAPE '!'
+                   OR lower(c.name) LIKE lower(:search) ESCAPE '!')
             ORDER BY u.username , u.id
             """,
             countQuery = """
@@ -49,10 +50,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
               AND (:companyId IS NULL OR u.company_id = :companyId)
               AND (:role IS NULL OR u.role = :role)
               AND (:search IS NULL
-                   OR lower(u.username) LIKE :search ESCAPE '!'
-                   OR lower(u.full_name) LIKE :search ESCAPE '!'
-                   OR lower(u.company_id) LIKE :search ESCAPE '!'
-                   OR lower(c.name) LIKE :search ESCAPE '!')
+                   OR lower(u.username) LIKE lower(:search) ESCAPE '!'
+                   OR lower(u.full_name) LIKE lower(:search) ESCAPE '!'
+                   OR lower(u.company_id) LIKE lower(:search) ESCAPE '!'
+                   OR lower(c.name) LIKE lower(:search) ESCAPE '!')
             """,
             nativeQuery = true)
     Page<User> search(@Param("companyId") String companyId,

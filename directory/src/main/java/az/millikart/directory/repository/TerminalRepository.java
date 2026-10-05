@@ -14,17 +14,18 @@ import org.springframework.stereotype.Repository;
 public interface TerminalRepository extends JpaRepository<Terminal, Integer> {
 
     // companyId — скоуп, а не поиск: null — глобальный читатель (P3-1). left join — терминал без
-    // компании остаётся в списке. Без escape '!' введённый % вернёт всю таблицу.
+    // компании остаётся в списке. Без escape '!' введённый % вернёт всю таблицу. cast у параметра обязателен:
+    // null внутри lower() Hibernate шлёт как bytea, и PostgreSQL — 500.
     @Query("""
             select t from Terminal t
             left join Company c on c.id = t.companyId
             where (:companyId is null or t.companyId = :companyId)
               and (:search is null
-                   or lower(t.name) like :search escape '!'
-                   or lower(t.login) like :search escape '!'
-                   or cast(t.id as string) like :search escape '!'
-                   or lower(t.companyId) like :search escape '!'
-                   or lower(c.name) like :search escape '!')
+                   or lower(t.name) like lower(cast(:search as string)) escape '!'
+                   or lower(t.login) like lower(cast(:search as string)) escape '!'
+                   or cast(t.id as string) like lower(cast(:search as string)) escape '!'
+                   or lower(t.companyId) like lower(cast(:search as string)) escape '!'
+                   or lower(c.name) like lower(cast(:search as string)) escape '!')
             """)
     Page<Terminal> search(@Param("companyId") String companyId,
                           @Param("search") String search,

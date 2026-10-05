@@ -13,27 +13,37 @@ import liquibase.database.jvm.JdbcConnection;
 import liquibase.resource.DirectoryResourceAccessor;
 
 // Прогоняет changelog чужого сервиса на базе, которой владеют тесты этого модуля: общая база есть
-// только в проде, а каждый модуль поднимает свою H2, и payment_links, которые directory
-// приостанавливает при блокировке (P2-8), в его тестах просто нет. Changelog читается по пути из
-// исходников pbl, а не с classpath: переименованная там колонка должна ломать тесты, а не прод.
+// только в проде, а каждый модуль поднимает свою H2, и чужих таблиц, которые directory читает и пишет
+// (payment_links pbl, слепки provider_* ecom), в его тестах просто нет. Changelog читается по пути из
+// исходников сервиса, а не с classpath: переименованная там колонка должна ломать тесты, а не прод.
 final class SharedDatabaseSchema {
 
-    private static final String PBL_CHANGELOG = "db/changelog/db.changelog-master.xml";
+    private static final String CHANGELOG = "db/changelog/db.changelog-master.xml";
 
     private SharedDatabaseSchema() {
     }
 
     // Создаёт payment_links, transactions и остальную схему pbl.
     static void applyPblChangelog(Connection connection) throws Exception {
-        Path pblResources = repositoryRoot().resolve("pbl/src/main/resources");
-        if (!Files.isDirectory(pblResources)) {
-            throw new IllegalStateException("pbl resources not found at " + pblResources
-                    + " — this test reads pbl's changelog from the source tree");
+        applyChangelog(connection, "pbl");
+    }
+
+    // Создаёт слепки ecom — provider_terminals и provider_logins. Идёт после directory, как в проде (AGENTS §4):
+    // terminals ecom дополняет, но не создаёт.
+    static void applyEcomChangelog(Connection connection) throws Exception {
+        applyChangelog(connection, "ecom");
+    }
+
+    private static void applyChangelog(Connection connection, String module) throws Exception {
+        Path resources = repositoryRoot().resolve(module + "/src/main/resources");
+        if (!Files.isDirectory(resources)) {
+            throw new IllegalStateException(module + " resources not found at " + resources
+                    + " — this test reads " + module + "'s changelog from the source tree");
         }
         Database database = DatabaseFactory.getInstance()
                 .findCorrectDatabaseImplementation(new JdbcConnection(connection));
-        try (DirectoryResourceAccessor accessor = new DirectoryResourceAccessor(pblResources);
-             Liquibase liquibase = new Liquibase(PBL_CHANGELOG, accessor, database)) {
+        try (DirectoryResourceAccessor accessor = new DirectoryResourceAccessor(resources);
+             Liquibase liquibase = new Liquibase(CHANGELOG, accessor, database)) {
             liquibase.update(new Contexts(), new LabelExpression());
         }
     }

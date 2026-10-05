@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -20,8 +21,8 @@ import az.millikart.pbl.domain.Terminal;
 import az.millikart.pbl.domain.Transaction;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
-import az.millikart.pbl.provider.AcquiringClient;
-import az.millikart.pbl.provider.dto.MoneyOperationResult;
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.dto.MoneyOperationResult;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
@@ -105,7 +106,7 @@ class PblAuditIntegrationTest {
     @Test
     void refund_isRecordedWithAmountAndAcquirerIdentifiers() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-77", "RID-42", "APPR-9", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
@@ -128,7 +129,7 @@ class PblAuditIntegrationTest {
     @Test
     void anAdminRefund_isRecordedForTheCompanyOfTheTerminal() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-78", "RID-44", "APPR-7", Map.of("status", "ok")));
         String adminToken = "Bearer " + jwtProvider.generateToken("admin-user", "admin@millikart.az", "SYSTEM_ADMIN", null);
 
@@ -146,7 +147,7 @@ class PblAuditIntegrationTest {
     @Test
     void capture_isRecordedWithAmountAndAcquirerIdentifiers() throws Exception {
         Transaction held = transaction(TransactionStatus.AUTHORIZED, PaymentType.DMS);
-        when(acquiringClient.completeDms(any(), anyString(), any(), any()))
+        when(acquiringClient.completeDms(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-88", "RID-43", "APPR-8", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + held.getId() + "/complete")
@@ -168,7 +169,7 @@ class PblAuditIntegrationTest {
     @Test
     void refundWithUnknownOutcome_isRecordedEvenThoughTheTransactionRolledBack() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException("No confirmation received from the acquirer"));
 
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
@@ -195,7 +196,7 @@ class PblAuditIntegrationTest {
     @Test
     void captureWithUnknownOutcome_isRecordedEvenThoughTheTransactionRolledBack() throws Exception {
         Transaction held = transaction(TransactionStatus.AUTHORIZED, PaymentType.DMS);
-        when(acquiringClient.completeDms(any(), anyString(), any(), any()))
+        when(acquiringClient.completeDms(any(), any(), any()))
                 .thenThrow(new PaymentOutcomeUnknownException("No confirmation received from the acquirer"));
 
         mockMvc.perform(post("/api/v1/transactions/" + held.getId() + "/complete")
@@ -235,6 +236,25 @@ class PblAuditIntegrationTest {
                 .isEqualTo("test-company");
     }
 
+    // STATUS-ORACLE (Р-114): отказ в статусе чужого заказа не ложится под компанию актора — иначе её
+    // руководитель прочёл бы в журнале номер чужого терминала и сам факт, что такой заказ есть.
+    @Test
+    void statusOfAnotherCompanysOrder_isRecordedForGlobalReadersOnly() throws Exception {
+        Transaction foreign = transaction(TransactionStatus.PENDING, PaymentType.SMS, FOREIGN_TERMINAL_ID);
+
+        mockMvc.perform(get("/api/v1/transactions/" + foreign.getProviderOrderId() + "/status")
+                        .header(HttpHeaders.AUTHORIZATION, headToken))
+                .andExpect(status().isNotFound());
+
+        AuditLog record = single("READ");
+        assertThat(record.getOutcome()).isEqualTo(AuditOutcome.DENIED);
+        assertThat(record.getEntityType()).isEqualTo("TERMINAL");
+        assertThat(record.getEntityId()).isEqualTo(String.valueOf(FOREIGN_TERMINAL_ID));
+        assertThat(record.getPerformedBy()).isEqualTo("head-user@test.com");
+        assertThat(record.getCompanyId()).as("no company: only global readers see it").isNull();
+        assertThat(record.getDetails()).contains(foreign.getProviderOrderId());
+    }
+
     // 17. Ссылки
 
     @Test
@@ -268,6 +288,17 @@ class PblAuditIntegrationTest {
                 .andExpect(status().isOk());
 
         assertThat(single("CANCEL").getDetails()).contains("ACTIVE -> CANCELED");
+
+        // AUDIT-CANCEL-KIND: действие выбиралось по итоговому статусу, и правка описания уже отменённой
+        // ссылки ложилась в журнал второй отменой. CANCEL — только сам переход в CANCELED.
+        mockMvc.perform(patch("/api/v1/payment-links/" + linkId)
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Edited after the cancel\"}"))
+                .andExpect(status().isOk());
+
+        single("CANCEL");
+        assertThat(single("UPDATE").getDetails()).isEqualTo("Changed description");
     }
 
     // 18. Сломанный журнал не должен стоить мерчанту возврата
@@ -275,10 +306,10 @@ class PblAuditIntegrationTest {
     @Test
     void auditFailure_doesNotBreakRefund() throws Exception {
         Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("TRAN-99", "RID-99", "APPR-99", Map.of("status", "ok")));
 
-        jdbcTemplate.execute("DROP TABLE audit_logs");
+        parkAuditTable();
         try {
             mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
                             .header(HttpHeaders.AUTHORIZATION, headToken)
@@ -343,20 +374,13 @@ class PblAuditIntegrationTest {
         return records.getFirst();
     }
 
+    // Журнал ломается переименованием, а не DROP: база общая на все классы модуля, и таблица должна
+    // вернуться ровно той, что была, — с индексами и умолчаниями, а не рукописной копией.
+    private void parkAuditTable() {
+        jdbcTemplate.execute("ALTER TABLE audit_logs RENAME TO audit_logs_parked");
+    }
+
     private void restoreAuditTable() {
-        jdbcTemplate.execute("""
-                CREATE TABLE audit_logs (
-                    id uuid NOT NULL,
-                    entity_type varchar(50) NOT NULL,
-                    entity_id varchar(255) NOT NULL,
-                    action varchar(50) NOT NULL,
-                    performed_by varchar(255) NOT NULL,
-                    company_id varchar(255),
-                    details varchar(4000),
-                    client_ip varchar(45),
-                    outcome varchar(16) DEFAULT 'SUCCESS' NOT NULL,
-                    created_at timestamp,
-                    CONSTRAINT pk_audit_logs PRIMARY KEY (id)
-                )""");
+        jdbcTemplate.execute("ALTER TABLE audit_logs_parked RENAME TO audit_logs");
     }
 }

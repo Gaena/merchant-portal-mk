@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Р-110: когда сверка последний раз брала строку в пакет. Пакет — давно не опрашиваемые первыми:
+      иначе строки, которые сверка закрыть не может, каждый проход занимали бы весь пакет. Без индекса:
+      сортируются только PENDING окна, их выбирает idx_transactions_status_created (007).
+    -->
+    <changeSet id="14-pbl-transaction-last-reconciled-at" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="transactions" columnName="last_reconciled_at"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="transactions">
+            <column name="last_reconciled_at" type="timestamp"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

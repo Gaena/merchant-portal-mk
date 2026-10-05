@@ -17,7 +17,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 // (что откуда — сказано в комментарии к ProviderOrderStatus).
 class ProviderOrderStatusTest {
 
-    // Каждое слово словаря даёт ровно тот исход, который предписан таблицей задачи.
+    // Каждое слово словаря даёт ровно тот исход, который предписан таблицей задачи. Cancelled — как в
+    // контракте, Canceled — как в старом коде: оба обязаны лечь в одно место.
     @ParameterizedTest(name = "\"{0}\" -> {1}")
     @CsvSource({
             "FullyPaid,  PAID",
@@ -66,12 +67,5 @@ class ProviderOrderStatusTest {
         assertEquals(ProviderOrderOutcome.UNKNOWN, ProviderOrderStatus.classify(Map.of("value", "FullyPaid")));
         assertEquals(ProviderOrderOutcome.UNKNOWN, ProviderOrderStatus.classify(List.of("FullyPaid")));
         assertEquals(ProviderOrderOutcome.UNKNOWN, ProviderOrderStatus.classify(Boolean.TRUE));
-    }
-
-    // В контракте пишут с двумя l, в нашем старом коде с одной; оба обязаны лечь в одно место.
-    @Test
-    void cancelledAndCanceled_haveTheSameOutcome() {
-        assertEquals(ProviderOrderStatus.classify("Cancelled"), ProviderOrderStatus.classify("Canceled"));
-        assertEquals(ProviderOrderOutcome.SETTLED_OTHER, ProviderOrderStatus.classify("Cancelled"));
     }
 }

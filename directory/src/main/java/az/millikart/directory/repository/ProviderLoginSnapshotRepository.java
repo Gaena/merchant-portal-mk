@@ -2,17 +2,12 @@ package az.millikart.directory.repository;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import javax.sql.DataSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Repository;
 
 // Слепок provider_logins пишет только ecom, здесь его только читают (Р-94). Своего JPA-маппинга
@@ -20,17 +15,16 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class ProviderLoginSnapshotRepository {
 
-    private static final Logger log = LoggerFactory.getLogger(ProviderLoginSnapshotRepository.class);
-
     private static final String TABLE = "provider_logins";
+    private static final String ACTIVE = "Active";
 
     @PersistenceContext
     private EntityManager entityManager;
 
-    private final DataSource dataSource;
+    private final SharedTables sharedTables;
 
-    public ProviderLoginSnapshotRepository(DataSource dataSource) {
-        this.dataSource = dataSource;
+    public ProviderLoginSnapshotRepository(SharedTables sharedTables) {
+        this.sharedTables = sharedTables;
     }
 
     // Связь логина с мерчантом; у логина без связей linkStatus и merchantRid пусты.
@@ -91,22 +85,17 @@ public class ProviderLoginSnapshotRepository {
                 .toList();
     }
 
-    private boolean tableMissing() {
-        try (Connection connection = dataSource.getConnection()) {
-            if (tableExists(connection, TABLE) || tableExists(connection, TABLE.toUpperCase(Locale.ROOT))) {
-                return false;
-            }
-        } catch (SQLException e) {
-            // Не «отсутствует», а «неизвестно»: если база правда недоступна, запрос упадёт сам.
-            log.warn("Could not determine whether {} exists; attempting the read anyway", TABLE, e);
-            return false;
-        }
-        return true;
+    // Мерчанты, за которых логин вправе ходить к провайдеру: связь и сам логин Active (Р-96). Одно правило
+    // на заведение и перенос терминала и на смену логина компании — разойдутся, и проверки разъедутся.
+    public Set<String> activeMerchantRidsOf(String login) {
+        return linksOf(login).stream()
+                .filter(link -> ACTIVE.equals(link.loginStatus()) && ACTIVE.equals(link.linkStatus())
+                        && link.merchantRid() != null)
+                .map(LoginLink::merchantRid)
+                .collect(Collectors.toSet());
     }
 
-    private static boolean tableExists(Connection connection, String name) throws SQLException {
-        try (ResultSet tables = connection.getMetaData().getTables(null, null, name, null)) {
-            return tables.next();
-        }
+    private boolean tableMissing() {
+        return sharedTables.missing(TABLE);
     }
 }

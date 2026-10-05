@@ -41,6 +41,9 @@ pbl:
     # Ceiling counted from the link's CREATION, on create and on every PATCH: counted from "now", a
     # chain of PATCHes would extend the expiry forever (P1-9).
     max-ttl: ${PBL_LINK_MAX_TTL:P90D}
+  link-expiry:
+    # ACTIVE links past expiresAt -> EXPIRED every 5 minutes. Opening checks the expiry by itself.
+    enabled: ${PBL_LINK_EXPIRY_ENABLED:true}
   reconciliation:
     # Sweep of PENDING rows the payer never returned from: the acquirer has no callback (Р-7).
     enabled: ${PBL_RECONCILIATION_ENABLED:true}
@@ -56,12 +59,12 @@ pbl:
   provider:
     # No defaults on purpose (P1-10): a test-stand fallback in production routes payments to the test
     # acquirer. gateway — payment page and createEcomOrder; api — exec-tran and order status.
-    gateway-base-url: ${PBL_PROVIDER_GATEWAY_BASE_URL}
-    api-base-url: ${PBL_PROVIDER_API_BASE_URL}
+    gateway-base-url: ${PROVIDER_GATEWAY_BASE_URL}
+    api-base-url: ${PROVIDER_API_BASE_URL}
     # Protocol constants, so defaults are fine. Quoted: a bare `{` starts a YAML flow mapping.
-    create-order-path: "${PBL_PROVIDER_CREATE_ORDER_PATH:/order}"
-    exec-tran-path: "${PBL_PROVIDER_EXEC_TRAN_PATH:/order/{orderId}/exec-tran}"
-    get-order-path: "${PBL_PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
+    create-order-path: "${PROVIDER_CREATE_ORDER_PATH:/order}"
+    exec-tran-path: "${PROVIDER_EXEC_TRAN_PATH:/order/{orderId}/exec-tran}"
+    get-order-path: "${PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
 
 mp:
   # Forwarding headers are believed only from these addresses — nginx on loopback (P2-10).
@@ -107,7 +110,7 @@ resilience4j:
         permittedNumberOfCallsInHalfOpenState: 3
         # Отказ шлюза конкретному терминалу — не сбой шлюза: не размыкает приём платежей всем.
         ignoreExceptions:
-          - az.millikart.pbl.provider.AcquirerDeclinedException
+          - az.millikart.txpg.AcquirerDeclinedException
   retry:
     instances:
       acquiring:
@@ -115,6 +118,6 @@ resilience4j:
         waitDuration: 500ms
         # Повтор отказа даёт тот же отказ.
         ignoreExceptions:
-          - az.millikart.pbl.provider.AcquirerDeclinedException
+          - az.millikart.txpg.AcquirerDeclinedException
 
 

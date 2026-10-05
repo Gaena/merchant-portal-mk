@@ -41,6 +41,7 @@
 | 12 | `GET /api/v1/transactions/{id}` — one transaction, no acquirer call | JWT | §5.12 |
 | 13 | `GET /api/v1/dashboard/summary` — payment link statistics | JWT | §5.13 |
 | 14 | `POST /api/v1/acquiring/terminal-checks/{terminalId}` — terminal check | JWT | §5.14 |
+| 15 | `POST /api/v1/transactions/{transactionId}/resolve-outcome` — record the outcome of an unconfirmed capture or refund | JWT | §5.15 |
 
 ---
 
@@ -116,13 +117,13 @@ with the company's links. Event dictionary — `../guides/technical_handover.md`
 | Field | Rules |
 |:---|:---|
 | `terminal` | required, our terminal id. The terminal must be `ACTIVE` (a blocked terminal takes no new payments, Р-38), its company must have acquirer credentials, and it must carry the provider terminal number (`terminal_rid`, Р-96) |
-| `amount` | required, > 0 |
+| `amount` | required, > 0, at most two decimal places as written (`10.555` and `10.500` are refused, like a capture or a refund: the column keeps two and would round the rest) and at most 17 integer digits |
 | `currency` | required, exactly 3 characters; only the length is checked, not ISO 4217 |
 | `paymentType` | required, `SMS` or `DMS` |
 | `usageType` | required, `SINGLE` or `MULTIPLE` |
 | `maxPayments` | required and > 0 for `MULTIPLE`; ignored and not stored for `SINGLE` |
-| `merchantOrderId`, `description` | optional, free text |
-| `customer` | optional, **single-use links only** (Р-96): a customer with any filled field on a `MULTIPLE` link is refused, not dropped. `email` — a valid address. `phone` — an Azerbaijani number: `+994`, `994` or `0` followed by 9 digits, spaces, dashes and brackets allowed; stored as `+994XXXXXXXXX` |
+| `merchantOrderId`, `description` | optional, free text, at most 255 characters |
+| `customer` | optional, **single-use links only** (Р-96): a customer with any filled field on a `MULTIPLE` link is refused, not dropped. `fullName` — at most 255 characters. `email` — a valid address, at most 255 characters. `phone` — an Azerbaijani number: `+994`, `994` or `0` followed by 9 digits, spaces, dashes and brackets allowed; stored as `+994XXXXXXXXX` |
 | `expiresAt` | optional ISO-8601 instant, §5.1.1 |
 | `metadata` | optional JSON object, stored as is |
 
@@ -179,7 +180,7 @@ The same body is returned by §5.2, §5.3 and §5.9.
 
 | HTTP | `message` | When |
 |:---|:---|:---|
-| 400 | `terminal is required`, `amount is required`, `amount must be positive`, `currency is required`, `currency must be a 3-letter ISO 4217 code`, `paymentType is required`, `usageType is required`, `maxPayments must be greater than 0`, `maxPayments is required and must be greater than 0 when usageType is MULTIPLE`, `customer.email must be a valid email address` | body validation; one message per answer |
+| 400 | `terminal is required`, `amount is required`, `amount must be positive`, `amount must have at most 17 integer digits and 2 decimal places`, `currency is required`, `currency must be a 3-letter ISO 4217 code`, `paymentType is required`, `usageType is required`, `maxPayments must be greater than 0`, `maxPayments is required and must be greater than 0 when usageType is MULTIPLE`, `customer.email must be a valid email address`, `merchantOrderId must be at most 255 characters`, `description must be at most 255 characters`, `customer.fullName must be at most 255 characters`, `customer.email must be at most 255 characters` | body validation; one message per answer |
 | 400 | `Invalid request payload format or parameter value` | malformed JSON, unknown `paymentType` / `usageType` |
 | 403, 404 | §4.1 | role, terminal, company |
 | 400 | `terminal <id> is blocked and cannot take new payments; unblock it or use another terminal` | terminal `BLOCKED` |
@@ -230,12 +231,13 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 
 -   **`amount` is frozen once the link has an attempt** in `PENDING`, `AUTHORIZED`, `SUCCESS`,
     `PARTIALLY_REFUNDED` or `REFUNDED` (P2-9, Р-31); only `FAILED` attempts leave it editable. Sending
-    the current amount is always accepted.
+    the current amount is always accepted. The scale rule of §5.1 applies.
 -   **`customer`** — single-use links only, same rules as §5.1. Each filled field replaces the stored one.
 -   **`expiresAt`** — the same bounds as §5.1.1, the ceiling counted from the link's `created_at`. It is
     applied before `status`, so one request can extend an expired link and reactivate it.
--   **`maxPayments`** — `MULTIPLE` links only; may not go below the number of uses, and a refunded
-    payment still counts as a use (Р-49). Equal is allowed and closes the link at what it has collected.
+-   **`maxPayments`** — `MULTIPLE` links only; may not go below the taken slots — the same count as the open
+    (§5.5): payments, a refunded one included (Р-49), and `AUTHORIZED` holds, which become payments when
+    captured. Equal is allowed and closes the link at what it has collected.
 -   **`metadata`** — replaces the stored object.
 -   **`status`** — case-insensitive, `CANCELLED` is read as `CANCELED`. Allowed transitions:
     `ACTIVE → CANCELED`, `EXPIRED → CANCELED`, `CANCELED → ACTIVE` (the expiry must be in the future).
@@ -251,20 +253,21 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 |:---|:---|
 | 404 | `Payment link not found: <id>` |
 | 403, 404 | §4.1 |
-| 400 | body validation: `amount must be positive`, `maxPayments must be greater than 0`, `customer.email must be a valid email address`; `Invalid request payload format or parameter value` for malformed JSON or an unknown status |
+| 400 | body validation: `amount must be positive`, `amount must have at most 17 integer digits and 2 decimal places`, `maxPayments must be greater than 0`, `customer.email must be a valid email address`, `description must be at most 255 characters`, `customer.fullName must be at most 255 characters`, `customer.email must be at most 255 characters`; `Invalid request payload format or parameter value` for malformed JSON or an unknown status |
 | 400 | `payment link already has payments, its amount cannot be changed; create a new link instead` |
 | 400 | `customer can only be set on a single-use link`, `customer.phone must be an Azerbaijani number: +994 and 9 digits` |
 | 400 | `expiresAt must be in the future`, `expiresAt must not be later than <instant>: …` |
 | 400 | `maxPayments can only be set when usageType is MULTIPLE` |
-| 400 | `maxPayments cannot be lowered to <n>: the link was already used <m> times (a refunded payment still counts as a use)` |
+| 400 | `maxPayments cannot be lowered to <n>: <m> slots are taken by payments and holds awaiting capture (a refunded payment still counts as a use)` |
 | 400 | `payment link is suspended because its terminal <id> is blocked; unblock the terminal to bring its links back` |
 | 400 | `payment link status SUSPENDED is set by blocking terminal <id>, not on the link itself` |
 | 400 | `payment link status cannot be changed from <A> to <B>` |
 | 400 | `payment link expired at <instant> and cannot be reactivated; send a new expiresAt in the same request` |
+| 409 | `The resource is being changed by another request, please retry` — an open, a capture, a refund or a status poll of this link holds its lock (`NOWAIT`); nothing was changed, a retry is safe |
 | 409 | `The resource was updated concurrently, please retry` — the link was changed by another request |
 
-**Audit journal:** `PAYMENT_LINK` / `UPDATE`, or `CANCEL` when the link is `CANCELED` after the
-request; the details name the changed fields (customer values are not written). Edits are not versioned
+**Audit journal:** `PAYMENT_LINK` / `CANCEL` when the request moves the link into `CANCELED`, otherwise
+`UPDATE` — an edit of an already canceled link included; the details name the changed fields (customer values are not written). Edits are not versioned
 (`../../AGENTS.md` §10).
 
 ### 5.3. Get Payment Link by ID
@@ -334,20 +337,26 @@ request; the details name the changed fields (customer values are not written). 
 
 The whole open is one database transaction:
 
-1.  The link row is locked with `SELECT … FOR UPDATE NOWAIT` (Р-85). If an open, a capture or a refund of
-    the same link holds the lock, the answer is `409` at once.
+1.  The link row is locked with `SELECT … FOR UPDATE NOWAIT` (Р-85). If an open, a capture, a refund, a
+    status poll or an edit (§5.2) of the same link holds the lock, the answer is `409` at once.
 2.  The terminal is read under the lock. A blocked terminal or a `SUSPENDED` link — `403`, without naming
     the terminal to the payer.
 3.  `CANCELED` and `COMPLETED` links — `403`; a link past its expiry — `403 Payment link has expired`.
-4.  The newest `PENDING` attempt of the link is polled at the acquirer once (§5.8): its order stays payable
-    for about ten minutes, and a payment made on the old page must take its slot. An unpaid attempt stays
-    `PENDING` for the reconciliation; a failed poll leaves it as it was and the open goes on. An attempt
-    created after this request started is a second click on the same link — `409`.
+4.  Earlier `PENDING` attempts are polled at the acquirer once each (§5.8): an order stays payable for
+    about ten minutes, and a payment made on an old page must take its slot. A multi-use link polls its
+    newest attempt only — every payer has an order of their own. A single-use link polls the newest one and
+    every one created in the last 30 minutes (Р-112). An unpaid attempt stays `PENDING` for the
+    reconciliation; a failed poll leaves it as it was. An attempt created after this request started is a
+    second click on the same link — `409`.
 5.  Usage slots are counted: payments (`SUCCESS`, `REFUNDED`, `PARTIALLY_REFUNDED`) and `AUTHORIZED` holds,
     because there is no Void to release a hold (P1-6, `../../AGENTS.md` §10). A single-use link has one
     slot, a multi-use link `maxPayments`. When the slots are taken, the newest hold is polled once: a hold
     the bank released without a capture (`Closed` after `Authorized`, every record of `order.trans[]`
     carries `clearAmount` and none is positive) becomes `FAILED` and frees its slot. Still taken — `403`.
+    A single-use link whose earlier order is still payable (`Preparing`) gets no second order — `409`: both
+    orders would be payable, and the provider does not open the page of the first one again (Р-112). The
+    same `409` when the acquirer did not answer about an attempt younger than 30 minutes, or answered with an
+    unknown status.
 6.  The company credentials and the provider terminal number are checked (`400`, §6).
 7.  The order is registered: `POST /order?terminalRid=<terminal_rid>` with the company credentials; the
     call is retried and goes through the circuit breaker (§6). Body: `typeRid` `Order_SMS` or `Order_DMS`;
@@ -359,11 +368,14 @@ The whole open is one database transaction:
     none is filled. A multi-use link sends no customer; a stored phone that is not an Azerbaijani number
     is left out.
 8.  A `PENDING` transaction is stored with `ridByMerchant`, the provider order id, the order password
-    (only in `provider_password`, P0-9), the payer's IP (through the trusted proxies) and `User-Agent`.
+    (only in `provider_password`, P0-9), the payer's IP (through the trusted proxies) and `User-Agent`,
+    cut to 512 characters: the row is written after the acquirer order, and a refusal here would leave the
+    payer without the payment page.
 
-The lock is held during the call to the acquirer (P1-5). A refusal rolls the whole transaction back,
-including what the polls of steps 4–5 found; those attempts are settled later by the return page,
-`/status` or the reconciliation.
+The lock is held during the call to the acquirer (P1-5). A refusal (`400`, `403`, `409`) still commits
+what the open found (Р-113): the statuses the polls of steps 4–5 brought, a link marked `EXPIRED` in step 3
+or `COMPLETED` in step 5. An unexpected failure (`5xx`) rolls everything back; those attempts are settled
+later by the return page, `/status` or the reconciliation.
 
 **Responses** (in the order of the checks):
 
@@ -380,6 +392,8 @@ including what the polls of steps 4–5 found; those attempts are settled later 
 | 409 | `A payment session for this link is already being opened` | second click while the first open was running |
 | 403 | `Single-use payment link has already been used` | a payment took the slot; a refund does not free it |
 | 403 | `Payment link has an authorized payment awaiting capture` | a hold takes the slot |
+| 409 | `A payment session for this link is already open; complete it or try again in about 10 minutes` | single-use link: an earlier order is still payable (Р-112) |
+| 409 | `The previous payment session for this link could not be checked; try again in a minute` | single-use link: the acquirer did not answer about an attempt younger than 30 minutes, or its status is unknown |
 | 403 | `Payment link has reached its usage limit` | a multi-use link has `maxPayments` payments |
 | 400 | credentials and terminal number texts, §6 | |
 | 400 | `Acquirer error: <description>` | the acquirer refused or failed (HTTP 4xx or 5xx) |
@@ -398,8 +412,8 @@ Refusals are the JSON of §6, not an HTML page: the payer's browser shows the ra
     logged.
 -   **Behaviour:** the transaction is polled at the acquirer once, synchronously, and the result is stored
     (as §5.8: a final status is not polled). There is no polling in the page and no JavaScript data
-    loading. If the acquirer is unavailable, the last known state is shown; a concurrent update of the
-    same link is retried once.
+    loading. The poll takes the link lock (Р-109); if the lock is busy or the acquirer is unavailable, the
+    last known state is shown; a concurrent update of the same link is retried once.
 
 **Response:** always `200 OK`, `text/html` (Thymeleaf `redirect.html`):
 
@@ -429,7 +443,11 @@ order id.
 ### 5.8. Get Transaction Status
 
 -   **Method:** `GET /api/v1/transactions/{identifier}/status`
--   **Access:** every role, on the transaction's terminal (§4.1).
+-   **Access:** every role, on the transaction's terminal (§4.1) — except the answer for another company's
+    transaction: `404 Transaction not found: <identifier>`, the same as for one that does not exist (Р-114).
+    Provider order ids are sequential, and a `403` would let anyone list the portal's orders and the
+    terminals of other companies. The refusal goes to the journal without a company — only `SYSTEM_ADMIN`
+    and `AUDITOR` see it.
 -   **`identifier`:** the transaction UUID or the provider order id (`providerOrderId`).
 -   **Behaviour:**
     -   `PENDING` and `AUTHORIZED` — the acquirer is polled once (`GET /order/{id}` with
@@ -442,10 +460,13 @@ order id.
     -   Any other `SETTLED_OTHER` or unknown status leaves the transaction as it was, for a person to check.
     -   `SUCCESS`, `FAILED`, `REFUNDED`, `PARTIALLY_REFUNDED` — returned from the database, the acquirer is
         not asked. A refund or reversal made outside the portal is therefore not seen (`../../AGENTS.md` §10).
--   **Refusals:** `404 Transaction not found: <identifier>`; §4.1; for a polled transaction — `400 Terminal configuration not found`,
+    -   The poll takes the link lock, like a capture or a refund (Р-109): while one of them holds it, the
+        answer is `409` at once and the acquirer is not asked. A capture or a refund holds it only to check
+        and to record its outcome, not during the acquirer call (Р-123).
+-   **Refusals:** `404 Transaction not found: <identifier>`; §4.1; `409` — the link lock is busy (§6); for a polled transaction — `400 Terminal configuration not found`,
     the credentials texts (§6), `400 Acquirer error: <description>` (the acquirer refused: `errorCode` or
     HTTP error), `400 Order status check failed: <reason>` (no answer), `503` (§6).
--   No journal record.
+-   No journal record, except the refusal above.
 
 **Response:** `200 OK`
 
@@ -477,11 +498,17 @@ order id.
     { "at": "2026-09-29T13:15:00Z", "type": "CREATED", "status": "PENDING", "amount": null, "acquirerReference": null },
     { "at": "2026-09-30T08:02:44Z", "type": "REFUNDED", "status": "PARTIALLY_REFUNDED", "amount": 500.00, "acquirerReference": "845120993" }
   ],
-  "failureReason": null
+  "failureReason": null,
+  "actions": {
+    "refund": { "enabled": true, "reason": null, "maxAmount": 1000.50 },
+    "capture": null,
+    "unresolved": null
+  }
 }
 ```
 
-The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `null`.
+The same payload is returned by §5.7, §5.11 and §5.12; `actions` only by §5.8, §5.12 and §5.15 — lists carry
+`null`. Empty fields come as `null`.
 
 -   `status` — `PENDING`, `AUTHORIZED`, `SUCCESS`, `FAILED`, `REFUNDED` or `PARTIALLY_REFUNDED`.
 -   `amount` — the authorised amount, never changed by a capture; `capturedAmount` — what a DMS capture
@@ -507,6 +534,19 @@ The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `
     purchase record of `order.trans[]` (`order.lastTran` when the list is absent) — not a reversal and not
     a refund, the earliest by `regTime` (`../external/TXPG-client-side-integration.md` §5.8.3–5.8.6).
     `null` while the order has no card operation, after a decline, or when the acquirer did not send the field.
+-   `actions` (Р-123) — the refund and capture buttons of this transaction, for the caller. `null` for an
+    action — no such button at all: a refund exists for `SUCCESS`, `PARTIALLY_REFUNDED`, `REFUNDED` and
+    `AUTHORIZED`, a capture for DMS in `PENDING`, `AUTHORIZED`, `SUCCESS`, `PARTIALLY_REFUNDED` and
+    `REFUNDED`. Otherwise `enabled`; a disabled one names the first reason, in this order: `NO_RIGHTS` (the
+    role may not do it: refund — §5.10, capture — §5.9), `OUTCOME_UNKNOWN` or `IN_PROGRESS` (see `unresolved`),
+    `CAPTURE_FIRST` (a refund of a hold), `FULLY_REFUNDED`, `ALREADY_CAPTURED`, `TERMINAL_NOT_IN_PORTAL`,
+    `NO_PROVIDER_CREDENTIALS` (the terminal's company has no provider credentials, Р-93). `maxAmount` — only
+    when enabled: what is left to refund, or the authorised amount for a capture.
+-   `actions.unresolved` — a capture or refund whose outcome is not recorded: `kind` (`CAPTURE`, `REFUND`),
+    `amount`, `state`, `startedAt`, `startedBy`, `resolvable`. `IN_PROGRESS` — the acquirer has not answered
+    yet; `UNKNOWN` — it did not answer (`502`), or the operation has been in progress for over 5 minutes (the
+    service died in the middle). While it exists, both buttons are disabled and §5.9 and §5.10 answer `409`.
+    `resolvable` is `true` only for `SYSTEM_ADMIN` and only when `UNKNOWN` (§5.15).
 
 ### 5.9. Complete DMS Payment
 
@@ -522,7 +562,10 @@ The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `
 }
 ```
 
--   The link is locked (`NOWAIT`) before the transaction is read, as in §5.5.
+-   Three steps (Р-123): under the link lock (`NOWAIT`) the checks and an attempt record
+    (`money_operation_attempts`); the acquirer call without a transaction or lock; under the lock again the
+    outcome, on the transaction re-read, and the attempt record removed. A declined call removes the record;
+    an unanswered one (`502`) leaves it, and another capture or refund is `409` until §5.15.
 -   `AUTHORIZED` is captured. `PENDING` is polled at the acquirer once first (§5.8), and the capture
     proceeds only if the acquirer reports it authorised.
 -   **Partial capture** (P0-8): `amount` may be lower than the authorised amount, and exactly that is
@@ -544,6 +587,8 @@ The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `
 | 404 | `Transaction not found: <id>` |
 | 409 | `The resource is being changed by another request, please retry` — the link lock is busy |
 | 403, 404 | §4.1 |
+| 409 | `Another money operation on this transaction is in progress` |
+| 409 | `An earlier capture of this transaction has an unknown outcome; a system administrator must resolve it before another money operation` (or `refund`) — §5.15 |
 | 400 | `Transaction has already been captured` — `SUCCESS`, or a `PENDING` the acquirer reports as settled |
 | 400 | `Transaction is in status <STATUS>. Only PENDING or AUTHORIZED transactions can be completed.` |
 | 400 | the poll of a `PENDING` transaction failed: `Acquirer error: <description>`, `Order status check failed: <reason>` (§5.8) |
@@ -579,7 +624,7 @@ The same payload is returned by §5.7, §5.11 and §5.12. Empty fields come as `
 -   Only `SUCCESS` and `PARTIALLY_REFUNDED` transactions are refunded. The ceiling is the **captured**
     amount — `captured_amount` after a DMS capture, `amount` when there was none (every SMS payment) —
     minus what was already refunded (P0-8).
--   The link is locked (`NOWAIT`) before the transaction is read. `exec-tran` with
+-   Three steps, as in §5.9 (Р-123). `exec-tran` with
     `{"tran": {"phase": "Single", "type": "Refund", "amount": "500.00"}}`; success is confirmed only by
     `tran.match.ridByPmo` (P1-8b). The call is **never retried**: a repeated refund pays twice (P0-7).
 -   A confirmed refund is recorded twice with the same moment: under `mpRefunds` in the transaction's
@@ -618,6 +663,7 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
 | 404 | `Transaction not found: <id>` |
 | 409 | `The resource is being changed by another request, please retry` — the link lock is busy |
 | 403, 404 | §4.1 |
+| 409 | `Another money operation on this transaction is in progress`; the unknown-outcome text of §5.9 |
 | 400 | `Only successful or partially refunded transactions can be refunded` |
 | 400 | `Refund amount must not have more than two decimal places` |
 | 400 | `Refund amount exceeds the captured amount of the transaction` |
@@ -641,7 +687,7 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
 -   **Method:** `GET /api/v1/transactions/{id}`
 -   **Access:** every role, on the transaction's terminal (§4.1).
 -   **Behaviour:** a plain read — **the acquirer is not polled**; for a fresh outcome use §5.8.
--   **Response:** `200 OK`, the payload of §5.8.
+-   **Response:** `200 OK`, the payload of §5.8, with `actions`.
 -   **Refusals:** `400 Parameter 'id' has an invalid value` (not a UUID); `404 Transaction not found: <id>`; §4.1.
 
 ### 5.13. Dashboard Summary
@@ -761,6 +807,25 @@ details, under the terminal's company. The password is never logged or recorded.
 
 ---
 
+### 5.15. Resolve an Unknown Outcome
+
+-   **Method:** `POST /api/v1/transactions/{transactionId}/resolve-outcome`
+-   **Access:** `SYSTEM_ADMIN` only (Р-123): it records money without the acquirer's confirmation.
+-   **Request Body:** `{ "executed": true }` — the outcome found when reconciling with the provider.
+-   **Behaviour:** under the link lock, for the attempt of `actions.unresolved` in state `UNKNOWN`:
+    -   `executed: true` — recorded as a confirmed capture or refund (amounts, status, `transaction_refunds`
+        with the time it was sent, `mpCapture` / `mpRefunds` with `resolvedBy` and `resolvedAt`), but without
+        the acquirer's references — there are none to record;
+    -   `executed: false` — nothing changes on the transaction.
+
+    The attempt record is removed either way, and a capture or a refund is possible again.
+-   **Response:** `200 OK`, the payload of §5.8 with `actions`.
+-   **Refusals:** `400 executed is required`; `404 Transaction not found: <id>`; `403` for any other
+    role; `409 This transaction has no money operation awaiting resolution`; `409 The money operation on this
+    transaction is still in progress` — less than 5 minutes old; `409 Recording this refund would exceed the
+    captured amount of the transaction`; `409` — the link lock is busy.
+-   **Audit journal:** `TRANSACTION` / `RESOLVE`.
+
 ## 6. Error Handling
 
 Every error is the `ErrorResponse` JSON `{ timestamp, status, error, message, path }` (`../../AGENTS.md` §5).
@@ -780,8 +845,11 @@ Every error is the `ErrorResponse` JSON `{ timestamp, status, error, message, pa
 | 403 | access and state refusals | §4.1, §5.5 |
 | 404 | `… not found: <id>`; `Endpoint not found` | missing resource; unknown path |
 | 405 | `Method <M> is not supported for this endpoint; use <M2>` | wrong method, with `Allow` |
-| 409 | `The resource is being changed by another request, please retry` | the link lock is taken (`NOWAIT`) by an open, a capture or a refund of the same link. Nothing was sent to the acquirer, a retry is safe |
+| 409 | `The resource is being changed by another request, please retry` | the link lock is taken (`NOWAIT`) by an open, a capture, a refund, a status poll or an edit of the same link. Nothing was sent to the acquirer, a retry is safe |
 | 409 | `The resource was updated concurrently, please retry` | a concurrent update of the same link (§5.2) |
+| 409 | `The request conflicts with existing data` | the database refused the row (a unique or foreign key constraint). The driver's text, which quotes the values, is not echoed |
+| 400 | `A field value is too long or has an invalid format` | the database refused a value that the body validation let through |
+| 406 | — (no body) | the `Accept` header excludes JSON. The method has already run: a capture or a refund may have moved money, check the status before any retry |
 | 415 | `Content-Type <type> is not supported by this endpoint; send application/json` | |
 | 500 | `Unexpected server error` | anything not listed here |
 | 502 | `No confirmation received from the acquirer. Check the transaction status before retrying.` | **the outcome of a capture or a refund is unknown** |

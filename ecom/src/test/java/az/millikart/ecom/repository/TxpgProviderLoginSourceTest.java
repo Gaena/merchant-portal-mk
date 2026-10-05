@@ -40,6 +40,7 @@ class TxpgProviderLoginSourceTest {
         Assertions.assertTrue(text.contains("where l.ownerkind = :ownerKind"), text);
         Assertions.assertEquals("MultiMerchantSys", params.getValue().getValue("ownerKind"));
         Assertions.assertFalse(text.contains("terminal"), "a multimerchant login has no terminal: " + text);
+        TxpgColumns.assertOnlyProviderColumns(sql.getValue());
 
         ResultSet rs = mock(ResultSet.class);
         when(rs.getString("login")).thenReturn("bazarstore@company.com");

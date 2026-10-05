@@ -1,3 +1,4 @@
+import type { TransactionActions } from './transaction';
 /**
  * Выписка сервиса `ecom` (`project_docs/modules/ecom.md` §2). К шести статусам операций добавлены
  * `PARTIALLY_PAID` (Р-78) и `CANCELED` (Р-75, Р-77); как выводится статус — там же, §2.3 (Р-92).
@@ -73,6 +74,10 @@ export interface EcomOrder {
   /** Код ответа последней операции — только когда одобренных не было. */
   declineCode: string | null;
   operations: EcomOperation[];
+  /** Кнопки возврата и списания (Р-124) — только в карточке заказа; у заказа портала их нет. */
+  actions?: TransactionActions;
+  /** Заказ завёл портал: возврат и списание — через эту операцию `pbl` (Р-124). */
+  portalTransactionId?: string;
 }
 
 export interface EcomPage {

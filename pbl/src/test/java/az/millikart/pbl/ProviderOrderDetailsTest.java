@@ -53,6 +53,46 @@ class ProviderOrderDetailsTest {
         detailsLogger().setLevel(previousLevel);
     }
 
+    // Холд, снятый банком без списания (Р-75): Closed после Authorized и ни одной записи с деньгами.
+    // Ложное «снят» пометило бы оплаченный платёж FAILED и освободило его слот, поэтому любое сомнение —
+    // «нет»: списанная сумма, другой предыдущий статус, нет записей или суммы в них.
+    @Test
+    void releasedAuthorization_isOnlyClosedAfterAuthorizedWithNothingCleared() {
+        assertTrue(ProviderOrderDetails.isReleasedAuthorization(order("Closed", "Authorized", List.of(tran("0")))));
+        assertTrue(ProviderOrderDetails.isReleasedAuthorization(order("Closed", "Authorized", List.of(tran(0), tran("0.00")))));
+
+        assertFalse(ProviderOrderDetails.isReleasedAuthorization(order("Closed", "Authorized", List.of(tran("0"), tran("100.00")))),
+                "money was cleared: the payment is not a released hold");
+        assertFalse(ProviderOrderDetails.isReleasedAuthorization(order("Closed", "FullyPaid", List.of(tran("0")))));
+        assertFalse(ProviderOrderDetails.isReleasedAuthorization(order("Closed", null, List.of(tran("0")))));
+        assertFalse(ProviderOrderDetails.isReleasedAuthorization(order("Authorized", "Preparing", List.of(tran("0")))));
+        assertFalse(ProviderOrderDetails.isReleasedAuthorization(order("Closed", "Authorized", List.of())));
+        assertFalse(ProviderOrderDetails.isReleasedAuthorization(order("Closed", "Authorized", null)));
+        assertFalse(ProviderOrderDetails.isReleasedAuthorization(order("Closed", "Authorized", List.of(tran(null)))),
+                "a record without clearAmount says nothing about the money");
+        assertFalse(ProviderOrderDetails.isReleasedAuthorization(order("Closed", "Authorized", List.of(tran("n/a")))));
+        assertFalse(ProviderOrderDetails.isReleasedAuthorization(null));
+    }
+
+    private static Map<String, Object> order(String status, String prevStatus, List<Map<String, Object>> trans) {
+        Map<String, Object> order = new LinkedHashMap<>();
+        order.put("status", status);
+        order.put("prevStatus", prevStatus);
+        if (trans != null) {
+            order.put("trans", trans);
+        }
+        return order;
+    }
+
+    private static Map<String, Object> tran(Object clearAmount) {
+        Map<String, Object> tran = new LinkedHashMap<>();
+        tran.put("description", "Purchase");
+        if (clearAmount != null) {
+            tran.put("clearAmount", clearAmount);
+        }
+        return tran;
+    }
+
     // Payload'ы из самого контракта
 
     // 1. §5.8.6 — все три уровня детализации: есть и trans[], и srcToken.

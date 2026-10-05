@@ -1,6 +1,6 @@
 package az.millikart.auth;
 
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -16,12 +16,15 @@ import az.millikart.auth.dto.LoginRequest;
 import az.millikart.auth.dto.LoginResponse;
 import az.millikart.auth.dto.LogoutRequest;
 import az.millikart.auth.dto.RefreshRequest;
+import az.millikart.auth.dto.UpdateUserRequest;
 import az.millikart.auth.repository.CompanyRepository;
 import az.millikart.auth.repository.RefreshTokenRepository;
 import az.millikart.auth.repository.UserRepository;
 import az.millikart.auth.service.AuthService;
 import az.millikart.auth.service.RefreshTokenService;
+import az.millikart.auth.service.UserService;
 import az.millikart.common.exception.UnauthorizedException;
+import az.millikart.common.security.UserPrincipal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -36,8 +39,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -49,8 +50,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 // На настоящей PostgreSQL, а не на H2, и здесь это существенно: весь тест про то, что второй
 // коммит видит работу первого, то есть про блокировки и изоляцию. У H2 они свои, и на ней тест
 // подтверждал бы, что код не виснет, а не что гонка закрыта той СУБД, которая стоит в проде.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
+@PostgresIntegrationTest
 class RefreshTokenConcurrencyTest {
 
     private static final String EMAIL = "race@comp01.com";
@@ -75,6 +75,9 @@ class RefreshTokenConcurrencyTest {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private UserService userService;
 
     @SpyBean
     private RefreshTokenService refreshTokenService;
@@ -185,6 +188,79 @@ class RefreshTokenConcurrencyTest {
                 "the successor minted during the race must be dead after the logout");
     }
 
+    // Блокировка — те же две очерёдности, что у logout, но отзыв идёт по всем семьям пользователя
+    // (revokeAllForUser), а refresh к этому моменту уже прочитал статус ACTIVE.
+    @Test
+    @DisplayName("block committed after the refresh checked the status: the refresh is refused, nothing new is issued")
+    void refresh_whenUserBlockedAfterTheStatusCheck_isRefusedAndIssuesNothing() throws Exception {
+        String token = authService.login(new LoginRequest(EMAIL, PASSWORD), CLIENT_IP).refreshToken();
+
+        // Держим refresh перед ротацией: статус прочитан как ACTIVE, блокировок строк ещё нет.
+        CountDownLatch statusChecked = new CountDownLatch(1);
+        CountDownLatch blockDone = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            statusChecked.countDown();
+            assertTrue(blockDone.await(5, TimeUnit.SECONDS), "block did not finish in time");
+            return invocation.callRealMethod();
+        }).when(refreshTokenService).markRotated(any(), any());
+
+        Future<Throwable> refreshOutcome = pool.submit(() -> {
+            try {
+                authService.refresh(new RefreshRequest(token));
+                return null;
+            } catch (Throwable t) {
+                return t;
+            }
+        });
+
+        assertTrue(statusChecked.await(5, TimeUnit.SECONDS), "refresh did not reach its rotation in time");
+        block();   // commits: BLOCKED, every token of the user revoked
+        blockDone.countDown();
+
+        Throwable outcome = refreshOutcome.get(10, TimeUnit.SECONDS);
+        assertNotNull(outcome, "the refresh must be refused, not served");
+        assertEquals(UnauthorizedException.class, outcome.getClass(), String.valueOf(outcome));
+
+        List<RefreshToken> rows = refreshTokenRepository.findAllByUserId(userId);
+        assertEquals(1, rows.size(), "no successor may be minted for a user blocked mid-refresh");
+        assertTrue(rows.getFirst().isRevoked());
+        assertFalse(rows.getFirst().isRotated());
+    }
+
+    @Test
+    @DisplayName("block arriving while the refresh already holds the row: it waits, then revokes the successor too")
+    void blocking_whileRefreshIsCommitting_revokesTheSuccessorAsWell() throws Exception {
+        String token = authService.login(new LoginRequest(EMAIL, PASSWORD), CLIENT_IP).refreshToken();
+
+        // Как во втором тесте logout: refresh внутри issue(), строка токена под его блокировкой.
+        CountDownLatch rowLocked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            rowLocked.countDown();
+            assertTrue(release.await(5, TimeUnit.SECONDS), "refresh was not released in time");
+            return invocation.callRealMethod();
+        }).when(refreshTokenService).issue(any(), any(), any());
+
+        Future<LoginResponse> refreshOutcome = pool.submit(() -> authService.refresh(new RefreshRequest(token)));
+        assertTrue(rowLocked.await(5, TimeUnit.SECONDS), "refresh did not reach issue() in time");
+
+        Future<?> blockOutcome = pool.submit(this::block);
+        Thread.sleep(HOLD_MILLIS);
+        assertFalse(blockOutcome.isDone(), "the block must wait for the in-flight refresh, not overtake it");
+        release.countDown();
+
+        LoginResponse refreshed = refreshOutcome.get(10, TimeUnit.SECONDS);
+        blockOutcome.get(10, TimeUnit.SECONDS);
+
+        List<RefreshToken> rows = refreshTokenRepository.findAllByUserId(userId);
+        assertEquals(2, rows.size(), "the refresh committed first: predecessor + successor");
+        assertTrue(rows.stream().allMatch(RefreshToken::isRevoked),
+                "the block that waited must revoke the successor as well");
+        assertThrows(UnauthorizedException.class,
+                () -> authService.refresh(new RefreshRequest(refreshed.refreshToken())),
+                "the successor minted during the race must be dead after the block");
+    }
+
     @Test
     @DisplayName("markRotated refuses a token that has been revoked — the conditional UPDATE the race protection stands on")
     void markRotated_onRevokedToken_updatesNothing() {
@@ -202,5 +278,11 @@ class RefreshTokenConcurrencyTest {
         assertFalse(refreshTokenService.markRotated(stored.getId(), Instant.now()), "a revoked token cannot be rotated");
         assertTrue(refreshTokenRepository.findById(stored.getId()).orElseThrow().isRevoked(),
                 "the failed rotation must leave the revocation in place");
+    }
+
+    // Блокировка администратором через сервис, как её делает PATCH /users/{id}.
+    private void block() {
+        userService.updateUser(userId, new UpdateUserRequest(null, null, null, "BLOCKED", null),
+                new UserPrincipal(UUID.randomUUID().toString(), "admin@millikart.az", "SYSTEM_ADMIN", null));
     }
 }

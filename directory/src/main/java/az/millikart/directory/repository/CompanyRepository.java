@@ -14,13 +14,13 @@ public interface CompanyRepository extends JpaRepository<Company, String> {
 
     // Фильтр и поиск — в запросе: отсев после чтения даёт короткие страницы и неверный totalElements
     // (P2-1, P3-1). status NOT NULL, так что <> ничего не теряет. Без escape '!' введённый % вернёт
-    // всю таблицу.
+    // всю таблицу. cast у параметра обязателен: null внутри lower() Hibernate шлёт как bytea, и PostgreSQL — 500.
     @Query("""
             select c from Company c
             where c.status <> :excluded
               and (:search is null
-                   or lower(c.name) like :search escape '!'
-                   or lower(c.id) like :search escape '!')
+                   or lower(c.name) like lower(cast(:search as string)) escape '!'
+                   or lower(c.id) like lower(cast(:search as string)) escape '!')
             """)
     Page<Company> search(@Param("excluded") String excluded,
                          @Param("search") String search,

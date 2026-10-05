@@ -1,8 +1,10 @@
 package az.millikart.pbl;
 
+import az.millikart.common.exception.BusinessException;
 import az.millikart.common.security.CredentialCipher;
+import az.millikart.common.security.UserPrincipal;
 import org.springframework.jdbc.core.JdbcTemplate;
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
@@ -16,12 +18,14 @@ import az.millikart.pbl.domain.Terminal;
 import az.millikart.pbl.domain.Transaction;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
-import az.millikart.pbl.provider.AcquiringClient;
-import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.dto.EcomCreateOrderResponse;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
+import az.millikart.pbl.dto.UpdatePaymentLinkRequest;
 import az.millikart.pbl.service.OpenLinkService;
+import az.millikart.pbl.service.PaymentLinkService;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,9 +40,8 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.dao.PessimisticLockingFailureException;
 
 // P1-5: два одновременных открытия одной ссылки обязаны дать одну попытку платежа, а не две.
 // Старый openAndBuildRedirect проверял ссылку в одной транзакции, звал эквайера вне транзакций
@@ -47,8 +50,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 // На настоящей PostgreSQL, а не на H2, и это здесь главное: тест держит ссылку под
 // `SELECT ... FOR UPDATE`, а семантика блокировок у H2 своя. На эмуляции он подтверждал бы,
 // что код не виснет, но не что гонка закрыта той СУБД, которая стоит в проде.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
+@PostgresIntegrationTest
 class OpenLinkConcurrencyTest {
 
     private static final int TERMINAL_ID = 123456789;
@@ -61,6 +63,9 @@ class OpenLinkConcurrencyTest {
 
     @Autowired
     private OpenLinkService openLinkService;
+
+    @Autowired
+    private PaymentLinkService paymentLinkService;
 
     @Autowired
     private PaymentLinkRepository paymentLinkRepository;
@@ -101,7 +106,7 @@ class OpenLinkConcurrencyTest {
                     Thread.sleep(PROVIDER_DELAY_MILLIS);
                     long orderId = orderIds.incrementAndGet();
                     return new EcomCreateOrderResponse(new EcomCreateOrderResponse.Order(
-                            "https://gateway.txpg.example.com/pay?rid=" + orderId,
+                            "https://gateway.txpg.example.com/pay",
                             orderId,
                             "Preparing",
                             "password-" + orderId));
@@ -139,6 +144,44 @@ class OpenLinkConcurrencyTest {
                 "a multi-use link with maxPayments=1 may serve one of two simultaneous opens: " + outcomes);
         Assertions.assertEquals(1, transactionRepository.count());
         verify(acquiringClient, times(1)).createEcomOrder(any(), any(), any(), any(), anyString());
+    }
+
+    // LINK-PATCH-LOCK: PATCH читал ссылку без замка и не видел попытку, которую открытие ещё не закоммитило:
+    // сумма менялась, пока открытие заводило у эквайера заказ по старой (обход Р-31). Теперь PATCH берёт тот
+    // же замок с NOWAIT и получает отказ сразу, а после открытия сумма уже заморожена.
+    @Test
+    void patchWhileAnOpenIsAtTheAcquirer_isRefused_andTheAmountStaysFrozen() throws Exception {
+        UUID linkId = link(UsageType.SINGLE, null);
+        CountDownLatch atAcquirer = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(acquiringClient.createEcomOrder(any(), any(), any(), any(), anyString()))
+                .thenAnswer(invocation -> {
+                    atAcquirer.countDown();
+                    release.await(10, TimeUnit.SECONDS);
+                    return new EcomCreateOrderResponse(new EcomCreateOrderResponse.Order(
+                            "https://gateway.txpg.example.com/pay", 7001L, "Preparing", "password-7001"));
+                });
+        UserPrincipal head = new UserPrincipal("head", "head@test.com", "COMPANY_HEAD", "test-company");
+        UpdatePaymentLinkRequest newAmount =
+                new UpdatePaymentLinkRequest(new BigDecimal("1.00"), null, null, null, null, null, null);
+
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<String> open = pool.submit(() -> openLinkService.openAndBuildRedirect(linkId, "10.0.0.1", "junit"));
+            Assertions.assertTrue(atAcquirer.await(10, TimeUnit.SECONDS), "the open never reached the acquirer");
+
+            Assertions.assertThrows(PessimisticLockingFailureException.class,
+                    () -> paymentLinkService.update(linkId, newAmount, head));
+
+            release.countDown();
+            open.get(10, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+
+        Assertions.assertThrows(BusinessException.class, () -> paymentLinkService.update(linkId, newAmount, head));
+        Assertions.assertEquals(0, AMOUNT.compareTo(paymentLinkRepository.findById(linkId).orElseThrow().getAmount()));
     }
 
     // Пускает открытия одной ссылки по общему стартовому выстрелу, чтобы они оказались внутри

@@ -4,11 +4,11 @@ plugins {
 
 dependencies {
     implementation project(':common')
+    // Клиент провайдера; resilience4j и AOP для его @CircuitBreaker/@Retry приходят вместе с ним.
+    implementation project(':txpg-client')
     implementation 'org.springframework.boot:spring-boot-starter-validation'
 
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-aop'
-    implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.liquibase:liquibase-core'
@@ -20,8 +20,6 @@ dependencies {
     // Тесты схемы, миграций и конкурентности идут на настоящей PostgreSQL в контейнере:
     // H2 в режиме совместимости их вопросы не проверяет. См. common PostgresTestContainer.
     testImplementation testFixtures(project(':common'))
-}
-
-tasks.named('test') {
-    useJUnitPlatform()
+    // StubAcquiringClient — тестовый двойник эквайера.
+    testImplementation testFixtures(project(':txpg-client'))
 }

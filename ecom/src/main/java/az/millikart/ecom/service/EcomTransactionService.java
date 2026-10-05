@@ -2,6 +2,7 @@ package az.millikart.ecom.service;
 
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.ResourceNotFoundException;
+import az.millikart.common.money.OperationActions;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.ecom.config.TxpgProperties;
 import az.millikart.ecom.domain.ProviderLogin;
@@ -12,6 +13,7 @@ import az.millikart.ecom.dto.EcomStatsResponse;
 import az.millikart.ecom.dto.EcomTerminalResponse;
 import az.millikart.ecom.dto.EcomTransactionFilter;
 import az.millikart.ecom.dto.EcomTransactionResponse;
+import az.millikart.ecom.repository.PortalPaymentsRepository;
 import az.millikart.ecom.repository.ProviderLoginRepository;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.repository.TxpgTransactionRepository;
@@ -25,6 +27,8 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -44,17 +48,23 @@ public class EcomTransactionService {
     private final ProviderTerminalRepository providerTerminals;
     private final ProviderLoginRepository providerLogins;
     private final TxpgProperties properties;
+    private final PortalPaymentsRepository portal;
+    private final ProviderOrderAttemptService attempts;
 
     public EcomTransactionService(TxpgTransactionRepository repository,
                                   EcomScopeService scope,
                                   ProviderTerminalRepository providerTerminals,
                                   ProviderLoginRepository providerLogins,
-                                  TxpgProperties properties) {
+                                  TxpgProperties properties,
+                                  PortalPaymentsRepository portal,
+                                  ProviderOrderAttemptService attempts) {
         this.repository = repository;
         this.scope = scope;
         this.providerTerminals = providerTerminals;
         this.providerLogins = providerLogins;
         this.properties = properties;
+        this.portal = portal;
+        this.attempts = attempts;
     }
 
     public CursorPage<EcomTransactionResponse> list(Instant dateFrom, Instant dateTo, List<String> merchantRids,
@@ -247,7 +257,43 @@ public class EcomTransactionService {
             // Номер из адреса отражается в ответ, только когда это число.
             throw new ResourceNotFoundException(id != null ? "Transaction not found: " + id : "Transaction not found");
         }
-        return orders.get(0);
+        return withActions(orders.get(0), principal);
+    }
+
+    // Кнопки возврата и списания (Р-124). Заказ, заведённый порталом, проводит pbl (решение 5 к MONEY-ACTIONS-ALL):
+    // вместо своих кнопок — номер его операции, и деньги учитываются в одном месте.
+    private EcomTransactionResponse withActions(EcomTransactionResponse order, UserPrincipal principal) {
+        Optional<UUID> portalTransaction = portal.portalTransactionOf(order.orderId());
+        if (portalTransaction.isPresent()) {
+            return order.withActions(null, portalTransaction.get().toString());
+        }
+        EcomStatus status = parseKnownStatus(order.status());
+        if (status == null) {
+            return order;
+        }
+        Optional<PortalPaymentsRepository.PortalTerminal> terminal = portal.terminalOfMerchant(order.merchantRid());
+        boolean credentials = terminal.map(PortalPaymentsRepository.PortalTerminal::companyId)
+                .map(portal::hasProviderCredentials)
+                .orElse(false);
+        // DMS — по операциям заказа, как фильтр типа оплаты (Р-87): авторизация или списание.
+        boolean dms = order.operations().stream()
+                .anyMatch(op -> EcomOperationKind.AUTHORIZATION.name().equals(op.kind())
+                        || EcomOperationKind.CAPTURE.name().equals(op.kind()));
+        OperationActions actions = EcomMoneyActions.decide(new EcomMoneyActions.Facts(status, dms, order.amount(),
+                order.capturedAmount(), order.refundedAmount(), UserPrincipal.getRole(principal), terminal.isPresent(),
+                credentials, attempts.open(order).orElse(null), Instant.now()));
+        return order.withActions(actions, null);
+    }
+
+    private static EcomStatus parseKnownStatus(String status) {
+        if (status == null) {
+            return null;
+        }
+        try {
+            return EcomStatus.valueOf(status);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     // Каждый запрос выписки — проход по боевой базе шлюза (Р-91): одна строка INFO с его ценой.

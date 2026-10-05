@@ -1,11 +1,13 @@
 package az.millikart.pbl;
 
 import az.millikart.common.security.CredentialCipher;
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -17,7 +19,7 @@ import az.millikart.pbl.domain.Terminal;
 import az.millikart.pbl.domain.Transaction;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
-import az.millikart.pbl.provider.AcquiringClient;
+import az.millikart.txpg.AcquiringClient;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
@@ -35,10 +37,10 @@ import java.util.UUID;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -50,16 +52,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 // На настоящей PostgreSQL, а не на H2: метки, по которым свёртка узнаёт судьбу платежа, лежат
 // в `provider_response` — колонке jsonb, а выборка идёт по возрасту операции. И тип, и работа
 // с временем у эмуляции свои.
-@SpringBootTest(properties = {
-        "pbl.reconciliation.min-age=PT2M",
-        "pbl.reconciliation.max-age=PT24H",
-        "pbl.reconciliation.give-up-age=P7D",
-        "pbl.reconciliation.batch-size=3"
-})
-@Import(PostgresTestContainer.class)
+@PostgresIntegrationTest
 class TransactionReconciliationIntegrationTest {
 
-    // Обязаны повторять свойства выше: фикстуры состариваются относительно них.
+    // Обязаны повторять pbl.reconciliation.* тестового yaml: фикстуры состариваются относительно них.
     private static final Duration MIN_AGE = Duration.ofMinutes(2);
     private static final Duration MAX_AGE = Duration.ofHours(24);
     private static final Duration GIVE_UP_AGE = Duration.ofDays(7);
@@ -147,6 +143,23 @@ class TransactionReconciliationIntegrationTest {
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE, linkStatusOf(tx));
     }
 
+    // По max-age гасится только старое: Preparing моложе суток — заказ ещё можно оплатить, строка
+    // остаётся PENDING. Ловит сравнение возраста с min-age вместо max-age: сверка гасила бы живые оплаты.
+    @Test
+    void reconcile_pendingYoungerThanMaxAge_providerSaysPreparing_staysPending() {
+        Transaction tx = agedTransaction("STILL-OPEN", TransactionStatus.PENDING, MAX_AGE.minusHours(1));
+        providerAnswers("Preparing");
+
+        Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
+
+        Assertions.assertEquals(TransactionStatus.PENDING, statusOf(tx));
+        Map<String, Object> providerResponse = reload(tx).getProviderResponse();
+        Assertions.assertTrue(providerResponse == null
+                        || !"ABANDONED_TIMEOUT".equals(providerResponse.get("reconciliationOutcome")),
+                "a young unpaid order must not be timed out: " + providerResponse);
+        Assertions.assertEquals(PaymentLinkStatus.ACTIVE, linkStatusOf(tx));
+    }
+
     // Несущий тест P1-3: недоступный шлюз нельзя читать как «платёж не прошёл». Иначе суточная
     // авария разом провалила бы транзакции, которые на самом деле оплачены.
     @Test
@@ -212,6 +225,7 @@ class TransactionReconciliationIntegrationTest {
 
     @Test
     void reconcile_oneFailingTransaction_doesNotAbortBatch() {
+        // Сбой эквайера reconcileOne ловит сам; защиту самого прохода проверяет тест ниже.
         // Сначала самые старые, поэтому сломанная заведомо обрабатывается раньше здоровой.
         Transaction broken = agedTransaction("STUCK", TransactionStatus.PENDING, Duration.ofMinutes(30));
         Transaction healthy = agedTransaction("OK", TransactionStatus.PENDING, Duration.ofMinutes(10));
@@ -225,6 +239,24 @@ class TransactionReconciliationIntegrationTest {
 
         Assertions.assertEquals(TransactionStatus.PENDING, statusOf(broken));
         Assertions.assertEquals(TransactionStatus.SUCCESS, statusOf(healthy));
+    }
+
+    // Защита прохода в самом сервисе сверки: reconcileOne, бросивший исключение, не обрывает пакет, и
+    // следующая операция всё равно сверяется. Ловит снятый try/catch в цикле TransactionReconciliationService.
+    @Test
+    void reconcile_aTransactionWhoseReconciliationThrows_doesNotAbortTheBatch() {
+        Transaction first = agedTransaction("THROWS", TransactionStatus.PENDING, Duration.ofMinutes(30));
+        Transaction second = agedTransaction("NEXT", TransactionStatus.PENDING, Duration.ofMinutes(10));
+        PaymentLinkService failing = Mockito.mock(PaymentLinkService.class);
+        doThrow(new IllegalStateException("the row cannot be reconciled"))
+                .when(failing).reconcileOne(eq(first.getId()), any());
+        TransactionReconciliationService batch = new TransactionReconciliationService(
+                transactionRepository, failing, MIN_AGE, MAX_AGE, GIVE_UP_AGE, 50);
+
+        Assertions.assertEquals(2, batch.reconcilePendingTransactions());
+
+        verify(failing).reconcileOne(eq(first.getId()), any());
+        verify(failing).reconcileOne(eq(second.getId()), any());
     }
 
     // P1-8a: неизвестный или закрытый снаружи статус никогда не становится FAILED
@@ -421,6 +453,32 @@ class TransactionReconciliationIntegrationTest {
         Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
 
         Assertions.assertEquals(TransactionStatus.SUCCESS, statusOf(live));
+    }
+
+    // RECON-STARVATION (Р-110): пакет брал самые старые PENDING, и строки, которые сверка закрыть не может
+    // (незнакомый статус, SETTLED_OTHER, эквайер недоступен), занимали его каждый проход до give-up-age —
+    // остальные не опрашивались неделю. Теперь опрошенная уходит в конец очереди, второй проход берёт новые.
+    @Test
+    void reconcile_rowsItCannotSettle_doNotStarveTheRestOfTheQueue() {
+        int queue = BATCH_SIZE + 2;
+        for (int i = 0; i < queue; i++) {
+            agedTransaction("STUCK-" + i, TransactionStatus.PENDING, Duration.ofMinutes(10 + i));
+        }
+        providerAnswers("SomethingNew");
+
+        Assertions.assertEquals(BATCH_SIZE, reconciliationService.reconcilePendingTransactions());
+        Assertions.assertEquals(BATCH_SIZE, reconciliationService.reconcilePendingTransactions());
+
+        ArgumentCaptor<String> polled = ArgumentCaptor.forClass(String.class);
+        verify(acquiringClient, times(2 * BATCH_SIZE)).getOrderStatus(polled.capture(), anyString(), any());
+        List<String> firstPass = polled.getAllValues().subList(0, BATCH_SIZE);
+        List<String> secondPass = polled.getAllValues().subList(BATCH_SIZE, 2 * BATCH_SIZE);
+        Assertions.assertEquals(List.of("ORD-STUCK-4", "ORD-STUCK-3", "ORD-STUCK-2"), firstPass);
+        Assertions.assertEquals(List.of("ORD-STUCK-1", "ORD-STUCK-0", "ORD-STUCK-4"), secondPass,
+                "the never-polled rows go first, then the longest-unpolled one");
+        Assertions.assertEquals(queue, transactionRepository.findAll().stream()
+                .filter(t -> t.getStatus() == TransactionStatus.PENDING)
+                .count());
     }
 
     // Фикстуры

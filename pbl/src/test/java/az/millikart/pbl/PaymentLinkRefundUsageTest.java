@@ -2,7 +2,7 @@ package az.millikart.pbl;
 
 import az.millikart.common.security.CredentialCipher;
 import org.springframework.jdbc.core.JdbcTemplate;
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
@@ -24,9 +24,9 @@ import az.millikart.pbl.domain.Terminal;
 import az.millikart.pbl.domain.Transaction;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
-import az.millikart.pbl.provider.AcquiringClient;
-import az.millikart.pbl.provider.dto.EcomCreateOrderResponse;
-import az.millikart.pbl.provider.dto.MoneyOperationResult;
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.dto.EcomCreateOrderResponse;
+import az.millikart.txpg.dto.MoneyOperationResult;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
@@ -41,9 +41,6 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -58,9 +55,7 @@ import org.springframework.test.web.servlet.ResultActions;
 // На настоящей PostgreSQL, а не на H2: тест про суммы — сколько возвращено, сколько осталось,
 // когда возврат считается полным. Это вопрос к настоящему numeric и его точности, а не к тому,
 // как её изображает эмуляция.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
-@AutoConfigureMockMvc
+@PostgresIntegrationTest
 class PaymentLinkRefundUsageTest {
 
     private static final int TERMINAL_ID = 123456789;
@@ -171,8 +166,7 @@ class PaymentLinkRefundUsageTest {
 
     // Арифметика слотов на ссылке, которая ещё ACTIVE, хотя все слоты заняты: OpenLinkService
     // обязан считать возвращённый платёж занятым слотом и отказать до обращения к эквайеру.
-    // До P2-16 такое открытие проходило. Ссылка намеренно остаётся ACTIVE в базе: записи пути
-    // открытия откатываются вместе с отказом, см. openAndBuildRedirect.
+    // До P2-16 такое открытие проходило. Отказ коммитит открытие (Р-113): ссылка становится COMPLETED.
     @Test
     void openOnActiveLink_withARefundedPaymentAtTheLimit_isRefused() throws Exception {
         PaymentLink link = seedLink(UsageType.MULTIPLE, 2);
@@ -184,6 +178,8 @@ class PaymentLinkRefundUsageTest {
                 .andExpect(jsonPath("$.message", containsString("usage limit")));
 
         verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        Assertions.assertEquals(PaymentLinkStatus.COMPLETED,
+                paymentLinkRepository.findById(link.getId()).orElseThrow().getStatus());
     }
 
     // 3. Частичный возврат — тоже использование
@@ -299,6 +295,29 @@ class PaymentLinkRefundUsageTest {
                 .andExpect(jsonPath("$.refundedPaymentsCount", is(1)));
     }
 
+    // MAXPAY-HOLDS: нижней границей были только платежи, а слот занимает и живой холд (P1-6). Лимит
+    // опускали до 1 при платеже и холде, после списания холда ссылка показывала «2 из 1».
+    @Test
+    void lowerMaxPayments_belowPaymentsAndHolds_isRefused() throws Exception {
+        PaymentLink link = seedLink(UsageType.MULTIPLE, 5);
+        seedTransaction(link, TransactionStatus.SUCCESS);
+        seedTransaction(link, TransactionStatus.AUTHORIZED);
+
+        ObjectNode update = objectMapper.createObjectNode();
+        update.put("maxPayments", 1);
+        patchLink(link.getId(), update)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("maxPayments cannot be lowered to 1: 2 slots are taken by payments "
+                        + "and holds awaiting capture (a refunded payment still counts as a use)")));
+        Assertions.assertEquals(5, paymentLinkRepository.findById(link.getId()).orElseThrow().getMaxPayments());
+
+        update.put("maxPayments", 2);
+        patchLink(link.getId(), update)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxPayments", is(2)))
+                .andExpect(jsonPath("$.currentPaymentsCount", is(1)));
+    }
+
     // 9. Колонка и ответ говорят одно число
 
     // Колонка переписывается на каждом расчёте счётом по PAID_STATUSES, а возврат не трогает ни
@@ -392,7 +411,7 @@ class PaymentLinkRefundUsageTest {
     // Возврат через настоящий endpoint, эквайер подтверждает (форма контракта §5.7).
     private void refundThroughApi(Transaction tx, BigDecimal amount) throws Exception {
         String tag = tx.getId().toString().substring(0, 8);
-        when(acquiringClient.refund(anyString(), anyString(), any(), any()))
+        when(acquiringClient.refund(anyString(), any(), any()))
                 .thenReturn(new MoneyOperationResult("AC-" + tag, "TA-" + tag, "RID-" + tag,
                         Map.of("tran", Map.of("approvalCode", "AC-" + tag,
                                 "match", Map.of("tranActionId", "TA-" + tag, "ridByPmo", "RID-" + tag)))));

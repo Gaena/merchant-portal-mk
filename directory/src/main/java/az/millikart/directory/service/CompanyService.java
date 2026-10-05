@@ -1,6 +1,7 @@
 package az.millikart.directory.service;
 
 import az.millikart.directory.domain.Company;
+import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.dto.CompanyResponse;
 import az.millikart.directory.dto.CreateCompanyRequest;
 import az.millikart.directory.dto.ProviderLoginOption;
@@ -11,6 +12,7 @@ import az.millikart.common.exception.ConflictException;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.directory.repository.CompanyRepository;
 import az.millikart.directory.repository.ProviderLoginSnapshotRepository;
+import az.millikart.directory.repository.TerminalRepository;
 
 import az.millikart.common.audit.AuditAction;
 import az.millikart.common.audit.AuditEntity;
@@ -54,17 +56,20 @@ public class CompanyService {
     private final ApplicationEventPublisher eventPublisher;
     private final CredentialCipher credentialCipher;
     private final ProviderLoginSnapshotRepository providerLogins;
+    private final TerminalRepository terminalRepository;
 
     public CompanyService(CompanyRepository companyRepository,
                           AuditLogService auditLogService,
                           ApplicationEventPublisher eventPublisher,
                           CredentialCipher credentialCipher,
-                          ProviderLoginSnapshotRepository providerLogins) {
+                          ProviderLoginSnapshotRepository providerLogins,
+                          TerminalRepository terminalRepository) {
         this.companyRepository = companyRepository;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
         this.credentialCipher = credentialCipher;
         this.providerLogins = providerLogins;
+        this.terminalRepository = terminalRepository;
     }
 
     @Transactional
@@ -198,11 +203,11 @@ public class CompanyService {
 
         StringBuilder changes = new StringBuilder();
         String previousStatus = company.getStatus();
-        if (request.name() != null && !request.name().isBlank()) {
+        if (request.name() != null && !request.name().isBlank() && !request.name().equals(company.getName())) {
             changes.append("Name changed from '").append(company.getName()).append("' to '").append(request.name()).append("'. ");
             company.setName(request.name());
         }
-        if (request.status() != null && !request.status().isBlank()) {
+        if (request.status() != null && !request.status().isBlank() && !request.status().equals(previousStatus)) {
             changes.append("Status changed from '").append(company.getStatus()).append("' to '").append(request.status()).append("'. ");
             company.setStatus(request.status());
         }
@@ -210,6 +215,7 @@ public class CompanyService {
         if (providerLogin != null && !providerLogin.isBlank() && !providerLogin.equals(company.getProviderLogin())) {
             requireActiveMultiMerchantLogin(providerLogin);
             requireFreeProviderLogin(providerLogin, company.getId());
+            requireLoginCoversTerminals(providerLogin, company);
             changes.append("Provider login changed from '").append(company.getProviderLogin()).append("' to '").append(providerLogin).append("'. ");
             company.setProviderLogin(providerLogin);
         }
@@ -217,6 +223,11 @@ public class CompanyService {
         if (request.providerPassword() != null && !request.providerPassword().isBlank()) {
             changes.append("Provider password changed. ");
             company.setProviderPassword(credentialCipher.encrypt(request.providerPassword()));
+        }
+
+        // PATCH без настоящих изменений — не событие: ни записи в журнале, ни updated_by (Р-108).
+        if (changes.isEmpty()) {
+            return mapToResponse(company, actorRole);
         }
 
         company.setUpdatedBy(actorUsername);
@@ -284,7 +295,8 @@ public class CompanyService {
         if (actorRole == Role.SYSTEM_ADMIN || actorRole == Role.AUDITOR) {
             return;
         }
-        if (targetCompanyId != null && targetCompanyId.equals(actorCompanyId)) {
+        // Нераспознанной роли — отказ и в своей компании (AGENTS §6, NULL-ROLE-READ).
+        if (actorRole != null && targetCompanyId != null && targetCompanyId.equals(actorCompanyId)) {
             return;
         }
         auditLogService.logDenied(AuditEntity.COMPANY, targetCompanyId, AuditAction.READ,
@@ -324,6 +336,26 @@ public class CompanyService {
         }
         if (links.stream().noneMatch(link -> PROVIDER_ACTIVE.equals(link.linkStatus()) && link.merchantRid() != null)) {
             throw new BusinessException("Provider login " + providerLogin + " has no active merchants at the provider");
+        }
+    }
+
+    // Терминалы компании ходят к провайдеру с её логином (Р-93), выписка видит только мерчантов логина (Р-97):
+    // логин без мерчанта заведённого терминала оставил бы его без платежей, возвратов по старым и выписки
+    // (LOGIN-CHANGE-TERMINALS). Заблокированные — тоже: возврат идёт и по ним. Без merchant_rid не сверить.
+    private void requireLoginCoversTerminals(String providerLogin, Company company) {
+        Set<String> merchants = providerLogins.activeMerchantRidsOf(providerLogin.substring(MULTI_MERCHANT_PREFIX.length()));
+        List<Integer> uncovered = terminalRepository.findAllByCompanyIdOrderByNameAscIdAsc(company.getId()).stream()
+                .filter(terminal -> terminal.getMerchantRid() != null && !merchants.contains(terminal.getMerchantRid()))
+                .map(Terminal::getId)
+                .sorted()
+                .toList();
+        if (!uncovered.isEmpty()) {
+            log.warn("Refusing provider login {} for company {}: it has no active link to the merchants of terminals {}",
+                    providerLogin, company.getId(), uncovered);
+            throw new BusinessException("Provider login " + providerLogin + " has no active link to the merchants of "
+                    + "terminals " + uncovered.stream().map(String::valueOf).collect(Collectors.joining(", "))
+                    + " of company " + company.getId() + "; link them to this login at the provider and refresh "
+                    + "the provider directory, or move the terminals to another company first");
         }
     }
 

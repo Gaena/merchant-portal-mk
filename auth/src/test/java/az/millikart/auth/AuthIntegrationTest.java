@@ -28,6 +28,9 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import java.util.List;
+import org.springframework.context.ApplicationContext;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
 
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -51,6 +54,9 @@ public class AuthIntegrationTest {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private ApplicationContext applicationContext;
 
     // Миграция больше не заводит админа (P0-6), поэтому фикстура создаёт своего. Пароль отвечает
     // той же политике, которую API требует от любого аккаунта.
@@ -395,6 +401,53 @@ public class AuthIntegrationTest {
                 .andExpect(status().isCreated());
     }
 
+    // DB-CONSTRAINT-500: пустая строка уходила в users.company_id как есть, падала на внешнем ключе к
+    // companies, и администратор получал 500. Пустая компания — «без компании», как в правке.
+    @Test
+    public void createUser_auditorWithAnEmptyCompany_isCreatedWithoutOne() throws Exception {
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateUserRequest(
+                                "auditor2@millikart.az", USER_PASSWORD, "Auditor", "AUDITOR", ""))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.companyId").doesNotExist());
+
+        Assertions.assertNull(userRepository.findByUsername("auditor2@millikart.az").orElseThrow().getCompanyId());
+    }
+
+    // USER-EMPTY-PASSWORD: форма правки шлёт пустой пароль как «не менять», сервис так его и понимает, а
+    // проверка политики отвечала 400 на пустую строку — и правка имени срывалась.
+    @Test
+    public void updateUser_withAnEmptyPassword_changesTheRestAndKeepsThePassword() throws Exception {
+        UUID clerkId = createUser("clerk-empty@comp01.com", "COMPANY_EMPLOYEE", "comp-01");
+        String hashBefore = userRepository.findById(clerkId).orElseThrow().getPasswordHash();
+
+        mockMvc.perform(patch("/api/v1/users/" + clerkId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fullName\": \"Renamed Clerk\", \"password\": \"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fullName", is("Renamed Clerk")))
+                .andExpect(jsonPath("$.passwordChangeRequired", is(false)));
+
+        Assertions.assertEquals(hashBefore, userRepository.findById(clerkId).orElseThrow().getPasswordHash());
+    }
+
+    // DB-CONSTRAINT-500: имя длиннее колонки проходило проверку DTO и роняло вставку — 500 и ERROR.
+    @Test
+    public void createUser_withAFullNameLongerThanTheColumn_isABadRequest() throws Exception {
+        mockMvc.perform(post("/api/v1/users")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateUserRequest(
+                                "longname@comp01.com", USER_PASSWORD, "x".repeat(256), "COMPANY_EMPLOYEE", "comp-01"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Full name must be at most 255 characters")));
+
+        Assertions.assertTrue(userRepository.findByUsername("longname@comp01.com").isEmpty());
+    }
+
     // Р-103: правкой ставятся только ACTIVE и BLOCKED. DELETED через PATCH удалял бы в обход DELETE и
     // его записи в журнале, а незнакомое значение ни один экран не прочтёт.
     @Test
@@ -572,6 +625,34 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$.message", containsString("minutes")));
     }
 
+    // Истёкший локаут обнуляет счётчик: без сброса неудача после блокировки была бы седьмой, и первая же
+    // опечатка снова закрывала бы аккаунт на 30 минут (Р-28).
+    @Test
+    @DisplayName("16c. after the lockout has expired, a wrong password counts from one again")
+    public void expiredLockout_wrongPassword_startsTheCountAfresh() throws Exception {
+        expiredLockOut("admin@millikart.az");
+
+        login("admin@millikart.az", "WrongPass123!", "203.0.113.161")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is(INVALID_CREDENTIALS)));
+
+        User user = userRepository.findByUsername("admin@millikart.az").orElseThrow();
+        Assertions.assertEquals(1, user.getFailedLoginAttempts());
+        Assertions.assertNull(user.getLockoutUntil(), "one typo after the lockout must not lock the account again");
+    }
+
+    @Test
+    @DisplayName("16d. after the lockout has expired, the right password signs in and clears the count")
+    public void expiredLockout_rightPassword_signsIn() throws Exception {
+        expiredLockOut("admin@millikart.az");
+
+        login("admin@millikart.az", ADMIN_PASSWORD, "203.0.113.162").andExpect(status().isOk());
+
+        User user = userRepository.findByUsername("admin@millikart.az").orElseThrow();
+        Assertions.assertEquals(0, user.getFailedLoginAttempts());
+        Assertions.assertNull(user.getLockoutUntil());
+    }
+
     @Test
     @DisplayName("17. past the per-address limit → 429 with Retry-After")
     public void tooManyFailures_areRefusedWith429AndRetryAfter() throws Exception {
@@ -627,23 +708,38 @@ public class AuthIntegrationTest {
                 .andExpect(status().isTooManyRequests());
     }
 
-    // Без сброса один общий офисный адрес исчерпает попытки за утро обычных опечаток. Для отказов
-    // взяты несуществующие логины, чтобы собственная блокировка аккаунта после шести отказов
-    // не мешала измерению.
+    // Свои опечатки вход снимает — общий офисный адрес не исчерпает попытки за утро; чужие логины остаются в
+    // счёте. Для чужих отказов взяты несуществующие логины, чтобы блокировка аккаунта не мешала измерению.
     @Test
-    @DisplayName("20. a successful login gives the address its full allowance back")
-    public void successfulLogin_resetsTheAddressCounter() throws Exception {
+    @DisplayName("20. a successful login takes back only its own failures from the address")
+    public void successfulLogin_clearsOnlyItsOwnFailuresFromTheAddress() throws Exception {
         String clientIp = "198.51.100.20";
-        for (int i = 0; i < MAX_FAILURES_PER_ADDRESS - 1; i++) {
+        for (int i = 0; i < MAX_FAILURES_PER_ADDRESS - 2; i++) {
             login("nobody" + i + "@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
         }
+        login("admin@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
 
         login("admin@millikart.az", ADMIN_PASSWORD, clientIp).andExpect(status().isOk());
 
-        // Без сброса вторая неудача этой партии была бы уже 429.
-        for (int i = 0; i < MAX_FAILURES_PER_ADDRESS - 1; i++) {
-            login("nobody" + i + "@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
-        }
+        // RATE-LIMIT-RESET (Р-117): вход обнулял весь адрес, и свой вход каждые девять попыток прятал перебор
+        // чужих логинов. Снимается только своя опечатка: две неудачи ещё проходят, третья — уже 429.
+        login("nobody-a@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
+        login("nobody-b@millikart.az", "WrongPass123!", clientIp).andExpect(status().isBadRequest());
+        login("nobody-c@millikart.az", "WrongPass123!", clientIp).andExpect(status().isTooManyRequests());
+    }
+
+    // Контексты тестов живут весь прогон: задача по расписанию сработала бы посреди чужого теста. Новый
+    // планировщик без выключателя в тестовом yaml уронит этот тест.
+    @Test
+    public void noTaskRunsByTheClockInTests() {
+        // Держатель задач есть всегда (@EnableScheduling): без него проверка прошла бы впустую.
+        java.util.Collection<ScheduledTaskHolder> holders = applicationContext.getBeansOfType(ScheduledTaskHolder.class).values();
+        org.junit.jupiter.api.Assertions.assertFalse(holders.isEmpty());
+        List<String> tasks = holders.stream()
+                .flatMap(holder -> holder.getScheduledTasks().stream())
+                .map(String::valueOf)
+                .toList();
+        Assertions.assertTrue(tasks.isEmpty(), "scheduled in tests: " + tasks);
     }
 
     // Фикстуры и хелперы
@@ -679,6 +775,14 @@ public class AuthIntegrationTest {
         User user = userRepository.findByUsername(username).orElseThrow();
         user.setFailedLoginAttempts(6);
         user.setLockoutUntil(Instant.now().plus(30, ChronoUnit.MINUTES));
+        userRepository.save(user);
+    }
+
+    // Шесть неудач и блокировка, срок которой уже прошёл.
+    private void expiredLockOut(String username) {
+        User user = userRepository.findByUsername(username).orElseThrow();
+        user.setFailedLoginAttempts(6);
+        user.setLockoutUntil(Instant.now().minus(1, ChronoUnit.MINUTES));
         userRepository.save(user);
     }
 

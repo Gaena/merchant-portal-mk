@@ -2,7 +2,7 @@ package az.millikart.pbl;
 
 import az.millikart.common.security.CredentialCipher;
 import org.springframework.jdbc.core.JdbcTemplate;
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.containsString;
@@ -28,8 +28,8 @@ import az.millikart.pbl.domain.TerminalStatus;
 import az.millikart.pbl.domain.Transaction;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
-import az.millikart.pbl.provider.AcquiringClient;
-import az.millikart.pbl.provider.dto.MoneyOperationResult;
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.dto.MoneyOperationResult;
 import az.millikart.pbl.repository.PaymentLinkRepository;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
@@ -49,9 +49,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.PessimisticLockingFailureException;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -66,9 +63,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 //
 // Обратная сторона блокировки терминала, со стороны платёжного пути. Диалект тот же и так же
 // существенный: проверяется поведение запросов, а не только код вокруг них.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
-@AutoConfigureMockMvc
+@PostgresIntegrationTest
 class TerminalBlockedIntegrationTest {
 
     private static final int BLOCKED_TERMINAL = 820001;
@@ -164,15 +159,16 @@ class TerminalBlockedIntegrationTest {
         UUID linkId = link(ACTIVE_TERMINAL, PaymentLinkStatus.ACTIVE).getId();
 
         CountDownLatch lockHeld = new CountDownLatch(1);
+        CountDownLatch openRefused = new CountDownLatch(1);
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             Future<?> holder = executor.submit(() -> new TransactionTemplate(transactionManager)
                     .execute(status -> {
                         paymentLinkRepository.findWithLockById(linkId);
                         lockHeld.countDown();
-                        // Достаточно, чтобы открытие точно встало в очередь за замком,
-                        // а для любой более ранней проверки терминал был ещё ACTIVE.
-                        sleep(250);
+                        // Терминал блокируется под замком и только после отказа открытию: для открытия,
+                        // пришедшего раньше, он был ещё ACTIVE.
+                        await(openRefused);
                         terminalRepository.save(terminal(ACTIVE_TERMINAL, TerminalStatus.BLOCKED));
                         return null;
                     }));
@@ -182,6 +178,7 @@ class TerminalBlockedIntegrationTest {
             assertThatThrownBy(() -> openLinkService.openAndBuildRedirect(linkId, "203.0.113.9", "curl"))
                     .as("while another transaction holds the link, the open is refused at once")
                     .isInstanceOf(PessimisticLockingFailureException.class);
+            openRefused.countDown();
 
             holder.get(5, TimeUnit.SECONDS);
         } finally {
@@ -198,9 +195,11 @@ class TerminalBlockedIntegrationTest {
                 .isZero();
     }
 
-    private static void sleep(long millis) {
+    private static void await(CountDownLatch latch) {
         try {
-            Thread.sleep(millis);
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("the open was not refused in time");
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);
@@ -294,7 +293,7 @@ class TerminalBlockedIntegrationTest {
     @Test
     void refundOnBlockedTerminal_goesThrough() throws Exception {
         Transaction paid = transaction(BLOCKED_TERMINAL, TransactionStatus.SUCCESS, PaymentType.SMS, null);
-        when(acquiringClient.refund(any(), anyString(), any(), any()))
+        when(acquiringClient.refund(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("REF-1", "RRN-1", "APPR-1", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
@@ -312,7 +311,7 @@ class TerminalBlockedIntegrationTest {
     @Test
     void captureOnBlockedTerminal_goesThrough() throws Exception {
         Transaction held = transaction(BLOCKED_TERMINAL, TransactionStatus.AUTHORIZED, PaymentType.DMS, null);
-        when(acquiringClient.completeDms(any(), anyString(), any(), any()))
+        when(acquiringClient.completeDms(any(), any(), any()))
                 .thenReturn(new MoneyOperationResult("CAP-1", "RRN-2", "APPR-2", Map.of("status", "ok")));
 
         mockMvc.perform(post("/api/v1/transactions/" + held.getId() + "/complete")

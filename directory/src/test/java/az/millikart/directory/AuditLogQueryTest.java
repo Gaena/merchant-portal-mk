@@ -1,6 +1,6 @@
 package az.millikart.directory;
 
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import az.millikart.common.security.JwtProvider;
 import az.millikart.common.audit.AuditLog;
+import az.millikart.common.audit.AuditLogRepository;
 import az.millikart.directory.repository.CompanyRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,20 +22,18 @@ import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // Чтение после P2-2: фильтрация и постраничность — на стороне БД, порядок всегда от новых к
 // старым, а скоуп по компании держится ровно так же, как прежний фильтр в памяти.
 //
 // Сортировка, срезы по времени и поиск через LIKE: у PostgreSQL здесь своя локаль и своя
 // работа с временными типами, и проверять их на H2 значит проверять другую СУБД.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
-@AutoConfigureMockMvc
+@PostgresIntegrationTest
 public class AuditLogQueryTest {
 
     @Autowired
@@ -57,6 +56,13 @@ public class AuditLogQueryTest {
 
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    // Пишущая сторона журнала из common — та, что у приложения.
+    @Autowired
+    private AuditLogRepository journal;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     private String adminToken;
     private String auditorToken;
@@ -91,6 +97,44 @@ public class AuditLogQueryTest {
             Thread.currentThread().interrupt();
         }
         return saved;
+    }
+
+    // Р-42 на настоящей базе: save пишущей стороны на записи с id существующей делал merge и переписывал её.
+    // Отказ или молчаливый пропуск — оба годятся; изменённая строка — нет.
+    @Test
+    public void savingARecordWithAnExistingId_neverRewritesTheJournal() {
+        AuditLog original = seed("TERMINAL", "42", "CREATE", "comp-01");
+        AuditLog forged = AuditLog.builder()
+                .entityType("TERMINAL").entityId("42").action("CREATE")
+                .performedBy("forger@test").companyId("comp-01").details("forged")
+                .build();
+        // Билдер id не задаёт; подделка идёт в обход — как пошёл бы рефакторинг, вернувший его.
+        ReflectionTestUtils.setField(forged, "id", original.getId());
+
+        try {
+            journal.save(forged);
+        } catch (RuntimeException refused) {
+            // отказ Hibernate тоже оставляет журнал целым
+        }
+
+        assertThat(jdbcTemplate.queryForMap("SELECT performed_by, details FROM audit_logs WHERE id = ?", original.getId()))
+                .containsEntry("performed_by", "seeder@test")
+                .containsEntry("details", null);
+    }
+
+    // Загруженная запись, изменённая в памяти (рефлексией или вернувшимся сеттером), в базу не уходит: @Immutable.
+    @Test
+    public void aLoadedRecordChangedInMemory_isNotWrittenBack() {
+        AuditLog original = seed("TERMINAL", "43", "CREATE", "comp-01");
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            AuditLog loaded = auditLogRepository.findById(original.getId()).orElseThrow();
+            ReflectionTestUtils.setField(loaded, "performedBy", "rewriter@test");
+        });
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT performed_by FROM audit_logs WHERE id = ?", String.class, original.getId()))
+                .isEqualTo("seeder@test");
     }
 
     // 8. Фильтр в БД делает ровно то же, что делал фильтр в памяти
@@ -261,6 +305,20 @@ public class AuditLogQueryTest {
 
     // P3-1, D.2: search, outcome и диапазон created_at
 
+    // SEARCH-CASE: поиск по журналу — Criteria, свой путь к lower(); «İlham» в details должен находиться так же.
+    @Test
+    public void search_findsAzerbaijaniCapitalsInTheDetails() throws Exception {
+        seedFull("COMPANY", "c-az", "UPDATE", "comp-01", "bob@comp1.com", "Renamed to İlham Ticarət");
+        seedFull("COMPANY", "c-other", "UPDATE", "comp-01", "bob@comp1.com", "Renamed to Phoenix");
+
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("search", "İlham")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", Matchers.is(1)))
+                .andExpect(jsonPath("$.content[0].entityId", Matchers.is("c-az")));
+    }
+
     @Test
     public void search_matchesActorActionEntityIdAndDetails_caseInsensitively() throws Exception {
         seedFull("TERMINAL", "t-1", "CREATE", "comp-01", "alice@comp1.com", "made a terminal");
@@ -398,7 +456,9 @@ public class AuditLogQueryTest {
                 INSERT INTO audit_logs (id, entity_type, entity_id, action, performed_by, company_id, outcome, created_at)
                 VALUES (?, 'TERMINAL', ?, 'CREATE', 'seeder@test', 'comp-01', 'SUCCESS', ?)
                 """,
-                java.util.UUID.randomUUID(), entityId, java.sql.Timestamp.from(createdAt));
+                java.util.UUID.randomUUID(), entityId,
+                // В UTC, как пишет Hibernate (AGENTS §11): Timestamp.from кодирует время в поясе JVM.
+                java.time.LocalDateTime.ofInstant(createdAt, java.time.ZoneOffset.UTC));
     }
 
     private JsonNode page(int page, int size) throws Exception {

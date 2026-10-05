@@ -204,11 +204,13 @@ public class TxpgTransactionRepository {
     }
 
     // При мультиклиринге заказ остаётся Authorized и после списания (Р-76). Признак списания —
-    // EcomOperationKind.CAPTURE_SIGNS, тот же список, что считает списание в деньгах (Р-86).
+    // EcomOperationKind.CAPTURE_SIGNS, тот же список, что считает списание в деньгах (Р-86). Пустой статус —
+    // незнакомый, а не незавершённый: NULL not in (…) в SQL не истина, без is null заказ пропадал (ECOM-NULL-STATUS).
     private String finishedOrdersOnly() {
         String captured = anyOf("c", EcomOperationKind.CAPTURE_SIGNS);
         return """
-                   and (o.status not in (:unfinished_statuses)
+                   and (o.status is null
+                        or o.status not in (:unfinished_statuses)
                         or (o.status = 'Authorized'
                             and exists (select 1
                                           from %1$s.tran c

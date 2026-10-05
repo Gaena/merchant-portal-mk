@@ -5,6 +5,7 @@ import az.millikart.ecom.domain.ProviderTerminal;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -13,7 +14,8 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // Чужой сбой не должен выключить наши терминалы: неудачный и пустой опрос не применяются, терминал
 // гасится только после missingRunsBeforeDisable пропаданий подряд (Р-66).
@@ -25,13 +27,20 @@ public class ProviderTerminalSyncService {
     private final ProviderTerminalSource source;
     private final ProviderTerminalRepository repository;
     private final TxpgProperties properties;
+    private final TransactionTemplate transactionTemplate;
+    private final SkippedSyncRuns skippedRuns = new SkippedSyncRuns(log, "Provider terminal sync");
+    // Мерчанты, о неоднозначности которых уже сказано: WARN при появлении, INFO при исчезновении, повтор
+    // каждый проход не пишется (ECOM-SYNC-LOG, Р-98). Память процесса, под замком sync().
+    private Set<String> reportedAmbiguous = Set.of();
 
     public ProviderTerminalSyncService(ProviderTerminalSource source,
                                        ProviderTerminalRepository repository,
-                                       TxpgProperties properties) {
+                                       TxpgProperties properties,
+                                       PlatformTransactionManager transactionManager) {
         this.source = source;
         this.repository = repository;
         this.properties = properties;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     // ambiguous — мерчанты, пришедшие несколькими разными строками: не обновлены, но и не погашены.
@@ -42,26 +51,46 @@ public class ProviderTerminalSyncService {
         }
     }
 
-    @Transactional
-    public SyncOutcome sync() {
+    // Проходы — по одному, замок до коммита: два разом вставляли один и тот же новый терминал, и второй
+    // падал на первичном ключе (ECOM-SYNC-RACE, Р-119). Поэтому транзакция внутри, а не @Transactional.
+    public synchronized SyncOutcome sync() {
         List<ProviderTerminalSource.ProviderTerminalRow> rows;
         try {
             rows = source.fetchActive();
         } catch (RuntimeException e) {
             String reason = ProviderSyncFailure.reason(e);
-            log.error("Provider terminal sync skipped: {}. The previous snapshot is kept as is.", reason, e);
+            if (skippedRuns.isNew(ProviderSyncFailure.kind(e), reason)) {
+                log.error("Provider terminal sync skipped: {}. The previous snapshot is kept as is.", reason, e);
+            }
             return SyncOutcome.skipped(reason);
         }
 
         // У работающего эквайринга не бывает нуля терминалов: пустой ответ — оборванная выборка
         // или сменившийся фильтр, и действовать по нему значит остановить приём платежей всем.
         if (rows == null || rows.isEmpty()) {
-            log.error("Provider terminal sync skipped: the gateway returned no terminals at all. "
-                    + "An acquiring provider without a single terminal is a broken answer, not news, "
-                    + "and acting on it would suspend live payment links.");
+            if (skippedRuns.isNew("empty response", "empty response")) {
+                log.error("Provider terminal sync skipped: the gateway returned no terminals at all. "
+                        + "An acquiring provider without a single terminal is a broken answer, not news, "
+                        + "and acting on it would suspend live payment links.");
+            }
             return SyncOutcome.skipped("empty response");
         }
 
+        Set<String> ambiguousNow = new HashSet<>();
+        SyncOutcome outcome = transactionTemplate.execute(status -> apply(rows, ambiguousNow));
+        skippedRuns.applied();
+        for (String rid : reportedAmbiguous) {
+            if (!ambiguousNow.contains(rid)) {
+                log.info("Provider no longer returns different rows for merchant {}", rid);
+            }
+        }
+        reportedAmbiguous = ambiguousNow;
+        log.info("Provider terminal sync applied: {} terminals seen, {} ambiguous, {} marked inactive",
+                outcome.seen(), outcome.ambiguous(), outcome.disabled());
+        return outcome;
+    }
+
+    private SyncOutcome apply(List<ProviderTerminalSource.ProviderTerminalRow> rows, Set<String> ambiguousNow) {
         // Одна строка на мерчанта (Р-67, Р-79). Одинаковые строки — это одна (например, две строки
         // terminalpmo у терминала); разные логины или названия у одного мерчанта сопоставить не с чем.
         Map<String, Set<ProviderTerminalSource.ProviderTerminalRow>> byRid = new LinkedHashMap<>();
@@ -84,6 +113,7 @@ public class ProviderTerminalSyncService {
             ProviderTerminal terminal = known.remove(entry.getKey());
             if (entry.getValue().size() > 1) {
                 ambiguous++;
+                ambiguousNow.add(entry.getKey());
                 keepAliveWithoutUpdating(entry.getKey(), entry.getValue().size(), terminal, now);
                 continue;
             }
@@ -127,17 +157,16 @@ public class ProviderTerminalSyncService {
             }
             repository.save(missing);
         }
-
-        log.info("Provider terminal sync applied: {} terminals seen, {} ambiguous, {} marked inactive",
-                seen, ambiguous, disabled);
         return new SyncOutcome(true, seen, ambiguous, disabled, null);
     }
 
     // Мерчант у провайдера есть, так что гасить его нельзя; но какой из логинов наш — неизвестно,
     // поэтому ни логин, ни название, ни флаг активности не трогаются, а новый не заводится вовсе.
     private void keepAliveWithoutUpdating(String rid, int variants, ProviderTerminal terminal, Instant now) {
-        log.warn("Provider returned {} different rows for merchant {}; it is not updated in this run. "
-                + "One merchant is expected to have exactly one e-commerce terminal login", variants, rid);
+        if (!reportedAmbiguous.contains(rid)) {
+            log.warn("Provider returned {} different rows for merchant {}; it is not updated until they become one. "
+                    + "One merchant is expected to have exactly one e-commerce terminal login", variants, rid);
+        }
         if (terminal == null) {
             return;
         }

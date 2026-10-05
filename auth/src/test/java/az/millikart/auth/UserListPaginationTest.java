@@ -1,6 +1,6 @@
 package az.millikart.auth;
 
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -22,9 +22,6 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -35,9 +32,7 @@ import org.springframework.test.web.servlet.ResultActions;
 // Сортировка строк в PostgreSQL зависит от локали базы, а H2 сравнивает побайтово: порядок
 // страниц и результат поиска через LIKE — ровно те вопросы, на которые эмуляция отвечает
 // за себя, а не за прод.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
-@AutoConfigureMockMvc
+@PostgresIntegrationTest
 public class UserListPaginationTest {
 
     // UserController.MAX_PAGE_SIZE — потолок, общий для всех страничных списков.
@@ -232,6 +227,19 @@ public class UserListPaginationTest {
                 .andExpect(jsonPath("$.totalElements", is(1)))
                 .andExpect(jsonPath("$.number", is(0)))
                 .andExpect(jsonPath("$.content[0].username", is("acct22@comp1.com")));
+    }
+
+    // SEARCH-CASE: «İ» Java и PostgreSQL понижают по-разному, и поиск «İlham» не находил «İlham …».
+    @Test
+    public void search_findsAzerbaijaniCapitals() throws Exception {
+        User ilham = seed("ilham@comp1.com", "comp-01", "ACTIVE");
+        ilham.setFullName("İlham Əliyev");
+        userRepository.saveAndFlush(ilham);
+        seed("other@comp1.com", "comp-01", "ACTIVE");
+
+        search(adminToken, "İlham")
+                .andExpect(jsonPath("$.content", hasSize(1)))
+                .andExpect(jsonPath("$.content[0].username", is("ilham@comp1.com")));
     }
 
     @Test

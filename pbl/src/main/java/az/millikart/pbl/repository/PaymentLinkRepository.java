@@ -27,6 +27,12 @@ public interface PaymentLinkRepository extends JpaRepository<PaymentLink, UUID> 
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "0"))
     Optional<PaymentLink> findWithLockById(UUID id);
 
+    // Ждущий замок — только для записи итога денежной операции, уже проведённой эквайером (Р-123): NOWAIT
+    // отказал бы после того, как деньги ушли. Ждёт держателя, а держатели ходят к эквайеру с таймаутом.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT pl FROM PaymentLink pl WHERE pl.id = :id")
+    Optional<PaymentLink> findWithWaitingLockById(@Param("id") UUID id);
+
     @Query("""
             SELECT pl FROM PaymentLink pl
             WHERE (:terminal IS NULL OR pl.terminalId = :terminal)
@@ -39,7 +45,10 @@ public interface PaymentLinkRepository extends JpaRepository<PaymentLink, UUID> 
                              @Param("status") PaymentLinkStatus status,
                              Pageable pageable);
 
+    // Версия поднимается: запись, прочитанная до истечения, получит конфликт, а не вернёт ACTIVE.
     @Modifying
-    @Query("UPDATE PaymentLink pl SET pl.status = az.millikart.pbl.domain.PaymentLinkStatus.EXPIRED WHERE pl.status = az.millikart.pbl.domain.PaymentLinkStatus.ACTIVE AND pl.expiresAt IS NOT NULL AND pl.expiresAt < :now")
+    @Query("UPDATE PaymentLink pl SET pl.status = az.millikart.pbl.domain.PaymentLinkStatus.EXPIRED, "
+            + "pl.version = COALESCE(pl.version, 0) + 1 "
+            + "WHERE pl.status = az.millikart.pbl.domain.PaymentLinkStatus.ACTIVE AND pl.expiresAt IS NOT NULL AND pl.expiresAt < :now")
     int expireActiveLinksBefore(@Param("now") java.time.Instant now);
 }

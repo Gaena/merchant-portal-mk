@@ -3,7 +3,7 @@ package az.millikart.pbl.service;
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.security.CredentialCipher;
 import az.millikart.pbl.domain.Terminal;
-import az.millikart.pbl.provider.ProviderCredentials;
+import az.millikart.txpg.ProviderCredentials;
 import az.millikart.pbl.repository.CompanyCredentialsRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +40,15 @@ public class ProviderCredentialsService {
                             + " has no acquirer credentials; a system administrator must set them on the company");
                 });
         return new ProviderCredentials(stored.login(), cipher.decrypt(stored.encryptedPassword()));
+    }
+
+    // Для кнопок карточки (Р-123): есть ли у компании терминала креды — без расшифровки и без отказа.
+    public boolean hasCredentials(Terminal terminal) {
+        String companyId = terminal.getCompanyId();
+        return companyId != null && repository.findByCompanyId(companyId)
+                .filter(credentials -> credentials.login() != null && !credentials.login().isBlank()
+                        && credentials.encryptedPassword() != null && !credentials.encryptedPassword().isBlank())
+                .isPresent();
     }
 
     // Без номера терминала провайдер заказ не примет — отказ до него (Р-96). Номера нет у терминалов,

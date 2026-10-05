@@ -7,6 +7,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import az.millikart.common.audit.AuditAction;
+import az.millikart.common.audit.AuditEntity;
 import az.millikart.common.audit.AuditLogService;
 import az.millikart.common.exception.InvalidStateException;
 import az.millikart.common.security.UserPrincipal;
@@ -24,13 +26,15 @@ class EcomScopeServiceTest {
 
     private CompanyLoginRepository companies;
     private ProviderLoginRepository providerLogins;
+    private AuditLogService auditLogService;
     private EcomScopeService service;
 
     @BeforeEach
     void setUp() {
         companies = mock(CompanyLoginRepository.class);
         providerLogins = mock(ProviderLoginRepository.class);
-        service = new EcomScopeService(companies, providerLogins, mock(AuditLogService.class));
+        auditLogService = mock(AuditLogService.class);
+        service = new EcomScopeService(companies, providerLogins, auditLogService);
     }
 
     @Test
@@ -72,18 +76,24 @@ class EcomScopeServiceTest {
         verify(providerLogins, never()).findLinkedMerchantRids(any());
     }
 
+    // Отказ — с записью в журнал: роль компании без компании — сбой заведения учётки, его ищут по журналу.
     @Test
     void aRoleWithoutACompanyIsRefused() {
         Assertions.assertThrows(InvalidStateException.class,
                 () -> service.scopeFor(new UserPrincipal("1", "head@comp1.com", "COMPANY_HEAD", null)));
         verify(companies, never()).providerLoginOf(anyString());
         verify(companies, never()).allProviderLogins();
+        verify(auditLogService).logDenied(AuditEntity.TERMINAL, "ALL", AuditAction.LIST, "head@comp1.com", null,
+                "Denied: COMPANY_HEAD without a company asked for acquiring transactions");
     }
 
+    // Роль сверяется строго (AGENTS §6): «system_admin» — не администратор, и отказ тоже в журнале.
     @Test
     void anUnknownRoleIsRefused() {
         Assertions.assertThrows(InvalidStateException.class,
                 () -> service.scopeFor(new UserPrincipal("1", "head@comp1.com", "system_admin", "comp-01")));
         verify(companies, never()).allProviderLogins();
+        verify(auditLogService).logDenied(AuditEntity.TERMINAL, "ALL", AuditAction.LIST, "head@comp1.com", "comp-01",
+                "Denied: unrecognised role system_admin asked for acquiring transactions");
     }
 }

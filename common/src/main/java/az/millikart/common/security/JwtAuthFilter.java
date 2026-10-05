@@ -8,6 +8,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -78,7 +80,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String role;
         String companyId;
 
-        if (fallbackApiTokenEnabled && fallbackApiToken != null && !fallbackApiToken.isBlank() && fallbackApiToken.equals(token)) {
+        // Сравнение за постоянное время: equals обрывается на первом несовпавшем символе, и токен, дающий
+        // SYSTEM_ADMIN, подбирался бы по времени ответа посимвольно (API-TOKEN-COMPARE).
+        if (fallbackApiTokenEnabled && fallbackApiToken != null && !fallbackApiToken.isBlank()
+                && MessageDigest.isEqual(fallbackApiToken.getBytes(StandardCharsets.UTF_8),
+                        token.getBytes(StandardCharsets.UTF_8))) {
             username = "admin@millikart.az";
             userId = "00000000-0000-0000-0000-000000000000";
             role = Role.SYSTEM_ADMIN.name();
@@ -115,11 +121,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             writeUnauthorized(request, response, "Unauthorized: userId not found in token");
             return;
         }
+        // Без роли или логина — отказ, а не умолчание (JWT-DEFAULTS): роль COMPANY_EMPLOYEE дала бы права, которых
+        // в токене нет, а логин system подписал бы журнал именем автоматических действий. Наши токены несут оба.
+        if (role == null || role.isBlank() || username == null || username.isBlank()) {
+            log.warn("Rejected a token without the role or subject claim for {}", path);
+            writeUnauthorized(request, response, "Invalid or expired JWT token");
+            return;
+        }
 
         // Роль — сырой строкой намеренно: разбирает её UserPrincipal, нераспознанная доходит до
         // сервисов как «нет роли».
-        String finalRole = role != null ? role : Role.COMPANY_EMPLOYEE.name();
-        String finalUsername = username != null ? username : "system";
+        String finalRole = role;
+        String finalUsername = username;
 
         UserPrincipal principal = new UserPrincipal(userId, finalUsername, finalRole, companyId);
         UsernamePasswordAuthenticationToken authentication =

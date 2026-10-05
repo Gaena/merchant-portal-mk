@@ -23,6 +23,8 @@ import az.millikart.ecom.dto.EcomStatsResponse;
 import az.millikart.ecom.dto.EcomTerminalResponse;
 import az.millikart.ecom.dto.EcomTransactionFilter;
 import az.millikart.ecom.dto.EcomTransactionResponse;
+import az.millikart.ecom.repository.PortalPaymentsRepository;
+import az.millikart.ecom.repository.PortalPaymentsRepository.PortalTerminal;
 import az.millikart.ecom.repository.ProviderLoginRepository;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.repository.TxpgStatementRow;
@@ -31,13 +33,17 @@ import az.millikart.ecom.service.EcomScope;
 import az.millikart.ecom.service.EcomPaymentType;
 import az.millikart.ecom.service.EcomScopeService;
 import az.millikart.ecom.service.EcomTransactionService;
+import az.millikart.ecom.service.ProviderOrderAttemptService;
 import az.millikart.ecom.service.TxpgRows;
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,6 +60,8 @@ class EcomTransactionScopeTest {
     private EcomScopeService scope;
     private ProviderTerminalRepository providerTerminals;
     private ProviderLoginRepository providerLogins;
+    private PortalPaymentsRepository portal;
+    private ProviderOrderAttemptService attempts;
     private EcomTransactionService service;
 
     private static final EcomScope SCOPE = new EcomScope(List.of("E1120020"));
@@ -73,7 +81,10 @@ class EcomTransactionScopeTest {
         TxpgProperties properties = new TxpgProperties();
         properties.setMaxWindow(Duration.ofDays(92));
         properties.setMaxPageSize(200);
-        service = new EcomTransactionService(repository, scope, providerTerminals, providerLogins, properties);
+        portal = Mockito.mock(PortalPaymentsRepository.class);
+        attempts = Mockito.mock(ProviderOrderAttemptService.class);
+        service = new EcomTransactionService(repository, scope, providerTerminals, providerLogins, properties, portal,
+                attempts);
     }
 
     // Компании без мерчантов — пустая выписка, и в базу шлюза за ней даже не ходим. Обратная
@@ -459,7 +470,8 @@ class EcomTransactionScopeTest {
         properties.setMaxWindow(Duration.ofDays(92));
         properties.setMaxPageSize(maxPageSize);
         properties.setStatusScanLimit(statusScanLimit);
-        return new EcomTransactionService(repository, scope, providerTerminals, providerLogins, properties);
+        return new EcomTransactionService(repository, scope, providerTerminals, providerLogins, properties, portal,
+                attempts);
     }
 
     // Шлюз из заказов: номера — от новых к старым ниже курсора и не больше запрошенного, строки — по номерам.
@@ -476,6 +488,69 @@ class EcomTransactionScopeTest {
             wanted.forEach(id -> rows.addAll(orders.get(id)));
             return rows;
         });
+    }
+
+    // --- кнопки возврата и списания (Р-124) -----------------------------------------------------------
+
+    // Мерчант заказа заведён терминалом портала, у компании терминала есть креды — возврат активен на остаток,
+    // списано минус возвращено; у покупки SMS списания нет вовсе.
+    @Test
+    void theOrderCard_offersARefundOfWhatIsLeft_whenItsMerchantIsAPortalTerminal() {
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+        when(repository.findRows(any(), any(), any()))
+                .thenReturn(TxpgRows.order("175900", "FullyPaid", null, "40", TxpgRows.single("40")));
+        when(portal.terminalOfMerchant(TxpgRows.MERCHANT_RID)).thenReturn(Optional.of(new PortalTerminal(7, "comp-01")));
+        when(portal.hasProviderCredentials("comp-01")).thenReturn(true);
+
+        EcomTransactionResponse order = service.order("175900", principal);
+
+        Assertions.assertTrue(order.actions().refund().enabled());
+        Assertions.assertEquals(0, new BigDecimal("40").compareTo(order.actions().refund().maxAmount()));
+        Assertions.assertNull(order.actions().capture(), "an SMS purchase has no capture");
+        Assertions.assertNull(order.portalTransactionId());
+    }
+
+    // Требование заказчика: мерчанта нет среди терминалов портала — кнопка видна, но выключена и говорит почему.
+    @Test
+    void anOrderOfAMerchantThatIsNoPortalTerminal_saysSo() {
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+        when(repository.findRows(any(), any(), any()))
+                .thenReturn(TxpgRows.order("175901", "FullyPaid", null, "40", TxpgRows.single("40")));
+
+        EcomTransactionResponse order = service.order("175901", principal);
+
+        Assertions.assertFalse(order.actions().refund().enabled());
+        Assertions.assertEquals("TERMINAL_NOT_IN_PORTAL", order.actions().refund().reason());
+    }
+
+    // Заказ завёл портал — проводит его pbl: вместо кнопок номер операции портала, и деньги учитываются в одном месте.
+    @Test
+    void anOrderThePortalCreated_pointsToItsPortalTransactionInsteadOfButtons() {
+        UUID portalTransaction = UUID.randomUUID();
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+        when(repository.findRows(any(), any(), any()))
+                .thenReturn(TxpgRows.order("175902", "FullyPaid", null, "40", TxpgRows.single("40")));
+        when(portal.portalTransactionOf("175902")).thenReturn(Optional.of(portalTransaction));
+
+        EcomTransactionResponse order = service.order("175902", principal);
+
+        Assertions.assertNull(order.actions());
+        Assertions.assertEquals(portalTransaction.toString(), order.portalTransactionId());
+        verify(portal, never()).terminalOfMerchant(any());
+    }
+
+    // Строки выписки кнопок не несут: на каждую строку — запросы к терминалам, кредам и операциям портала.
+    @Test
+    void statementRowsCarryNoButtons() {
+        when(scope.scopeFor(principal)).thenReturn(SCOPE);
+        when(repository.findOrderIds(any(), any(), anyInt())).thenReturn(List.of(175662L));
+        when(repository.findRows(any(), any(), any())).thenReturn(rowsOf("175662"));
+
+        CursorPage<EcomTransactionResponse> page =
+                service.list(from, to, null, null, null, null, null, null, null, null, principal);
+
+        Assertions.assertNull(page.content().get(0).actions());
+        verifyNoInteractions(portal, attempts);
     }
 
     private static List<TxpgStatementRow> rowsOf(String... orderIds) {

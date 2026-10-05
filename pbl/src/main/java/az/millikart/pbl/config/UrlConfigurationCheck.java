@@ -17,8 +17,8 @@ public class UrlConfigurationCheck {
     private static final Logger log = LoggerFactory.getLogger(UrlConfigurationCheck.class);
 
     static final String BASE_URL_VARIABLE = "PBL_BASE_URL";
-    static final String GATEWAY_BASE_URL_VARIABLE = "PBL_PROVIDER_GATEWAY_BASE_URL";
-    static final String API_BASE_URL_VARIABLE = "PBL_PROVIDER_API_BASE_URL";
+    static final String GATEWAY_BASE_URL_VARIABLE = "PROVIDER_GATEWAY_BASE_URL";
+    static final String API_BASE_URL_VARIABLE = "PROVIDER_API_BASE_URL";
 
     private static final Set<String> ALLOWED_SCHEMES = Set.of("http", "https");
 
@@ -32,8 +32,8 @@ public class UrlConfigurationCheck {
             How to fix:
               Export an absolute http(s) URL before starting the service, for example:
                 export PBL_BASE_URL='https://pay.example.com/'
-                export PBL_PROVIDER_GATEWAY_BASE_URL='https://gateway.acquirer.example:8083/'
-                export PBL_PROVIDER_API_BASE_URL='https://api.acquirer.example:8000/'
+                export PROVIDER_GATEWAY_BASE_URL='https://gateway.acquirer.example:8083/'
+                export PROVIDER_API_BASE_URL='https://api.acquirer.example:8000/'
               None of the three has a default value on purpose. PBL_BASE_URL is sent to the acquirer
               as the address the payer is returned to after paying; the two provider addresses decide
               which acquirer receives the payments. A wrong value does not stop the service — it stops

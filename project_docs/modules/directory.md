@@ -69,7 +69,7 @@
 
     | Код | `message` | Когда | Журнал |
     |:---|:---|:---|:---|
-    | `400` | `Company ID is required`, `Company name is required`, `Provider login is required`, `Provider password is required` | не прошла валидация | — |
+    | `400` | `Company ID is required`, `Company name is required`, `Provider login is required`, `Provider password is required`; `Company ID must be at most 255 characters`, `Company name must be at most 255 characters`, `Provider password must be at most 100 characters` | не прошла валидация. Пароль ложится шифротекстом в `varchar(512)`: 100 знаков влезают при любых символах | — |
     | `403` | `Access denied: Only SYSTEM_ADMIN can create companies` | не администратор | `COMPANY` / `CREATE` / `DENIED` |
     | `400` | `Company with ID '<id>' already exists` | `id` занят, в том числе удалённой компанией | — |
     | `400` | `Provider login must be a multimerchant login: MultiMerchantSys/<login>` | логин без префикса `MultiMerchantSys/` | — |
@@ -78,6 +78,7 @@
     | `400` | `Provider login <login> is not active at the provider` | логин не `Active` | — |
     | `400` | `Provider login <login> has no active merchants at the provider` | нет активной связи с мерчантом | — |
     | `409` | `Provider login is already used by another company` | логин у другой компании; удалённые компании его не освобождают | — |
+    | `409` | `The request conflicts with existing data` | одновременный запрос успел занять тот же ключ между проверкой и записью; повтор получит отказ выше (`id` или логин) | — |
 
     *Журнал*: `COMPANY` / `CREATE` `Created company: <name>, provider login <login>`.
 -   `GET /api/v1/companies` — Получить список компаний (постранично).  
@@ -95,7 +96,8 @@
     компании, включая удалённые. `merchants` — названия мерчантов активных связей. Слепка нет или пуст —
     пустой список. Список — подсказка форме: `POST` и `PATCH` проверяют логин сами.
 -   `GET /api/v1/companies/{id}` — Детали компании.  
-    *Доступ*: `SYSTEM_ADMIN` и `AUDITOR` — любой; остальные роли — только своей компании.  
+    *Доступ*: `SYSTEM_ADMIN` и `AUDITOR` — любой; остальные роли — только своей компании; нераспознанная роль —
+    никакой, и своей тоже (`../../AGENTS.md` §6).  
     *Ответ `200`*: `CompanyResponse`.  
     *Отказы*: `400 Company not found` — нет такой или она удалена; `403 Access denied` — чужая компания, запись
     `COMPANY` / `READ` / `DENIED`.
@@ -103,7 +105,10 @@
     *Доступ*: Только `SYSTEM_ADMIN`.  
     *Запрос* (все поля необязательны, пустое — «не менять»): `{"name", "status", "providerLogin",
     "providerPassword"}`. Новый пароль ложится шифротекстом; прочитать прежний нельзя. Новый логин
-    проверяется по слепку так же, как при создании; тот же логин проверку не запускает.  
+    проверяется по слепку так же, как при создании, и ещё по терминалам компании: мерчант каждого её
+    терминала, заблокированного тоже, должен быть активно связан с новым логином (Р-96, Р-97) — иначе этот
+    терминал остался бы без платежей, возвратов и выписки. Терминал без `merchant_rid` не сверяется. Тот же
+    логин проверку не запускает.  
     *Статус*: только `ACTIVE` или `INACTIVE`, сравнение точное. `DELETED` ставит только `DELETE`. `INACTIVE`
     платежей не останавливает (`../../AGENTS.md` §10): их останавливает блокировка терминалов.  
     *Ответ `200`*: `CompanyResponse`.  
@@ -111,15 +116,18 @@
 
     | Код | `message` | Когда | Журнал |
     |:---|:---|:---|:---|
+    | `400` | `Company name must be at most 255 characters`, `Provider password must be at most 100 characters` | не прошла валидация | — |
     | `403` | `Access denied: Only SYSTEM_ADMIN can update companies` | не администратор | `COMPANY` / `UPDATE` / `DENIED` |
     | `400` | `Company not found` | нет такой или она удалена | — |
     | `400` | `Company status must be ACTIVE or INACTIVE` | иной `status` | — |
     | `400` | те же, что у `POST`, для нового логина | новый логин не проходит проверку по слепку | — |
     | `409` | `Provider login is already used by another company` | новый логин занят | — |
+    | `400` | `Provider login <login> has no active link to the merchants of terminals <id, …> of company <id>; link them to this login at the provider and refresh the provider directory, or move the terminals to another company first` | мерчант хотя бы одного терминала компании не связан с новым логином | — |
 
     *Журнал*: `COMPANY` / `UPDATE` с перечнем изменений — `Name changed from 'X' to 'Y'.`, `Status changed
     from …`, `Provider login changed from 'X' to 'Y'.`, `Provider password changed.` (без значения пароля);
-    смена статуса пишет ещё `BLOCK`/`UNBLOCK`.
+    смена статуса пишет ещё `BLOCK`/`UNBLOCK`. В перечень попадают только поля, значение которых изменилось;
+    PATCH без изменений отвечает `200` и не пишет ничего, `updatedAt` не меняется (Р-108).
 -   `DELETE /api/v1/companies/{id}` — мягкое удаление: `status = DELETED`.  
     *Доступ*: Только `SYSTEM_ADMIN`.  
     *Ответ `204`*. Терминалы и пользователи компании не трогаются, её логин к провайдеру остаётся занятым.
@@ -136,7 +144,8 @@
 `AUDITOR` и любая нераспознанная роль получают `403` даже на терминалы своей компании (P1-15). Чтение шире:
 свои терминалы видят все компанейские роли, включая `COMPANY_EMPLOYEE`, а `SYSTEM_ADMIN` и `AUDITOR` — все.
 
-`TerminalResponse` — `id`, `name`, `login`, `terminalRid`, `companyId`, `status`, `createdBy`, `createdAt`,
+`TerminalResponse` — `id`, `name`, `login`, `terminalRid`, `providerLinked` (связан со справочником провайдера: у
+терминала есть `merchant_rid`, название — провайдера), `companyId`, `status`, `createdBy`, `createdAt`,
 `updatedBy`, `updatedAt`:
 
 -   `id` — внутренний номер терминала в портале из последовательности `terminals_id_seq` (Р-81), а не номер у
@@ -167,6 +176,7 @@
     | `403` | `Access denied: AUDITOR is read-only` / `Access denied` | аудитор / прочие не-администраторы | `TERMINAL` / `CREATE` / `DENIED`, `entityId` = `NEW` |
     | `400` | `Company with ID '<id>' not found` | компании нет или она удалена | — |
     | `400` | `Provider terminal <rid> is already linked to terminal <id>` | мерчант уже заведён: один терминал провайдера — одна компания | — |
+    | `409` | `The request conflicts with existing data` | тот же мерчант заводится одновременным запросом: он успел между проверкой и записью | — |
     | `400` | `Provider terminal <rid> is not in the synchronised list` | мерчанта нет в справочнике | — |
     | `400` | `Provider terminal <rid> has no name, login or terminal number in the synchronised list` | в строке справочника нет названия, логина или номера терминала | — |
     | `400` | `Provider terminal <rid> is not active at the provider` | строка справочника неактивна | — |
@@ -197,14 +207,16 @@
     ```
     Отдаёт и `BLOCKED`: подпись старых платежей по заблокированному терминалу должна остаться, фильтрует потребитель (Р-45).
 -   `GET /api/v1/terminals/{id}` — Детали терминала.  
-    *Доступ*: `SYSTEM_ADMIN`, `AUDITOR`, любая роль из компании терминала (в т.ч. `COMPANY_EMPLOYEE`).  
+    *Доступ*: `SYSTEM_ADMIN`, `AUDITOR`, любая роль из компании терминала (в т.ч. `COMPANY_EMPLOYEE`);
+    нераспознанной роли — `403` и на терминал своей компании, с той же записью в журнал.  
     *Ответ `200`*: `TerminalResponse`.  
     *Отказы*: `400 Terminal not found`; `403 Access denied` — чужой терминал, запись `TERMINAL` / `READ` / `DENIED`.
 -   `PATCH /api/v1/terminals/{id}` — Редактировать терминал **и его статус**.  
     *Доступ*: `SYSTEM_ADMIN`, `COMPANY_HEAD`/`COMPANY_MANAGER` (своей компании).  
     *Запрос* (все поля необязательны, пустое — «не менять»): `{"name": "...", "companyId": "...", "status":
     "ACTIVE" | "BLOCKED"}`. Логин не правится — его меняет только сверка со справочником; `login` и
-    `password` в теле игнорируются.  
+    `password` в теле игнорируются. Название терминала из справочника (`providerLinked`) — тоже провайдера
+    (Р-67, Р-116): другое значение `name` — 400; переименовать можно только терминал без справочника.  
     *Компания*: переносит терминал в другую компанию **только `SYSTEM_ADMIN`** — для руководителя и менеджера
     чужая целевая компания — отказ в доступе. Терминал переходит только в компанию, с логином мультимерчанта
     которой его мерчант (`merchant_rid`) активно связан в `provider_logins`, — то же правило, что при заведении
@@ -220,16 +232,20 @@
 
     | Код | `message` | Когда | Журнал |
     |:---|:---|:---|:---|
+    | `400` | `Terminal name must be at most 255 characters` | не прошла валидация | — |
     | `400` | `Terminal not found` | нет такого терминала | — |
+    | `400` | `Terminal <id> takes its name from the provider directory; rename it at the provider` | новое `name` у терминала из справочника (после проверки прав) | — |
     | `403` | `Access denied: AUDITOR is read-only` / `Access denied` | аудитор / роль без права записи или чужой терминал | `TERMINAL` / `UPDATE` / `DENIED` |
     | `403` | `Access denied` | не администратор переносит терминал в другую компанию | `TERMINAL` / `UPDATE` / `DENIED` |
     | `400` | `Company with ID '<id>' not found` | целевой компании нет или она удалена | — |
     | `400` | `Terminal <id> cannot be moved to company <id>: its provider merchant is not linked to the multimerchant login of that company` | мерчант не связан с логином целевой компании или у терминала нет `merchant_rid` | — |
     | `403` | `Terminal <id> is out of service at the provider and will be unblocked automatically once the provider brings it back` | ручное включение терминала, выключенного сверкой (`status_source = PROVIDER`, Р-66) | `TERMINAL` / `UNBLOCK` / `DENIED` |
+    | `409` | `The resource was updated concurrently, please retry` | терминал изменила сверка или другая правка, пока шла эта (Р-115); ничего не сохранено | — |
 
     *Журнал*: `TERMINAL` / `UPDATE` с перечнем изменений (`Name changed from 'X' to 'Y'.`, `CompanyId changed
     from 'X' to 'Y'.`, смена статуса); смена статуса — ещё `BLOCK` `Blocked terminal <id>, suspended N links`
-    или `UNBLOCK` `Unblocked terminal <id>, resumed N links, expired M links`.
+    или `UNBLOCK` `Unblocked terminal <id>, resumed N links, expired M links`. В перечень попадают только
+    изменившиеся поля; PATCH без изменений отвечает `200` и не пишет ничего, `updatedAt` не меняется (Р-108).
 -   `DELETE /api/v1/terminals/{id}` — нет: `405` (§3). Терминалы не удаляются, а блокируются (Р-37): на них
     ссылаются платёжные ссылки.
 
@@ -251,8 +267,11 @@
 Пустой справочник (синхронизация ещё не проходила или `ecom` не установлен) не применяется вовсе.
 Строку справочника неактивной делает `ecom`: терминал выключен у провайдера или три обновления подряд не
 приходил. Название, логин и номер терминала (`terminal_rid`, Р-96) сверка переносит к нам у любого терминала,
-найденного в справочнике по `merchant_rid`, и пишет `TERMINAL` / `UPDATE` от `system`. Смены статуса пишутся
-как `TERMINAL` / `BLOCK` или `UNBLOCK` с исполнителем `system`.
+найденного в справочнике по `merchant_rid`, и пишет `TERMINAL` / `UPDATE` от `system`; название длиннее 255
+знаков обрезается по колонке. Смены статуса пишутся как `TERMINAL` / `BLOCK` или `UNBLOCK` с исполнителем
+`system`. Каждый терминал сверяется в своей транзакции, и запись журнала ложится после её коммита (Р-115):
+сбой одного терминала не откатывает остальные и не оставляет записи о несостоявшемся. Терминал, который
+правят во время прохода, сверка не перезаписывает — он остаётся до следующего прохода.
 
 ### 3.3. Журнал аудита (Audit Logs)
 

@@ -1,0 +1,23 @@
+plugins {
+    id 'java-library'
+    // Тестовый двойник эквайера (StubAcquiringClient) — один на все сервисы, как контейнер PostgreSQL в common.
+    id 'java-test-fixtures'
+    id 'io.spring.dependency-management'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom("org.springframework.boot:spring-boot-dependencies:3.2.5")
+    }
+}
+
+dependencies {
+    // Исключения в сигнатурах (BusinessException, PaymentOutcomeUnknownException), RestClient, Jackson.
+    api project(':common')
+    // @CircuitBreaker и @Retry стоят на методах клиента; без AOP они молча ничего не делают. Настройки
+    // экземпляра acquiring — в application.yaml сервиса.
+    api 'org.springframework.boot:spring-boot-starter-aop'
+    api 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}

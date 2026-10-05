@@ -11,7 +11,11 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import liquibase.Contexts;
 import liquibase.LabelExpression;
 import liquibase.Liquibase;
@@ -76,45 +80,47 @@ public class SharedSchemaMigrationTest {
         }
     }
 
+    // pbl создаёт terminals, companies и audit_logs сам; directory, пришедший вторым, их дополняет:
+    // колонки аудита у companies, уникальный логин (Р-93), индексы журнала (P2-14).
     @Test
-    @DisplayName("pbl starts first on an empty database, directory follows")
+    @DisplayName("pbl starts first on an empty database, directory and auth follow")
     void pblFirst_thenDirectory_bothMigrate() throws Exception {
         assertDoesNotThrow(this::runPblChangelog);
         assertTrue(columnExists("terminals", "status"), "pbl must add status to the table it created");
+        assertTrue(tableExists("audit_logs"), "pbl must create audit_logs when nobody else has");
+        assertTrue(columnExists("audit_logs", "outcome"));
+        assertTrue(columnExists("companies", "provider_login"));
+        assertTrue(columnExists("companies", "provider_password"));
+        assertFalse(columnExists("terminals", "password"), "the terminal password is gone");
 
         assertDoesNotThrow(this::runDirectoryChangelog,
-                "directory must migrate onto a terminals table pbl created");
+                "directory must migrate onto the tables pbl created");
+        assertDoesNotThrow(this::runAuthChangelog);
 
         assertTrue(columnExists("terminals", "status"));
-        assertTrue(tableExists("audit_logs"), "directory's own tables must still be created");
+        assertTrue(columnExists("companies", "created_by"), "directory completes the table pbl created");
+        assertTrue(indexExists("companies", "ux_companies_provider_login"));
+        assertAuditIndexesAreComplete();
     }
 
+    // Колонки и индексы добавляются один раз, кто бы ни успел первым: повторный ADD COLUMN на PostgreSQL
+    // падает, и только precondition превращает его в пропуск. Креды компании pbl находит на месте (Р-93).
     @Test
-    @DisplayName("directory starts first on an empty database, pbl follows")
+    @DisplayName("directory starts first, pbl follows, both run again: nothing is added twice")
     void directoryFirst_thenPbl_bothMigrate() throws Exception {
         assertDoesNotThrow(this::runDirectoryChangelog);
         assertTrue(columnExists("terminals", "status"), "directory must add status to the table it created");
+        assertTrue(indexExists("companies", "ux_companies_provider_login"));
+        assertFalse(columnExists("terminals", "password"));
+        assertAuditIndexesAreComplete();
 
         assertDoesNotThrow(this::runPblChangelog,
-                "pbl must migrate onto a terminals table directory created");
-
-        assertTrue(columnExists("terminals", "status"));
+                "pbl must migrate onto the tables directory created");
         assertTrue(tableExists("payment_links"), "pbl's own tables must still be created");
-    }
-
-    // Колонка добавляется один раз, кто бы ни успел первым: второй changelog не должен пытаться
-    // добавить её снова. На PostgreSQL повторный ADD COLUMN status падает, и только precondition
-    // превращает его в пропуск.
-    @Test
-    @DisplayName("running both changelogs twice, in both orders, changes nothing and fails nothing")
-    void bothChangelogs_runRepeatedly_areIdempotent() throws Exception {
-        runDirectoryChangelog();
-        runPblChangelog();
+        assertTrue(columnExists("companies", "provider_password"));
 
         assertDoesNotThrow(this::runPblChangelog);
         assertDoesNotThrow(this::runDirectoryChangelog);
-
-        assertTrue(columnExists("terminals", "status"));
         assertTrue(statusColumnIsSingle(), "status must exist exactly once on terminals");
     }
 
@@ -150,22 +156,8 @@ public class SharedSchemaMigrationTest {
         assertDoesNotThrow(this::runDirectoryChangelog,
                 "directory must migrate onto an audit_logs table auth created");
 
-        assertTrue(indexExists("audit_logs", "idx_audit_logs_company_created"));
-        assertTrue(indexExists("audit_logs", "idx_audit_logs_entity"));
-        assertTrue(indexExists("audit_logs", "idx_audit_logs_created"));
+        assertAuditIndexesAreComplete();
         assertTrue(tableExists("companies"), "directory's own tables must still be created");
-    }
-
-    @Test
-    @DisplayName("pbl starts first on an empty database, directory follows: one audit_logs")
-    void pblFirst_thenDirectory_shareOneAuditTable() throws Exception {
-        assertDoesNotThrow(this::runPblChangelog);
-        assertTrue(tableExists("audit_logs"), "pbl must create audit_logs when nobody else has");
-        assertTrue(columnExists("audit_logs", "outcome"));
-
-        assertDoesNotThrow(this::runDirectoryChangelog);
-
-        assertTrue(indexExists("audit_logs", "idx_audit_logs_created"));
     }
 
     @Test
@@ -176,8 +168,7 @@ public class SharedSchemaMigrationTest {
         assertDoesNotThrow(this::runAuthChangelog);
         assertDoesNotThrow(this::runPblChangelog);
 
-        assertTrue(tableExists("audit_logs"));
-        assertTrue(indexExists("audit_logs", "idx_audit_logs_entity"));
+        assertAuditIndexesAreComplete();
     }
 
     // Обновление живой базы: таблица осталась с времён до P2-8, а колонки в ней нет.
@@ -241,35 +232,36 @@ public class SharedSchemaMigrationTest {
         }
     }
 
-    // --- Р-93: креды компании и пароль терминала ---
+    // --- ecom: свои слепки и колонки сверки в общей terminals ---
 
-    // Колонки кредов добавляет тот, кто стартовал первым; pbl при этом умеет создать companies сам, а
-    // directory потом дополняет её колонками аудита. Уникальность логина — только directory.
+    // ecom стартует после directory или pbl (AGENTS §4): terminals он дополняет, но не создаёт.
     @Test
-    @DisplayName("pbl first: companies get provider credentials, directory adds the unique login index")
-    void pblFirst_companiesGetProviderCredentials() throws Exception {
+    @DisplayName("directory first, then ecom: the snapshots are created, the terminal columns are found in place")
+    void directoryFirst_thenEcom_bothMigrate() throws Exception {
+        assertDoesNotThrow(this::runDirectoryChangelog);
+        assertDoesNotThrow(this::runEcomChangelog);
+
+        assertTrue(columnExists("provider_terminals", "terminal_rid"));
+        assertTrue(tableExists("provider_logins"));
+        assertTrue(indexExists("terminals", "uk_terminals_merchant_rid"));
+
+        assertDoesNotThrow(this::runEcomChangelog, "a second ecom run must change nothing");
+        assertDoesNotThrow(this::runDirectoryChangelog, "directory after ecom must change nothing");
+    }
+
+    // pbl создаёт terminals сам; колонки сверки добавляет тот из ecom и directory, кто пришёл первым.
+    @Test
+    @DisplayName("pbl first, then ecom, then directory and auth: the reconciliation columns are added once")
+    void pblFirst_thenEcom_thenDirectory_allMigrate() throws Exception {
         assertDoesNotThrow(this::runPblChangelog);
-        assertTrue(columnExists("companies", "provider_login"));
-        assertTrue(columnExists("companies", "provider_password"));
-        assertFalse(columnExists("terminals", "password"), "the terminal password is gone");
+        assertDoesNotThrow(this::runEcomChangelog);
+        assertTrue(columnExists("terminals", "status_source"));
+        assertTrue(columnExists("terminals", "merchant_rid"));
 
         assertDoesNotThrow(this::runDirectoryChangelog);
         assertDoesNotThrow(this::runAuthChangelog);
-
-        assertTrue(columnExists("companies", "created_by"), "directory completes the table pbl created");
-        assertTrue(indexExists("companies", "ux_companies_provider_login"));
-    }
-
-    @Test
-    @DisplayName("directory first: pbl finds the provider credentials in place and skips them")
-    void directoryFirst_thenPbl_skipsTheProviderCredentials() throws Exception {
-        assertDoesNotThrow(this::runDirectoryChangelog);
-        assertTrue(indexExists("companies", "ux_companies_provider_login"));
-        assertFalse(columnExists("terminals", "password"));
-
-        assertDoesNotThrow(this::runPblChangelog);
-        assertDoesNotThrow(this::runDirectoryChangelog);
-        assertTrue(columnExists("companies", "provider_password"));
+        assertTrue(indexExists("terminals", "uk_terminals_merchant_rid"));
+        assertTrue(tableExists("audit_logs"));
     }
 
     // --- вспомогательное ---
@@ -284,6 +276,10 @@ public class SharedSchemaMigrationTest {
 
     private void runAuthChangelog() throws Exception {
         runChangelog("auth/src/main/resources");
+    }
+
+    private void runEcomChangelog() throws Exception {
+        runChangelog("ecom/src/main/resources");
     }
 
     private void runChangelog(String moduleResources) throws Exception {
@@ -333,6 +329,34 @@ public class SharedSchemaMigrationTest {
             }
         }
         return false;
+    }
+
+    // Индексы журнала — по метаданным схемы, а не по DATABASECHANGELOG: changeset, тихо пропущенный
+    // предусловием, отмечен выполненным и оставил бы таблицу без индекса. Кто бы ни создал audit_logs,
+    // колонки и порядок те же: по компании и по времени — от новых к старым.
+    private void assertAuditIndexesAreComplete() throws Exception {
+        Map<String, List<String>> columns = new HashMap<>();
+        Map<String, List<String>> ordering = new HashMap<>();
+        try (ResultSet rs = keepAlive.getMetaData().getIndexInfo(null, schema, upper("audit_logs"), false, false)) {
+            while (rs.next()) {
+                String index = rs.getString("INDEX_NAME");
+                String column = rs.getString("COLUMN_NAME");
+                if (index == null || column == null) {
+                    continue;
+                }
+                String key = index.toLowerCase(Locale.ROOT);
+                columns.computeIfAbsent(key, k -> new ArrayList<>()).add(column.toLowerCase(Locale.ROOT));
+                ordering.computeIfAbsent(key, k -> new ArrayList<>()).add(rs.getString("ASC_OR_DESC"));
+            }
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(List.of("company_id", "created_at"),
+                columns.get("idx_audit_logs_company_created"));
+        org.junit.jupiter.api.Assertions.assertEquals(List.of("entity_type", "entity_id"), columns.get("idx_audit_logs_entity"));
+        org.junit.jupiter.api.Assertions.assertEquals(List.of("created_at"), columns.get("idx_audit_logs_created"));
+        org.junit.jupiter.api.Assertions.assertEquals("D", ordering.get("idx_audit_logs_company_created").get(1),
+                "created_at must be descending in the company index");
+        org.junit.jupiter.api.Assertions.assertEquals("D", ordering.get("idx_audit_logs_created").getFirst(),
+                "created_at must be descending in the administrator index");
     }
 
     private boolean statusColumnIsSingle() throws Exception {

@@ -3,10 +3,12 @@ package az.millikart.auth.dto;
 import az.millikart.common.validation.ValidPassword;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 public record CreateUserRequest(
         @NotBlank(message = "Username is required")
         @Email(message = "Username must be a valid email address")
+        @Size(max = 255, message = "Username must be at most 255 characters")
         String username,
 
         @NotBlank(message = "Password is required")
@@ -14,6 +16,7 @@ public record CreateUserRequest(
         String password,
 
         @NotBlank(message = "Full name is required")
+        @Size(max = 255, message = "Full name must be at most 255 characters")
         String fullName,
 
         @NotBlank(message = "Role is required")

@@ -138,10 +138,12 @@ class PasswordChangeIntegrationTest {
                 .andExpect(jsonPath("$.token", nullValue()));
     }
 
-    // Свой пароль владелец задаёт сам — второй смены это не требует.
+    // Свой пароль владелец задаёт сам — второй смены это не требует. PATCH-SELF-PASSWORD: сессии со старым
+    // паролем при этом гасились только у чужого сброса, и украденная сессия жила дальше; теперь гаснут все.
     @Test
     void changingYourOwnPasswordThroughTheUserApi_requiresNoFurtherChange() throws Exception {
         UUID adminId = userRepository.findByUsername(ADMIN).orElseThrow().getId();
+        String stolenSession = body(login(ADMIN, ADMIN_PASSWORD)).get("refreshToken").asText();
 
         mockMvc.perform(patch("/api/v1/users/" + adminId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
@@ -151,6 +153,10 @@ class PasswordChangeIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.passwordChangeRequired", is(false)));
 
+        mockMvc.perform(fromClient(post("/api/v1/auth/refresh"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new RefreshRequest(stolenSession))))
+                .andExpect(status().isUnauthorized());
         login(ADMIN, "AdminPassword456!").andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").isNotEmpty());
     }

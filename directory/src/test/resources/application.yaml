@@ -14,6 +14,12 @@ spring:
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.xml
 
+directory:
+  terminal-reconciliation:
+    # Off: every 15 minutes it would block or rename other tests' terminals. TerminalStatusReconciliationTest
+    # calls the service itself.
+    enabled: false
+
 pbl:
   security:
     # No test uses the static fallback token, and leaving it enabled would demand a real value.

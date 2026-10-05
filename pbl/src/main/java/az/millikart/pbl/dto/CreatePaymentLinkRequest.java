@@ -9,8 +9,10 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Map;
 
+// Потолки длины — ширина колонок payment_links: длиннее база не примет (DB-CONSTRAINT-500).
 public record CreatePaymentLinkRequest(
 
+        @Size(max = 255, message = "merchantOrderId must be at most 255 characters")
         String merchantOrderId,
 
         @NotNull(message = "terminal is required")
@@ -19,12 +21,16 @@ public record CreatePaymentLinkRequest(
         @NotNull(message = "amount is required")
         @Positive(message = "amount must be positive")
         @DecimalMin(value = "0.0", inclusive = false, message = "amount must be positive")
+        // Колонка numeric(19,2) молча округлит третий знак: ответ и журнал показали бы 10.555, а в базе и у
+        // эквайера была бы 10.56 (LINK-AMOUNT-SCALE).
+        @Digits(integer = 17, fraction = 2, message = "amount must have at most 17 integer digits and 2 decimal places")
         BigDecimal amount,
 
         @NotBlank(message = "currency is required")
         @Size(min = 3, max = 3, message = "currency must be a 3-letter ISO 4217 code")
         String currency,
 
+        @Size(max = 255, message = "description must be at most 255 characters")
         String description,
 
         @Valid

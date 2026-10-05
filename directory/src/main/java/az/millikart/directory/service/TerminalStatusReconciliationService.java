@@ -3,7 +3,6 @@ package az.millikart.directory.service;
 import az.millikart.common.audit.AuditAction;
 import az.millikart.common.audit.AuditEntity;
 import az.millikart.common.audit.AuditEvent;
-import az.millikart.common.audit.AuditLogService;
 import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.domain.TerminalStatus;
 import az.millikart.directory.domain.TerminalStatusSource;
@@ -14,8 +13,12 @@ import java.time.Instant;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // Таблица переходов — project_docs/modules/directory.md §3.2 (Р-66). Ручную блокировку (BLOCKED +
 // MANUAL) не снимать никогда: это решение клиента. Нет строки в слепке — «не знаем», не трогать.
@@ -26,25 +29,38 @@ public class TerminalStatusReconciliationService {
 
     private static final String SYSTEM_ACTOR = "system";
 
+    // Ширина terminals.name; у провайдера название до 256 (ecom/001). Длиннее — режем, и сравниваем
+    // уже обрезанное: иначе каждый проход видел бы «новое» название и падал на записи (RECON-AUDIT-ROLLBACK).
+    static final int NAME_MAX_LENGTH = 255;
+
     private final TerminalRepository terminalRepository;
     private final ProviderTerminalStatusRepository snapshot;
     private final PaymentLinkStatusRepository paymentLinkStatusRepository;
-    private final AuditLogService auditLogService;
+    private final ApplicationEventPublisher eventPublisher;
+    private final TransactionTemplate perTerminal;
 
     public TerminalStatusReconciliationService(TerminalRepository terminalRepository,
                                                ProviderTerminalStatusRepository snapshot,
                                                PaymentLinkStatusRepository paymentLinkStatusRepository,
-                                               AuditLogService auditLogService) {
+                                               ApplicationEventPublisher eventPublisher,
+                                               PlatformTransactionManager transactionManager) {
         this.terminalRepository = terminalRepository;
         this.snapshot = snapshot;
         this.paymentLinkStatusRepository = paymentLinkStatusRepository;
-        this.auditLogService = auditLogService;
+        this.eventPublisher = eventPublisher;
+        // REQUIRES_NEW: позванная внутри чужой транзакции, сверка иначе снова стала бы одной на все терминалы.
+        this.perTerminal = new TransactionTemplate(transactionManager);
+        this.perTerminal.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     public record ReconcileOutcome(int blocked, int unblocked, int untouched) {
     }
 
-    @Transactional
+    private enum Change { BLOCKED, UNBLOCKED, NONE }
+
+    // Транзакция на терминал, а не на проход: сбой или конфликт одного не откатывает остальные, а записи
+    // журнала ложатся после коммита своей — откат не оставляет в журнале несостоявшихся блокировок
+    // (RECON-AUDIT-ROLLBACK). Терминал, который правят руками во время прохода, — до следующего (@Version).
     public ReconcileOutcome reconcile() {
         Map<String, Boolean> activity = snapshot.activityByRid();
         if (activity.isEmpty()) {
@@ -61,34 +77,22 @@ public class TerminalStatusReconciliationService {
         int untouched = 0;
 
         for (Terminal terminal : terminalRepository.findAll()) {
-            String rid = terminal.getMerchantRid();
-            if (rid == null || rid.isBlank()) {
-                untouched++;
-                continue;
+            Change change;
+            try {
+                change = perTerminal.execute(status -> reconcileOne(terminal, activity, identity));
+            } catch (OptimisticLockingFailureException e) {
+                // Терминал правят руками прямо сейчас: его решение свежее нашего снимка.
+                log.info("Terminal {} was changed while the reconciliation ran; leaving it to the next pass",
+                        terminal.getId());
+                change = Change.NONE;
+            } catch (RuntimeException e) {
+                log.warn("Reconciliation of terminal {} failed; continuing with the rest", terminal.getId(), e);
+                change = Change.NONE;
             }
-            ProviderTerminalStatusRepository.ProviderTerminalRow row = identity.get(rid);
-            if (row != null) {
-                alignIdentity(terminal, row);
-            }
-            Boolean activeAtProvider = activity.get(rid);
-            if (activeAtProvider == null) {
-                log.debug("Terminal {} points at provider terminal {}, which the snapshot does not "
-                        + "mention; leaving it alone", terminal.getId(), rid);
-                untouched++;
-                continue;
-            }
-
-            boolean ourActive = terminal.getStatus() != TerminalStatus.BLOCKED;
-
-            if (ourActive && !activeAtProvider) {
-                apply(terminal, TerminalStatus.BLOCKED, rid);
-                blocked++;
-            } else if (!ourActive && activeAtProvider
-                    && terminal.getStatusSource() == TerminalStatusSource.PROVIDER) {
-                apply(terminal, TerminalStatus.ACTIVE, rid);
-                unblocked++;
-            } else {
-                untouched++;
+            switch (change == null ? Change.NONE : change) {
+                case BLOCKED -> blocked++;
+                case UNBLOCKED -> unblocked++;
+                case NONE -> untouched++;
             }
         }
 
@@ -99,11 +103,40 @@ public class TerminalStatusReconciliationService {
         return new ReconcileOutcome(blocked, unblocked, untouched);
     }
 
+    private Change reconcileOne(Terminal terminal, Map<String, Boolean> activity,
+                                Map<String, ProviderTerminalStatusRepository.ProviderTerminalRow> identity) {
+        String rid = terminal.getMerchantRid();
+        if (rid == null || rid.isBlank()) {
+            return Change.NONE;
+        }
+        ProviderTerminalStatusRepository.ProviderTerminalRow row = identity.get(rid);
+        if (row != null) {
+            alignIdentity(terminal, row);
+        }
+        Boolean activeAtProvider = activity.get(rid);
+        if (activeAtProvider == null) {
+            log.debug("Terminal {} points at provider terminal {}, which the snapshot does not "
+                    + "mention; leaving it alone", terminal.getId(), rid);
+            return Change.NONE;
+        }
+
+        boolean ourActive = terminal.getStatus() != TerminalStatus.BLOCKED;
+        if (ourActive && !activeAtProvider) {
+            apply(terminal, TerminalStatus.BLOCKED, rid);
+            return Change.BLOCKED;
+        }
+        if (!ourActive && activeAtProvider && terminal.getStatusSource() == TerminalStatusSource.PROVIDER) {
+            apply(terminal, TerminalStatus.ACTIVE, rid);
+            return Change.UNBLOCKED;
+        }
+        return Change.NONE;
+    }
+
     // Название, логин и номер — провайдера (Р-67): старый номер отправил бы заказ pbl не на тот
     // терминал (Р-96).
     private void alignIdentity(Terminal terminal, ProviderTerminalStatusRepository.ProviderTerminalRow row) {
         String login = row.gatewayLogin();
-        String title = row.title() != null && !row.title().isBlank() ? row.title() : null;
+        String title = row.title() != null && !row.title().isBlank() ? fitName(row.title()) : null;
         String terminalRid = row.terminalRid() != null && !row.terminalRid().isBlank() ? row.terminalRid() : null;
         boolean loginChanged = login != null && !login.equals(terminal.getLogin());
         boolean titleChanged = title != null && !title.equals(terminal.getName());
@@ -128,8 +161,12 @@ public class TerminalStatusReconciliationService {
         terminalRepository.save(terminal);
         log.info(details);
 
-        auditLogService.recordSuccess(AuditEvent.of(AuditEntity.TERMINAL, String.valueOf(terminal.getId()),
+        eventPublisher.publishEvent(AuditEvent.of(AuditEntity.TERMINAL, String.valueOf(terminal.getId()),
                 AuditAction.UPDATE, SYSTEM_ACTOR, terminal.getCompanyId(), details));
+    }
+
+    private static String fitName(String title) {
+        return title.length() <= NAME_MAX_LENGTH ? title : title.substring(0, NAME_MAX_LENGTH);
     }
 
     // Ссылки — в той же транзакции, как у ручной блокировки (Р-39, Р-40).
@@ -154,9 +191,7 @@ public class TerminalStatusReconciliationService {
         }
         log.info(details);
 
-        // Синхронно, а не событием после коммита: запись о массовой правке ссылок должна лечь, даже
-        // если транзакция планировщика дальше упадёт.
-        auditLogService.recordSuccess(AuditEvent.of(
+        eventPublisher.publishEvent(AuditEvent.of(
                 AuditEntity.TERMINAL,
                 String.valueOf(terminalId),
                 target == TerminalStatus.BLOCKED ? AuditAction.BLOCK : AuditAction.UNBLOCK,

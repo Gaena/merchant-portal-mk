@@ -34,6 +34,10 @@ pbl:
     # expiresAt explicitly instead.
     default-ttl: PT24H
     max-ttl: P90D
+  link-expiry:
+    # Off like the sweep below: every five minutes it would expire other tests' fixtures.
+    # PaymentLinkIntegrationTest calls the scheduler method itself.
+    enabled: false
   reconciliation:
     # Off by default so the sweep never races the fixtures of the other integration tests.
     # TransactionReconciliationIntegrationTest drives the service directly instead.
@@ -42,13 +46,15 @@ pbl:
     min-age: PT2M
     max-age: PT24H
     give-up-age: P7D
-    batch-size: 50
+    # Small on purpose: TransactionReconciliationIntegrationTest.reconcile_respectsBatchSize overflows it.
+    batch-size: 3
   provider:
     gateway-base-url: https://gateway.txpg.example.com/pay
     api-base-url: https://api.txpg.example.com/pay
+    # Protocol paths are the production defaults (ConfigurationExternalizationTest keeps them equal).
     create-order-path: /order
-    exec-tran-path: /api/order/{orderId}/exec-tran
-    get-order-path: /api/order/{orderId}
+    exec-tran-path: /order/{orderId}/exec-tran
+    get-order-path: /order/{orderId}
 
 # Mirrors production (src/main/resources/application.yaml): actuator on its own port, swagger off.
 # The tests drive the main port through MockMvc, which never boots the management child context —

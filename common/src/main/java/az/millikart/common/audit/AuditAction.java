@@ -23,11 +23,13 @@ public final class AuditAction {
     public static final String CAPTURE = "CAPTURE";
     public static final String REFUND = "REFUND";
     public static final String CANCEL = "CANCEL";
+    // Неизвестный исход денежной операции разрешён администратором после сверки с провайдером (Р-123).
+    public static final String RESOLVE = "RESOLVE";
 
     private static final Set<String> KNOWN = Set.of(
             CREATE, READ, UPDATE, DELETE, LIST, BLOCK, UNBLOCK,
             LOGIN, LOGOUT, LOCKOUT, RATE_LIMIT, TOKEN_REUSE, PASSWORD_CHANGE,
-            CAPTURE, REFUND, CANCEL);
+            CAPTURE, REFUND, CANCEL, RESOLVE);
 
     private AuditAction() {
     }

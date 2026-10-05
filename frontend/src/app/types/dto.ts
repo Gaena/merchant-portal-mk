@@ -18,6 +18,8 @@ export interface TerminalDto {
   login: string;
   /** Номер у провайдера (`terminal.rid`, Р-96) — основная подпись; у заведённых до Р-96 пуст. */
   terminalRid?: string | null;
+  /** Связан со справочником провайдера: название — провайдера, правкой его не сменить (Р-67). */
+  providerLinked?: boolean;
   companyId: string;
   /** Бэкенд присылает всегда; необязательное намеренно — без поля терминал не прячется (`isTerminalActive`). */
   status?: TerminalStatus;

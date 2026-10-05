@@ -5,7 +5,11 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Ticker;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +39,16 @@ public class LoginRateLimiter {
     private final int maxFailures;
     private final Duration window;
     private final Cache<String, Integer> failures;
+    // Доля каждого логина в счётчике адреса: успех снимает только её (RATE-LIMIT-RESET, Р-117).
+    private final Cache<AddressLogin, Integer> failuresByLogin;
+
+    private record AddressLogin(String clientIp, String login) {
+    }
+
+    // Попытки, идущие прямо сейчас: сколько с адреса и какие логины. Под замком лимитера — проверка и
+    // резерв одним шагом; внутри только память.
+    private final Map<String, Integer> inFlightByAddress = new HashMap<>();
+    private final Set<String> inFlightLogins = new HashSet<>();
 
     @Autowired // второй конструктор существует для тестов; Spring обязан брать этот
     public LoginRateLimiter(@Value("${auth.login.rate-limit.enabled}") boolean enabled,
@@ -59,6 +73,12 @@ public class LoginRateLimiter {
                 .maximumSize(MAX_TRACKED_ADDRESSES)
                 .ticker(ticker)
                 .build();
+        // Вытесненная доля не снимется успехом — адрес лишь дольше остаётся под счётом, а не наоборот.
+        this.failuresByLogin = Caffeine.newBuilder()
+                .expireAfterWrite(window)
+                .maximumSize(MAX_TRACKED_ADDRESSES)
+                .ticker(ticker)
+                .build();
         if (enabled) {
             log.info("Login rate limit: {} failed attempts per {} per client address", maxFailures, window);
         } else {
@@ -67,27 +87,76 @@ public class LoginRateLimiter {
         }
     }
 
-    // Звать первым, до поиска пользователя и BCrypt: проверка после хэширования уже оплатила атаку.
-    public void checkAllowed(String clientIp) {
-        if (!enabled || clientIp == null) {
-            return;
+    // Звать первым, до поиска пользователя и BCrypt, и закрывать после проверки пароля. Резерв, а не проверка:
+    // залп параллельных попыток видел один и тот же счётчик и проходил целиком; второй вход в логин, пока идёт
+    // первый, ждал бы его на FOR UPDATE, держа соединение пула (LOGIN-POOL, Р-118). Отказ по логину одинаков
+    // для существующего и несуществующего: учётку он не выдаёт.
+    public Attempt begin(String clientIp, String login) {
+        if (!enabled) {
+            return new Attempt(null, null, null);
         }
-        Integer count = failures.getIfPresent(clientIp);
-        if (count == null || count < maxFailures) {
-            return;
+        synchronized (this) {
+            if (login != null && inFlightLogins.contains(login)) {
+                log.info("Refused a login attempt for {}: another attempt for this login is in progress", login);
+                throw new TooManyRequestsException(MESSAGE, Duration.ofSeconds(1));
+            }
+            if (clientIp != null) {
+                int failed = Optional.ofNullable(failures.getIfPresent(clientIp)).orElse(0);
+                int inFlight = inFlightByAddress.getOrDefault(clientIp, 0);
+                if (failed + inFlight >= maxFailures) {
+                    Duration retryAfter = failed >= maxFailures ? remainingWindow(clientIp) : Duration.ofSeconds(1);
+                    log.warn("{}: {} failed and {} running login attempts from {} — refusing further attempts for {}",
+                            LOGIN_RATE_LIMITED_MARKER, failed, inFlight, clientIp, retryAfter);
+                    throw new TooManyRequestsException(MESSAGE, retryAfter);
+                }
+                inFlightByAddress.merge(clientIp, 1, Integer::sum);
+            }
+            if (login != null) {
+                inFlightLogins.add(login);
+            }
         }
-        Duration retryAfter = remainingWindow(clientIp);
-        log.warn("{}: {} failed login attempts from {} — refusing further attempts for {}",
-                LOGIN_RATE_LIMITED_MARKER, count, clientIp, retryAfter);
-        throw new TooManyRequestsException(MESSAGE, retryAfter);
+        return new Attempt(this, clientIp, login);
+    }
+
+    private synchronized void end(String clientIp, String login) {
+        if (clientIp != null) {
+            inFlightByAddress.computeIfPresent(clientIp, (address, count) -> count > 1 ? count - 1 : null);
+        }
+        if (login != null) {
+            inFlightLogins.remove(login);
+        }
+    }
+
+    // Место в лимите на время одной попытки; закрывается и при отказе, и при исключении.
+    public static final class Attempt implements AutoCloseable {
+
+        private final LoginRateLimiter limiter;
+        private final String clientIp;
+        private final String login;
+        private boolean closed;
+
+        private Attempt(LoginRateLimiter limiter, String clientIp, String login) {
+            this.limiter = limiter;
+            this.clientIp = clientIp;
+            this.login = login;
+        }
+
+        @Override
+        public void close() {
+            if (!closed && limiter != null) {
+                closed = true;
+                limiter.end(clientIp, login);
+            }
+        }
     }
 
     // Считается и несуществующий логин: из него состоит перебор. true — ровно раз за окно, на попытке,
     // достигшей лимита: на этом держится одна запись в журнал за окно (P2-14).
-    public boolean recordFailure(String clientIp) {
+    public boolean recordFailure(String clientIp, String login) {
         if (!enabled || clientIp == null) {
             return false;
         }
+        failuresByLogin.asMap().merge(new AddressLogin(clientIp, login), 1, Integer::sum);
         int count = failures.asMap().merge(clientIp, 1, Integer::sum);
         if (count == maxFailures) {
             log.warn("{}: address {} reached {} failed login attempts; blocked for {}",
@@ -97,12 +166,17 @@ public class LoginRateLimiter {
         return false;
     }
 
-    // Успешный вход обнуляет счётчик адреса: офис за одним NAT не запирает сам себя.
-    public void reset(String clientIp) {
+    // Успешный вход снимает с адреса только неудачи своего логина: опечатки сотрудника не запирают офис за
+    // одним NAT, а чужие логины остаются в счёте — иначе свой вход каждые девять попыток обнулял бы перебор
+    // (RATE-LIMIT-RESET, Р-117). Снятие — запись: окно оставшихся отсчитывается заново, блок только длиннее.
+    public void clearFailuresOf(String clientIp, String login) {
         if (clientIp == null) {
             return;
         }
-        failures.invalidate(clientIp);
+        Integer own = failuresByLogin.asMap().remove(new AddressLogin(clientIp, login));
+        if (own != null) {
+            failures.asMap().computeIfPresent(clientIp, (address, total) -> total > own ? total - own : null);
+        }
     }
 
     // Возраст записи — с последней засчитанной неудачи: отбитые попытки не считаются и блокировку

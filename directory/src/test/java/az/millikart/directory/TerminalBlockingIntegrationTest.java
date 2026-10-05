@@ -1,10 +1,11 @@
 package az.millikart.directory;
 
-import az.millikart.common.testing.PostgresTestContainer;
+import az.millikart.common.testing.PostgresIntegrationTest;
 import az.millikart.common.audit.AuditLog;
 import az.millikart.common.audit.AuditOutcome;
 import az.millikart.common.security.JwtProvider;
 import az.millikart.common.security.UserPrincipal;
+import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.domain.TerminalStatus;
 import az.millikart.directory.dto.CreateTerminalRequest;
 import az.millikart.directory.dto.UpdateTerminalRequest;
@@ -13,12 +14,10 @@ import az.millikart.directory.repository.PaymentLinkStatusRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.directory.service.TerminalService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpHeaders;
@@ -54,9 +53,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 //
 // Пишет в `payment_links` — таблицу чужого модуля — нативным запросом, и проверяет, что
 // блокировка терминала двигает ссылки. Диалект здесь существенный, а не безразличный.
-@SpringBootTest
-@Import(PostgresTestContainer.class)
-@AutoConfigureMockMvc
+@PostgresIntegrationTest
 public class TerminalBlockingIntegrationTest {
 
     @Autowired
@@ -95,6 +92,13 @@ public class TerminalBlockingIntegrationTest {
     // Номера выдаёт база при заведении (Р-81), поэтому поля, а не константы.
     private int terminal;
     private int otherTerminal;
+
+    // payment_links ссылается на terminals: оставленные строки уронили бы на внешнем ключе deleteAll терминалов
+    // в следующих классах на той же базе (AuditLogQueryTest, DirectoryListPaginationTest).
+    @AfterEach
+    public void removePaymentLinks() {
+        jdbcTemplate.update("DELETE FROM payment_links");
+    }
 
     @BeforeEach
     public void setup() throws Exception {
@@ -266,6 +270,30 @@ public class TerminalBlockingIntegrationTest {
         assertThat(auditRecord("UNBLOCK").getDetails()).contains("resumed 2 links", "expired 0 links");
     }
 
+    // Каждый перевод ссылки поднимает её версию (@Version в pbl): иначе pbl, прочитавший ссылку до блокировки
+    // или разблокировки, сохранил бы её целиком и вернул прежний статус — ACTIVE на заблокированном
+    // терминале или SUSPENDED на разблокированном.
+    @Test
+    public void everyStatusMoveOfALink_bumpsItsVersion() throws Exception {
+        UUID stillGood = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID ranOut = seedLink(terminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+        UUID untouched = seedLink(otherTerminal, "ACTIVE", Instant.now().plus(1, ChronoUnit.DAYS));
+
+        block(terminal);
+        assertThat(versionOf(stillGood)).isEqualTo(1L);
+        assertThat(versionOf(ranOut)).isEqualTo(1L);
+        jdbcTemplate.update("UPDATE payment_links SET expires_at = ? WHERE id = ?",
+                utc(Instant.now().minus(1, ChronoUnit.HOURS)), ranOut);
+
+        unblock(terminal);
+
+        assertThat(statusOf(stillGood)).isEqualTo("ACTIVE");
+        assertThat(versionOf(stillGood)).isEqualTo(2L);
+        assertThat(statusOf(ranOut)).isEqualTo("EXPIRED");
+        assertThat(versionOf(ranOut)).isEqualTo(2L);
+        assertThat(versionOf(untouched)).as("a link that did not move keeps its version").isZero();
+    }
+
     // 10. Блокировка — запись, и требует прав на запись
 
     @Test
@@ -332,6 +360,10 @@ public class TerminalBlockingIntegrationTest {
         return id;
     }
 
+    private Long versionOf(UUID linkId) {
+        return jdbcTemplate.queryForObject("SELECT version FROM payment_links WHERE id = ?", Long.class, linkId);
+    }
+
     private String statusOf(UUID linkId) {
         return jdbcTemplate.queryForObject(
                 "SELECT status FROM payment_links WHERE id = ?", String.class, linkId);
@@ -346,12 +378,17 @@ public class TerminalBlockingIntegrationTest {
     }
 
     // Правка терминала руководителем компании осталась: заводит терминалы только администратор (Р-93).
+    // Переименовать можно только терминал без справочника: у связанного название провайдера (TERMINAL-RENAME).
     @Test
     public void nameChange_byACompanyHead_stillGoesThrough() throws Exception {
         String headTokenCompany1 = "Bearer " + jwtProvider.generateToken(
                 "111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
+        int manual = terminalRepository.saveAndFlush(Terminal.builder()
+                .id(700501).name("Manual Terminal").login("manual_login")
+                .companyId("comp-01").status(TerminalStatus.ACTIVE)
+                .createdBy("seeder").updatedBy("seeder").build()).getId();
 
-        mockMvc.perform(patch("/api/v1/terminals/{id}", terminal)
+        mockMvc.perform(patch("/api/v1/terminals/{id}", manual)
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Renamed Terminal\"}"))

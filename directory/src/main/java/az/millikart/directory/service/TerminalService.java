@@ -52,8 +52,6 @@ public class TerminalService {
     // entityId отказа в заведении: номер терминалу выдаётся только при сохранении (Р-81).
     private static final String NEW_TERMINAL = "NEW";
 
-    private static final String PROVIDER_ACTIVE = "Active";
-
     private final TerminalRepository terminalRepository;
     private final CompanyRepository companyRepository;
     private final PaymentLinkStatusRepository paymentLinkStatusRepository;
@@ -217,11 +215,7 @@ public class TerminalService {
         if (providerLogin == null || !providerLogin.startsWith(CompanyService.MULTI_MERCHANT_PREFIX)) {
             return Set.of();
         }
-        return providerLogins.linksOf(providerLogin.substring(CompanyService.MULTI_MERCHANT_PREFIX.length())).stream()
-                .filter(link -> PROVIDER_ACTIVE.equals(link.loginStatus()) && PROVIDER_ACTIVE.equals(link.linkStatus())
-                        && link.merchantRid() != null)
-                .map(ProviderLoginSnapshotRepository.LoginLink::merchantRid)
-                .collect(Collectors.toSet());
+        return providerLogins.activeMerchantRidsOf(providerLogin.substring(CompanyService.MULTI_MERCHANT_PREFIX.length()));
     }
 
     // Возвращает не только флаг: роль без права на список получает отказ прямо здесь.
@@ -274,19 +268,27 @@ public class TerminalService {
                 "update terminal " + id + " of company " + terminal.getCompanyId());
 
         StringBuilder changes = new StringBuilder();
-        if (request.name() != null && !request.name().isBlank()) {
+        if (request.name() != null && !request.name().isBlank() && !request.name().equals(terminal.getName())) {
+            // Название терминала из справочника — провайдера (Р-67): сверка вернула бы его через 15 минут, и
+            // API согласился бы на правку, которая не удержится (TERMINAL-RENAME).
+            if (terminal.getMerchantRid() != null) {
+                throw new BusinessException("Terminal " + id + " takes its name from the provider directory; "
+                        + "rename it at the provider");
+            }
             changes.append("Name changed from '").append(terminal.getName()).append("' to '").append(request.name()).append("'. ");
             terminal.setName(request.name());
         }
-        if (request.companyId() != null && !request.companyId().isBlank()) {
+        // Та же компания — не перенос: PATCH объектом целиком по терминалу удалённой компании иначе падал
+        // бы на её проверке (Р-107) и не блокировал терминал.
+        if (request.companyId() != null && !request.companyId().isBlank()
+                && !request.companyId().equals(terminal.getCompanyId())) {
             validateWriteAccessToCompany(request.companyId(), principal,
                     String.valueOf(id), AuditAction.UPDATE,
                     "move terminal " + id + " to company " + request.companyId());
             Company target = liveCompany(request.companyId());
             // Как при заведении: иначе ссылки ушли бы к провайдеру с кредами компании, чей логин
             // этого мерчанта не знает, а выписка его платежей осталась бы у прежней (Р-96, Р-97).
-            if (!target.getId().equals(terminal.getCompanyId())
-                    && (terminal.getMerchantRid() == null || !merchantsOfCompanyLogin(target).contains(terminal.getMerchantRid()))) {
+            if (terminal.getMerchantRid() == null || !merchantsOfCompanyLogin(target).contains(terminal.getMerchantRid())) {
                 throw new BusinessException("Terminal " + id + " cannot be moved to company " + target.getId()
                         + ": its provider merchant is not linked to the multimerchant login of that company");
             }
@@ -314,6 +316,11 @@ public class TerminalService {
             // Ручную блокировку сверка не снимает (Р-66).
             terminal.setStatusSource(TerminalStatusSource.MANUAL);
             changes.append(statusChange).append(". ");
+        }
+
+        // PATCH без настоящих изменений — не событие: ни записи в журнале, ни updated_by (Р-108).
+        if (changes.isEmpty()) {
+            return mapToResponse(terminal);
         }
 
         terminal.setUpdatedBy(actorUsername);
@@ -370,7 +377,8 @@ public class TerminalService {
         if (actorRole == Role.SYSTEM_ADMIN || actorRole == Role.AUDITOR) {
             return;
         }
-        if (targetCompanyId != null && targetCompanyId.equals(actorCompanyId)) {
+        // Нераспознанной роли — отказ и в своей компании, как в списке (AGENTS §6, NULL-ROLE-READ).
+        if (actorRole != null && targetCompanyId != null && targetCompanyId.equals(actorCompanyId)) {
             return;
         }
         // Отказ пишется с компанией актора, а не цели (Р-104).
@@ -414,6 +422,7 @@ public class TerminalService {
                 terminal.getName(),
                 terminal.getLogin(),
                 terminal.getTerminalRid(),
+                terminal.getMerchantRid() != null,
                 terminal.getCompanyId(),
                 terminal.getStatus(),
                 terminal.getCreatedBy(),

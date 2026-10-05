@@ -25,7 +25,7 @@ class ConfigurationExternalizationTest {
 
         Assertions.assertFalse(yaml.contains("millikart.az"),
                 "pbl/src/main/resources/application.yaml must not contain a MilliKart address: the acquirer "
-                        + "addresses come from PBL_PROVIDER_GATEWAY_BASE_URL / PBL_PROVIDER_API_BASE_URL "
+                        + "addresses come from PROVIDER_GATEWAY_BASE_URL / PROVIDER_API_BASE_URL "
                         + "with no default (P1-10, Р-18)");
     }
 
@@ -47,8 +47,26 @@ class ConfigurationExternalizationTest {
         String yaml = read();
 
         assertExactPlaceholder(yaml, "base-url", "PBL_BASE_URL");
-        assertExactPlaceholder(yaml, "gateway-base-url", "PBL_PROVIDER_GATEWAY_BASE_URL");
-        assertExactPlaceholder(yaml, "api-base-url", "PBL_PROVIDER_API_BASE_URL");
+        assertExactPlaceholder(yaml, "gateway-base-url", "PROVIDER_GATEWAY_BASE_URL");
+        assertExactPlaceholder(yaml, "api-base-url", "PROVIDER_API_BASE_URL");
+    }
+
+    // Пути протокола — константы шлюза, у них боевые умолчания. Тестовый yaml заменяет боевой целиком и обязан
+    // повторять их: иначе тест, однажды пустивший настоящий клиент, ходил бы не туда, куда ходит прод.
+    @Test
+    void testYaml_usesTheProductionProviderPaths() throws IOException {
+        String production = read();
+        String test = Files.readString(Path.of("src", "test", "resources", "application.yaml"), StandardCharsets.UTF_8);
+
+        for (String key : new String[] {"create-order-path", "exec-tran-path", "get-order-path"}) {
+            java.util.regex.Matcher fallback = Pattern.compile("(?m)^\\s*" + Pattern.quote(key)
+                    + ":\\s*\"\\$\\{[A-Z_]+:(.+)}\"\\s*$").matcher(production);
+            Assertions.assertTrue(fallback.find(), key + " has no default in the production yaml");
+            java.util.regex.Matcher inTest = Pattern.compile("(?m)^\\s*" + Pattern.quote(key) + ":\\s*(\\S+)\\s*$")
+                    .matcher(test);
+            Assertions.assertTrue(inTest.find(), key + " is missing in the test yaml");
+            Assertions.assertEquals(fallback.group(1), inTest.group(1), key);
+        }
     }
 
     private static void assertExactPlaceholder(String yaml, String key, String variable) {

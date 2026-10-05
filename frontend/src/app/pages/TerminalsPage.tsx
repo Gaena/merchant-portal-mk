@@ -682,6 +682,8 @@ export const TerminalsPage: React.FC = () => {
               label={`${tObj.terminals.name} *`}
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              disabled={editingTerminal?.providerLinked === true}
+              helperText={editingTerminal?.providerLinked === true ? tObj.terminals.nameFromProvider : undefined}
               fullWidth
             />
           </Stack>

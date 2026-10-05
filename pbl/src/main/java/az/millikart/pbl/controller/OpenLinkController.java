@@ -3,7 +3,7 @@ package az.millikart.pbl.controller;
 import az.millikart.common.web.ClientIp;
 import az.millikart.common.web.TrustedProxies;
 import az.millikart.pbl.dto.PaymentReceiptView;
-import az.millikart.pbl.provider.ProviderPayloads;
+import az.millikart.txpg.ProviderPayloads;
 import az.millikart.pbl.service.OpenLinkService;
 import az.millikart.pbl.service.PaymentLinkService;
 import java.net.URI;
@@ -62,8 +62,8 @@ public class OpenLinkController {
             try {
                 receipt = paymentLinkService.refreshByRidByMerchant(ridByMerchant).orElse(null);
             } catch (OptimisticLockingFailureException e) {
-                // Другой плательщик той же ссылки поднял её версию; конфликт всплывает на коммите, мимо
-                // catch сервиса: один повтор вместо JSON 409.
+                // Версию ссылки поднял другой запрос; сервис этот конфликт не глотает: один повтор вместо
+                // последнего известного состояния.
                 log.info("Return page refresh for a payment raced with another update of its link; retrying once");
                 receipt = paymentLinkService.refreshByRidByMerchant(ridByMerchant).orElse(null);
             }

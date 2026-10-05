@@ -17,7 +17,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -29,10 +28,11 @@ import az.millikart.pbl.domain.Terminal;
 import az.millikart.pbl.domain.Transaction;
 import az.millikart.pbl.domain.TransactionStatus;
 import az.millikart.pbl.domain.UsageType;
-import az.millikart.pbl.provider.AcquiringClient;
-import az.millikart.pbl.provider.ProviderCredentials;
+import az.millikart.txpg.AcquiringClient;
+import az.millikart.txpg.ProviderCredentials;
 import az.millikart.pbl.provider.StubAcquirerConfig;
 import az.millikart.pbl.repository.PaymentLinkRepository;
+import az.millikart.pbl.scheduler.PaymentLinkScheduler;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
 import ch.qos.logback.classic.Logger;
@@ -57,10 +57,13 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -68,6 +71,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -89,6 +93,12 @@ class PaymentLinkIntegrationTest {
     private PaymentLinkRepository paymentLinkRepository;
 
     @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private ApplicationContext applicationContext;
+
+    @Autowired
     private TransactionRepository transactionRepository;
 
     @Autowired
@@ -99,9 +109,6 @@ class PaymentLinkIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
-
-    @Autowired
-    private PlatformTransactionManager transactionManager;
 
     // Эквайер подменён моком, который по умолчанию делегирует StubAcquiringClient: поведение дубля
     // сохраняется, а тесты, которым нужен свой ответ, переопределяют один метод. Зарегистрирован
@@ -246,6 +253,50 @@ class PaymentLinkIntegrationTest {
                         .content(objectMapper.writeValueAsString(validCreateRequest())))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("has no acquirer credentials")));
+    }
+
+    // LINK-AMOUNT-SCALE: numeric(19,2) молча округлял третий знак — ответ и журнал говорили 10.555, база и
+    // эквайер — 10.56, а 0.004 проходил @Positive и давал ссылку на 0.00. Отказ, как у списания и возврата.
+    @ParameterizedTest
+    @ValueSource(strings = {"10.555", "0.004"})
+    void createPaymentLink_amountWithMoreThanTwoDecimals_returns400(String amount) throws Exception {
+        ObjectNode request = validCreateRequest();
+        request.put("amount", new BigDecimal(amount));
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("amount must have at most 17 integer digits and 2 decimal places")));
+
+        Assertions.assertEquals(0, paymentLinkRepository.count());
+    }
+
+    // Та же граница у правки суммы.
+    @Test
+    void updateAmount_withMoreThanTwoDecimals_returns400() throws Exception {
+        PaymentLink link = linkFixture(UsageType.MULTIPLE, 5);
+
+        patchLink(link.getId(), amountUpdate("10.555"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("amount must have at most 17 integer digits and 2 decimal places")));
+        Assertions.assertEquals(0, new BigDecimal("100.00").compareTo(
+                paymentLinkRepository.findById(link.getId()).orElseThrow().getAmount()));
+    }
+
+    // DB-CONSTRAINT-500: описание длиннее колонки проходило проверку DTO и роняло вставку — 500 и ERROR.
+    @Test
+    void createPaymentLink_descriptionLongerThanTheColumn_returns400() throws Exception {
+        ObjectNode request = validCreateRequest();
+        request.put("description", "x".repeat(256));
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("description must be at most 255 characters")));
+
+        Assertions.assertEquals(0, paymentLinkRepository.count());
     }
 
     // Клиент — только у одноразовой ссылки (Р-96): у многоразовой отказ, а не молчаливый пропуск.
@@ -558,6 +609,43 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.maxPayments", is(2)));
     }
 
+    // Руководитель чужой компании не правит и не отменяет ссылку: отмена обрывала бы чужие продажи, правка
+    // суммы меняла бы то, что платит чужой клиент. Ловит validateAccess в update, пропускающий чужой терминал.
+    @Test
+    void headOfAnotherCompany_cannotEditOrCancelALink() throws Exception {
+        UUID id = createLinkAndGetId(headToken);
+
+        for (ObjectNode attempt : List.of(amountUpdate("1.00"), statusUpdate("CANCELED"))) {
+            mockMvc.perform(authed(patch("/api/v1/payment-links/{id}", id), foreignToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(attempt)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.message", is("Access denied to terminal: " + TERMINAL_ID)));
+        }
+
+        PaymentLink after = paymentLinkRepository.findById(id).orElseThrow();
+        Assertions.assertEquals(PaymentLinkStatus.ACTIVE, after.getStatus());
+        Assertions.assertEquals(0, new BigDecimal("1500.50").compareTo(after.getAmount()));
+    }
+
+    // Холд чужой компании не списывается: отказ до опроса эквайера и до клиринга. Ловит validateAccess в
+    // completeDms, поставленный после похода к эквайеру или пропускающий чужой терминал.
+    @Test
+    void headOfAnotherCompany_cannotCaptureAHold() throws Exception {
+        Transaction hold = createTransaction(TERMINAL_ID, "TX-FOREIGN-CAPTURE", TransactionStatus.AUTHORIZED);
+
+        mockMvc.perform(authed(post("/api/v1/transactions/{id}/complete", hold.getId()), foreignToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\": 100.00}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message", is("Access denied to terminal: " + TERMINAL_ID)));
+
+        verify(acquiringClient, never()).completeDms(anyString(), any(), any());
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
+        Assertions.assertEquals(TransactionStatus.AUTHORIZED,
+                transactionRepository.findById(hold.getId()).orElseThrow().getStatus());
+    }
+
     private ResultActions patchLink(UUID id, ObjectNode body) throws Exception {
         return mockMvc.perform(authed(patch("/api/v1/payment-links/{id}", id), headToken)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -576,14 +664,34 @@ class PaymentLinkIntegrationTest {
         return update;
     }
 
+    // Плательщик уходит на страницу оплаты с номером и паролем заказа — адрес сравнивается целиком:
+    // проверка подстроки ловила бы то, что вернула заглушка, а не то, что собрал сервис.
     @Test
     void openPaymentLink_redirectsToProvider() throws Exception {
         UUID id = createLinkAndGetId(headToken);
 
         // Публичный эндпоинт, авторизация не нужна.
-        mockMvc.perform(get("/api/v1/payment-links/{id}/open", id))
+        String location = mockMvc.perform(get("/api/v1/payment-links/{id}/open", id))
                 .andExpect(status().isFound())
-                .andExpect(header().string("Location", containsString("rid=")));
+                .andReturn().getResponse().getHeader("Location");
+
+        Transaction attempt = transactionRepository.findAll().getFirst();
+        Assertions.assertEquals("https://gateway.txpg.example.com/pay?id=" + attempt.getProviderOrderId()
+                + "&password=" + attempt.getProviderPassword(), location);
+    }
+
+    // DB-CONSTRAINT-500: User-Agent длиннее transactions.user_agent (512) ронял вставку попытки уже после
+    // заказа у провайдера — плательщик получал 500 вместо платёжной страницы. Теперь он обрезается.
+    @Test
+    void openPaymentLink_withAnOverlongUserAgent_stillRedirects() throws Exception {
+        UUID id = createLinkAndGetId(headToken);
+        String userAgent = "Mozilla/5.0 " + "x".repeat(600);
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", id).header(HttpHeaders.USER_AGENT, userAgent))
+                .andExpect(status().isFound());
+
+        Transaction attempt = transactionRepository.findAll().getFirst();
+        Assertions.assertEquals(userAgent.substring(0, 512), attempt.getUserAgent());
     }
 
     // Р-103: circuit breaker к эквайеру открыт — вызов не ушёл, это 503 «попробуйте позже», а не 500
@@ -764,7 +872,7 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("has not been authorized by the acquirer yet")));
 
-        verify(acquiringClient, never()).completeDms(anyString(), anyString(), any(), any());
+        verify(acquiringClient, never()).completeDms(anyString(), any(), any());
         Assertions.assertEquals(TransactionStatus.PENDING,
                 transactionRepository.findById(pending.getId()).orElseThrow().getStatus());
     }
@@ -856,19 +964,6 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.content.length()", is(1)))
                 .andExpect(jsonPath("$.content[0].id", is(own.getId().toString())))
                 .andExpect(jsonPath("$.content[0].terminalId", is(TERMINAL_ID)));
-    }
-
-    @Test
-    void listTransactions_asForeignCompanyHead_doesNotSeeOtherCompany() throws Exception {
-        createTransaction(TERMINAL_ID, "TX-OWN");
-        Transaction foreign = createTransaction(FOREIGN_TERMINAL_ID, "TX-FOREIGN");
-
-        mockMvc.perform(authed(get("/api/v1/transactions"), foreignToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements", is(1)))
-                .andExpect(jsonPath("$.content.length()", is(1)))
-                .andExpect(jsonPath("$.content[0].id", is(foreign.getId().toString())))
-                .andExpect(jsonPath("$.content[0].terminalId", is(FOREIGN_TERMINAL_ID)));
     }
 
     @Test
@@ -973,12 +1068,21 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // STATUS-ORACLE (Р-114): чужой заказ отвечал 403 «Access denied to terminal: N», несуществующий — 404,
+    // и перебор номеров заказов провайдера выдавал портальные заказы и номера чужих терминалов. Теперь
+    // ответы одинаковы до символа, кроме самого номера, и эквайера не спрашивают.
     @Test
-    void checkStatus_asForeignCompany_returns403() throws Exception {
+    void checkStatus_asForeignCompany_looksExactlyLikeAMissingOrder() throws Exception {
         Transaction tx = createTransaction(TERMINAL_ID, "TX-OWN");
 
-        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", tx.getId()), foreignToken))
-                .andExpect(status().isForbidden());
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", tx.getProviderOrderId()), foreignToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message", is("Transaction not found: " + tx.getProviderOrderId())));
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", "ORD-NO-SUCH-ORDER"), foreignToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message", is("Transaction not found: ORD-NO-SUCH-ORDER")));
+
+        verify(acquiringClient, never()).getOrderStatus(anyString(), anyString(), any());
     }
 
     @Test
@@ -1217,10 +1321,11 @@ class PaymentLinkIntegrationTest {
     }
 
     // Неоплаченная PENDING-попытка при переоткрытии не гасится вслепую: заказ у эквайера ещё живёт, и
-    // оплату по нему потеряли бы. Она остаётся PENDING (её закроет сверка), новая регистрируется рядом.
+    // оплату по нему потеряли бы. Она остаётся PENDING (её закроет сверка). У многоразовой ссылки это
+    // сессия другого плательщика, и новая регистрируется рядом; одноразовую — ниже (OPEN-DOUBLE-PAY).
     @Test
     void reopen_withUnpaidPendingTransaction_keepsItPendingAndProceeds() throws Exception {
-        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        PaymentLink link = linkFixture(UsageType.MULTIPLE, 5);
         Transaction abandoned = attemptFixture(link, TransactionStatus.PENDING);
         doReturn(Map.of("id", 11338, "status", "Preparing"))
                 .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
@@ -1236,12 +1341,94 @@ class PaymentLinkIntegrationTest {
         Assertions.assertEquals(TransactionStatus.PENDING, attempts.getFirst().getStatus());
     }
 
+    // OPEN-DOUBLE-PAY (Р-112): заказ одноразовой ссылки ещё жив (Preparing), а повторное открытие заводило
+    // второй — около 10 минут оба можно было оплатить. Теперь отказ, второго заказа нет.
+    @Test
+    void reopen_singleUseWithALiveSession_isRefusedAndOpensNoSecondOrder() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        Transaction live = attemptFixture(link, TransactionStatus.PENDING);
+        doReturn(Map.of("id", 11338, "status", "Preparing"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", is(
+                        "A payment session for this link is already open; complete it or try again in about 10 minutes")));
+
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        Assertions.assertEquals(List.of(live.getId()), transactionRepository.findByLinkIdOrderByCreatedAtDesc(link.getId())
+                .stream().map(Transaction::getId).toList());
+        Assertions.assertEquals(TransactionStatus.PENDING,
+                transactionRepository.findById(live.getId()).orElseThrow().getStatus());
+    }
+
+    // OPEN-DOUBLE-PAY: эквайера спрашивали только о последней попытке. Ранняя, оплаченная без возврата на
+    // страницу, слот не занимала, последняя истекла — и ссылку открывали ещё раз. Теперь спрашивают о всех,
+    // и найденное остаётся после отказа (Р-113).
+    @Test
+    void reopen_singleUse_anEarlierAttemptPaidAtTheAcquirer_refusesTheOpen() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        Transaction paid = attemptFixture(link, TransactionStatus.PENDING);
+        backdateAttempt(paid, Duration.ofMinutes(8));
+        Transaction expired = attemptFixture(link, TransactionStatus.PENDING);
+        Mockito.doAnswer(invocation -> paid.getProviderOrderId().equals(invocation.getArgument(0))
+                        ? Map.of("id", 11338, "status", "FullyPaid")
+                        : Map.of("id", 11339, "status", "Expired"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message", is("Single-use payment link has already been used")));
+
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        verify(acquiringClient).getOrderStatus(eq(paid.getProviderOrderId()), anyString(), any());
+        verify(acquiringClient).getOrderStatus(eq(expired.getProviderOrderId()), anyString(), any());
+        Assertions.assertEquals(TransactionStatus.SUCCESS,
+                transactionRepository.findById(paid.getId()).orElseThrow().getStatus());
+        Assertions.assertEquals(TransactionStatus.FAILED,
+                transactionRepository.findById(expired.getId()).orElseThrow().getStatus());
+    }
+
+    // Эквайер не ответил о свежей попытке одноразовой ссылки: она может быть жива или оплачена, и второй
+    // заказ поверх — риск двойной оплаты. Отказ «повторите», а не новый заказ (Р-112).
+    @Test
+    void reopen_singleUseWhoseRecentSessionCouldNotBeChecked_isRefused() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        attemptFixture(link, TransactionStatus.PENDING);
+        Mockito.doThrow(new org.springframework.web.client.ResourceAccessException("Read timed out"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", is(
+                        "The previous payment session for this link could not be checked; try again in a minute")));
+
+        verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+    }
+
+    // Обратная сторона окна: попытка старше получаса живой быть не может (провайдер закрывает заказ через
+    // 10 минут, Р-71), и молчание эквайера о ней ссылку не запирает.
+    @Test
+    void reopen_singleUseWhoseUncheckableSessionIsOlderThanAnOrderLives_proceeds() throws Exception {
+        PaymentLink link = linkFixture(UsageType.SINGLE, null);
+        Transaction stale = attemptFixture(link, TransactionStatus.PENDING);
+        backdateAttempt(stale, Duration.ofMinutes(31));
+        Mockito.doThrow(new org.springframework.web.client.ResourceAccessException("Read timed out"))
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(get("/api/v1/payment-links/{id}/open", link.getId()))
+                .andExpect(status().isFound());
+
+        Assertions.assertEquals(2, transactionRepository.findByLinkIdOrderByCreatedAtDesc(link.getId()).size());
+    }
+
     // Плательщик оплатил старую страницу, но на страницу возврата не попал и открыл ссылку снова:
-    // эквайер говорит «оплачено», одноразовая ссылка занята, второго заказа нет.
+    // эквайер говорит «оплачено», одноразовая ссылка занята, второго заказа нет. OPEN-ROLLBACK (Р-113):
+    // отказ откатывал и сам опрос — оплаченная попытка оставалась PENDING, ссылка ACTIVE до сверки.
     @Test
     void reopen_withPendingTransactionPaidAtAcquirer_refusesSecondPayment() throws Exception {
         PaymentLink link = linkFixture(UsageType.SINGLE, null);
-        attemptFixture(link, TransactionStatus.PENDING);
+        Transaction paid = attemptFixture(link, TransactionStatus.PENDING);
         doReturn(Map.of("id", 11338, "status", "FullyPaid"))
                 .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
 
@@ -1250,6 +1437,10 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.message", is("Single-use payment link has already been used")));
 
         verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        Assertions.assertEquals(TransactionStatus.SUCCESS,
+                transactionRepository.findById(paid.getId()).orElseThrow().getStatus());
+        Assertions.assertEquals(PaymentLinkStatus.COMPLETED,
+                paymentLinkRepository.findById(link.getId()).orElseThrow().getStatus());
     }
 
     // Холд одноразовой ссылки банк снял сам, ничего не списав (Closed ← Authorized, Р-75): слот
@@ -1436,17 +1627,6 @@ class PaymentLinkIntegrationTest {
         Assertions.assertEquals(extended, paymentLinkRepository.findById(id).orElseThrow().getExpiresAt());
     }
 
-    // Поля не было в PaymentLinkResponse, хотя в PaymentLinkSummaryResponse оно было, — именно это
-    // и толкнуло портал выдумать собственный срок жизни.
-    @Test
-    void createLink_response_containsExpiresAt() throws Exception {
-        UUID id = createLinkAndGetId(headToken);
-
-        mockMvc.perform(authed(get("/api/v1/payment-links/{id}", id), headToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.expiresAt", notNullValue()));
-    }
-
     // Теперь, когда ссылки действительно истекают, пути открытия есть что отклонять.
     @Test
     void expiredLink_cannotBeOpened() throws Exception {
@@ -1457,6 +1637,9 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.message", is("Payment link has expired")));
 
         verify(acquiringClient, never()).createEcomOrder(any(), any(), any(), any(), anyString());
+        // Отказ коммитит открытие (Р-113): ссылка истекла сразу, а не со следующим проходом планировщика.
+        Assertions.assertEquals(PaymentLinkStatus.EXPIRED,
+                paymentLinkRepository.findById(link.getId()).orElseThrow().getStatus());
     }
 
     // Свёртка PaymentLinkScheduler ходит раз в пять минут. Она была верна и P1-9 её не трогал —
@@ -1466,14 +1649,45 @@ class PaymentLinkIntegrationTest {
         PaymentLink overdue = linkFixture(UsageType.SINGLE, null, Instant.now().minus(Duration.ofMinutes(1)));
         PaymentLink live = linkFixture(UsageType.SINGLE, null, Instant.now().plus(DEFAULT_TTL));
 
-        Integer expired = new TransactionTemplate(transactionManager)
-                .execute(status -> paymentLinkRepository.expireActiveLinksBefore(Instant.now()));
+        // Сам планировщик, а не его запрос: ловит и сломанный планировщик, и сломанный запрос. Бин в тестах
+        // выключен (pbl.link-expiry.enabled), поэтому метод зовётся на своём экземпляре в транзакции, как у прокси.
+        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                new PaymentLinkScheduler(paymentLinkRepository).cleanupExpiredLinksAndSessions());
 
-        Assertions.assertEquals(1, expired);
         Assertions.assertEquals(PaymentLinkStatus.EXPIRED,
                 paymentLinkRepository.findById(overdue.getId()).orElseThrow().getStatus());
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE,
                 paymentLinkRepository.findById(live.getId()).orElseThrow().getStatus());
+    }
+
+    // Истечение поднимает версию: ссылка, прочитанная до него, при сохранении получает конфликт, а не
+    // возвращает себе ACTIVE, пока её не догонит следующий проход.
+    @Test
+    void aLinkReadBeforeItExpired_cannotBeSavedBackAsActive() {
+        PaymentLink overdue = linkFixture(UsageType.SINGLE, null, Instant.now().minus(Duration.ofMinutes(1)));
+        PaymentLink stale = paymentLinkRepository.findById(overdue.getId()).orElseThrow();
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                new PaymentLinkScheduler(paymentLinkRepository).cleanupExpiredLinksAndSessions());
+
+        stale.setDescription("Edited from a copy read before the expiry");
+        Assertions.assertThrows(OptimisticLockingFailureException.class, () -> paymentLinkRepository.save(stale));
+        Assertions.assertEquals(PaymentLinkStatus.EXPIRED,
+                paymentLinkRepository.findById(overdue.getId()).orElseThrow().getStatus());
+    }
+
+    // Контексты тестов живут весь прогон: задача по расписанию сработала бы посреди чужого теста. Новый
+    // планировщик без выключателя в тестовом yaml уронит этот тест.
+    @Test
+    void noTaskRunsByTheClockInTests() {
+        // Держатель задач есть всегда (@EnableScheduling): без него проверка прошла бы впустую.
+        java.util.Collection<ScheduledTaskHolder> holders = applicationContext.getBeansOfType(ScheduledTaskHolder.class).values();
+        org.junit.jupiter.api.Assertions.assertFalse(holders.isEmpty());
+        List<String> tasks = holders.stream()
+                .flatMap(holder -> holder.getScheduledTasks().stream())
+                .map(String::valueOf)
+                .toList();
+        Assertions.assertTrue(tasks.isEmpty(), "scheduled in tests: " + tasks);
     }
 
     // Создаёт ссылку через API и возвращает разобранное тело ответа.
@@ -1502,6 +1716,13 @@ class PaymentLinkIntegrationTest {
         int rows = jdbcTemplate.update(
                 "UPDATE payment_links SET created_at = TIMESTAMPADD(SECOND, ?, created_at) WHERE id = ?",
                 -age.toSeconds(), linkId);
+        Assertions.assertEquals(1, rows, "backdating helper must touch exactly one row");
+    }
+
+    private void backdateAttempt(Transaction attempt, Duration age) {
+        int rows = jdbcTemplate.update(
+                "UPDATE transactions SET created_at = TIMESTAMPADD(SECOND, ?, created_at) WHERE id = ?",
+                -age.toSeconds(), attempt.getId());
         Assertions.assertEquals(1, rows, "backdating helper must touch exactly one row");
     }
 

@@ -42,6 +42,10 @@ mp:
   # Same as production. MockMvc reports 127.0.0.1 as the peer, so it counts as a trusted proxy here
   # and the forwarding-header rules are exercised exactly as they are behind the real nginx.
   trusted-proxies: 127.0.0.1,::1
+  security:
+    # BCrypt cost 4 instead of production's 10: every fixture password and every sign-in costs ~1 ms, not
+    # ~80. Hashes stay real BCrypt; UnknownLoginTimingTest keeps the placeholder hash on the same cost.
+    bcrypt-strength: 4
 
 pbl:
   security:

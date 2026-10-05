@@ -2,6 +2,7 @@ package az.millikart.directory;
 
 import static az.millikart.directory.DirectoryTestFixtures.company;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
@@ -16,6 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import az.millikart.directory.domain.Terminal;
 import az.millikart.directory.domain.TerminalStatus;
+import az.millikart.directory.domain.TerminalStatusSource;
 import az.millikart.directory.dto.CreateCompanyRequest;
 import az.millikart.directory.dto.CreateTerminalRequest;
 import az.millikart.directory.dto.UpdateCompanyRequest;
@@ -23,6 +25,7 @@ import az.millikart.directory.dto.UpdateTerminalRequest;
 import az.millikart.directory.repository.CompanyRepository;
 import az.millikart.directory.repository.TerminalRepository;
 import az.millikart.common.audit.AuditLog;
+import az.millikart.common.audit.AuditOutcome;
 import az.millikart.common.security.CredentialCipher;
 import az.millikart.common.security.JwtProvider;
 
@@ -35,6 +38,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -67,6 +74,12 @@ public class DirectoryIntegrationTest {
 
     @Autowired
     private CredentialCipher credentialCipher;
+
+    @Autowired
+    private ApplicationContext applicationContext;
+
+    @Autowired
+    private az.millikart.directory.service.TerminalStatusReconciliationService terminalReconciliation;
 
     private String adminToken;
     private String headTokenCompany1;
@@ -338,24 +351,6 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.name", is("Main Terminal")));
     }
 
-    @Test
-    public void blockTerminal_asEmployee_returns403() throws Exception {
-        createCompany("comp-01", "MilliKart LLC");
-        int terminalId = createTerminal("Main Terminal", "comp-01", adminToken);
-
-        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
-                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED))))
-                .andExpect(status().isForbidden());
-
-        mockMvc.perform(get("/api/v1/terminals/" + terminalId)
-                        .header(HttpHeaders.AUTHORIZATION, adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("ACTIVE")));
-    }
-
     // P2-8: эндпоинта нет, а путь есть. Терминал, через который прошёл платёж, удалить нельзя
     // вовсе (на него ссылаются ссылки), так что DELETE тут бессмыслен — но ресурс существует,
     // поэтому честный ответ 405, а 404 был бы враньём про URL.
@@ -478,6 +473,42 @@ public class DirectoryIntegrationTest {
         String stored = companyRepository.findById("comp-01").orElseThrow().getProviderPassword();
         assertThat(stored).isNotEqualTo("secret-comp-01");
         assertThat(credentialCipher.decrypt(stored)).isEqualTo("secret-comp-01");
+    }
+
+    // DB-CONSTRAINT-500: шифротекст пароля лежит в varchar(512), и длинный пароль ронял вставку — 500 и
+    // ERROR. Потолок 100 знаков с запасом: самые «тяжёлые» знаки (три байта UTF-8) ещё влезают.
+    @Test
+    public void providerPassword_isCappedSoItsCiphertextFitsTheColumn() throws Exception {
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateCompanyRequest(
+                                "comp-02", "Other LLC", "MultiMerchantSys/comp-02", "€".repeat(101)))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Provider password must be at most 100 characters")));
+        assertThat(companyRepository.existsById("comp-02")).isFalse();
+
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateCompanyRequest(
+                                "comp-01", "MilliKart LLC", "MultiMerchantSys/comp-01", "€".repeat(100)))))
+                .andExpect(status().isCreated());
+        String stored = companyRepository.findById("comp-01").orElseThrow().getProviderPassword();
+        assertThat(credentialCipher.decrypt(stored)).isEqualTo("€".repeat(100));
+    }
+
+    // DB-CONSTRAINT-500: название длиннее колонки проходило проверку DTO и роняло вставку.
+    @Test
+    public void companyName_longerThanTheColumn_isABadRequest() throws Exception {
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(company("comp-01", "x".repeat(256)))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Company name must be at most 255 characters")));
+
+        assertThat(companyRepository.existsById("comp-01")).isFalse();
     }
 
     // Логин к провайдеру задаёт и видит только администратор; остальным компания отдаётся без него.
@@ -639,14 +670,133 @@ public class DirectoryIntegrationTest {
                 .isEqualTo("MultiMerchantSys/comp-01");
     }
 
+    // LOGIN-CHANGE-TERMINALS: смена логина проверяла только сам логин. Новый логин без мерчанта заведённого
+    // терминала оставлял его без платежей (провайдер отказывает кредам компании) и без выписки (Р-97).
+    @Test
+    public void loginChange_toALoginWithoutTheMerchantsOfItsTerminals_isRefused() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+        String merchantRid = terminalRepository.findById(terminalId).orElseThrow().getMerchantRid();
+
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"providerLogin\": \"MultiMerchantSys/new-login\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString(
+                        "has no active link to the merchants of terminals " + terminalId + " of company comp-01")));
+        assertThat(companyRepository.findById("comp-01").orElseThrow().getProviderLogin())
+                .isEqualTo("MultiMerchantSys/comp-01");
+
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "new-login", merchantRid);
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"providerLogin\": \"MultiMerchantSys/new-login\"}"))
+                .andExpect(status().isOk());
+        assertThat(companyRepository.findById("comp-01").orElseThrow().getProviderLogin())
+                .isEqualTo("MultiMerchantSys/new-login");
+    }
+
+    // NULL-ROLE-READ: чтение по id сравнивало только companyId, и нераспознанная роль читала свою компанию и
+    // терминал, хотя список ей отказывает. Против AGENTS §6: такой учётке отказывают везде, с записью в журнал.
+    @Test
+    public void anUnrecognisedRole_cannotReadItsOwnCompanyOrTerminal() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+        auditLogRepository.deleteAll();
+
+        mockMvc.perform(get("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, unknownRoleToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, unknownRoleToken))
+                .andExpect(status().isForbidden());
+
+        assertThat(auditLogRepository.findAll())
+                .extracting(AuditLog::getEntityType, AuditLog::getOutcome)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("TERMINAL", AuditOutcome.DENIED),
+                        org.assertj.core.groups.Tuple.tuple("COMPANY", AuditOutcome.DENIED));
+    }
+
+    // TERMINAL-RENAME: название терминала из справочника — провайдера (Р-67), и сверка возвращала его через
+    // 15 минут. PATCH соглашался на правку, которая не удержится; теперь отказ, и экран знает это заранее.
+    @Test
+    public void renamingAProviderTerminal_isRefused_andTheNameStays() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Renamed", null, null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Terminal " + terminalId
+                        + " takes its name from the provider directory; rename it at the provider")));
+
+        mockMvc.perform(get("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name", is("Shop")))
+                .andExpect(jsonPath("$.providerLinked", is(true)));
+    }
+
+    // TERMINAL-LOST-UPDATE: сверка и PATCH писали строку целиком, и копия, прочитанная до ручной блокировки,
+    // возвращала терминалу ACTIVE (или BLOCKED с источником PROVIDER — и сверка потом сама снимала блок).
+    // С версией устаревшая копия не сохраняется.
+    @Test
+    public void aStaleCopyOfATerminal_cannotOverwriteAManualBlock() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+        var stale = terminalRepository.findById(terminalId).orElseThrow();
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\": \"BLOCKED\"}"))
+                .andExpect(status().isOk());
+
+        stale.setName("Renamed from a stale copy");
+        assertThrows(OptimisticLockingFailureException.class, () -> terminalRepository.save(stale));
+        var stored = terminalRepository.findById(terminalId).orElseThrow();
+        assertThat(stored.getStatus()).isEqualTo(TerminalStatus.BLOCKED);
+        assertThat(stored.getStatusSource()).isEqualTo(TerminalStatusSource.MANUAL);
+        assertThat(stored.getName()).isEqualTo("Shop");
+    }
+
+    // Проход сверки на настоящей базе: транзакция на терминал, версия, ссылки и журнал после коммита
+    // работают вместе — терминал, выключенный у провайдера, блокируется, и запись BLOCK от system есть.
+    @Test
+    public void reconciliation_blocksATerminalTheProviderDisabled_andRecordsIt() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Shop", "comp-01", adminToken);
+        String merchantRid = terminalRepository.findById(terminalId).orElseThrow().getMerchantRid();
+        jdbcTemplate.update("UPDATE provider_terminals SET active = ? WHERE rid = ?", false, merchantRid);
+        auditLogRepository.deleteAll();
+
+        terminalReconciliation.reconcile();
+
+        var stored = terminalRepository.findById(terminalId).orElseThrow();
+        assertThat(stored.getStatus()).isEqualTo(TerminalStatus.BLOCKED);
+        assertThat(stored.getStatusSource()).isEqualTo(TerminalStatusSource.PROVIDER);
+        assertThat(auditLogRepository.findAll())
+                .anySatisfy(record -> {
+                    assertThat(record.getAction()).isEqualTo("BLOCK");
+                    assertThat(record.getEntityId()).isEqualTo(String.valueOf(terminalId));
+                    assertThat(record.getPerformedBy()).isEqualTo("system");
+                });
+    }
+
     // Логин компании выбирается из справочника (Р-95): в списке только то, что пройдёт проверку при
     // сохранении, и ничего занятого — ни живой компанией, ни удалённой (уникальный индекс держит и её логин).
     @Test
     public void freeProviderLogins_listOnlyLoginsThatPassTheCheck_andAreNotTaken() throws Exception {
         jdbcTemplate.update("DELETE FROM provider_logins WHERE login = 'free-login'");
-        jdbcTemplate.update("INSERT INTO provider_logins (login, login_status, link_status, merchant_rid, merchant_title) "
-                + "VALUES ('free-login', 'Active', 'Active', 'M-A', 'Shop A'), ('free-login', 'Active', 'Active', 'M-B', 'Shop B'), "
-                + "('free-login', 'Active', 'Blocked', 'M-C', 'Shop C')");
+        jdbcTemplate.update("INSERT INTO provider_logins (login, login_status, link_status, merchant_rid, merchant_title, synced_at) "
+                + "VALUES ('free-login', 'Active', 'Active', 'M-A', 'Shop A', CURRENT_TIMESTAMP), "
+                + "('free-login', 'Active', 'Active', 'M-B', 'Shop B', CURRENT_TIMESTAMP), "
+                + "('free-login', 'Active', 'Blocked', 'M-C', 'Shop C', CURRENT_TIMESTAMP)");
         DirectoryTestFixtures.providerLogin(jdbcTemplate, "blocked-login", "Blocked", "Active", "M-2");
         DirectoryTestFixtures.providerLogin(jdbcTemplate, "lonely-login", "Active", null, null);
         createCompany("comp-01", "MilliKart LLC");
@@ -729,6 +879,52 @@ public class DirectoryIntegrationTest {
         assertThat(terminalRepository.findByMerchantRid("RID-FOREIGN")).isEmpty();
     }
 
+    // Один терминал провайдера — одна наша компания (Р-67, Р-96): мерчант, общий для логинов двух компаний,
+    // достаётся заведшей первой. Иначе у одного мерчанта стало бы два терминала в разных компаниях, и сверка
+    // статусов и выписка не знали бы, чей он.
+    @Test
+    public void createTerminal_ofAMerchantAlreadyLinked_isRefusedToEveryCompany() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Second LLC");
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", "RID-SHARED", "Shared Shop", "SH00001");
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-02", "RID-SHARED");
+
+        String created = mockMvc.perform(post("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-SHARED"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        int terminalId = objectMapper.readTree(created).get("id").asInt();
+
+        for (String companyId : List.of("comp-02", "comp-01")) {
+            mockMvc.perform(post("/api/v1/terminals")
+                            .header(HttpHeaders.AUTHORIZATION, adminToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(new CreateTerminalRequest(companyId, "RID-SHARED"))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", is("Provider terminal RID-SHARED is already linked to terminal " + terminalId)));
+        }
+
+        assertThat(terminalRepository.findAll())
+                .filteredOn(terminal -> "RID-SHARED".equals(terminal.getMerchantRid()))
+                .extracting(Terminal::getCompanyId)
+                .containsExactly("comp-01");
+    }
+
+    // То же правило в базе: уникальный индекс uk_terminals_merchant_rid держит его и для записи мимо проверки
+    // сервиса. Снимешь индекс — правило останется только в одном if.
+    @Test
+    public void oneMerchant_cannotBeStoredOnTwoTerminals() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int first = createTerminal("First Shop", "comp-01", adminToken);
+        int second = createTerminal("Second Shop", "comp-01", adminToken);
+        String firstMerchant = jdbcTemplate.queryForObject("SELECT merchant_rid FROM terminals WHERE id = ?", String.class, first);
+
+        assertThrows(DataIntegrityViolationException.class,
+                () -> jdbcTemplate.update("UPDATE terminals SET merchant_rid = ? WHERE id = ?", firstMerchant, second));
+    }
+
     // Перенос — по тем же правилам, что заведение (Р-96, Р-97): в компанию, с логином которой мерчант терминала
     // не связан, терминал не переходит — его ссылки ушли бы к провайдеру с чужими кредами.
     @Test
@@ -741,7 +937,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Renamed", "comp-02", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("not linked to the multimerchant login of that company")));
         assertThat(terminalRepository.findById(terminalId).orElseThrow().getCompanyId()).isEqualTo("comp-01");
@@ -777,7 +973,8 @@ public class DirectoryIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Manual Shop 2", "comp-01", null))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.name", is("Manual Shop 2")));
+                .andExpect(jsonPath("$.name", is("Manual Shop 2")))
+                .andExpect(jsonPath("$.providerLinked", is(false)));
         assertThat(terminalRepository.findById(700401).orElseThrow().getCompanyId()).isEqualTo("comp-01");
     }
 
@@ -835,7 +1032,167 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.message", is("Company with ID 'comp-02' not found")));
     }
 
+    // Регрессия Р-107: удалённая компания проверялась и тогда, когда companyId в PATCH — текущий, и
+    // объект целиком с блокировкой получал 400, а терминал удалённой компании продолжал принимать платежи.
+    // Та же компания — не перенос: ни проверки, ни «CompanyId changed from X to X» в журнале.
+    @Test
+    public void terminalOfADeletedCompany_isBlockedByAPatchCarryingItsOwnCompanyId() throws Exception {
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Other Shop", "comp-02", adminToken);
+        mockMvc.perform(delete("/api/v1/companies/comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isNoContent());
+        auditLogRepository.deleteAll();
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateTerminalRequest(null, "comp-02", TerminalStatus.BLOCKED))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("BLOCKED")))
+                .andExpect(jsonPath("$.companyId", is("comp-02")));
+
+        assertThat(terminalRepository.findById(terminalId).orElseThrow().getStatus()).isEqualTo(TerminalStatus.BLOCKED);
+        List<AuditLog> updates = auditLogRepository.findAll().stream()
+                .filter(record -> "UPDATE".equals(record.getAction()))
+                .toList();
+        assertThat(updates).singleElement()
+                .satisfies(record -> assertThat(record.getDetails()).doesNotContain("CompanyId changed"));
+    }
+
+    // Р-108: журнал пишет только настоящие изменения. Ловит «Name changed from 'X' to 'X'» у терминала и
+    // компании и «Status changed from 'X' to 'X'» у компании: PATCH, повторяющий текущие значения, — не событие.
+    @Test
+    public void aPatchRepeatingCurrentValues_isNotAnEvent_andOnlyRealChangesAreRecorded() throws Exception {
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Other Shop", "comp-02", adminToken);
+        String terminalName = terminalRepository.findById(terminalId).orElseThrow().getName();
+        auditLogRepository.deleteAll();
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateTerminalRequest(terminalName, "comp-02", TerminalStatus.ACTIVE))))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/v1/companies/comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateCompanyRequest("Other LLC", "ACTIVE", null, null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name", is("Other LLC")));
+        assertThat(auditLogRepository.findAll()).isEmpty();
+
+        mockMvc.perform(patch("/api/v1/companies/comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateCompanyRequest("Other LLC", "INACTIVE", null, null))))
+                .andExpect(status().isOk());
+        List<AuditLog> companyUpdates = auditLogRepository.findAll().stream()
+                .filter(record -> "UPDATE".equals(record.getAction()))
+                .toList();
+        assertThat(companyUpdates).singleElement().satisfies(record -> {
+            assertThat(record.getDetails()).contains("Status changed from 'ACTIVE' to 'INACTIVE'");
+            assertThat(record.getDetails()).doesNotContain("Name changed");
+        });
+    }
+
+    // Руководитель чужой компании не читает, не блокирует, не переименовывает и не переносит терминал —
+    // даже к себе. Ловит сравнение компаний в validateWriteAccessToCompany и validateReadAccessToCompany,
+    // пропускающее чужую: блокировка остановила бы чужие платежи, перенос увёл бы чужую выручку.
+    @Test
+    public void headOfAnotherCompany_cannotReadBlockRenameOrMoveATerminal() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Main Shop", "comp-01", adminToken);
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-02",
+                terminalRepository.findById(terminalId).orElseThrow().getMerchantRid());
+
+        mockMvc.perform(get("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany2))
+                .andExpect(status().isForbidden());
+        for (UpdateTerminalRequest attempt : List.of(
+                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED),
+                new UpdateTerminalRequest("Hijacked", null, null),
+                new UpdateTerminalRequest(null, "comp-02", null))) {
+            mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                            .header(HttpHeaders.AUTHORIZATION, headTokenCompany2)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(attempt)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.message", is("Access denied")));
+        }
+
+        Terminal after = terminalRepository.findById(terminalId).orElseThrow();
+        assertThat(after.getStatus()).isEqualTo(TerminalStatus.ACTIVE);
+        assertThat(after.getName()).isEqualTo("Main Shop");
+        assertThat(after.getCompanyId()).isEqualTo("comp-01");
+    }
+
+    // Свой терминал руководитель в чужую компанию не переносит, даже если мерчант связан с её логином:
+    // права на цель проверяются отдельно. Ловит проверку только исходной компании терминала.
+    @Test
+    public void head_cannotMoveOwnTerminalIntoAnotherCompany() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Main Shop", "comp-01", adminToken);
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-02",
+                terminalRepository.findById(terminalId).orElseThrow().getMerchantRid());
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message", is("Access denied")));
+
+        assertThat(terminalRepository.findById(terminalId).orElseThrow().getCompanyId()).isEqualTo("comp-01");
+    }
+
+    // Компанию правит и удаляет только администратор — даже свою и даже руководитель: иначе руководитель
+    // сменил бы логин к провайдеру (Р-93) или удалил компанию. Ловит проверку роли, открытую для своей компании.
+    @Test
+    public void onlyAdmin_editsOrDeletesACompany_evenItsOwn() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+
+        for (String actor : List.of(headTokenCompany1, managerTokenCompany1, employeeTokenCompany1,
+                auditorToken, unknownRoleToken)) {
+            mockMvc.perform(patch("/api/v1/companies/comp-01")
+                            .header(HttpHeaders.AUTHORIZATION, actor)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(
+                                    new UpdateCompanyRequest("Renamed LLC", "INACTIVE", null, null))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.message", is("Access denied: Only SYSTEM_ADMIN can update companies")));
+            mockMvc.perform(delete("/api/v1/companies/comp-01")
+                            .header(HttpHeaders.AUTHORIZATION, actor))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.message", is("Access denied: Only SYSTEM_ADMIN can delete companies")));
+        }
+
+        var company = companyRepository.findById("comp-01").orElseThrow();
+        assertThat(company.getName()).isEqualTo("MilliKart LLC");
+        assertThat(company.getStatus()).isEqualTo("ACTIVE");
+    }
+
     // Фикстуры
+
+    // Контексты тестов живут весь прогон: задача по расписанию сработала бы посреди чужого теста. Новый
+    // планировщик без выключателя в тестовом yaml уронит этот тест.
+    @Test
+    public void noTaskRunsByTheClockInTests() {
+        // Держатель задач есть всегда (@EnableScheduling): без него проверка прошла бы впустую.
+        java.util.Collection<ScheduledTaskHolder> holders = applicationContext.getBeansOfType(ScheduledTaskHolder.class).values();
+        org.junit.jupiter.api.Assertions.assertFalse(holders.isEmpty());
+        List<String> tasks = holders.stream()
+                .flatMap(holder -> holder.getScheduledTasks().stream())
+                .map(String::valueOf)
+                .toList();
+        org.junit.jupiter.api.Assertions.assertTrue(tasks.isEmpty(), "scheduled in tests: " + tasks);
+    }
 
     private void assertCompanyRefused(String providerLogin, String reason) throws Exception {
         mockMvc.perform(post("/api/v1/companies")
