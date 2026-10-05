@@ -185,6 +185,9 @@ export interface TranslationDictionary {
     copyLink: string;
     sendEmail: string;
     sendWhatsApp: string;
+    qrCode: string;
+    qrHint: string;
+    downloadQr: string;
     createdTitle: string;
     linkLabel: string;
     done: string;
@@ -855,6 +858,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       copyLink: 'Copy link',
       sendEmail: 'Send by email',
       sendWhatsApp: 'Send via WhatsApp',
+      qrCode: 'QR code',
+      qrHint: 'Point a phone camera at the code to open the payment page',
+      downloadQr: 'Download PNG',
       createdTitle: 'Payment link created. Share it with the customer.',
       linkLabel: 'Payment link',
       done: 'Done',
@@ -1465,6 +1471,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       copyLink: 'Linki kopyala',
       sendEmail: 'E-poçtla göndər',
       sendWhatsApp: 'WhatsApp ilə göndər',
+      qrCode: 'QR kod',
+      qrHint: 'Ödəniş səhifəsini açmaq üçün telefonun kamerasını koda yönəldin',
+      downloadQr: 'PNG yüklə',
       createdTitle: 'Ödəniş linki yaradıldı. Onu müştəri ilə paylaşın.',
       linkLabel: 'Ödəniş linki',
       done: 'Hazırdır',
@@ -2075,6 +2084,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       copyLink: 'Скопировать ссылку',
       sendEmail: 'Отправить по email',
       sendWhatsApp: 'Отправить в WhatsApp',
+      qrCode: 'QR-код',
+      qrHint: 'Наведите камеру телефона на код, чтобы открыть страницу оплаты',
+      downloadQr: 'Скачать PNG',
       createdTitle: 'Ссылка на оплату создана. Поделитесь ею с клиентом.',
       linkLabel: 'Ссылка на оплату',
       done: 'Готово',
