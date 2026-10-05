@@ -1,4 +1,5 @@
 import { apiClient } from '../api/client';
+import { mapActions } from './mapTransaction';
 import {
   ECOM_OPERATION_KINDS,
   ECOM_STATUSES,
@@ -85,6 +86,8 @@ export const mapEcomOrder = (raw: any): EcomOrder => ({
   rrn: text(raw?.rrn),
   declineCode: text(raw?.declineCode),
   operations: Array.isArray(raw?.operations) ? raw.operations.map(mapEcomOperation) : [],
+  actions: mapActions(raw?.actions),
+  portalTransactionId: typeof raw?.portalTransactionId === 'string' ? raw.portalTransactionId : undefined,
 });
 
 const mapStats = (raw: any): EcomStats => {

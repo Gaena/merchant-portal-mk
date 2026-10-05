@@ -41,17 +41,34 @@ public class PortalPaymentsRepository {
         return Optional.of(new PortalTerminal(((Number) row[0]).intValue(), row[1] != null ? String.valueOf(row[1]) : null));
     }
 
-    // Без расшифровки: только есть ли логин и пароль компании к провайдеру (Р-93).
-    public boolean hasProviderCredentials(String companyId) {
+    // Пароль — шифротекст CredentialCipher (Р-93): расшифровывает тот, кто идёт к провайдеру.
+    public record StoredCredentials(String login, String encryptedPassword) {
+        @Override
+        public String toString() {
+            return "StoredCredentials[login=" + login + ", encryptedPassword=********]";
+        }
+    }
+
+    public Optional<StoredCredentials> credentialsOf(String companyId) {
+        if (companyId == null) {
+            return Optional.empty();
+        }
         List<?> rows = entityManager
                 .createNativeQuery("SELECT provider_login, provider_password FROM companies WHERE id = :id")
                 .setParameter("id", companyId)
                 .getResultList();
         if (rows.isEmpty()) {
-            return false;
+            return Optional.empty();
         }
         Object[] row = (Object[]) rows.get(0);
-        return notBlank(row[0]) && notBlank(row[1]);
+        return notBlank(row[0]) && notBlank(row[1])
+                ? Optional.of(new StoredCredentials(String.valueOf(row[0]), String.valueOf(row[1])))
+                : Optional.empty();
+    }
+
+    // Без расшифровки: только есть ли логин и пароль компании к провайдеру (Р-93).
+    public boolean hasProviderCredentials(String companyId) {
+        return credentialsOf(companyId).isPresent();
     }
 
     // Заказ, заведённый порталом, — операция pbl с этим номером заказа. Таблицы нет, пока pbl ни разу не

@@ -1,6 +1,7 @@
 package az.millikart.ecom;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
@@ -11,12 +12,16 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import az.millikart.common.exception.ConflictException;
 import az.millikart.common.security.JwtProvider;
-import az.millikart.ecom.service.ProviderLoginSource;
+import az.millikart.ecom.domain.ProviderOrderAttempt;
 import az.millikart.ecom.service.ProviderLoginSource.ProviderLoginRow;
-import az.millikart.ecom.service.ProviderTerminalSource;
+import az.millikart.ecom.service.ProviderLoginSource;
+import az.millikart.ecom.service.ProviderOrderAttemptService;
 import az.millikart.ecom.service.ProviderTerminalSource.ProviderTerminalRow;
+import az.millikart.ecom.service.ProviderTerminalSource;
 import com.zaxxer.hikari.HikariDataSource;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -28,9 +33,9 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.ApplicationContext;
-import org.springframework.scheduling.config.ScheduledTaskHolder;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
 import org.springframework.test.web.servlet.MockMvc;
 
 // ecom целиком, на H2 вместо нашей PostgreSQL и отдельной H2 вместо шлюза. Сам подъём контекста проверяет
@@ -62,11 +67,15 @@ class EcomApplicationIntegrationTest {
     @Autowired
     private ApplicationContext applicationContext;
 
+    @Autowired
+    private ProviderOrderAttemptService attempts;
+
     private JdbcTemplate portal;
 
     @BeforeEach
     void setUp() {
         portal = new JdbcTemplate(portalDataSource);
+        portal.update("DELETE FROM provider_order_attempts");
         portal.update("DELETE FROM provider_logins");
         portal.update("DELETE FROM provider_terminals");
         portal.update("DELETE FROM audit_logs");
@@ -216,6 +225,19 @@ class EcomApplicationIntegrationTest {
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder terminals(String token) {
         return get("/api/v1/ecom/transactions/terminals").header(HttpHeaders.AUTHORIZATION, token);
+    }
+
+    // Строка попытки и есть замок заказа выписки (Р-125): вторая попытка обязана упасть на ключе и получить 409,
+    // а не тихо перезаписать первую (merge вместо INSERT) и уйти к провайдеру вторым возвратом.
+    @Test
+    void aSecondAttemptOnTheSameOrder_isRefusedByTheKey() {
+        attempts.begin("175900", ProviderOrderAttempt.Kind.REFUND, new BigDecimal("10.00"), "first@test.com");
+
+        assertThatThrownBy(() -> attempts.begin("175900", ProviderOrderAttempt.Kind.REFUND, new BigDecimal("20.00"),
+                "second@test.com"))
+                .isInstanceOf(ConflictException.class);
+        assertThat(portal.queryForObject("SELECT started_by FROM provider_order_attempts WHERE order_id = '175900'",
+                String.class)).isEqualTo("first@test.com");
     }
 
     private String token(String role, String companyId) {

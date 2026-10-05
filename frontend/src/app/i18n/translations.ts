@@ -320,6 +320,8 @@ export interface TranslationDictionary {
       checkStatusFailed: string;
       /** Вернуть можно только остаток. */
       refundableLeft: string;
+      /** Заголовок блока возврата и списания — общий у карточки операции и панели заказа выписки. */
+      actionsTitle: string;
       /** Причина выключенной кнопки (Р-123) — ровно `MoneyActionReason` бэкенда; `other` — код незнакомый. */
       moneyReasons: {
         NO_RIGHTS: string;
@@ -973,6 +975,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         statusChecked: 'Transaction status refreshed.',
         checkStatusFailed: 'Could not check the status. Try again.',
         refundableLeft: 'Left to refund',
+        actionsTitle: 'Actions',
         moneyReasons: {
           NO_RIGHTS: 'Your role does not allow this action',
           TERMINAL_NOT_IN_PORTAL: 'The terminal of this operation is not registered in the portal',
@@ -1580,6 +1583,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         statusChecked: 'Əməliyyatın statusu yeniləndi.',
         checkStatusFailed: 'Statusu yoxlamaq mümkün olmadı. Yenidən cəhd edin.',
         refundableLeft: 'Qaytarıla bilən qalıq',
+        actionsTitle: 'Əməliyyatlar',
         moneyReasons: {
           NO_RIGHTS: 'Rolunuz bu əməliyyata icazə vermir',
           TERMINAL_NOT_IN_PORTAL: 'Bu əməliyyatın terminalı portalda qeydiyyatda deyil',
@@ -2187,6 +2191,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         statusChecked: 'Статус операции обновлён.',
         checkStatusFailed: 'Не удалось проверить статус. Попробуйте ещё раз.',
         refundableLeft: 'Остаток к возврату',
+        actionsTitle: 'Действия',
         moneyReasons: {
           NO_RIGHTS: 'Ваша роль не позволяет это действие',
           TERMINAL_NOT_IN_PORTAL: 'Терминала этой операции нет в системе портала',

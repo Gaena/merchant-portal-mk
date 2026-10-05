@@ -14,6 +14,10 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
+import { apiClient } from '../api/client';
+import { MoneyActionsPanel } from './MoneyActionsPanel';
+import type { Transaction } from '../types/transaction';
+import { mapTransaction } from '../utils/mapTransaction';
 import { useLanguage } from '../context/LanguageContext';
 import type { EcomOrder, EcomTerminal } from '../types/ecom';
 import { ecomTerminalLabel, fetchEcomOrder, fetchEcomTerminals, operationApproved } from '../utils/ecom';
@@ -52,15 +56,18 @@ const Field: React.FC<{ label: string; mono?: boolean; children: React.ReactNode
 
 /**
  * Заказ из выписки провайдера со всей историей операций (`project_docs/modules/ecom.md` §2.7): панель поверх
- * выписки и страница `/transactions/ecommerce/:orderId`. Своя карточка, а не `/transactions/:id`: чужой заказ
- * только читается, кнопок, двигающих деньги, нет. `actions` — над заголовком: «назад» или «закрыть».
+ * выписки и страница `/transactions/ecommerce/:orderId`. Возврат и списание (Р-125) — те же кнопки, что у
+ * операции портала (`MoneyActionsPanel`); заказ, заведённый порталом, проводится через свою операцию `pbl`.
+ * `actions` — над заголовком: «назад» или «закрыть».
  */
 export const EcomOrderDetails: React.FC<{
   orderId: string;
   actions: React.ReactNode;
   /** Справочник, уже загруженный выпиской; без него карточка запросит свой. */
   knownTerminals?: EcomTerminal[];
-}> = ({ orderId, actions, knownTerminals }) => {
+  /** Деньги по заказу сдвинулись — выписке под панелью пора перечитаться. */
+  onMoneyMoved?: () => void;
+}> = ({ orderId, actions, knownTerminals, onMoneyMoved }) => {
   const { tObj } = useLanguage();
   const t = tObj.ecommerce;
 
@@ -68,6 +75,8 @@ export const EcomOrderDetails: React.FC<{
   const [fetchedTerminals, setFetchedTerminals] = useState<EcomTerminal[]>([]);
   const terminals = knownTerminals ?? fetchedTerminals;
   const [state, setState] = useState<'loading' | 'ready' | 'notFound' | 'failed'>('loading');
+  // Операция портала — у заказа, который завёл портал: кнопки и вызовы — её, у pbl (Р-124).
+  const [portalTransaction, setPortalTransaction] = useState<Transaction | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -85,6 +94,32 @@ export const EcomOrderDetails: React.FC<{
       });
     return () => controller.abort();
   }, [orderId]);
+
+  const portalTransactionId = order?.portalTransactionId;
+  useEffect(() => {
+    setPortalTransaction(null);
+    if (!portalTransactionId) return;
+    const controller = new AbortController();
+    apiClient.get(`/api/v1/transactions/${portalTransactionId}`, { signal: controller.signal })
+      .then(res => setPortalTransaction(res.data ? mapTransaction(res.data, {}) : null))
+      .catch(() => setPortalTransaction(null));
+    return () => controller.abort();
+  }, [portalTransactionId]);
+
+  // После действия и после отказа — тихо, без спиннера: кнопки, суммы и история — с сервера.
+  const reloadAfterMoney = async () => {
+    onMoneyMoved?.();
+    try {
+      const fresh = await fetchEcomOrder(orderId);
+      setOrder(fresh);
+      if (fresh.portalTransactionId) {
+        const res = await apiClient.get(`/api/v1/transactions/${fresh.portalTransactionId}`);
+        setPortalTransaction(res.data ? mapTransaction(res.data, {}) : null);
+      }
+    } catch (error) {
+      console.warn('[ecom] не удалось перечитать заказ после денежного действия:', error);
+    }
+  };
 
   // Отдельно от заказа: справочник выписки, догрузившийся при открытой панели, не должен повторять запрос
   // заказа к шлюзу.
@@ -180,6 +215,33 @@ export const EcomOrderDetails: React.FC<{
           {order.description && <Field label={t.detail.description}>{order.description}</Field>}
         </Paper>
       </Box>
+
+      {/* Возврат и списание (Р-125): кнопки — как решил сервер; у заказа портала — его операции в pbl. */}
+      {order.portalTransactionId
+        ? portalTransaction?.actions && (
+            <MoneyActionsPanel
+              actions={portalTransaction.actions}
+              currency={portalTransaction.currency}
+              identifiers={[
+                { label: t.columns.orderId, value: order.orderId },
+                { label: t.columns.ridByMerchant, value: order.ridByMerchant || '—' },
+              ]}
+              baseUrl={`/api/v1/transactions/${order.portalTransactionId}`}
+              onChanged={reloadAfterMoney}
+            />
+          )
+        : order.actions && (
+            <MoneyActionsPanel
+              actions={order.actions}
+              currency={order.currency ?? ''}
+              identifiers={[
+                { label: t.columns.orderId, value: order.orderId },
+                { label: t.columns.ridByMerchant, value: order.ridByMerchant || '—' },
+              ]}
+              baseUrl={`/api/v1/ecom/transactions/${encodeURIComponent(order.orderId)}`}
+              onChanged={reloadAfterMoney}
+            />
+          )}
 
       <Paper elevation={2}>
         <Typography variant="h6" sx={{ p: 2.5, pb: 1 }}>{t.detail.operations}</Typography>

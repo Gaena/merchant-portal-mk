@@ -219,6 +219,16 @@ export const EcommerceTransactionListPage: React.FC = () => {
     setSearchParams(next, { state: { orderFromList: true } });
   };
 
+  // Деньги в панели сдвинулись — после её закрытия выписка перечитывается, иначе строка останется со старым
+  // статусом. Без этого закрытие панели шлюз не трогает.
+  const moneyMoved = useRef(false);
+  useEffect(() => {
+    if (openOrderId === null && moneyMoved.current) {
+      moneyMoved.current = false;
+      setReloadKey(key => key + 1);
+    }
+  }, [openOrderId]);
+
   // Открытую отсюда панель закрывает шаг назад: иначе «Назад» браузера открыл бы её снова. Открытую по
   // ссылке — замена адреса.
   const closeOrder = () => {
@@ -644,6 +654,7 @@ export const EcommerceTransactionListPage: React.FC = () => {
           <EcomOrderDetails
             orderId={drawerOrderId}
             knownTerminals={terminals}
+            onMoneyMoved={() => { moneyMoved.current = true; }}
             actions={
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
                 <Button

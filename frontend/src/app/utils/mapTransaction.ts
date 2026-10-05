@@ -39,7 +39,8 @@ const mapMoneyAction = (raw: any): MoneyAction | null => {
   };
 };
 
-const mapActions = (raw: any): TransactionActions | undefined => {
+// Тот же разбор у операции портала и заказа выписки: форма и коды причин одни (Р-124).
+export const mapActions = (raw: any): TransactionActions | undefined => {
   if (!raw || typeof raw !== 'object') {
     return undefined;
   }

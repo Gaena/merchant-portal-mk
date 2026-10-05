@@ -197,6 +197,117 @@
 						"description": "One order with its whole history - the same object as a statement row (ecom.md §2.7); no period needed. `{{orderId}}` is set by List Statement. 404 when the order does not exist, belongs to another company, is not finished or the number is not numeric - the four cases are indistinguishable on purpose."
 					},
 					"response": []
+				},
+				{
+					"name": "Refund Order",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": 25.00\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/transactions/{{orderId}}/refund",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"transactions",
+								"{{orderId}}",
+								"refund"
+							]
+						},
+						"description": "Refunds a statement order (ecom.md §2.7a, Р-125): up to actions.refund.maxAmount of the order card; SYSTEM_ADMIN, COMPANY_HEAD, COMPANY_MANAGER within the company's merchants. A disabled button is the same refusal and never reaches the provider. 409 for an order the portal created - refund its portal transaction instead."
+					},
+					"response": []
+				},
+				{
+					"name": "Capture Order",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": 25.00\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/transactions/{{orderId}}/complete",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"transactions",
+								"{{orderId}}",
+								"complete"
+							]
+						},
+						"description": "Captures the hold of a DMS statement order (ecom.md §2.7a, Р-125): up to actions.capture.maxAmount; every role except AUDITOR."
+					},
+					"response": []
+				},
+				{
+					"name": "Resolve Order Outcome",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"executed\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/ecom/transactions/{{orderId}}/resolve-outcome",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ecom",
+								"transactions",
+								"{{orderId}}",
+								"resolve-outcome"
+							]
+						},
+						"description": "SYSTEM_ADMIN only (ecom.md §2.7b, Р-125): records the outcome of a refund or capture the provider did not confirm, after reconciling it with the provider. Lifts the lock; nothing is recorded locally - the money is in the statement. Returns the order card."
+					},
+					"response": []
 				}
 			]
 		},

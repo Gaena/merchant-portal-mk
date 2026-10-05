@@ -20,8 +20,9 @@ export const readMoneyOperationFailure = (
   const message = (axios.isAxiosError(error) ? error.response?.data?.message : undefined)
     || fallbackMessage;
 
+  // 503 — разомкнут предохранитель к эквайеру: вызов не ушёл и денег не двигал (Р-103), повтор безопасен.
   return {
-    outcome: status === undefined || status >= 500 ? 'unknown' : 'declined',
+    outcome: status === undefined || (status >= 500 && status !== 503) ? 'unknown' : 'declined',
     message,
   };
 };

@@ -15,7 +15,6 @@ import az.millikart.ecom.dto.EcomTransactionFilter;
 import az.millikart.ecom.dto.EcomTransactionResponse;
 import az.millikart.ecom.repository.PortalPaymentsRepository;
 import az.millikart.ecom.repository.ProviderLoginRepository;
-import az.millikart.ecom.repository.ProviderOrderAttemptRepository;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.repository.TxpgTransactionRepository;
 import az.millikart.ecom.service.EcomStatusResolver.EcomStatus;
@@ -50,7 +49,7 @@ public class EcomTransactionService {
     private final ProviderLoginRepository providerLogins;
     private final TxpgProperties properties;
     private final PortalPaymentsRepository portal;
-    private final ProviderOrderAttemptRepository attempts;
+    private final ProviderOrderAttemptService attempts;
 
     public EcomTransactionService(TxpgTransactionRepository repository,
                                   EcomScopeService scope,
@@ -58,7 +57,7 @@ public class EcomTransactionService {
                                   ProviderLoginRepository providerLogins,
                                   TxpgProperties properties,
                                   PortalPaymentsRepository portal,
-                                  ProviderOrderAttemptRepository attempts) {
+                                  ProviderOrderAttemptService attempts) {
         this.repository = repository;
         this.scope = scope;
         this.providerTerminals = providerTerminals;
@@ -282,7 +281,7 @@ public class EcomTransactionService {
                         || EcomOperationKind.CAPTURE.name().equals(op.kind()));
         OperationActions actions = EcomMoneyActions.decide(new EcomMoneyActions.Facts(status, dms, order.amount(),
                 order.capturedAmount(), order.refundedAmount(), UserPrincipal.getRole(principal), terminal.isPresent(),
-                credentials, attempts.findById(order.orderId()).orElse(null), Instant.now()));
+                credentials, attempts.open(order).orElse(null), Instant.now()));
         return order.withActions(actions, null);
     }
 

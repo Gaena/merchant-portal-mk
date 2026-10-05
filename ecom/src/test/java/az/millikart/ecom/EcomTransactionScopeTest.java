@@ -26,7 +26,6 @@ import az.millikart.ecom.dto.EcomTransactionResponse;
 import az.millikart.ecom.repository.PortalPaymentsRepository;
 import az.millikart.ecom.repository.PortalPaymentsRepository.PortalTerminal;
 import az.millikart.ecom.repository.ProviderLoginRepository;
-import az.millikart.ecom.repository.ProviderOrderAttemptRepository;
 import az.millikart.ecom.repository.ProviderTerminalRepository;
 import az.millikart.ecom.repository.TxpgStatementRow;
 import az.millikart.ecom.repository.TxpgTransactionRepository;
@@ -34,6 +33,7 @@ import az.millikart.ecom.service.EcomScope;
 import az.millikart.ecom.service.EcomPaymentType;
 import az.millikart.ecom.service.EcomScopeService;
 import az.millikart.ecom.service.EcomTransactionService;
+import az.millikart.ecom.service.ProviderOrderAttemptService;
 import az.millikart.ecom.service.TxpgRows;
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -61,7 +61,7 @@ class EcomTransactionScopeTest {
     private ProviderTerminalRepository providerTerminals;
     private ProviderLoginRepository providerLogins;
     private PortalPaymentsRepository portal;
-    private ProviderOrderAttemptRepository attempts;
+    private ProviderOrderAttemptService attempts;
     private EcomTransactionService service;
 
     private static final EcomScope SCOPE = new EcomScope(List.of("E1120020"));
@@ -82,7 +82,7 @@ class EcomTransactionScopeTest {
         properties.setMaxWindow(Duration.ofDays(92));
         properties.setMaxPageSize(200);
         portal = Mockito.mock(PortalPaymentsRepository.class);
-        attempts = Mockito.mock(ProviderOrderAttemptRepository.class);
+        attempts = Mockito.mock(ProviderOrderAttemptService.class);
         service = new EcomTransactionService(repository, scope, providerTerminals, providerLogins, properties, portal,
                 attempts);
     }
