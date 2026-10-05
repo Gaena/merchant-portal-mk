@@ -78,7 +78,7 @@ class EcomMoneyOperationServiceTest {
         when(orders.order(ORDER, head)).thenReturn(order(refundable("40"), null));
         when(acquiringClient.refund(anyString(), any(), any())).thenReturn(confirmed());
 
-        EcomMoneyOperationResponse response = service.refund(ORDER, new BigDecimal("25.00"), head);
+        EcomMoneyOperationResponse response = service.refund(ORDER, new BigDecimal("25.00"), null, head);
 
         verify(attempts).begin(ORDER, ProviderOrderAttempt.Kind.REFUND, new BigDecimal("25.00"), "head@comp1.com");
         verify(acquiringClient).refund(ORDER, new ProviderCredentials("MultiMerchantSys/shop", "company-password"),
@@ -90,20 +90,33 @@ class EcomMoneyOperationServiceTest {
         assertEquals("RID-1", response.acquirerReference());
     }
 
+    // Р-126: причина возврата — в записи журнала, без пробелов по краям; эквайеру она не уходит.
+    @Test
+    void theReasonOfARefund_goesToTheJournal() {
+        when(orders.order(ORDER, head)).thenReturn(order(refundable("40"), null));
+        when(acquiringClient.refund(anyString(), any(), any())).thenReturn(confirmed());
+
+        service.refund(ORDER, new BigDecimal("25.00"), "  Goods returned  ", head);
+
+        ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(attempts).finish(eq(ORDER), event.capture());
+        assertTrue(event.getValue().details().endsWith("; reason: Goods returned"), event.getValue().details());
+    }
+
     // Требование заказчика: выключенная кнопка — не только на экране. Тот же отказ с той же причиной, и к провайдеру
     // запрос не идёт; нет прав — 403 и запись в журнал.
     @Test
     void aDisabledButton_isTheSameRefusal_andNeverReachesTheProvider() {
         when(orders.order(ORDER, head)).thenReturn(order(disabled(MoneyActionReason.TERMINAL_NOT_IN_PORTAL), null));
         BusinessException notInPortal = assertThrows(BusinessException.class,
-                () -> service.refund(ORDER, new BigDecimal("10.00"), head));
+                () -> service.refund(ORDER, new BigDecimal("10.00"), null, head));
         assertTrue(notInPortal.getMessage().contains("not registered in the portal"));
 
         when(orders.order(ORDER, head)).thenReturn(order(disabled(MoneyActionReason.OUTCOME_UNKNOWN), null));
-        assertThrows(ConflictException.class, () -> service.refund(ORDER, new BigDecimal("10.00"), head));
+        assertThrows(ConflictException.class, () -> service.refund(ORDER, new BigDecimal("10.00"), null, head));
 
         when(orders.order(ORDER, head)).thenReturn(order(disabled(MoneyActionReason.NO_RIGHTS), null));
-        assertThrows(InvalidStateException.class, () -> service.refund(ORDER, new BigDecimal("10.00"), head));
+        assertThrows(InvalidStateException.class, () -> service.refund(ORDER, new BigDecimal("10.00"), null, head));
         verify(auditLogService).logDenied(eq("PROVIDER_ORDER"), eq(ORDER), eq("REFUND"), anyString(), any(), anyString());
 
         verifyNoInteractions(acquiringClient);
@@ -114,8 +127,8 @@ class EcomMoneyOperationServiceTest {
     void anAmountAboveWhatIsLeft_orWithThreeDecimals_isRefused() {
         when(orders.order(ORDER, head)).thenReturn(order(refundable("40"), null));
 
-        assertThrows(BusinessException.class, () -> service.refund(ORDER, new BigDecimal("40.01"), head));
-        assertThrows(BusinessException.class, () -> service.refund(ORDER, new BigDecimal("10.005"), head));
+        assertThrows(BusinessException.class, () -> service.refund(ORDER, new BigDecimal("40.01"), null, head));
+        assertThrows(BusinessException.class, () -> service.refund(ORDER, new BigDecimal("10.005"), null, head));
         verifyNoInteractions(acquiringClient);
     }
 
@@ -125,7 +138,7 @@ class EcomMoneyOperationServiceTest {
         when(orders.order(ORDER, head)).thenReturn(order(null, "0c7d3c1e-9a7a-4f9e-9a0e-6b5f2b1d1a11"));
 
         ConflictException refused = assertThrows(ConflictException.class,
-                () -> service.refund(ORDER, new BigDecimal("10.00"), head));
+                () -> service.refund(ORDER, new BigDecimal("10.00"), null, head));
         assertTrue(refused.getMessage().contains("0c7d3c1e-9a7a-4f9e-9a0e-6b5f2b1d1a11"));
         verifyNoInteractions(acquiringClient);
     }
@@ -136,7 +149,7 @@ class EcomMoneyOperationServiceTest {
         when(orders.order(ORDER, head)).thenReturn(order(refundable("40"), null));
         when(acquiringClient.refund(anyString(), any(), any())).thenThrow(new PaymentOutcomeUnknownException("Read timed out"));
 
-        assertThrows(PaymentOutcomeUnknownException.class, () -> service.refund(ORDER, new BigDecimal("10.00"), head));
+        assertThrows(PaymentOutcomeUnknownException.class, () -> service.refund(ORDER, new BigDecimal("10.00"), null, head));
 
         verify(attempts).markUnknown(ORDER);
         verify(attempts, never()).release(any());
@@ -149,7 +162,7 @@ class EcomMoneyOperationServiceTest {
         when(orders.order(ORDER, head)).thenReturn(order(refundable("40"), null));
         when(acquiringClient.refund(anyString(), any(), any())).thenThrow(new BusinessException("Acquirer error: declined"));
 
-        assertThrows(BusinessException.class, () -> service.refund(ORDER, new BigDecimal("10.00"), head));
+        assertThrows(BusinessException.class, () -> service.refund(ORDER, new BigDecimal("10.00"), null, head));
 
         verify(attempts).release(ORDER);
         verify(attempts, never()).markUnknown(any());

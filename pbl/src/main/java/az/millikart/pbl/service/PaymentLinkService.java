@@ -557,7 +557,7 @@ public class PaymentLinkService {
             throw new BusinessException("Capture amount exceeds the authorized amount");
         }
 
-        return prepare(transaction, MoneyOperationAttempt.Kind.CAPTURE, request.amount(), principal, terminalCompanyId);
+        return prepare(transaction, MoneyOperationAttempt.Kind.CAPTURE, request.amount(), null, principal, terminalCompanyId);
     }
 
     private PaymentLinkResponse recordConfirmedCapture(PreparedOperation operation, MoneyOperationResult capture) {
@@ -643,7 +643,8 @@ public class PaymentLinkService {
             throw new BusinessException("Refund amount exceeds the captured amount of the transaction");
         }
 
-        return prepare(transaction, MoneyOperationAttempt.Kind.REFUND, request.amount(), principal, terminalCompanyId);
+        return prepare(transaction, MoneyOperationAttempt.Kind.REFUND, request.amount(), reasonOf(request.reason()),
+                principal, terminalCompanyId);
     }
 
     private RefundResponse recordConfirmedRefund(PreparedOperation operation, MoneyOperationResult result) {
@@ -666,7 +667,7 @@ public class PaymentLinkService {
                         + "; refunded so far " + transaction.getRefundedAmount() + ", transaction now "
                         + transaction.getStatus() + " (ridByPmo " + result.ridByPmo()
                         + ", tranActionId " + result.tranActionId()
-                        + ", approvalCode " + result.approvalCode() + ")"));
+                        + ", approvalCode " + result.approvalCode() + ")" + operation.reasonSuffix()));
 
         return new RefundResponse(
                 transaction.getId(),
@@ -720,13 +721,18 @@ public class PaymentLinkService {
     // держит операцию на время вызова: второй возврат или списание — 409. 2: вызов эквайера без транзакции и
     // замка — соединение пула не ждёт эквайера. 3: под ждущим замком итог по перечитанной операции и удаление
     // строки. Строка без итога — исход неизвестен: её снимает только SYSTEM_ADMIN (resolveOutcome).
+    // reason — причина возврата для журнала (Р-126), null у списания и у возврата без причины.
     private record PreparedOperation(UUID transactionId, MoneyOperationAttempt.Kind kind, BigDecimal amount,
                                      String providerOrderId, ProviderCredentials credentials, String currency,
-                                     String actor, String terminalCompanyId) {
+                                     String actor, String terminalCompanyId, String reason) {
+
+        String reasonSuffix() {
+            return reason == null ? "" : "; reason: " + reason;
+        }
     }
 
     private PreparedOperation prepare(Transaction transaction, MoneyOperationAttempt.Kind kind, BigDecimal amount,
-                                      UserPrincipal principal, String terminalCompanyId) {
+                                      String reason, UserPrincipal principal, String terminalCompanyId) {
         PaymentLink link = transaction.getLink();
         Terminal terminal = terminalRepository.findById(link.getTerminalId())
                 .orElseThrow(() -> {
@@ -746,7 +752,12 @@ public class PaymentLinkService {
                 .build());
         log.info("Sending {} of {} to the acquirer for providerOrderId: {}", kind, amount, transaction.getProviderOrderId());
         return new PreparedOperation(transaction.getId(), kind, amount, transaction.getProviderOrderId(), credentials,
-                link.getCurrency(), actor, terminalCompanyId);
+                link.getCurrency(), actor, terminalCompanyId, reason);
+    }
+
+    // Пустая причина — её нет; пробелы по краям не храним.
+    private static String reasonOf(String raw) {
+        return raw == null || raw.isBlank() ? null : raw.strip();
     }
 
     // Пока исход прошлой операции не записан, новая не уходит: та могла уже двинуть деньги (Р-123).
@@ -773,7 +784,7 @@ public class PaymentLinkService {
                     capitalized(operation.kind()) + " of " + operation.amount() + " " + operation.currency()
                             + " left unconfirmed by the acquirer (providerOrderId " + operation.providerOrderId()
                             + "): " + e.getMessage() + ". Outcome unknown — a system administrator must reconcile "
-                            + "it with the provider and resolve it before another money operation.");
+                            + "it with the provider and resolve it before another money operation." + operation.reasonSuffix());
             throw e;
         } catch (RuntimeException e) {
             // Отказ эквайера или разомкнутый breaker: деньги не двигались, запрет снимается.

@@ -618,8 +618,9 @@ The same payload is returned by §5.7, §5.11 and §5.12; `actions` only by §5.
 ```
 
 -   `amount` — required, > 0, at most two decimal places.
--   `reason` — accepted and **not used**: it is not stored, not written to the journal and not sent to the
-    acquirer (open task REFUND-REASON).
+-   `reason` — optional, at most 255 characters (Р-126): trimmed and appended to the journal record
+    `TRANSACTION` / `REFUND` (and to the `UNRESOLVED` one on `502`) as `; reason: <text>`. It is not stored on
+    the transaction and not sent to the acquirer — `exec-tran` has no such field.
 
 -   Only `SUCCESS` and `PARTIALLY_REFUNDED` transactions are refunded. The ceiling is the **captured**
     amount — `captured_amount` after a DMS capture, `amount` when there was none (every SMS payment) —
@@ -666,6 +667,7 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
 | 409 | `Another money operation on this transaction is in progress`; the unknown-outcome text of §5.9 |
 | 400 | `Only successful or partially refunded transactions can be refunded` |
 | 400 | `Refund amount must not have more than two decimal places` |
+| 400 | `reason must be at most 255 characters` |
 | 400 | `Refund amount exceeds the captured amount of the transaction` |
 | 400 | `Terminal configuration not found`; credentials texts (§6) |
 | 400 | `Acquirer error: <description>` — the acquirer refused (`errorCode` or HTTP 4xx); nothing moved |

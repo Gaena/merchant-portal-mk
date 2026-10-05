@@ -4,6 +4,8 @@ import az.millikart.common.security.CredentialCipher;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -124,6 +126,30 @@ class PblAuditIntegrationTest {
                 .contains("40.00", "AZN", "RID-42", "TRAN-77", "PARTIALLY_REFUNDED");
     }
 
+    // Р-126: причина возврата — в записи журнала, рядом с суммой: при разборе спора её больше негде взять. Без
+    // причины запись прежняя; длиннее колонки — 400 до эквайера.
+    @Test
+    void refund_recordsTheReasonTheMerchantGave() throws Exception {
+        Transaction paid = transaction(TransactionStatus.SUCCESS, PaymentType.SMS);
+        when(acquiringClient.refund(any(), any(), any()))
+                .thenReturn(new MoneyOperationResult("TRAN-79", "RID-45", "APPR-8", Map.of("status", "ok")));
+
+        mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":40.00,\"reason\":\"  Goods returned by the customer  \"}"))
+                .andExpect(status().isOk());
+
+        assertThat(single("REFUND").getDetails()).endsWith("; reason: Goods returned by the customer");
+
+        mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
+                        .header(HttpHeaders.AUTHORIZATION, headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":10.00,\"reason\":\"" + "x".repeat(256) + "\"}"))
+                .andExpect(status().isBadRequest());
+        verify(acquiringClient, times(1)).refund(any(), any(), any());
+    }
+
     // Р-104: запись о деньгах — компании терминала, а не того, кто действовал. У администратора компании
     // нет, и раньше его возврат по ссылке компании в её журнале не был виден.
     @Test
@@ -175,7 +201,7 @@ class PblAuditIntegrationTest {
         mockMvc.perform(post("/api/v1/transactions/" + paid.getId() + "/refund")
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"amount\":40.00}"))
+                        .content("{\"amount\":40.00,\"reason\":\"Duplicate charge\"}"))
                 .andExpect(status().isBadGateway());
 
         // Локально ничего не применилось...
@@ -190,7 +216,8 @@ class PblAuditIntegrationTest {
         assertThat(record.getOutcome()).isEqualTo(AuditOutcome.UNRESOLVED);
         assertThat(record.getDetails())
                 .contains("40.00", "unconfirmed", "reconcile")
-                .contains(paid.getProviderOrderId());
+                .contains(paid.getProviderOrderId())
+                .endsWith("; reason: Duplicate charge");
     }
 
     @Test

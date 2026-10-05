@@ -302,6 +302,9 @@ export interface TranslationDictionary {
       confirmCapture: string;
       /** Возврат (P3-5a): окно говорит «возврат», как бэкенд (`/refund`, `REFUND` в журнале). */
       refundQuestion: string;
+      /** Необязательная причина возврата — в журнал аудита (Р-126). */
+      refundReason: string;
+      refundReasonHint: string;
       keepTransaction: string;
       customerInfo: string;
       paymentInfo: string;
@@ -964,6 +967,8 @@ export const translations: Record<Language, TranslationDictionary> = {
         captureAmount: 'Amount being captured',
         confirmCapture: 'Capture Funds',
         refundQuestion: 'Do you want to refund this transaction? The funds will be returned to the customer\u2019s card and this cannot be undone.',
+        refundReason: 'Reason (optional)',
+        refundReasonHint: 'Goes to the audit log; the customer and the acquirer do not see it.',
         keepTransaction: 'Keep Transaction',
         customerInfo: 'Customer Information',
         paymentInfo: 'Payment Breakdown',
@@ -1572,6 +1577,8 @@ export const translations: Record<Language, TranslationDictionary> = {
         captureAmount: 'Silinəcək məbləğ',
         confirmCapture: 'Məbləği Sil',
         refundQuestion: 'Bu əməliyyat üzrə məbləği qaytarmaq istəyirsiniz? Vəsait müştərinin kartına qaytarılacaq və bunu geri almaq mümkün olmayacaq.',
+        refundReason: 'Səbəb (istəyə görə)',
+        refundReasonHint: 'Audit jurnalına düşür; müştəri və ekvayer onu görmür.',
         keepTransaction: 'Əməliyyatı Saxla',
         customerInfo: 'Müştəri Məlumatları',
         paymentInfo: 'Ödəniş Bölgüsü',
@@ -2180,6 +2187,8 @@ export const translations: Record<Language, TranslationDictionary> = {
         captureAmount: 'Сумма к списанию',
         confirmCapture: 'Списать средства',
         refundQuestion: 'Вернуть средства по этой транзакции? Деньги вернутся на карту клиента, отменить это действие нельзя.',
+        refundReason: 'Причина (необязательно)',
+        refundReasonHint: 'Попадает в журнал аудита; клиент и эквайер её не видят.',
         keepTransaction: 'Оставить транзакцию',
         customerInfo: 'Информация о клиенте',
         paymentInfo: 'Параметры платежа',
