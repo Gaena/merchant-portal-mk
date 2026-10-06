@@ -287,7 +287,7 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 | Parameter | Default | Meaning |
 |:---|:---|:---|
 | `page` | `0` | page number |
-| `size` | `20` | page size; not clamped — `size=0` answers `500` (`../../AGENTS.md` §10) |
+| `size` | `20` | page size, clamped to `1…200`; a negative `page` is read as `0` — clamped, not refused |
 | `terminal` | — | our terminal id; a terminal of another company — `403`, an unknown one — `404` (§4.1) |
 | `status` | — | exactly `ACTIVE`, `EXPIRED`, `COMPLETED`, `CANCELED` or `SUSPENDED`; anything else — `400 Parameter 'status' has an invalid value` |
 
@@ -434,7 +434,8 @@ order id.
 -   **Access:** every role; an unrecognised role — `403` (§4.1). `SYSTEM_ADMIN` and `AUDITOR` see every
     company, the other roles — transactions of links on their company's terminals; no company or no
     terminals — an empty page.
--   **Query Parameters:** `page` (default `0`), `size` (default `20`, not clamped — `../../AGENTS.md` §10).
+-   **Query Parameters:** `page` (default `0`, a negative one is read as `0`), `size` (default `20`, clamped to
+    `1…200`) — clamped, not refused.
 -   **Ordering:** `createdAt DESC, id DESC`. No filters. The portal UI does not call this endpoint: it
     shows transactions under their link (§5.11) and opens one by id (§5.12).
 

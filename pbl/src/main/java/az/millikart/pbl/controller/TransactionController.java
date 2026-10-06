@@ -17,6 +17,9 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/transactions")
 public class TransactionController {
 
+    // Общий потолок страницы всех списков проекта.
+    private static final int MAX_PAGE_SIZE = 200;
+
     private final PaymentLinkService paymentLinkService;
 
     public TransactionController(PaymentLinkService paymentLinkService) {
@@ -63,7 +66,8 @@ public class TransactionController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal UserPrincipal principal) {
-        Pageable pageable = PageRequest.of(page, size,
+        // Параметры приводятся, а не отвергаются: PageRequest.of бросает на page < 0 и size < 1 (P2-1).
+        Pageable pageable = PageRequest.of(Math.max(page, 0), Math.clamp(size, 1, MAX_PAGE_SIZE),
                 Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
         return paymentLinkService.listTransactions(pageable, principal);
     }

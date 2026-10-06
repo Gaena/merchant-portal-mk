@@ -137,7 +137,7 @@
 								{
 									"key": "size",
 									"value": "10",
-									"description": "Page size, default 20. Not clamped: size=0 answers 500."
+									"description": "Page size, default 20, clamped to 1-200."
 								},
 								{
 									"key": "terminal",
@@ -275,7 +275,7 @@
 								{
 									"key": "size",
 									"value": "20",
-									"description": "Page size, default 20. Not clamped: size=0 answers 500."
+									"description": "Page size, default 20, clamped to 1-200."
 								}
 							]
 						},

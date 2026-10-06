@@ -387,6 +387,25 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.totalElements", is(1)));
     }
 
+    // Параметры страницы приводятся, а не отвергаются (P2-1): size=0 и page=-1 давали 500 из
+    // PageRequest.of, а размер без потолка вытягивал таблицу одним запросом.
+    @Test
+    void listPaymentLinks_outOfRangePageParameters_areClamped() throws Exception {
+        createLinkAndGetId(headToken);
+
+        mockMvc.perform(authed(get("/api/v1/payment-links"), headToken)
+                        .param("page", "-1")
+                        .param("size", "0"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.number", is(0)))
+                .andExpect(jsonPath("$.size", is(1)))
+                .andExpect(jsonPath("$.content.length()", is(1)));
+        mockMvc.perform(authed(get("/api/v1/payment-links"), headToken)
+                        .param("size", "100000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.size", is(200)));
+    }
+
     @Test
     void listPaymentLinks_forForeignCompany_returnsEmpty() throws Exception {
         createLinkAndGetId(headToken);
@@ -996,6 +1015,24 @@ class PaymentLinkIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements", is(0)))
                 .andExpect(jsonPath("$.content.length()", is(0)));
+    }
+
+    // То же приведение, что у списка ссылок (P2-1).
+    @Test
+    void listTransactions_outOfRangePageParameters_areClamped() throws Exception {
+        createTransaction(TERMINAL_ID, "TX-OWN");
+
+        mockMvc.perform(authed(get("/api/v1/transactions"), headToken)
+                        .param("page", "-1")
+                        .param("size", "0"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.number", is(0)))
+                .andExpect(jsonPath("$.size", is(1)))
+                .andExpect(jsonPath("$.content.length()", is(1)));
+        mockMvc.perform(authed(get("/api/v1/transactions"), headToken)
+                        .param("size", "100000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.size", is(200)));
     }
 
     @Test
