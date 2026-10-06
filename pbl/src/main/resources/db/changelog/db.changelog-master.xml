@@ -21,5 +21,6 @@
     <include file="changes/014-transaction-last-reconciled.xml" relativeToChangelogFile="true"/>
     <include file="changes/015-money-operation-attempts.xml" relativeToChangelogFile="true"/>
     <include file="changes/016-transaction-card-submitted.xml" relativeToChangelogFile="true"/>
+    <include file="changes/017-company-tax-id.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

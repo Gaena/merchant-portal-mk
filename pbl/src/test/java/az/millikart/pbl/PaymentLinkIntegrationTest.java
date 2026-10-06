@@ -46,6 +46,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1262,6 +1263,56 @@ class PaymentLinkIntegrationTest {
                 // Никакого клиентского кода: страница не должна сама никуда ходить.
                 .andExpect(content().string(not(containsString("<script"))))
                 .andExpect(content().string(not(containsString("/api/v1/transactions"))));
+    }
+
+    // Р-130: чек по закону о платёжных услугах (ст. 17.1) и правилам ЦБ АР № 12/3 (п. 14.1, 15.5) —
+    // провайдер с VÖEN, продавец с VÖEN, терминал, номер чека, RRN, код авторизации, платёжная система и
+    // карта, данные ссылки и клиента. Страница открывается без входа: первых шести цифр карты, пароля
+    // заказа и внутреннего id операции на ней нет.
+    @Test
+    void redirectPage_rendersTheLawfulReceiptRequisites() throws Exception {
+        jdbcTemplate.update("UPDATE companies SET tax_id = '2000000002' WHERE id = 'test-company'");
+        doReturn(contractOrderPayload())
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+        Transaction tx = createTransaction(TERMINAL_ID, "ORDER-LAWFUL", TransactionStatus.PENDING);
+        PaymentLink link = paymentLinkRepository.findById(tx.getLink().getId()).orElseThrow();
+        link.setCustomerName("Aysel Mammadova");
+        link.setCustomerEmail("aysel@example.az");
+        link.setCustomerPhone("+994501234567");
+        paymentLinkRepository.save(link);
+
+        String page = mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", tx.getRidByMerchant()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+
+        for (String expected : List.of(
+                "Ödəniş çeki", "Test Payment Provider LLC", "1700000001",
+                "Company test-company", "2000000002", "Test Terminal", "TID-Admin",
+                "ORD-ORDER-LAWFUL", "629677123123123123", "629677", "Visa", "**** 3689",
+                "14.03.2023 10:30:39", "100.00 AZN", "RID-ORDER-LAWFUL", "ORDER-LAWFUL",
+                "Fixture for ORDER-LAWFUL", "Aysel Mammadova", "aysel@example.az", "+994501234567")) {
+            Assertions.assertTrue(page.contains(expected), "the receipt must show " + expected);
+        }
+        for (String leaked : List.of("426863", "1h1pq153fk8xk", "provider-password", tx.getId().toString())) {
+            Assertions.assertFalse(page.contains(leaked), "the receipt must not show " + leaked);
+        }
+        Assertions.assertTrue(page.contains("name=\"referrer\" content=\"no-referrer\""));
+    }
+
+    // Р-129: у компании, заведённой без VÖEN, строки VÖEN продавца нет — выдумывать реквизит нельзя (Р-48).
+    // VÖEN провайдера на месте: он из настроек и обязателен.
+    @Test
+    void redirectPage_companyWithoutTaxId_omitsOnlyTheMerchantTaxIdLine() throws Exception {
+        Transaction tx = createTransaction(TERMINAL_ID, "ORDER-NO-VOEN", TransactionStatus.SUCCESS);
+
+        String page = mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", tx.getRidByMerchant()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+
+        Assertions.assertTrue(page.contains("Company test-company"));
+        Assertions.assertTrue(page.contains("1700000001"));
+        Assertions.assertEquals(1, page.split("VÖEN<span", -1).length - 1,
+                "only the provider's VÖEN line is expected");
     }
 
     @Test

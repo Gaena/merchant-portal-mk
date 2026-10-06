@@ -97,6 +97,7 @@ public class PaymentLinkService {
     private final TransactionRefundRepository transactionRefundRepository;
     private final MoneyOperationAttemptRepository attemptRepository;
     private final TerminalRepository terminalRepository;
+    private final PaymentReceipts paymentReceipts;
     private final AcquiringClient acquiringClient;
     private final ProviderCredentialsService providerCredentials;
     private final PaymentLinkMapper mapper;
@@ -118,6 +119,7 @@ public class PaymentLinkService {
                                AuditLogService auditLogService,
                                ApplicationEventPublisher eventPublisher,
                                PlatformTransactionManager transactionManager,
+                               PaymentReceipts paymentReceipts,
                                @Value("${pbl.base-url}") String baseUrl,
                                @Value("${pbl.link.default-ttl}") Duration defaultLinkTtl,
                                @Value("${pbl.link.max-ttl}") Duration maxLinkTtl) {
@@ -132,6 +134,7 @@ public class PaymentLinkService {
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
         this.txTemplate = new TransactionTemplate(transactionManager);
+        this.paymentReceipts = paymentReceipts;
         this.baseUrl = baseUrl;
         this.defaultLinkTtl = defaultLinkTtl;
         this.maxLinkTtl = maxLinkTtl;
@@ -964,7 +967,7 @@ public class PaymentLinkService {
     }
 
     // Страница возврата плательщика: владение не проверяется — ключ случайный ridByMerchant, его не
-    // перебрать. Ответ беден на персональные данные; пусто вместо ошибки — не выдать, есть ли операция.
+    // перебрать. Ответ — чек по закону (Р-130), без лишнего; пусто вместо ошибки — не выдать, есть ли операция.
     // Опрос — в своей транзакции под замком ссылки: занятый замок или недоступный эквайер не должны
     // портить страницу, тогда она рисуется последним известным состоянием.
     public Optional<PaymentReceiptView> refreshByRidByMerchant(UUID ridByMerchant) {
@@ -977,7 +980,7 @@ public class PaymentLinkService {
         UUID transactionId = found.get();
         try {
             return Optional.of(txTemplate.execute(status ->
-                    toReceiptView(refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction())));
+                    paymentReceipts.of(refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction())));
         } catch (OptimisticLockingFailureException e) {
             // Версию ссылки поднял запрос без её замка: повторяет контроллер — свежий опрос лучше старого состояния.
             throw e;
@@ -987,7 +990,7 @@ public class PaymentLinkService {
         } catch (RuntimeException e) {
             log.warn("Status refresh failed for transaction {}: {}; rendering the last known state", transactionId, e.getMessage());
         }
-        return txTemplate.execute(status -> transactionRepository.findById(transactionId).map(this::toReceiptView));
+        return txTemplate.execute(status -> transactionRepository.findById(transactionId).map(paymentReceipts::of));
     }
 
     // Метка в providerResponse: платёж закончил этот сервис, а не эквайер.
@@ -1292,31 +1295,6 @@ public class PaymentLinkService {
                 });
         validateAccess(tx.getLink().getTerminalId(), principal, READ_ROLES);
         return mapToTransactionResponse(tx, actionsOf(tx, principal));
-    }
-
-    // Узкая проекция для страницы плательщика: только то, что плательщик и так знает.
-    private PaymentReceiptView toReceiptView(Transaction tx) {
-        PaymentLink link = tx.getLink();
-        return new PaymentReceiptView(
-                receiptState(tx.getStatus()),
-                tx.getId(),
-                tx.getAmount(),
-                link != null ? link.getCurrency() : "AZN",
-                link != null ? link.getMerchantOrderId() : null,
-                link != null ? link.getDescription() : null,
-                link != null ? link.getCustomerName() : null,
-                link != null ? link.getCustomerEmail() : null,
-                tx.getCreatedAt()
-        );
-    }
-
-    private static String receiptState(TransactionStatus status) {
-        return switch (status) {
-            case SUCCESS, REFUNDED, PARTIALLY_REFUNDED -> "PAID";
-            case AUTHORIZED -> "AUTHORIZED";
-            case FAILED -> "FAILED";
-            case PENDING -> "PENDING";
-        };
     }
 
     // Маска карты, RRN и код авторизации — на лету из providerResponse через ProviderOrderDetails (P1-16).

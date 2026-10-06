@@ -51,6 +51,16 @@ class ConfigurationExternalizationTest {
         assertExactPlaceholder(yaml, "api-base-url", "PROVIDER_API_BASE_URL");
     }
 
+    // Р-130: реквизиты провайдера на чеке — из окружения и без умолчания. Умолчание напечатало бы на чеках
+    // прода чужое название или выдуманный VÖEN, и закон был бы нарушен молча.
+    @Test
+    void productionYaml_readsTheReceiptRequisitesFromTheEnvironmentWithoutDefaults() throws IOException {
+        String yaml = read();
+
+        assertExactPlaceholder(yaml, "provider-name", "RECEIPT_PROVIDER_NAME");
+        assertExactPlaceholder(yaml, "provider-tax-id", "RECEIPT_PROVIDER_TAX_ID");
+    }
+
     // Пути протокола — константы шлюза, у них боевые умолчания. Тестовый yaml заменяет боевой целиком и обязан
     // повторять их: иначе тест, однажды пустивший настоящий клиент, ходил бы не туда, куда ходит прод.
     @Test

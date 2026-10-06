@@ -442,6 +442,8 @@ DB_URL=jdbc:postgresql://localhost:5432/merchant_portal
 DB_USERNAME=postgres
 DB_PASSWORD=ВАШ_ПАРОЛЬ_БАЗЫ_ДАННЫХ
 PBL_BASE_URL=https://ВАШ_ДОМЕН/
+RECEIPT_PROVIDER_NAME=НАЗВАНИЕ_ПЛАТЁЖНОГО_ПРОВАЙДЕРА
+RECEIPT_PROVIDER_TAX_ID=VÖEN_ПЛАТЁЖНОГО_ПРОВАЙДЕРА
 PROVIDER_GATEWAY_BASE_URL=АДРЕС_ШЛЮЗА_ОТ_MILLIKART
 PROVIDER_API_BASE_URL=АДРЕС_API_ОТ_MILLIKART
 ECOM_TXPG_URL=jdbc:oracle:thin:@//АДРЕС_БАЗЫ_ШЛЮЗА:ПОРТ/СЕРВИС
@@ -1700,6 +1702,7 @@ sudo systemctl restart mp-auth
 | `CREDENTIALS_ENCRYPTION_KEY` | — | **обяз.** | **обяз.** | **обяз.** | нет — ключ AES-256 паролей компаний к провайдеру, 32 байта в base64, одно значение в `directory`, `pbl` и `ecom` (Р-93, Р-124). Не терять и не менять (§8.3, §16) |
 | `DIRECTORY_TERMINAL_RECONCILIATION_ENABLED`, `DIRECTORY_TERMINAL_RECONCILIATION_CRON` | — | + | — | — | `true`, `0 */15 * * * *` — сверка статусов терминалов со справочником провайдера |
 | `PBL_BASE_URL` | — | — | **обяз.** | — | нет — публичный адрес портала, уходит эквайеру как адрес возврата плательщика (P1-10, §8.3) |
+| `RECEIPT_PROVIDER_NAME`, `RECEIPT_PROVIDER_TAX_ID` | — | — | **обяз.** | — | нет — название и VÖEN (ровно 10 цифр) платёжного провайдера на чеке плательщика: закон о платёжных услугах, ст. 17.1.1 (Р-130). Значения даёт заказчик; пусто или не 10 цифр — `pbl` не стартует |
 | `PROVIDER_GATEWAY_BASE_URL` | — | — | **обяз.** | **обяз.** | нет — адрес шлюза эквайера (страница оплаты), выдаёт MilliKart; не-HTTPS даёт WARN |
 | `PROVIDER_API_BASE_URL` | — | — | **обяз.** | **обяз.** | нет — адрес e-commerce API эквайера, выдаёт MilliKart; не-HTTPS даёт WARN |
 | `PROVIDER_CREATE_ORDER_PATH`, `PROVIDER_EXEC_TRAN_PATH`, `PROVIDER_GET_ORDER_PATH` | — | — | + | + | `/order`, `/order/{orderId}/exec-tran`, `/order/{orderId}` — пути протокола эквайера, менять не нужно |
@@ -1823,6 +1826,7 @@ sudo -u postgres psql -d merchant_portal -c "UPDATE users SET status = 'ACTIVE',
 | `Migration failed for changeset …002-ecom-terminal-status-source…` с причиной `relation "terminals" does not exist` | `ecom` запущен на пустой базе раньше `directory` и `pbl` | Запустить `mp-directory`, затем снова `mp-ecom`: `sudo systemctl reset-failed mp-ecom && sudo systemctl start mp-ecom` (§9.5) |
 | `Could not resolve placeholder '…'` (например `'auth.inactivity.max-idle'`) | Сервис запущен с внешней копией `application.yaml` (`--spring.config.location`), в которой нет свойства из новой версии | Удалить копию и параметр из юнита (§8.1), `daemon-reload`, запустить |
 | `WARNING: the acquirer address is not HTTPS` (в рамке, сервис стартует) | Адрес шлюза или API эквайера задан по `http://` | Это не ошибка конфигурации: HTTPS даёт MilliKart. Запросить у них `https://` адрес и заменить переменную |
+| `The environment variable RECEIPT_PROVIDER_NAME … is empty` / `RECEIPT_PROVIDER_TAX_ID … must be a VÖEN of exactly 10 digits`; `Could not resolve placeholder 'RECEIPT_PROVIDER_NAME'` | Реквизитов провайдера для чека нет в `mp.env` или VÖEN не из 10 цифр | Задать оба в `mp.env` значениями от заказчика и перезапустить `mp-pbl` |
 | `WARNING: the public address of this service is not HTTPS` (в рамке, сервис стартует) | `PBL_BASE_URL` по `http://` на не-локальном хосте | В проде — `https://ВАШ_ДОМЕН/` (раздел 12); для `localhost`/`127.0.0.1`/`[::1]` предупреждения нет |
 | Логин проходит, но `directory`, `pbl` или `ecom` отвечают 401 | `JWT_SECRET` различается между сервисами | Одно значение на все (§8.3), перезапустить все сервисы |
 | `ecom` работает, но health DOWN у `txpgDataSource` (§14.1), в журнале ERROR `Provider terminal sync skipped: gateway unavailable: …` или `gateway query failed: …` (то же для `Provider login sync`) — один раз в начале сбоя и при смене причины; пока сбой длится, повторы — DEBUG, возврат — INFO `… is applied again after skipped runs` | Неверные `ECOM_TXPG_URL`, `ECOM_TXPG_USERNAME`, `ECOM_TXPG_PASSWORD` или `ECOM_TXPG_SCHEMA`, нет прав на чтение либо сетевого доступа к базе шлюза. Сервис стартует — соединение с базой шлюза открывается при первом запросе | Исправить переменные в `mp.env` или доступ и перезапустить `mp-ecom`. Пока справочники не обновляются, новые компании и терминалы не заводятся, а выписка и главная не открываются |

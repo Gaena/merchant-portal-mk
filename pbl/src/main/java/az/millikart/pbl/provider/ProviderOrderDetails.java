@@ -20,6 +20,12 @@ public final class ProviderOrderDetails {
         static final TransactionFacts EMPTY = new TransactionFacts(null, null, null);
     }
 
+    // Реквизиты операции для чека плательщика (Р-130): платёжная система, последние 4 цифры карты, RRN,
+    // код авторизации и время операции у провайдера — строкой, как пришло. Любое поле бывает null.
+    public record ReceiptFacts(String cardBrand, String cardLastFour, String rrn, String approvalCode,
+                               String operationTime) {
+    }
+
     // §5.8.8: описания записей order.trans[]. Void — подстрокой: в контракте есть «Purchase - Void»,
     // а отмена чего угодно — не покупка.
     static final String DESCRIPTION_PURCHASE = "Purchase";
@@ -51,6 +57,30 @@ public final class ProviderOrderDetails {
                 maskedCard,
                 ProviderPayloads.scalarText(record.get("rrn")),
                 ProviderPayloads.scalarText(record.get("approvalCode")));
+    }
+
+    // Карта на чеке — только последние 4 цифры (Р-130): первые шесть displayName раскрывают банк-эмитент,
+    // а чек открывается по ссылке без входа. Время — regTime той же записи покупки, откуда RRN.
+    public static ReceiptFacts receiptFacts(Map<String, Object> orderPayload) {
+        if (orderPayload == null) {
+            return new ReceiptFacts(null, null, null, null, null);
+        }
+        TransactionFacts facts = read(orderPayload);
+        Map<String, Object> srcToken = asMap(orderPayload.get("srcToken"));
+        Map<String, Object> card = srcToken != null ? asMap(srcToken.get("card")) : null;
+        String brand = card != null ? ProviderPayloads.scalarText(card.get("brand")) : null;
+        Map<String, Object> record = purchaseRecord(orderPayload);
+        String operationTime = record != null ? ProviderPayloads.scalarText(record.get("regTime")) : null;
+        return new ReceiptFacts(brand, lastFour(facts.maskedCard()), facts.rrn(), facts.approvalCode(), operationTime);
+    }
+
+    // Маска не той формы — «нет», а не кусок маски: на чеке не должно оказаться ничего, кроме цифр.
+    private static String lastFour(String maskedCard) {
+        if (maskedCard == null || maskedCard.length() < 4) {
+            return null;
+        }
+        String tail = maskedCard.substring(maskedCard.length() - 4);
+        return tail.chars().allMatch(c -> c >= '0' && c <= '9') ? tail : null;
     }
 
     // Плательщик отправил карту: в order.trans[] есть запись операции — оплата, отказ банка, оборванный

@@ -74,6 +74,27 @@ class ProviderOrderDetailsTest {
         assertFalse(ProviderOrderDetails.isReleasedAuthorization(null));
     }
 
+    // Р-130: реквизиты чека. Карта — только последние 4 цифры: первые шесть раскрывают банк-эмитент на
+    // странице, открытой без входа. Время — regTime записи покупки, как пришло; маска не той формы —
+    // «нет», а не её кусок.
+    @Test
+    void receiptFacts_carryBrandLastFourRrnApprovalAndTime() {
+        ProviderOrderDetails.ReceiptFacts facts = ProviderOrderDetails.receiptFacts(fullOrder());
+        assertEquals("Visa", facts.cardBrand());
+        assertEquals("3689", facts.cardLastFour());
+        assertEquals(RRN, facts.rrn());
+        assertEquals(APPROVAL_CODE, facts.approvalCode());
+        assertEquals("2023-03-14 10:30:39", facts.operationTime());
+
+        Map<String, Object> oddMask = fullOrder();
+        oddMask.put("srcToken", Map.of("displayName", "4268****36XX"));
+        assertNull(ProviderOrderDetails.receiptFacts(oddMask).cardLastFour());
+        assertNull(ProviderOrderDetails.receiptFacts(oddMask).cardBrand());
+
+        assertEquals(new ProviderOrderDetails.ReceiptFacts(null, null, null, null, null),
+                ProviderOrderDetails.receiptFacts(null));
+    }
+
     // Р-128: карта отправлена — в order.trans[] есть запись. Брошенный до ввода карты заказ записей не
     // несёт; пустой список, его отсутствие или не-список — «не отправлена», а не падение.
     @Test

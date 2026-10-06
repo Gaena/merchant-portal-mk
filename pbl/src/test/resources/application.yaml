@@ -22,6 +22,9 @@ pbl:
     # would mean the suite checks a configuration nobody runs.
     zone: Asia/Baku
   base-url: https://pay.example.com/
+  receipt:
+    provider-name: Test Payment Provider LLC
+    provider-tax-id: "1700000001"
   security:
     # No test uses the static fallback token, and leaving it enabled would demand a real value.
     api-token-enabled: false

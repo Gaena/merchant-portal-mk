@@ -242,7 +242,7 @@
 								"{{ridByMerchant}}"
 							]
 						},
-						"description": "The page the acquirer sends the payer back to (pay-by-link.md §5.6): public, no token, answers 200 text/html. The path segment is the attempt's `ridByMerchant` (set by Get Payment Link Transactions). The acquirer's ID, PASSWORD and STATUS query parameters are ignored. The transaction is polled at the acquirer once and the page shows Paid, Authorized (Hold), Failed or Pending; an unknown reference shows a neutral 'information unavailable' page."
+						"description": "The page the acquirer sends the payer back to (pay-by-link.md §5.6): public, no token, answers 200 text/html. The path segment is the attempt's `ridByMerchant` (set by Get Payment Link Transactions). The acquirer's ID, PASSWORD and STATUS query parameters are ignored. The transaction is polled at the acquirer once and the page shows the payer receipt (paid or held), Failed or Pending, in Azerbaijani with English; an unknown reference shows a neutral 'information unavailable' page. The receipt carries the requisites of the payment services law (art. 17.1) and CBAR rules 12/3: provider and merchant with VÖEN, terminal ID, receipt No., RRN, authorization code, payment system and the last four card digits, link and customer data (Р-130)."
 					},
 					"response": []
 				}

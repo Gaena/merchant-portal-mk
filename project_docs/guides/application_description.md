@@ -466,6 +466,7 @@ erDiagram
 | `pbl` | `014-transaction-last-reconciled.xml` | `transactions.last_reconciled_at`, если её ещё нет: очередь сверки (Р-110) |
 | `pbl` | `015-money-operation-attempts.xml` | `money_operation_attempts` — возврат или списание, исход которого ещё не записан (Р-123) |
 | `pbl` | `016-transaction-card-submitted.xml` | `transactions.card_submitted`, если её ещё нет: плательщик отправил карту, шаг воронки ссылок (Р-128); на PostgreSQL — отметка старых строк по `trans[]` в `provider_response` |
+| `pbl` | `017-company-tax-id.xml` | `companies.tax_id`, если её ещё нет: VÖEN продавца на чеке плательщика, пишет `directory` (Р-129, Р-130) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` и индекс по `login`; без преконтроля |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет; таблица `terminals` уже должна быть (§4.2) |
 | `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам — и индекс по `login` (Р-94) |

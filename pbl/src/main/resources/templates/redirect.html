@@ -1,9 +1,12 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html lang="az" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Payment Status</title>
+    <title>Ödəniş · Payment</title>
+    <!-- The address is the only key to this receipt (Р-130): never send it to the font host or anyone else. -->
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex, nofollow">
     <link rel="icon" type="image/png" href="data:image/png;base64,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">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
@@ -111,6 +114,19 @@
             color: var(--text-muted);
             line-height: 1.6;
             margin-bottom: 24px;
+        }
+
+        /* English under Azerbaijani: the state language comes first, the second one only helps. */
+        p.en {
+            font-size: 12px;
+            margin-top: -16px;
+            opacity: 0.8;
+        }
+
+        .en-title {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
         }
 
         /* Receipt view styling */
@@ -231,6 +247,43 @@
             margin: 20px 0;
         }
 
+        .receipt-subtitle {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .receipt-section {
+            border-top: 1px dashed var(--border-color);
+            padding-top: 16px;
+            margin-top: 16px;
+        }
+
+        .receipt-section-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        .receipt-label .en,
+        .receipt-section-title .en,
+        .receipt-amount-label .en {
+            display: block;
+            font-size: 10px;
+            font-weight: 400;
+            opacity: 0.75;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
+        .receipt-value.mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
         .actions-group {
             display: flex;
             gap: 12px;
@@ -308,6 +361,15 @@
             .receipt-amount-val, .receipt-value {
                 color: #000000;
             }
+            .receipt-label, .receipt-section-title, .receipt-subtitle, .receipt-amount-label {
+                color: #444444;
+            }
+            .receipt-section, .receipt-header {
+                border-color: #999999;
+            }
+            .brand-plate {
+                box-shadow: none;
+            }
             .actions-group {
                 display: none;
             }
@@ -329,53 +391,130 @@
         </div>
     </div>
 
-    <!-- State 1: settled payment - the receipt -->
-    <div class="receipt" th:if="${receipt != null and (receipt.state == 'PAID' or receipt.state == 'AUTHORIZED')}">
+    <!--
+      State 1: settled payment - the payer receipt (Р-130). Requisites of the payment services law
+      (art. 17.1) and the CBAR rules No 12/3 (14.1, 15.5), as on a POS slip. Azerbaijani first, English
+      beneath. A line whose value is unknown is left out, never filled with a guess (Р-48).
+    -->
+    <div class="receipt" th:if="${receipt != null and (receipt.state == 'PAID' or receipt.state == 'AUTHORIZED')}"
+         th:with="hold=${receipt.state == 'AUTHORIZED'}">
         <div class="receipt-header">
-            <div class="receipt-title">Transaction Receipt</div>
+            <div class="receipt-title">Ödəniş çeki</div>
+            <div class="receipt-subtitle">Transaction Receipt</div>
             <span class="receipt-status-badge"
-                  th:classappend="${receipt.state == 'AUTHORIZED' ? 'status-hold' : 'status-paid'}"
-                  th:text="${receipt.state == 'AUTHORIZED' ? 'Authorized (Hold)' : 'Paid'}">Paid</span>
+                  th:classappend="${hold ? 'status-hold' : 'status-paid'}"
+                  th:text="${hold ? 'Vəsait bloklanıb · Authorized (hold)' : 'Uğurlu · Approved'}">Uğurlu · Approved</span>
         </div>
 
         <div class="receipt-amount-section">
-            <div class="receipt-amount-label"
-                 th:text="${receipt.state == 'AUTHORIZED' ? 'Amount On Hold' : 'Amount Paid'}">Amount Paid</div>
+            <div class="receipt-amount-label" th:if="${hold}">Bloklanmış məbləğ<span class="en">Amount on hold</span></div>
+            <div class="receipt-amount-label" th:unless="${hold}">Ödənilmiş məbləğ<span class="en">Amount paid</span></div>
             <div class="receipt-amount-val"
-                 th:text="${#numbers.formatDecimal(receipt.amount, 1, 'NONE', 2, 'POINT') + ' ' + receipt.currency}">0.00 AZN</div>
+                 th:text="${#numbers.formatDecimal(receipt.amount, 1, 'NONE', 2, 'POINT') + (receipt.currency != null ? ' ' + receipt.currency : '')}">0.00 AZN</div>
         </div>
 
-        <div class="receipt-row">
-            <div class="receipt-label">Order Reference</div>
-            <div class="receipt-value" th:text="${receipt.merchantOrderId} ?: '-'">-</div>
-        </div>
-        <div class="receipt-row">
-            <div class="receipt-label">Transaction ID</div>
-            <div class="receipt-value" th:text="${receipt.transactionId}">-</div>
-        </div>
-        <div class="receipt-row">
-            <div class="receipt-label">Date &amp; Time</div>
-            <div class="receipt-value"
-                 th:text="${receipt.createdAt != null ? #temporals.format(receipt.createdAt, 'dd.MM.yyyy HH:mm') : '-'}">-</div>
+        <div class="receipt-section">
+            <div class="receipt-section-title">Ödəniş xidməti təchizatçısı<span class="en">Payment service provider</span></div>
+            <div class="receipt-row">
+                <div class="receipt-label">Adı<span class="en">Name</span></div>
+                <div class="receipt-value" th:text="${receipt.providerName}">-</div>
+            </div>
+            <div class="receipt-row">
+                <div class="receipt-label">VÖEN<span class="en">Tax ID</span></div>
+                <div class="receipt-value mono" th:text="${receipt.providerTaxId}">-</div>
+            </div>
         </div>
 
-        <div class="receipt-divider"></div>
-
-        <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.description)}">
-            <div class="receipt-label">Description</div>
-            <div class="receipt-value" th:text="${receipt.description}">-</div>
+        <div class="receipt-section">
+            <div class="receipt-section-title">Satıcı<span class="en">Merchant</span></div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.merchantName)}">
+                <div class="receipt-label">Adı<span class="en">Name</span></div>
+                <div class="receipt-value" th:text="${receipt.merchantName}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.merchantTaxId)}">
+                <div class="receipt-label">VÖEN<span class="en">Tax ID</span></div>
+                <div class="receipt-value mono" th:text="${receipt.merchantTaxId}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.terminalName)}">
+                <div class="receipt-label">Xidmət nöqtəsi<span class="en">Point of sale</span></div>
+                <div class="receipt-value" th:text="${receipt.terminalName}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.terminalCode)}">
+                <div class="receipt-label">Terminalın kodu<span class="en">Terminal ID</span></div>
+                <div class="receipt-value mono" th:text="${receipt.terminalCode}">-</div>
+            </div>
         </div>
-        <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerName)}">
-            <div class="receipt-label">Customer</div>
-            <div class="receipt-value"
-                 th:text="${#strings.isEmpty(receipt.customerEmail)
-                           ? receipt.customerName
-                           : receipt.customerName + ' (' + receipt.customerEmail + ')'}">-</div>
+
+        <div class="receipt-section">
+            <div class="receipt-section-title">Əməliyyat<span class="en">Transaction</span></div>
+            <div class="receipt-row">
+                <div class="receipt-label">Növü<span class="en">Type</span></div>
+                <div class="receipt-value"
+                     th:text="${hold ? 'Avtorizasiya · Authorization' : 'Ödəniş · Purchase'}">Ödəniş · Purchase</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.operationTime)}">
+                <div class="receipt-label">Tarix və vaxt<span class="en">Date &amp; time</span></div>
+                <div class="receipt-value mono" th:text="${receipt.operationTime}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.receiptNumber)}">
+                <div class="receipt-label">Qəbzin nömrəsi<span class="en">Receipt No.</span></div>
+                <div class="receipt-value mono" th:text="${receipt.receiptNumber}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.referenceNumber)}">
+                <div class="receipt-label">İstinad nömrəsi (RRN)<span class="en">Reference No. (RRN)</span></div>
+                <div class="receipt-value mono" th:text="${receipt.referenceNumber}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.approvalCode)}">
+                <div class="receipt-label">Avtorizasiya kodu<span class="en">Authorization code</span></div>
+                <div class="receipt-value mono" th:text="${receipt.approvalCode}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.cardBrand)}">
+                <div class="receipt-label">Ödəniş sistemi<span class="en">Payment system</span></div>
+                <div class="receipt-value" th:text="${receipt.cardBrand}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.cardLastFour)}">
+                <div class="receipt-label">Kart<span class="en">Card</span></div>
+                <div class="receipt-value mono" th:text="${'**** ' + receipt.cardLastFour}">-</div>
+            </div>
+        </div>
+
+        <div class="receipt-section">
+            <div class="receipt-section-title">Ödəniş linki<span class="en">Payment link</span></div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.linkNumber)}">
+                <div class="receipt-label">Linkin nömrəsi<span class="en">Link No.</span></div>
+                <div class="receipt-value mono" th:text="${receipt.linkNumber}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.merchantOrderId)}">
+                <div class="receipt-label">Sifariş<span class="en">Order</span></div>
+                <div class="receipt-value" th:text="${receipt.merchantOrderId}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.description)}">
+                <div class="receipt-label">Təyinat<span class="en">Description</span></div>
+                <div class="receipt-value" th:text="${receipt.description}">-</div>
+            </div>
+        </div>
+
+        <div class="receipt-section" th:if="${!#strings.isEmpty(receipt.customerName)
+                                             or !#strings.isEmpty(receipt.customerEmail)
+                                             or !#strings.isEmpty(receipt.customerPhone)}">
+            <div class="receipt-section-title">Müştəri<span class="en">Customer</span></div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerName)}">
+                <div class="receipt-label">Ad<span class="en">Name</span></div>
+                <div class="receipt-value" th:text="${receipt.customerName}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerEmail)}">
+                <div class="receipt-label">E-poçt<span class="en">Email</span></div>
+                <div class="receipt-value" th:text="${receipt.customerEmail}">-</div>
+            </div>
+            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerPhone)}">
+                <div class="receipt-label">Telefon<span class="en">Phone</span></div>
+                <div class="receipt-value mono" th:text="${receipt.customerPhone}">-</div>
+            </div>
         </div>
 
         <div class="actions-group">
-            <button class="btn btn-secondary" onclick="window.print()">Print Receipt</button>
-            <button class="btn btn-primary" onclick="window.close()">Close Page</button>
+            <button class="btn btn-secondary" onclick="window.print()">Çap et · Print</button>
+            <button class="btn btn-primary" onclick="window.close()">Bağla · Close</button>
         </div>
     </div>
 
@@ -385,10 +524,13 @@
             <div class="pulse-ring pulse-ring-error"></div>
             <div class="status-icon">&#10060;</div>
         </div>
-        <h1>Payment failed</h1>
-        <p>The bank declined this payment, so the order was not paid. To try again, ask the
+        <h1>Ödəniş alınmadı</h1>
+        <div class="en-title">Payment failed</div>
+        <p>Bank bu ödənişi rədd etdi, sifariş ödənilməyib. Yenidən cəhd etmək üçün satıcıdan yeni ödəniş
+            linki istəyin.</p>
+        <p class="en">The bank declined this payment, so the order was not paid. To try again, ask the
             merchant for a new payment link.</p>
-        <button class="btn btn-primary" onclick="window.close()">Close Page</button>
+        <button class="btn btn-primary" onclick="window.close()">Bağla · Close</button>
     </div>
 
     <!-- State 3: no final answer from the bank yet - we do not wait for one here -->
@@ -397,11 +539,14 @@
             <div class="pulse-ring"></div>
             <div class="status-icon">&#8987;</div>
         </div>
-        <h1>Your payment is being processed</h1>
-        <p>We have not received a final status from the bank yet, so we cannot confirm the payment
+        <h1>Ödənişiniz emal olunur</h1>
+        <div class="en-title">Your payment is being processed</div>
+        <p>Bankdan hələ yekun cavab gəlməyib, ona görə ödənişi bu səhifədə təsdiq edə bilmirik. Bank ödənişi
+            tamamladıqdan sonra satıcı sizə təsdiq göndərəcək. Bu səhifəni bağlaya bilərsiniz.</p>
+        <p class="en">We have not received a final status from the bank yet, so we cannot confirm the payment
             on this page. The merchant will send you a confirmation once the bank settles it.
             You can safely close this page.</p>
-        <button class="btn btn-primary" onclick="window.close()">Close Page</button>
+        <button class="btn btn-primary" onclick="window.close()">Bağla · Close</button>
     </div>
 
     <!-- State 4: unknown or malformed reference - stays deliberately uninformative -->
@@ -410,10 +555,13 @@
             <div class="pulse-ring"></div>
             <div class="status-icon">&#128274;</div>
         </div>
-        <h1>Payment information is unavailable</h1>
-        <p>We cannot show any payment details for this page. If you have just made a payment,
+        <h1>Ödəniş məlumatı əlçatan deyil</h1>
+        <div class="en-title">Payment information is unavailable</div>
+        <p>Bu səhifədə ödəniş məlumatını göstərə bilmirik. Ödəniş etmisinizsə, satıcı bunu sizə birbaşa
+            təsdiq edəcək.</p>
+        <p class="en">We cannot show any payment details for this page. If you have just made a payment,
             the merchant will confirm it directly.</p>
-        <button class="btn btn-primary" onclick="window.close()">Close Page</button>
+        <button class="btn btn-primary" onclick="window.close()">Bağla · Close</button>
     </div>
 
 </div>

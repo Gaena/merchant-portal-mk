@@ -419,14 +419,31 @@ Refusals are the JSON of §6, not an HTML page: the payer's browser shows the ra
 
 | Transaction status | Page |
 |:---|:---|
-| `SUCCESS`, `REFUNDED`, `PARTIALLY_REFUNDED` | receipt "Paid": amount and currency, `merchantOrderId`, transaction id, date, description, customer name and email; "Print Receipt" and "Close Page" |
-| `AUTHORIZED` | the same receipt marked "Authorized (Hold)", "Amount On Hold" |
-| `FAILED` | "Payment failed" |
-| `PENDING` | "Your payment is being processed" |
-| unknown or malformed `tx` | "Payment information is unavailable" — the page does not disclose whether the transaction exists |
+| `SUCCESS`, `REFUNDED`, `PARTIALLY_REFUNDED` | the payer receipt "Ödəniş çeki · Transaction Receipt", "Uğurlu · Approved" — see below; "Çap et · Print" and "Bağla · Close" |
+| `AUTHORIZED` | the same receipt marked "Vəsait bloklanıb · Authorized (hold)", type "Avtorizasiya · Authorization", amount on hold |
+| `FAILED` | "Ödəniş alınmadı · Payment failed" |
+| `PENDING` | "Ödənişiniz emal olunur · Your payment is being processed" |
+| unknown or malformed `tx` | "Ödəniş məlumatı əlçatan deyil · Payment information is unavailable" — the page does not disclose whether the transaction exists |
 
-The page gets only these fields (`PaymentReceiptView`): no card mask, RRN, approval code, IP or provider
-order id.
+Every text is Azerbaijani with English beneath. **The receipt** (`PaymentReceiptView`, Р-130) carries the
+requisites of the payment services law (art. 17.1) and the CBAR rules No 12/3 of 13.03.2024 (14.1, 15.5),
+as on a POS slip:
+
+| Block | Lines | Source |
+|:---|:---|:---|
+| Payment service provider | name, VÖEN | `RECEIPT_PROVIDER_NAME`, `RECEIPT_PROVIDER_TAX_ID` (required, `deployment_guide.md` §20.1) |
+| Merchant | company name, company VÖEN, terminal name, terminal ID | `companies.name`, `companies.tax_id` (Р-129), `terminals.name`, `terminals.terminal_rid` |
+| Transaction | type, date and time, receipt No., reference No. (RRN), authorization code, payment system, card `**** 1234` | provider order id; the purchase record of the stored provider order (`trans[].regTime`, `rrn`, `approvalCode`), `srcToken.card.brand`, the last four digits of `srcToken.displayName` |
+| Amount | captured amount, otherwise the authorised one, with the link's currency | transaction |
+| Payment link | link No. (`RID-…`), `merchantOrderId`, description | link |
+| Customer | name, email, phone — only those set | link (single-use links only) |
+
+A line whose value is unknown is left out, never filled in (Р-48): a company without a VÖEN, a payment
+without a provider record. Without the provider's operation time the receipt shows the start of the
+attempt in `pbl.dashboard.zone`. The fee line of art. 17.1.4 is not printed: the portal does not know the
+payer's fee. The page never shows the first six card digits, the order password, the payer's IP or user
+agent, or the internal transaction id; its address is the only key to it, so the page carries `<meta name="referrer" content="no-referrer">`
+and `noindex`.
 
 ### 5.7. List Transactions
 

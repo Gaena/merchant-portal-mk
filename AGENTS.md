@@ -137,7 +137,8 @@ npm run preview                 # отдать dist/ локально
 ⚠ **Без переменных окружения сервис не стартует, и дефолтов у секретов нет.** `DB_PASSWORD` и
 `JWT_SECRET` нужны всем четырём сервисам, причём `JWT_SECRET` — байт в байт одинаковый, иначе
 токен от `auth` не проходит в остальных. `pbl` дополнительно требует `PBL_BASE_URL`,
-`PROVIDER_GATEWAY_BASE_URL` и `PROVIDER_API_BASE_URL` (P1-10; те же два — и `ecom`, Р-124), `ecom` —
+`PROVIDER_GATEWAY_BASE_URL` и `PROVIDER_API_BASE_URL` (P1-10; те же два — и `ecom`, Р-124), `RECEIPT_PROVIDER_NAME`
+и `RECEIPT_PROVIDER_TAX_ID` (реквизиты провайдера на чеке, Р-130), `ecom` —
 `ECOM_TXPG_URL`, `ECOM_TXPG_USERNAME` и `ECOM_TXPG_PASSWORD`; `directory`, `pbl` и `ecom` —
 `CREDENTIALS_ENCRYPTION_KEY`, одно значение на все три (ключ AES-256 паролей компаний к провайдеру, Р-93). Полный перечень —
 `project_docs/guides/deployment_guide.md` §20.1 (шаблон — `.env.example`), запись в `mp.env` — там же, §8.3,
@@ -751,6 +752,10 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
 - **`rrn` и `approvalCode` — в `order.trans[]` (или `order.lastTran`), маска карты — в
   `order.srcToken.displayName`**; ключа `cardNumberMasked` в контракте нет. Читать через
   `ProviderOrderDetails.read`; `regTime` сравнивать как строку, не парсить (P1-16).
+- **Чек плательщика — публичная страница** (`redirect.html`, Р-130): открывается по `ridByMerchant` без входа.
+  На нём только реквизиты закона (ст. 17.1) и правил ЦБ АР № 12/3 (п. 14.1, 15.5); собирает их только
+  `PaymentReceipts`. Первых шести цифр карты, пароля заказа, IP и user agent плательщика там нет и не будет;
+  строки без значения не выводятся, умолчаний нет (Р-48). Тексты — азербайджанский, под ним английский.
 - **Асинхронного callback от TXPG нет и не будет** (Р-7). Статус дожимается страницей возврата
   (один заход), ручным `/status` и фоновой сверкой — эндпоинт не изобретать.
 - **Hibernate auto-flush.** Считаешь после изменения managed-сущности — она уже посчитана: flush

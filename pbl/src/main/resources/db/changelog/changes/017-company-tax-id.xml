@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Р-129, Р-130: VÖEN компании — реквизит продавца на чеке плательщика. Пишет его directory (011), pbl
+      только читает для чека; колонка добавляется и здесь под тем же преконтролем, потому что порядок
+      старта сервисов значения не имеет (P1-2).
+    -->
+    <changeSet id="17-pbl-companies-tax-id" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="companies"/>
+            <not>
+                <columnExists tableName="companies" columnName="tax_id"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="companies">
+            <column name="tax_id" type="varchar(10)"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>
