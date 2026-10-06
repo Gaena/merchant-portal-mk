@@ -52,15 +52,18 @@
 
 ### 3.1. Управление Компаниями (Companies CRUD)
 
-`CompanyResponse` — `id`, `name`, `status`, `providerLogin`, `createdBy`, `createdAt`, `updatedBy`, `updatedAt`.
+`CompanyResponse` — `id`, `name`, `status`, `providerLogin`, `taxId`, `createdBy`, `createdAt`, `updatedBy`, `updatedAt`.
+`taxId` — VÖEN компании (Р-129), реквизит продавца на чеке плательщика; виден каждому, кто читает компанию,
+`null`, пока не задан.
 **Пароля в ответах нет никогда**; `providerLogin` заполнен только для `SYSTEM_ADMIN`, остальным — `null`.
 `createdAt`/`updatedAt` старых записей без дат — `null`.
 
 -   `POST /api/v1/companies` — Создать компанию.  
     *Доступ*: Только `SYSTEM_ADMIN`.  
-    *Запрос* (все поля обязательны): `{"id": "comp-01", "name": "MilliKart LLC", "providerLogin":
-    "MultiMerchantSys/merchant@company.com", "providerPassword": "…"}`. Логин — целиком, с префиксом
-    владельца, сохраняется как пришёл; пароль ложится шифротекстом (Р-93).  
+    *Запрос*: `{"id": "comp-01", "name": "MilliKart LLC", "providerLogin":
+    "MultiMerchantSys/merchant@company.com", "providerPassword": "…", "taxId": "1234567890"}` — все поля
+    обязательны, кроме `taxId`. Логин — целиком, с префиксом владельца, сохраняется как пришёл; пароль ложится
+    шифротекстом (Р-93). `taxId` — VÖEN, ровно 10 цифр (Р-129).  
     **Логин — только активный мультимерчант** (Р-94): `MultiMerchantSys/<login>`, и в слепке логинов
     `provider_logins` (`ecom.md` §3.3) он `Active` и связан хотя бы с одним мерчантом связью `Active`.
     Проверяется только при сохранении — заведении или смене логина; уже сохранённые логины слепок не трогает.  
@@ -69,7 +72,7 @@
 
     | Код | `message` | Когда | Журнал |
     |:---|:---|:---|:---|
-    | `400` | `Company ID is required`, `Company name is required`, `Provider login is required`, `Provider password is required`; `Company ID must be at most 255 characters`, `Company name must be at most 255 characters`, `Provider password must be at most 100 characters` | не прошла валидация. Пароль ложится шифротекстом в `varchar(512)`: 100 знаков влезают при любых символах | — |
+    | `400` | `Company ID is required`, `Company name is required`, `Provider login is required`, `Provider password is required`; `Company ID must be at most 255 characters`, `Company name must be at most 255 characters`, `Provider password must be at most 100 characters`, `Tax ID (VÖEN) must be exactly 10 digits` | не прошла валидация. Пароль ложится шифротекстом в `varchar(512)`: 100 знаков влезают при любых символах | — |
     | `403` | `Access denied: Only SYSTEM_ADMIN can create companies` | не администратор | `COMPANY` / `CREATE` / `DENIED` |
     | `400` | `Company with ID '<id>' already exists` | `id` занят, в том числе удалённой компанией | — |
     | `400` | `Provider login must be a multimerchant login: MultiMerchantSys/<login>` | логин без префикса `MultiMerchantSys/` | — |
@@ -104,7 +107,8 @@
 -   `PATCH /api/v1/companies/{id}` — Редактировать компанию.  
     *Доступ*: Только `SYSTEM_ADMIN`.  
     *Запрос* (все поля необязательны, пустое — «не менять»): `{"name", "status", "providerLogin",
-    "providerPassword"}`. Новый пароль ложится шифротекстом; прочитать прежний нельзя. Новый логин
+    "providerPassword", "taxId"}`. Новый пароль ложится шифротекстом; прочитать прежний нельзя. `taxId` —
+    ровно 10 цифр, иначе `400 Tax ID (VÖEN) must be exactly 10 digits`; стереть VÖEN правкой нельзя. Новый логин
     проверяется по слепку так же, как при создании, и ещё по терминалам компании: мерчант каждого её
     терминала, заблокированного тоже, должен быть активно связан с новым логином (Р-96, Р-97) — иначе этот
     терминал остался бы без платежей, возвратов и выписки. Терминал без `merchant_rid` не сверяется. Тот же

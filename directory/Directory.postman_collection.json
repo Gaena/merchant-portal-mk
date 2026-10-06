@@ -25,7 +25,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"provider-password\"\n}",
+							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"provider-password\",\n  \"taxId\": \"1234567890\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -43,7 +43,7 @@
 								"companies"
 							]
 						},
-						"description": "Creates a company (201), SYSTEM_ADMIN only. providerLogin (the full login with its owner prefix) and providerPassword are required (Р-93): every request to the acquirer goes with them. The login must be MultiMerchantSys/<login>, active in the provider login snapshot (provider_logins, refreshed by ecom) with at least one active merchant (Р-94) — pick one from Free Provider Logins; otherwise 400. A login already used by another company, deleted ones included — 409. An id already taken — 400. The password is stored encrypted and never returned; providerLogin is returned to SYSTEM_ADMIN only."
+						"description": "Creates a company (201), SYSTEM_ADMIN only. providerLogin (the full login with its owner prefix) and providerPassword are required (Р-93): every request to the acquirer goes with them. The login must be MultiMerchantSys/<login>, active in the provider login snapshot (provider_logins, refreshed by ecom) with at least one active merchant (Р-94) — pick one from Free Provider Logins; otherwise 400. A login already used by another company, deleted ones included — 409. An id already taken — 400. The password is stored encrypted and never returned; providerLogin is returned to SYSTEM_ADMIN only. taxId (VÖEN, Р-129) is optional, exactly 10 digits, otherwise 400; it is printed on the payer receipt."
 					},
 					"response": []
 				},
@@ -155,7 +155,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"new-provider-password\"\n}",
+							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"new-provider-password\",\n  \"taxId\": \"1234567890\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -174,7 +174,7 @@
 								"{{companyId}}"
 							]
 						},
-						"description": "Updates a company, SYSTEM_ADMIN only. Every field is optional; an empty value keeps the stored one, and the stored password cannot be read. A new providerLogin is checked against the provider login snapshot as on creation (400 / 409); the same login is not re-checked. status is ACTIVE or INACTIVE only, exact match, anything else is 400; DELETED is set by DELETE alone. INACTIVE stops nothing: to stop payments, block the company's terminals. The audit record names a password change without the password."
+						"description": "Updates a company, SYSTEM_ADMIN only. Every field is optional; an empty value keeps the stored one, and the stored password cannot be read. A new providerLogin is checked against the provider login snapshot as on creation (400 / 409); the same login is not re-checked. status is ACTIVE or INACTIVE only, exact match, anything else is 400; DELETED is set by DELETE alone. INACTIVE stops nothing: to stop payments, block the company's terminals. The audit record names a password change without the password. taxId (VÖEN) is exactly 10 digits; it cannot be cleared."
 					},
 					"response": []
 				},

@@ -561,6 +561,10 @@ export interface TranslationDictionary {
     credentialsWarning: string;
     statusWarning: string;
     providerPasswordReplaced: string;
+    /** VÖEN компании (Р-129): 10 цифр, печатается на чеке плательщика; стереть нельзя, только заменить. */
+    taxId: string;
+    taxIdHint: string;
+    taxIdInvalid: string;
     editNothingChanged: string;
     formIncomplete: string;
     created: string;
@@ -1209,6 +1213,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       newProviderPassword: 'New acquirer password (optional)',
       newProviderPasswordHint: 'Leave blank to keep the current password',
       providerPasswordReplaced: 'The acquirer password will be replaced',
+      taxId: 'Tax ID (VÖEN)',
+      taxIdHint: '10 digits, printed on the payer\'s receipt. It can be replaced but not cleared.',
+      taxIdInvalid: 'VÖEN must be exactly 10 digits',
       editNothingChanged: 'Nothing changed — no request was sent.',
       formIncomplete: 'Fill in every required field',
       created: 'Company created',
@@ -1832,6 +1839,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       newProviderPassword: 'Yeni provayder şifrəsi (istəyə görə)',
       newProviderPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
       providerPasswordReplaced: 'Provayder şifrəsi əvəz olunacaq',
+      taxId: 'VÖEN',
+      taxIdHint: '10 rəqəm, ödəyicinin çekində çap olunur. Dəyişmək olar, silmək olmaz.',
+      taxIdInvalid: 'VÖEN düz 10 rəqəmdən ibarət olmalıdır',
       editNothingChanged: 'Heç nə dəyişməyib — sorğu göndərilmədi.',
       formIncomplete: 'Bütün məcburi sahələri doldurun',
       created: 'Şirkət yaradıldı',
@@ -2455,6 +2465,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       newProviderPassword: 'Новый пароль к провайдеру (необязательно)',
       newProviderPasswordHint: 'Оставьте пустым, чтобы не менять пароль',
       providerPasswordReplaced: 'Пароль к провайдеру будет заменён',
+      taxId: 'VÖEN (ИНН)',
+      taxIdHint: '10 цифр, печатается на чеке плательщика. Заменить можно, стереть нельзя.',
+      taxIdInvalid: 'VÖEN — ровно 10 цифр',
       editNothingChanged: 'Ничего не изменилось — запрос не отправлен.',
       formIncomplete: 'Заполните все обязательные поля',
       created: 'Компания создана',

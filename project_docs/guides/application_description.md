@@ -244,6 +244,7 @@ erDiagram
         varchar status "ACTIVE / INACTIVE / DELETED — мягкое удаление"
         varchar provider_login UK "Логин мультимерчанта целиком: MultiMerchantSys/логин (Р-93, Р-94)"
         varchar provider_password "Шифротекст AES-256-GCM, наружу не выходит"
+        varchar tax_id "VÖEN, 10 цифр: реквизит продавца на чеке (Р-129)"
         varchar created_by
         timestamp created_at
         varchar updated_by
@@ -448,6 +449,7 @@ erDiagram
 | `directory` | `008-company-provider-credentials.xml` | `companies.provider_login` и `provider_password`, уникальный индекс `ux_companies_provider_login`; удаление `terminals.password` (Р-93) |
 | `directory` | `009-terminal-rid.xml` | `terminals.terminal_rid` — номер терминала у провайдера (Р-96) |
 | `directory` | `010-terminal-version.xml` | `terminals.version`, если её ещё нет, с умолчанием 0 — для `@Version` (Р-115) |
+| `directory` | `011-company-tax-id.xml` | `companies.tax_id` (VÖEN), если её ещё нет: реквизит продавца на чеке (Р-129) |
 | `pbl` | `001-initial-schema.xml` | `terminals`, если ещё нет (исходный вид: с `password`, без аудит-колонок); `payment_links`, `transactions` (колонка `merchant_rid`, её переименовывает `009`), внешние ключи `payment_links → terminals` и `transactions → payment_links` |
 | `pbl` | `002-add-indexes.xml` | индексы `payment_links (terminal_id, status)`, `payment_links (status, expires_at)`, `transactions (provider_order_id)` |
 | `pbl` | `003-add-client-ip-and-user-agent.xml` | `transactions.client_ip`, `user_agent` |

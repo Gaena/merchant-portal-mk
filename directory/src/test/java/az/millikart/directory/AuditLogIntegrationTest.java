@@ -162,7 +162,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest(null, "INACTIVE", null, null))))
+                                new UpdateCompanyRequest(null, "INACTIVE", null, null, null))))
                 .andExpect(status().isOk());
 
         List<AuditLog> afterBlock = auditLogs.findAll();
@@ -178,7 +178,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest(null, "ACTIVE", null, null))))
+                                new UpdateCompanyRequest(null, "ACTIVE", null, null, null))))
                 .andExpect(status().isOk());
 
         assertThat(auditLogs.findAll()).extracting(AuditLog::getAction)
@@ -190,7 +190,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest(null, "ACTIVE", null, null))))
+                                new UpdateCompanyRequest(null, "ACTIVE", null, null, null))))
                 .andExpect(status().isOk());
         assertThat(auditLogs.findAll()).isEmpty();
     }
@@ -247,7 +247,7 @@ public class AuditLogIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, managerTokenCompany2)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest("Hijacked LLC", null, null, null))))
+                                new UpdateCompanyRequest("Hijacked LLC", null, null, null, null))))
                 .andExpect(status().isForbidden());
 
         assertThat(companyRepository.findById("comp-01").orElseThrow().getName())
@@ -370,7 +370,7 @@ public class AuditLogIntegrationTest {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         tx.executeWithoutResult(status -> {
             assertThatThrownBy(() -> companyService.updateCompany("comp-01",
-                    new UpdateCompanyRequest("Hijacked LLC", null, null, null), managerOfCompany2()))
+                    new UpdateCompanyRequest("Hijacked LLC", null, null, null, null), managerOfCompany2()))
                     .isInstanceOf(InvalidStateException.class);
             status.setRollbackOnly();
         });

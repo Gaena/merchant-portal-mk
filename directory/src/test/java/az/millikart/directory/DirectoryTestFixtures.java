@@ -35,7 +35,7 @@ final class DirectoryTestFixtures {
     // Компания с кредами к провайдеру: без них API её не заводит (Р-93). Логин уникален, поэтому — по id;
     // пройдёт проверку, только если providerLogins завёл его в слепок (Р-94).
     static CreateCompanyRequest company(String id, String name) {
-        return new CreateCompanyRequest(id, name, "MultiMerchantSys/" + id, "secret-" + id);
+        return new CreateCompanyRequest(id, name, "MultiMerchantSys/" + id, "secret-" + id, null);
     }
 
     // Слепок логинов мультимерчантов (Р-94). Логин каждой компании — активный, с одним активным мерчантом.

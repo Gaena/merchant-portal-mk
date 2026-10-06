@@ -4,6 +4,8 @@ export interface CompanyDto {
   status?: 'ACTIVE' | 'INACTIVE' | 'DISABLED';
   /** Только у SYSTEM_ADMIN, остальным `null`; пароля в ответе нет вовсе (Р-93). */
   providerLogin?: string | null;
+  /** VÖEN — реквизит продавца на чеке плательщика (Р-129); `null`, пока не задан. */
+  taxId?: string | null;
   createdAt?: string;
 }
 

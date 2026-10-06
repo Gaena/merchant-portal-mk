@@ -126,7 +126,7 @@ public class DirectoryIntegrationTest {
                         .content(objectMapper.writeValueAsString(createRequest2)))
                 .andExpect(status().isForbidden());
 
-        UpdateCompanyRequest updateRequest = new UpdateCompanyRequest("MilliKart Global LLC", "ACTIVE", null, null);
+        UpdateCompanyRequest updateRequest = new UpdateCompanyRequest("MilliKart Global LLC", "ACTIVE", null, null, null);
         mockMvc.perform(patch("/api/v1/companies/comp-01")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -158,7 +158,7 @@ public class DirectoryIntegrationTest {
             mockMvc.perform(patch("/api/v1/companies/comp-01")
                             .header(HttpHeaders.AUTHORIZATION, adminToken)
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(new UpdateCompanyRequest("Renamed LLC", status, null, null))))
+                            .content(objectMapper.writeValueAsString(new UpdateCompanyRequest("Renamed LLC", status, null, null, null))))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.message", is("Company status must be ACTIVE or INACTIVE")));
         }
@@ -168,7 +168,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/companies/comp-01")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateCompanyRequest(null, "INACTIVE", null, null))))
+                        .content(objectMapper.writeValueAsString(new UpdateCompanyRequest(null, "INACTIVE", null, null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("INACTIVE")));
         mockMvc.perform(get("/api/v1/audit-logs")
@@ -483,7 +483,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateCompanyRequest(
-                                "comp-02", "Other LLC", "MultiMerchantSys/comp-02", "€".repeat(101)))))
+                                "comp-02", "Other LLC", "MultiMerchantSys/comp-02", "€".repeat(101), null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Provider password must be at most 100 characters")));
         assertThat(companyRepository.existsById("comp-02")).isFalse();
@@ -492,7 +492,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateCompanyRequest(
-                                "comp-01", "MilliKart LLC", "MultiMerchantSys/comp-01", "€".repeat(100)))))
+                                "comp-01", "MilliKart LLC", "MultiMerchantSys/comp-01", "€".repeat(100), null))))
                 .andExpect(status().isCreated());
         String stored = companyRepository.findById("comp-01").orElseThrow().getProviderPassword();
         assertThat(credentialCipher.decrypt(stored)).isEqualTo("€".repeat(100));
@@ -509,6 +509,64 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.message", is("Company name must be at most 255 characters")));
 
         assertThat(companyRepository.existsById("comp-01")).isFalse();
+    }
+
+    // Р-129: VÖEN — реквизит продавца на чеке. Ровно 10 цифр, иначе 400 до записи; открытый реквизит,
+    // поэтому виден не только администратору; смена — запись UPDATE со старым и новым значением, а
+    // правка без VÖEN его не стирает.
+    @Test
+    public void companyTaxId_isTenDigits_shownToTheCompany_andChangedWithAJournalRecord() throws Exception {
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateCompanyRequest(
+                                "comp-01", "MilliKart LLC", "MultiMerchantSys/comp-01", "x", "12345"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Tax ID (VÖEN) must be exactly 10 digits")));
+        assertThat(companyRepository.existsById("comp-01")).isFalse();
+
+        mockMvc.perform(post("/api/v1/companies")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateCompanyRequest(
+                                "comp-01", "MilliKart LLC", "MultiMerchantSys/comp-01", "x", "1234567890"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.taxId", is("1234567890")));
+        mockMvc.perform(get("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.taxId", is("1234567890")));
+
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateCompanyRequest(null, null, null, null, "12345678901"))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateCompanyRequest(null, null, null, null, "0987654321"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.taxId", is("0987654321")));
+        mockMvc.perform(patch("/api/v1/companies/comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UpdateCompanyRequest("MilliKart Global LLC", null, null, null, null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.taxId", is("0987654321")));
+
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("entityType", "COMPANY")
+                        .param("entityId", "comp-01")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[1].action", is("UPDATE")))
+                .andExpect(jsonPath("$.content[1].details",
+                        containsString("Tax ID changed from '1234567890' to '0987654321'")))
+                .andExpect(jsonPath("$.content[2].details", containsString("tax ID 1234567890")));
     }
 
     // Логин к провайдеру задаёт и видит только администратор; остальным компания отдаётся без него.
@@ -539,7 +597,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-03", "Third LLC", "MultiMerchantSys/comp-01", "x"))))
+                                new CreateCompanyRequest("comp-03", "Third LLC", "MultiMerchantSys/comp-01", "x", null))))
                 .andExpect(status().isConflict());
         mockMvc.perform(patch("/api/v1/companies/comp-02")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
@@ -617,7 +675,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-01", "MilliKart LLC", "TerminalSys/terminal-login", "x"))))
+                                new CreateCompanyRequest("comp-01", "MilliKart LLC", "TerminalSys/terminal-login", "x", null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Provider login must be a multimerchant login: MultiMerchantSys/<login>")));
 
@@ -1080,7 +1138,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest("Other LLC", "ACTIVE", null, null))))
+                                new UpdateCompanyRequest("Other LLC", "ACTIVE", null, null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name", is("Other LLC")));
         assertThat(auditLogRepository.findAll()).isEmpty();
@@ -1089,7 +1147,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateCompanyRequest("Other LLC", "INACTIVE", null, null))))
+                                new UpdateCompanyRequest("Other LLC", "INACTIVE", null, null, null))))
                 .andExpect(status().isOk());
         List<AuditLog> companyUpdates = auditLogRepository.findAll().stream()
                 .filter(record -> "UPDATE".equals(record.getAction()))
@@ -1164,7 +1222,7 @@ public class DirectoryIntegrationTest {
                             .header(HttpHeaders.AUTHORIZATION, actor)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
-                                    new UpdateCompanyRequest("Renamed LLC", "INACTIVE", null, null))))
+                                    new UpdateCompanyRequest("Renamed LLC", "INACTIVE", null, null, null))))
                     .andExpect(status().isForbidden())
                     .andExpect(jsonPath("$.message", is("Access denied: Only SYSTEM_ADMIN can update companies")));
             mockMvc.perform(delete("/api/v1/companies/comp-01")
@@ -1199,7 +1257,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateCompanyRequest("comp-refused", "Refused LLC", providerLogin, "x"))))
+                                new CreateCompanyRequest("comp-refused", "Refused LLC", providerLogin, "x", null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString(reason)));
         assertThat(companyRepository.existsById("comp-refused")).as(providerLogin).isFalse();
