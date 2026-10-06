@@ -493,8 +493,9 @@ public class DirectoryListPaginationTest {
         Assertions.assertFalse(raw.contains("password"), "the feed must not name a password field: " + raw);
 
         JsonNode json = objectMapper.readTree(raw);
-        Assertions.assertEquals(List.of("id", "name", "login", "terminalRid", "status"), fieldNames(json.get(0)),
-                "five fields, nothing else: terminalRid names the terminal on screens since Р-96");
+        Assertions.assertEquals(List.of("id", "name", "login", "terminalRid", "status", "companyId"), fieldNames(json.get(0)),
+                "six fields, nothing else: terminalRid names the terminal on screens (Р-96), companyId lets the "
+                        + "admin pick an employee's terminals of its company (Р-131)");
         Assertions.assertEquals("term_login_500701", json.get(0).get("login").asText(),
                 "the login is what names the terminal on the payment screens: " + raw);
     }

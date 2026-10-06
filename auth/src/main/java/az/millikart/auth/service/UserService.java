@@ -136,7 +136,9 @@ public class UserService {
                 .passwordChangeRequired(true)
                 .build();
 
-        user = userRepository.save(user);
+        // saveAndFlush: назначения пишутся JDBC мимо Hibernate, и строка users должна быть в базе раньше них —
+        // иначе внешний ключ user_terminals отвергнет вставку.
+        user = userRepository.saveAndFlush(user);
         if (employee) {
             userTerminals.replace(user.getId(), terminalIds, actorUsername, Instant.now());
         }

@@ -49,9 +49,11 @@ final class TerminalFixture {
         MIGRATED.add(dataSource);
     }
 
-    // Терминал компании с постоянным номером: повторный вызов возвращает тот же, а не заводит второй.
+    // Терминал компании с постоянным номером: повторный вызов возвращает тот же, а не заводит второй. Номера
+    // компаний разнесены на сотню: у «comp-01» и «comp-02» хеши соседние, и дополнительный терминал одной
+    // (extraTerminalOf) иначе занял бы номер основного терминала другой.
     static int terminalOf(JdbcTemplate jdbc, String companyId) {
-        int id = 1000 + Math.floorMod(companyId.hashCode(), 100_000);
+        int id = 100_000 + Math.floorMod(companyId.hashCode(), 10_000) * 100;
         Integer existing = jdbc.queryForObject("SELECT COUNT(*) FROM terminals WHERE id = ?", Integer.class, id);
         if (existing == null || existing == 0) {
             jdbc.update("INSERT INTO terminals (id, name, login, company_id, status) VALUES (?, ?, ?, ?, 'ACTIVE')",
@@ -60,6 +62,7 @@ final class TerminalFixture {
         return id;
     }
 
+    // offset — от 1 до 99: в пределах сотни своей компании.
     static int extraTerminalOf(JdbcTemplate jdbc, String companyId, int offset) {
         int id = terminalOf(jdbc, companyId) + offset;
         jdbc.update("INSERT INTO terminals (id, name, login, company_id, status) VALUES (?, ?, ?, ?, 'ACTIVE')",
