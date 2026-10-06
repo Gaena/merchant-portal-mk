@@ -2,6 +2,7 @@ import type { TransactionStatus } from '../types/transaction';
 import type { LinkStatus } from '../utils/payByLinkData';
 import type { TerminalStatus } from '../types/dto';
 import type { EcomOperationKind, EcomStatus, EcomPaymentType } from '../types/ecom';
+import type { Role } from '../types/role';
 
 export type Language = 'en' | 'az' | 'ru';
 
@@ -693,6 +694,22 @@ export const statusLabel = (
   status: TransactionStatus | null | undefined,
   raw?: string
 ): string => (status ? dict.transactions.statuses[status] : raw || '—');
+
+/** Роль словами; правило то же, что у `statusLabel`: роль вне словаря — как есть, не знакомой (Р-48). */
+export const roleLabel = (
+  dict: TranslationDictionary,
+  role: Role | null | undefined,
+  raw?: string
+): string => {
+  switch (role) {
+    case 'SYSTEM_ADMIN': return dict.users.roles.systemAdmin;
+    case 'AUDITOR': return dict.users.roles.auditor;
+    case 'COMPANY_HEAD': return dict.users.roles.companyHead;
+    case 'COMPANY_MANAGER': return dict.users.roles.companyManager;
+    case 'COMPANY_EMPLOYEE': return dict.users.roles.companyEmployee;
+    default: return raw || '—';
+  }
+};
 
 /** Правило то же, что у `statusLabel`. */
 export const linkStatusLabel = (

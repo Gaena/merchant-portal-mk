@@ -24,6 +24,8 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Language } from '../i18n/translations';
+import { roleLabel } from '../i18n/translations';
+import { useCompanyName } from '../hooks/useCompanyName';
 import markUrl from '../assets/millikart-mark.png';
 
 interface HeaderProps {
@@ -39,7 +41,10 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
   // Имени бэкенд не отдаёт (эндпоинта `/me` нет) — показывается email.
   const displayEmail = user?.email || '—';
   const avatarLetter = (user?.email || '?').charAt(0).toUpperCase();
-  const displayRole = user?.role ?? '—';
+  const displayRole = roleLabel(tObj, user?.role);
+  // У администратора и аудитора своей компании в шапке нет: они работают со всеми компаниями.
+  const globalRole = user?.role === 'SYSTEM_ADMIN' || user?.role === 'AUDITOR';
+  const { name: companyName } = useCompanyName(user?.companyId, !globalRole);
 
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
@@ -79,6 +84,29 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
         <Typography variant="h6" component="div" sx={{ flexGrow: 0, mr: 3 }}>
           {tObj.header.title}
         </Typography>
+
+        {/* Кто вошёл: компания и роль, у администратора и аудитора — только роль. На узком экране — в меню. */}
+        {user && (
+          <Box
+            sx={{
+              display: { xs: 'none', sm: 'flex' },
+              flexDirection: 'column',
+              justifyContent: 'center',
+              minWidth: 0,
+              pl: 2,
+              borderLeft: '1px solid rgba(255, 255, 255, 0.35)',
+            }}
+          >
+            {companyName && (
+              <Typography variant="body2" noWrap sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                {companyName}
+              </Typography>
+            )}
+            <Typography variant="caption" noWrap sx={{ opacity: 0.85, lineHeight: 1.3 }}>
+              {displayRole}
+            </Typography>
+          </Box>
+        )}
 
         <Box sx={{ flexGrow: 1 }} />
 
@@ -143,6 +171,9 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick, onDesktopDrawerTogg
       >
         <Box sx={{ px: 2, py: 1.5 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 600, wordBreak: 'break-all' }}>{displayEmail}</Typography>
+          {companyName && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{companyName}</Typography>
+          )}
           <Chip label={displayRole} size="small" color="primary" sx={{ mt: 1, height: 20, fontSize: '0.65rem', fontWeight: 700 }} />
         </Box>
         <Divider />

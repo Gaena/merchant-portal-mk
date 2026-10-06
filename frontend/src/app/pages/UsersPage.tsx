@@ -42,6 +42,8 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 
 import type { UserDto, CompanyDto } from '../types/dto';
 import type { Role } from '../types/role';
+import { parseRole } from '../types/role';
+import { roleLabel } from '../i18n/translations';
 
 /**
  * Роли, которые может выдать руководитель компании, — зеркало `UserService.HEAD_MANAGED_ROLES` (Р-85).
@@ -222,17 +224,7 @@ export const UsersPage: React.FC = () => {
     }
   };
 
-  const roleLabel = (role?: string): string => {
-    switch (role) {
-      case 'SYSTEM_ADMIN': return tObj.users.roles.systemAdmin;
-      case 'AUDITOR': return tObj.users.roles.auditor;
-      case 'COMPANY_HEAD': return tObj.users.roles.companyHead;
-      case 'COMPANY_MANAGER': return tObj.users.roles.companyManager;
-      case 'COMPANY_EMPLOYEE': return tObj.users.roles.companyEmployee;
-      // Роль вне словаря показывается как есть, а не подменяется знакомой (Р-48).
-      default: return role || '—';
-    }
-  };
+  const roleText = (role?: string): string => roleLabel(tObj, parseRole(role), role);
 
   const statusLabel = (status?: string): string =>
     status === 'ACTIVE' || status === 'BLOCKED' ? tObj.users.statuses[status] : (status || '—');
@@ -257,7 +249,7 @@ export const UsersPage: React.FC = () => {
       changes.push(`${tObj.users.name}: ${editing.fullName || '—'} → ${editForm.fullName.trim() || '—'}`);
     }
     if (editForm.role !== (editing.role || '')) {
-      changes.push(`${tObj.users.role}: ${roleLabel(editing.role)} → ${roleLabel(editForm.role)}`);
+      changes.push(`${tObj.users.role}: ${roleText(editing.role)} → ${roleText(editForm.role)}`);
     }
     if (isAdmin && editForm.companyId !== (editing.companyId || '')) {
       changes.push(`${tObj.users.company}: ${getCompanyName(editing.companyId) || tObj.users.noCompany} → `
@@ -413,7 +405,7 @@ export const UsersPage: React.FC = () => {
                   <TableCell sx={{ fontWeight: 600 }}>{u.username}</TableCell>
                   <TableCell>{u.fullName || '—'}</TableCell>
                   <TableCell>
-                    <Chip label={roleLabel(u.role)} color="primary" size="small" variant="outlined" />
+                    <Chip label={roleText(u.role)} color="primary" size="small" variant="outlined" />
                   </TableCell>
                   <TableCell>{getCompanyName(u.companyId) || '—'}</TableCell>
                   <TableCell>
@@ -505,7 +497,7 @@ export const UsersPage: React.FC = () => {
             >
               {/* Только роли, которые бэкенд даст выдать: руководитель — менеджера и сотрудника (Р-85). */}
               {grantableRoles.map(role => (
-                <MenuItem key={role} value={role}>{roleLabel(role)}</MenuItem>
+                <MenuItem key={role} value={role}>{roleText(role)}</MenuItem>
               ))}
             </TextField>
             {isAdmin && companiesList.length > 0 && (
@@ -565,7 +557,7 @@ export const UsersPage: React.FC = () => {
                 {/* Текущая роль остаётся в списке, даже если её нельзя выдать: иначе селект был бы пустым. */}
                 {[...new Set([...(editing.role ? [editing.role] : []), ...grantableRoles])].map(role => (
                   <MenuItem key={role} value={role} disabled={!grantableRoles.includes(role as Role)}>
-                    {roleLabel(role)}
+                    {roleText(role)}
                   </MenuItem>
                 ))}
               </TextField>
