@@ -239,7 +239,7 @@
             font-weight: 600;
             text-align: right;
             max-width: 60%;
-            word-break: break-all;
+            overflow-wrap: anywhere;
         }
 
         .receipt-divider {
@@ -282,6 +282,75 @@
 
         .receipt-value.mono {
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
+        /*
+          Wide screens: the one-column slip is taller than a desktop window (~25 lines), so the blocks go
+          into three columns and the header sits next to the amount. Narrow screens and print keep the
+          single column, in the markup order - a printed receipt is a narrow slip.
+        */
+        @media screen and (min-width: 1000px) {
+            body {
+                padding: 16px;
+            }
+            .brand {
+                margin-bottom: 12px;
+            }
+            .brand-plate {
+                padding: 6px 14px;
+            }
+            .brand-plate img {
+                width: 90px;
+            }
+            .container.with-receipt {
+                max-width: 1040px;
+            }
+            .receipt {
+                padding: 24px 32px;
+            }
+            .receipt-top {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-end;
+                border-bottom: 1px dashed var(--border-color);
+                padding-bottom: 16px;
+            }
+            .receipt-header {
+                text-align: left;
+                border-bottom: none;
+                margin-bottom: 0;
+                padding-bottom: 0;
+            }
+            .receipt-amount-section {
+                text-align: right;
+                margin-bottom: 0;
+            }
+            .receipt-columns {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                column-gap: 36px;
+            }
+            .receipt-section {
+                margin-top: 0;
+                padding: 14px 0 6px;
+            }
+            /* The line under the header already separates the first block of every column. */
+            .receipt-col > .receipt-section:first-child {
+                border-top: none;
+            }
+            .receipt-row {
+                margin-bottom: 9px;
+            }
+            .receipt-value {
+                max-width: 70%;
+            }
+            .actions-group {
+                justify-content: flex-end;
+                margin-top: 12px;
+            }
+            .actions-group .btn {
+                flex: 0 0 200px;
+            }
         }
 
         .actions-group {
@@ -382,7 +451,8 @@
   Rendered entirely on the server: the status is read once, when this page is built.
   There is no polling and no client-side data loading here - do not reintroduce either.
 -->
-<div class="container">
+<div class="container"
+     th:classappend="${receipt != null and (receipt.state == 'PAID' or receipt.state == 'AUTHORIZED') ? 'with-receipt' : ''}">
 
     <!-- Embedded inline: the page is served from the API path, there is no static route to it -->
     <div class="brand">
@@ -398,117 +468,130 @@
     -->
     <div class="receipt" th:if="${receipt != null and (receipt.state == 'PAID' or receipt.state == 'AUTHORIZED')}"
          th:with="hold=${receipt.state == 'AUTHORIZED'}">
-        <div class="receipt-header">
-            <div class="receipt-title">Ödəniş çeki</div>
-            <div class="receipt-subtitle">Transaction Receipt</div>
-            <span class="receipt-status-badge"
-                  th:classappend="${hold ? 'status-hold' : 'status-paid'}"
-                  th:text="${hold ? 'Vəsait bloklanıb · Authorized (hold)' : 'Uğurlu · Approved'}">Uğurlu · Approved</span>
-        </div>
-
-        <div class="receipt-amount-section">
-            <div class="receipt-amount-label" th:if="${hold}">Bloklanmış məbləğ<span class="en">Amount on hold</span></div>
-            <div class="receipt-amount-label" th:unless="${hold}">Ödənilmiş məbləğ<span class="en">Amount paid</span></div>
-            <div class="receipt-amount-val"
-                 th:text="${#numbers.formatDecimal(receipt.amount, 1, 'NONE', 2, 'POINT') + (receipt.currency != null ? ' ' + receipt.currency : '')}">0.00 AZN</div>
-        </div>
-
-        <div class="receipt-section">
-            <div class="receipt-section-title">Ödəniş xidməti təchizatçısı<span class="en">Payment service provider</span></div>
-            <div class="receipt-row">
-                <div class="receipt-label">Adı<span class="en">Name</span></div>
-                <div class="receipt-value" th:text="${receipt.providerName}">-</div>
+        <div class="receipt-top">
+            <div class="receipt-header">
+                <div class="receipt-title">Ödəniş çeki</div>
+                <div class="receipt-subtitle">Transaction Receipt</div>
+                <span class="receipt-status-badge"
+                      th:classappend="${hold ? 'status-hold' : 'status-paid'}"
+                      th:text="${hold ? 'Vəsait bloklanıb · Authorized (hold)' : 'Uğurlu · Approved'}">Uğurlu · Approved</span>
             </div>
-            <div class="receipt-row">
-                <div class="receipt-label">VÖEN<span class="en">Tax ID</span></div>
-                <div class="receipt-value mono" th:text="${receipt.providerTaxId}">-</div>
+
+            <div class="receipt-amount-section">
+                <div class="receipt-amount-label" th:if="${hold}">Bloklanmış məbləğ<span class="en">Amount on hold</span></div>
+                <div class="receipt-amount-label" th:unless="${hold}">Ödənilmiş məbləğ<span class="en">Amount paid</span></div>
+                <div class="receipt-amount-val"
+                     th:text="${#numbers.formatDecimal(receipt.amount, 1, 'NONE', 2, 'POINT') + (receipt.currency != null ? ' ' + receipt.currency : '')}">0.00 AZN</div>
             </div>
         </div>
 
-        <div class="receipt-section">
-            <div class="receipt-section-title">Satıcı<span class="en">Merchant</span></div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.merchantName)}">
-                <div class="receipt-label">Adı<span class="en">Name</span></div>
-                <div class="receipt-value" th:text="${receipt.merchantName}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.merchantTaxId)}">
-                <div class="receipt-label">VÖEN<span class="en">Tax ID</span></div>
-                <div class="receipt-value mono" th:text="${receipt.merchantTaxId}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.terminalName)}">
-                <div class="receipt-label">Xidmət nöqtəsi<span class="en">Point of sale</span></div>
-                <div class="receipt-value" th:text="${receipt.terminalName}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.terminalCode)}">
-                <div class="receipt-label">Terminalın kodu<span class="en">Terminal ID</span></div>
-                <div class="receipt-value mono" th:text="${receipt.terminalCode}">-</div>
-            </div>
-        </div>
+        <!-- Three columns on a wide screen, one after another on a phone - the order is the same. -->
+        <div class="receipt-columns">
+            <div class="receipt-col">
 
-        <div class="receipt-section">
-            <div class="receipt-section-title">Əməliyyat<span class="en">Transaction</span></div>
-            <div class="receipt-row">
-                <div class="receipt-label">Növü<span class="en">Type</span></div>
-                <div class="receipt-value"
-                     th:text="${hold ? 'Avtorizasiya · Authorization' : 'Ödəniş · Purchase'}">Ödəniş · Purchase</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.operationTime)}">
-                <div class="receipt-label">Tarix və vaxt<span class="en">Date &amp; time</span></div>
-                <div class="receipt-value mono" th:text="${receipt.operationTime}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.receiptNumber)}">
-                <div class="receipt-label">Qəbzin nömrəsi<span class="en">Receipt No.</span></div>
-                <div class="receipt-value mono" th:text="${receipt.receiptNumber}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.referenceNumber)}">
-                <div class="receipt-label">İstinad nömrəsi (RRN)<span class="en">Reference No. (RRN)</span></div>
-                <div class="receipt-value mono" th:text="${receipt.referenceNumber}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.approvalCode)}">
-                <div class="receipt-label">Avtorizasiya kodu<span class="en">Authorization code</span></div>
-                <div class="receipt-value mono" th:text="${receipt.approvalCode}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.cardBrand)}">
-                <div class="receipt-label">Ödəniş sistemi<span class="en">Payment system</span></div>
-                <div class="receipt-value" th:text="${receipt.cardBrand}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.cardLastFour)}">
-                <div class="receipt-label">Kart<span class="en">Card</span></div>
-                <div class="receipt-value mono" th:text="${'**** ' + receipt.cardLastFour}">-</div>
-            </div>
-        </div>
+                <div class="receipt-section">
+                    <div class="receipt-section-title">Ödəniş xidməti təchizatçısı<span class="en">Payment service provider</span></div>
+                    <div class="receipt-row">
+                        <div class="receipt-label">Adı<span class="en">Name</span></div>
+                        <div class="receipt-value" th:text="${receipt.providerName}">-</div>
+                    </div>
+                    <div class="receipt-row">
+                        <div class="receipt-label">VÖEN<span class="en">Tax ID</span></div>
+                        <div class="receipt-value mono" th:text="${receipt.providerTaxId}">-</div>
+                    </div>
+                </div>
 
-        <div class="receipt-section">
-            <div class="receipt-section-title">Ödəniş linki<span class="en">Payment link</span></div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.linkNumber)}">
-                <div class="receipt-label">Linkin nömrəsi<span class="en">Link No.</span></div>
-                <div class="receipt-value mono" th:text="${receipt.linkNumber}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.merchantOrderId)}">
-                <div class="receipt-label">Sifariş<span class="en">Order</span></div>
-                <div class="receipt-value" th:text="${receipt.merchantOrderId}">-</div>
-            </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.description)}">
-                <div class="receipt-label">Təyinat<span class="en">Description</span></div>
-                <div class="receipt-value" th:text="${receipt.description}">-</div>
-            </div>
-        </div>
+                <div class="receipt-section">
+                    <div class="receipt-section-title">Satıcı<span class="en">Merchant</span></div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.merchantName)}">
+                        <div class="receipt-label">Adı<span class="en">Name</span></div>
+                        <div class="receipt-value" th:text="${receipt.merchantName}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.merchantTaxId)}">
+                        <div class="receipt-label">VÖEN<span class="en">Tax ID</span></div>
+                        <div class="receipt-value mono" th:text="${receipt.merchantTaxId}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.terminalName)}">
+                        <div class="receipt-label">Xidmət nöqtəsi<span class="en">Point of sale</span></div>
+                        <div class="receipt-value" th:text="${receipt.terminalName}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.terminalCode)}">
+                        <div class="receipt-label">Terminalın kodu<span class="en">Terminal ID</span></div>
+                        <div class="receipt-value mono" th:text="${receipt.terminalCode}">-</div>
+                    </div>
+                </div>
 
-        <div class="receipt-section" th:if="${!#strings.isEmpty(receipt.customerName)
-                                             or !#strings.isEmpty(receipt.customerEmail)
-                                             or !#strings.isEmpty(receipt.customerPhone)}">
-            <div class="receipt-section-title">Müştəri<span class="en">Customer</span></div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerName)}">
-                <div class="receipt-label">Ad<span class="en">Name</span></div>
-                <div class="receipt-value" th:text="${receipt.customerName}">-</div>
             </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerEmail)}">
-                <div class="receipt-label">E-poçt<span class="en">Email</span></div>
-                <div class="receipt-value" th:text="${receipt.customerEmail}">-</div>
+            <div class="receipt-col">
+                <div class="receipt-section">
+                    <div class="receipt-section-title">Əməliyyat<span class="en">Transaction</span></div>
+                    <div class="receipt-row">
+                        <div class="receipt-label">Növü<span class="en">Type</span></div>
+                        <div class="receipt-value"
+                             th:text="${hold ? 'Avtorizasiya · Authorization' : 'Ödəniş · Purchase'}">Ödəniş · Purchase</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.operationTime)}">
+                        <div class="receipt-label">Tarix və vaxt<span class="en">Date &amp; time</span></div>
+                        <div class="receipt-value mono" th:text="${receipt.operationTime}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.receiptNumber)}">
+                        <div class="receipt-label">Qəbzin nömrəsi<span class="en">Receipt No.</span></div>
+                        <div class="receipt-value mono" th:text="${receipt.receiptNumber}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.referenceNumber)}">
+                        <div class="receipt-label">İstinad nömrəsi (RRN)<span class="en">Reference No. (RRN)</span></div>
+                        <div class="receipt-value mono" th:text="${receipt.referenceNumber}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.approvalCode)}">
+                        <div class="receipt-label">Avtorizasiya kodu<span class="en">Authorization code</span></div>
+                        <div class="receipt-value mono" th:text="${receipt.approvalCode}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.cardBrand)}">
+                        <div class="receipt-label">Ödəniş sistemi<span class="en">Payment system</span></div>
+                        <div class="receipt-value" th:text="${receipt.cardBrand}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.cardLastFour)}">
+                        <div class="receipt-label">Kart<span class="en">Card</span></div>
+                        <div class="receipt-value mono" th:text="${'**** ' + receipt.cardLastFour}">-</div>
+                    </div>
+                </div>
+
             </div>
-            <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerPhone)}">
-                <div class="receipt-label">Telefon<span class="en">Phone</span></div>
-                <div class="receipt-value mono" th:text="${receipt.customerPhone}">-</div>
+            <div class="receipt-col">
+                <div class="receipt-section">
+                    <div class="receipt-section-title">Ödəniş linki<span class="en">Payment link</span></div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.linkNumber)}">
+                        <div class="receipt-label">Linkin nömrəsi<span class="en">Link No.</span></div>
+                        <div class="receipt-value mono" th:text="${receipt.linkNumber}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.merchantOrderId)}">
+                        <div class="receipt-label">Sifariş<span class="en">Order</span></div>
+                        <div class="receipt-value" th:text="${receipt.merchantOrderId}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.description)}">
+                        <div class="receipt-label">Təyinat<span class="en">Description</span></div>
+                        <div class="receipt-value" th:text="${receipt.description}">-</div>
+                    </div>
+                </div>
+
+                <div class="receipt-section" th:if="${!#strings.isEmpty(receipt.customerName)
+                                                     or !#strings.isEmpty(receipt.customerEmail)
+                                                     or !#strings.isEmpty(receipt.customerPhone)}">
+                    <div class="receipt-section-title">Müştəri<span class="en">Customer</span></div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerName)}">
+                        <div class="receipt-label">Ad<span class="en">Name</span></div>
+                        <div class="receipt-value" th:text="${receipt.customerName}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerEmail)}">
+                        <div class="receipt-label">E-poçt<span class="en">Email</span></div>
+                        <div class="receipt-value" th:text="${receipt.customerEmail}">-</div>
+                    </div>
+                    <div class="receipt-row" th:if="${!#strings.isEmpty(receipt.customerPhone)}">
+                        <div class="receipt-label">Telefon<span class="en">Phone</span></div>
+                        <div class="receipt-value mono" th:text="${receipt.customerPhone}">-</div>
+                    </div>
+                </div>
+
             </div>
         </div>
 
