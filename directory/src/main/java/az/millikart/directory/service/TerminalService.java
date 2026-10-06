@@ -173,7 +173,8 @@ public class TerminalService {
                 : terminalRepository.findAllByCompanyIdOrderByNameAscIdAsc(requireOwnCompany(principal));
 
         return terminals.stream()
-                .map(t -> new TerminalOptionResponse(t.getId(), t.getName(), t.getLogin(), t.getTerminalRid(), t.getStatus()))
+                .map(t -> new TerminalOptionResponse(t.getId(), t.getName(), t.getLogin(), t.getTerminalRid(), t.getStatus(),
+                        t.getCompanyId()))
                 .collect(Collectors.toList());
     }
 

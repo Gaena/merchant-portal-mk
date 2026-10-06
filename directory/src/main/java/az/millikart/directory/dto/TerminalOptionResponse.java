@@ -8,6 +8,8 @@ public record TerminalOptionResponse(
         String name,
         String login,
         String terminalRid,
-        TerminalStatus status
+        TerminalStatus status,
+        // Компания терминала: администратор выбирает терминалы сотрудника той компании, куда его заводит (Р-131).
+        String companyId
 ) {
 }

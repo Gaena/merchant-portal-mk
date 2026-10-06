@@ -38,6 +38,8 @@ export interface TerminalOptionDto {
   terminalRid?: string | null;
   /** Бэкенд присылает всегда; необязательное намеренно — без поля терминал не прячется (`isTerminalActive`). */
   status?: TerminalStatus;
+  /** Компания терминала: по ней администратор выбирает терминалы сотрудника (Р-131). */
+  companyId?: string | null;
 }
 
 // Только явно заблокированный: без поля `status` (старый бэкенд) форма ссылки осталась бы пустой
@@ -90,6 +92,8 @@ export interface UserDto {
   createdAt?: string;
   /** Пароль задал не владелец, и он ещё не сменил его при входе (Р-100). */
   passwordChangeRequired?: boolean;
+  /** Терминалы сотрудника (Р-131): он видит только их; у остальных ролей — пусто. */
+  terminalIds?: number[];
 }
 
 export interface AuditLogDto {

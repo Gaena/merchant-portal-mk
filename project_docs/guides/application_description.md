@@ -227,6 +227,8 @@ erDiagram
     companies |o--o{ users : "company_id"
     users ||--o{ refresh_tokens : "user_id, каскад на удаление"
     users ||--o{ password_history : "user_id, каскад на удаление"
+    users ||--o{ user_terminals : "user_id, каскад на удаление"
+    terminals ||--o{ user_terminals : "terminal_id, без внешнего ключа"
     companies |o--o{ terminals : "company_id"
     companies |o--o{ audit_logs : "company_id, без внешнего ключа"
     terminals ||--o{ payment_links : "terminal_id"
@@ -271,6 +273,13 @@ erDiagram
         uuid user_id FK "→ users.id"
         varchar password_hash "BCrypt прежнего пароля; хранятся три последних (Р-102)"
         timestamp replaced_at
+    }
+
+    user_terminals {
+        uuid user_id PK "→ users.id; сотрудник"
+        integer terminal_id PK "→ terminals.id; своей компании, проверяет auth"
+        varchar assigned_by "Логин назначившего"
+        timestamp assigned_at
     }
 
     refresh_tokens {
@@ -441,6 +450,7 @@ erDiagram
 | `auth` | `005-password-change-required.xml` | `users.password_change_required`, по умолчанию `false` (Р-100) |
 | `auth` | `006-last-activity.xml` | `users.last_activity_at`; существующим строкам — момент миграции (Р-101) |
 | `auth` | `007-password-history.xml` | `password_history`, индекс по `user_id`, внешний ключ на `users` с каскадом (Р-102) |
+| `auth` | `008-user-terminals.xml` | `user_terminals` — терминалы сотрудника (Р-131): ключ «пользователь + терминал», внешний ключ на `users` с каскадом, индекс по `terminal_id`; внешнего ключа на `terminals` нет — таблица чужая и может появиться позже |
 | `directory` | `003-directory-schema.xml` | `companies` и `terminals` (с колонкой `password`, её удаляет `008`), если их ещё нет; недостающие аудит-колонки (`created_by`, `created_at`, `updated_by`, `updated_at`) к таблицам, созданным другим сервисом; `audit_logs` в исходном виде, без `client_ip` и `outcome` |
 | `directory` | `004-audit-log-ip-and-indexes.xml` | `audit_logs.client_ip`, `outcome` (по умолчанию `SUCCESS`) и индексы `(company_id, created_at desc)`, `(entity_type, entity_id)`, `(created_at desc)` |
 | `directory` | `005-terminal-status.xml` | `terminals.status`, по умолчанию `ACTIVE` |

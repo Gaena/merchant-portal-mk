@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Р-131: terminals assigned to a COMPANY_EMPLOYEE - the employee sees only these; the head and the
+         managers see the whole company. auth writes the rows; directory, pbl and ecom read them for the
+         employee's scope. No foreign key to terminals: that table belongs to directory and pbl and may not
+         exist yet when auth migrates (P1-2) - auth checks the terminal's company in code instead. Each
+         part has its own precondition, as in 003. -->
+    <changeSet id="8-auth-user-terminals" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="user_terminals"/>
+            </not>
+        </preConditions>
+        <createTable tableName="user_terminals">
+            <column name="user_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="terminal_id" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="assigned_by" type="varchar(255)"/>
+            <column name="assigned_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="user_terminals" columnNames="user_id, terminal_id" constraintName="pk_user_terminals"/>
+    </changeSet>
+
+    <changeSet id="8-auth-user-terminals-user-fk" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <foreignKeyConstraintExists foreignKeyName="fk_user_terminals_user"/>
+            </not>
+        </preConditions>
+        <addForeignKeyConstraint baseTableName="user_terminals" baseColumnNames="user_id"
+                                 constraintName="fk_user_terminals_user"
+                                 referencedTableName="users" referencedColumnNames="id"
+                                 onDelete="CASCADE"/>
+    </changeSet>
+
+    <changeSet id="8-auth-user-terminals-terminal-index" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists tableName="user_terminals" indexName="idx_user_terminals_terminal"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="user_terminals" indexName="idx_user_terminals_terminal">
+            <column name="terminal_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

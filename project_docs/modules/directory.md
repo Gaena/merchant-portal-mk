@@ -207,7 +207,8 @@
     *Доступ и отказы*: те же, что у `GET /api/v1/terminals`.  
     *Ответ*: голый массив без пагинации, по `name`, затем `id`:
     ```json
-    [ {"id": 1001, "name": "Main Terminal", "login": "TerminalSys/BS00003", "terminalRid": "BS00003", "status": "ACTIVE"} ]
+    [ {"id": 1001, "name": "Main Terminal", "login": "TerminalSys/BS00003", "terminalRid": "BS00003", "status": "ACTIVE",
+       "companyId": "comp-01"} ]
     ```
     Отдаёт и `BLOCKED`: подпись старых платежей по заблокированному терминалу должна остаться, фильтрует потребитель (Р-45).
 -   `GET /api/v1/terminals/{id}` — Детали терминала.  

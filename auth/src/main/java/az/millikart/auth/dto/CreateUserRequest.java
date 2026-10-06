@@ -3,7 +3,9 @@ package az.millikart.auth.dto;
 import az.millikart.common.validation.ValidPassword;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import java.util.List;
 
 public record CreateUserRequest(
         @NotBlank(message = "Username is required")
@@ -22,6 +24,10 @@ public record CreateUserRequest(
         @NotBlank(message = "Role is required")
         String role,
 
-        String companyId
+        String companyId,
+
+        // Р-131: терминалы сотрудника — обязательны ему и запрещены остальным ролям; только своей компании.
+        @Size(max = 500, message = "At most 500 terminals can be assigned")
+        List<@NotNull(message = "Terminal ID must not be null") Integer> terminalIds
 ) {
 }

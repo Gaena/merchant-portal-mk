@@ -82,9 +82,9 @@ class UserCrossCompanyAccessTest {
         mockMvc.perform(get("/api/v1/users/" + employee.getId()).header(HttpHeaders.AUTHORIZATION, foreignHead))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Access denied")));
-        mockMvc.perform(patchUser(employee.getId(), foreignHead, new UpdateUserRequest("Renamed", null, null, null, null)))
+        mockMvc.perform(patchUser(employee.getId(), foreignHead, new UpdateUserRequest("Renamed", null, null, null, null, null)))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(patchUser(employee.getId(), foreignHead, new UpdateUserRequest(null, null, "Takeover12345!", null, null)))
+        mockMvc.perform(patchUser(employee.getId(), foreignHead, new UpdateUserRequest(null, null, "Takeover12345!", null, null, null)))
                 .andExpect(status().isForbidden());
         mockMvc.perform(delete("/api/v1/users/" + employee.getId()).header(HttpHeaders.AUTHORIZATION, foreignHead))
                 .andExpect(status().isForbidden());
@@ -102,10 +102,10 @@ class UserCrossCompanyAccessTest {
         User head = user("head@comp01.com", "COMPANY_HEAD", "comp-01", "ACTIVE");
         String headToken = token(head.getId(), head.getUsername(), "COMPANY_HEAD", "comp-01");
 
-        mockMvc.perform(patchUser(employee.getId(), headToken, new UpdateUserRequest(null, "COMPANY_HEAD", null, null, null)))
+        mockMvc.perform(patchUser(employee.getId(), headToken, new UpdateUserRequest(null, "COMPANY_HEAD", null, null, null, null)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Cannot assign this role")));
-        mockMvc.perform(patchUser(otherHead.getId(), headToken, new UpdateUserRequest("Renamed", null, null, null, null)))
+        mockMvc.perform(patchUser(otherHead.getId(), headToken, new UpdateUserRequest("Renamed", null, null, null, null, null)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Access denied")));
         mockMvc.perform(delete("/api/v1/users/" + otherHead.getId()).header(HttpHeaders.AUTHORIZATION, headToken))
@@ -130,9 +130,9 @@ class UserCrossCompanyAccessTest {
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(new CreateUserRequest(
                                     "new-" + role.toLowerCase() + "@comp01.com", PASSWORD, "New User",
-                                    "COMPANY_EMPLOYEE", "comp-01"))))
+                                    "COMPANY_EMPLOYEE", "comp-01", null))))
                     .andExpect(status().isForbidden());
-            mockMvc.perform(patchUser(employee.getId(), actor, new UpdateUserRequest("Renamed", null, null, null, null)))
+            mockMvc.perform(patchUser(employee.getId(), actor, new UpdateUserRequest("Renamed", null, null, null, null, null)))
                     .andExpect(status().isForbidden());
             mockMvc.perform(delete("/api/v1/users/" + employee.getId()).header(HttpHeaders.AUTHORIZATION, actor))
                     .andExpect(status().isForbidden());
@@ -157,7 +157,7 @@ class UserCrossCompanyAccessTest {
                         .header(HttpHeaders.AUTHORIZATION, liveToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateUserRequest(
-                                "late@comp01.com", PASSWORD, "Late User", "COMPANY_EMPLOYEE", "comp-01"))))
+                                "late@comp01.com", PASSWORD, "Late User", "COMPANY_EMPLOYEE", "comp-01", null))))
                 .andExpect(status().isForbidden());
         mockMvc.perform(delete("/api/v1/users/" + employee.getId()).header(HttpHeaders.AUTHORIZATION, liveToken))
                 .andExpect(status().isForbidden());

@@ -282,7 +282,7 @@ class RefreshTokenConcurrencyTest {
 
     // Блокировка администратором через сервис, как её делает PATCH /users/{id}.
     private void block() {
-        userService.updateUser(userId, new UpdateUserRequest(null, null, null, "BLOCKED", null),
+        userService.updateUser(userId, new UpdateUserRequest(null, null, null, "BLOCKED", null, null),
                 new UserPrincipal(UUID.randomUUID().toString(), "admin@millikart.az", "SYSTEM_ADMIN", null));
     }
 }

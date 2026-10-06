@@ -614,6 +614,14 @@ export interface TranslationDictionary {
     /** Пароль, заданный администратором, пользователь сменит при первом входе (Р-100). */
     issuedPasswordHint: string;
     passwordChangePending: string;
+    /** Р-131: сотрудник видит только назначенные терминалы; руководитель и менеджер — все терминалы компании. */
+    terminals: string;
+    terminalsHint: string;
+    terminalsRequired: string;
+    noCompanyTerminals: string;
+    allCompanyTerminals: string;
+    noTerminals: string;
+    noTerminalsHint: string;
     passwordWillChange: string;
     /** Свой пароль: сервер гасит все сессии, и эту тоже — после сохранения вход заново. */
     ownPasswordSignsOut: string;
@@ -1282,6 +1290,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       newPasswordHint: 'Leave empty to keep the current password. At least 12 characters with upper and lower case, a digit and a symbol.',
       issuedPasswordHint: 'The user will be asked to change this password at the first sign-in.',
       passwordChangePending: 'Password change pending',
+      terminals: 'Terminals',
+      terminalsHint: 'The employee sees only these terminals, their links and payments',
+      terminalsRequired: 'Choose at least one terminal for the employee.',
+      noCompanyTerminals: 'The company has no terminals',
+      allCompanyTerminals: 'All company terminals',
+      noTerminals: 'No terminals',
+      noTerminalsHint: 'Sees nothing in the portal until terminals are assigned',
       passwordWillChange: 'The password will be replaced',
       ownPasswordSignsOut: 'All your sessions will end, this one too: sign in again with the new password',
       selfHint: 'You cannot change your own role or status here.',
@@ -1908,6 +1923,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       newPasswordHint: 'Cari parolu saxlamaq üçün boş buraxın. Ən azı 12 simvol: böyük və kiçik hərf, rəqəm və xüsusi simvol.',
       issuedPasswordHint: 'İstifadəçi ilk girişdə bu parolu dəyişməli olacaq.',
       passwordChangePending: 'Parol dəyişikliyi gözlənilir',
+      terminals: 'Terminallar',
+      terminalsHint: 'Əməkdaş yalnız bu terminalları, onların linklərini və ödənişlərini görür',
+      terminalsRequired: 'Əməkdaş üçün ən azı bir terminal seçin.',
+      noCompanyTerminals: 'Şirkətin terminalı yoxdur',
+      allCompanyTerminals: 'Şirkətin bütün terminalları',
+      noTerminals: 'Terminal yoxdur',
+      noTerminalsHint: 'Terminal təyin olunana qədər portalda heç nə görmür',
       passwordWillChange: 'Parol dəyişdiriləcək',
       ownPasswordSignsOut: 'Bütün sessiyalarınız, bu da daxil olmaqla, bitəcək: yeni parolla yenidən daxil olun',
       selfHint: 'Öz rolunuzu və statusunuzu burada dəyişə bilməzsiniz.',
@@ -2534,6 +2556,13 @@ export const translations: Record<Language, TranslationDictionary> = {
       newPasswordHint: 'Оставьте пустым, чтобы не менять. Не меньше 12 символов: заглавные и строчные буквы, цифра и спецсимвол.',
       issuedPasswordHint: 'Пользователь сменит этот пароль при первом входе.',
       passwordChangePending: 'Ждёт смены пароля',
+      terminals: 'Терминалы',
+      terminalsHint: 'Сотрудник видит только эти терминалы, их ссылки и платежи',
+      terminalsRequired: 'Выберите сотруднику хотя бы один терминал.',
+      noCompanyTerminals: 'У компании нет терминалов',
+      allCompanyTerminals: 'Все терминалы компании',
+      noTerminals: 'Нет терминалов',
+      noTerminalsHint: 'Пока не назначены терминалы, в портале ничего не видит',
       passwordWillChange: 'Пароль будет заменён',
       ownPasswordSignsOut: 'Все ваши сессии, и эта тоже, завершатся: войдите снова с новым паролем',
       selfHint: 'Свою роль и статус здесь поменять нельзя.',
