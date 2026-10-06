@@ -146,7 +146,8 @@
 `TerminalService.TERMINAL_WRITE_ROLES` = `SYSTEM_ADMIN`, `COMPANY_HEAD`, `COMPANY_MANAGER`; руководитель и
 менеджер — только терминалы своей компании. Роль проверяется **до** `companyId`, поэтому `COMPANY_EMPLOYEE`,
 `AUDITOR` и любая нераспознанная роль получают `403` даже на терминалы своей компании (P1-15). Чтение шире:
-свои терминалы видят все компанейские роли, включая `COMPANY_EMPLOYEE`, а `SYSTEM_ADMIN` и `AUDITOR` — все.
+руководитель и менеджер видят терминалы своей компании, `COMPANY_EMPLOYEE` — только назначенные ему
+(`user_terminals`, Р-131; без назначений — пустые списки), `SYSTEM_ADMIN` и `AUDITOR` — все.
 
 `TerminalResponse` — `id`, `name`, `login`, `terminalRid`, `providerLinked` (связан со справочником провайдера: у
 терминала есть `merchant_rid`, название — провайдера), `companyId`, `status`, `createdBy`, `createdAt`,
@@ -196,8 +197,8 @@
     при пустом справочнике — пустой список.  
     *Отказы*: `400 companyId is required`; `400 Company with ID '<id>' not found` — компании нет или она удалена.
 -   `GET /api/v1/terminals` — Список терминалов (постранично).  
-    *Доступ*: `SYSTEM_ADMIN` и `AUDITOR` — все; `COMPANY_HEAD`/`COMPANY_MANAGER`/`COMPANY_EMPLOYEE` — только
-    своей компании. Отказы с записью `TERMINAL` / `LIST` / `DENIED`: роль компании без `companyId` — `403 Access
+    *Доступ*: `SYSTEM_ADMIN` и `AUDITOR` — все; `COMPANY_HEAD`/`COMPANY_MANAGER` — только своей компании,
+    `COMPANY_EMPLOYEE` — только назначенные ему (Р-131); то же у `/terminals/options`. Отказы с записью `TERMINAL` / `LIST` / `DENIED`: роль компании без `companyId` — `403 Access
     denied: User not assigned to a company`; нераспознанная роль — `403 Access denied`.  
     *Параметры*: `page`, `size`, `search` — по `name`, `login`, `id` (как тексту), `companyId` и **названию
     компании**. Поиск работает **внутри** ролевого скоупа: компания видит только свои терминалы, что бы ни искала.  
@@ -212,10 +213,12 @@
     ```
     Отдаёт и `BLOCKED`: подпись старых платежей по заблокированному терминалу должна остаться, фильтрует потребитель (Р-45).
 -   `GET /api/v1/terminals/{id}` — Детали терминала.  
-    *Доступ*: `SYSTEM_ADMIN`, `AUDITOR`, любая роль из компании терминала (в т.ч. `COMPANY_EMPLOYEE`);
-    нераспознанной роли — `403` и на терминал своей компании, с той же записью в журнал.  
+    *Доступ*: `SYSTEM_ADMIN`, `AUDITOR`, руководитель и менеджер компании терминала, `COMPANY_EMPLOYEE` — только
+    назначенный ему (Р-131); нераспознанной роли — `403` и на терминал своей компании, с той же записью в журнал.  
     *Ответ `200`*: `TerminalResponse`.  
-    *Отказы*: `400 Terminal not found`; `403 Access denied` — чужой терминал, запись `TERMINAL` / `READ` / `DENIED`.
+    *Отказы*: `400 Terminal not found`; `403 Access denied` — чужой терминал, запись `TERMINAL` / `READ` / `DENIED`;
+    `403 Access denied` — терминал своей компании, не назначенный сотруднику: запись `DENIED` под компанией
+    сотрудника, `Denied: employee attempted to read terminal <id> not assigned to it`.
 -   `PATCH /api/v1/terminals/{id}` — Редактировать терминал **и его статус**.  
     *Доступ*: `SYSTEM_ADMIN`, `COMPANY_HEAD`/`COMPANY_MANAGER` (своей компании).  
     *Запрос* (все поля необязательны, пустое — «не менять»): `{"name": "...", "companyId": "...", "status":

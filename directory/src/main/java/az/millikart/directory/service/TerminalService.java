@@ -13,6 +13,7 @@ import az.millikart.directory.dto.TerminalOptionResponse;
 import az.millikart.directory.dto.TerminalResponse;
 import az.millikart.directory.dto.UpdateTerminalRequest;
 import az.millikart.directory.repository.CompanyRepository;
+import az.millikart.directory.repository.EmployeeTerminalRepository;
 import az.millikart.directory.repository.PaymentLinkStatusRepository;
 import az.millikart.directory.repository.ProviderLoginSnapshotRepository;
 import az.millikart.directory.repository.ProviderTerminalStatusRepository;
@@ -59,6 +60,10 @@ public class TerminalService {
     private final ProviderLoginSnapshotRepository providerLogins;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
+    private final EmployeeTerminalRepository employeeTerminals;
+
+    // Несуществующий терминал: при restricted = false до него не доходит, но параметр связывается.
+    private static final List<Integer> NO_TERMINAL_FILTER = List.of(Integer.MIN_VALUE);
 
     public TerminalService(TerminalRepository terminalRepository,
                            CompanyRepository companyRepository,
@@ -66,7 +71,8 @@ public class TerminalService {
                            ProviderTerminalStatusRepository providerTerminals,
                            ProviderLoginSnapshotRepository providerLogins,
                            AuditLogService auditLogService,
-                           ApplicationEventPublisher eventPublisher) {
+                           ApplicationEventPublisher eventPublisher,
+                           EmployeeTerminalRepository employeeTerminals) {
         this.terminalRepository = terminalRepository;
         this.companyRepository = companyRepository;
         this.paymentLinkStatusRepository = paymentLinkStatusRepository;
@@ -74,6 +80,7 @@ public class TerminalService {
         this.providerLogins = providerLogins;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
+        this.employeeTerminals = employeeTerminals;
     }
 
     // Заводит только SYSTEM_ADMIN и только выбором из справочника провайдера (Р-80, Р-93).
@@ -156,8 +163,12 @@ public class TerminalService {
                 Sort.by(Sort.Order.asc("name"), Sort.Order.asc("id")));
 
         String companyScope = isGlobalReader(principal) ? null : requireOwnCompany(principal);
-        Page<Terminal> page = terminalRepository.search(companyScope,
-                SearchTerms.toLikePattern(search), byName);
+        Set<Integer> assigned = employeeScope(principal, companyScope);
+        if (assigned != null && assigned.isEmpty()) {
+            return PagedResponse.of(Page.empty(byName), List.of());
+        }
+        Page<Terminal> page = terminalRepository.search(companyScope, assigned != null,
+                assigned != null ? assigned : NO_TERMINAL_FILTER, SearchTerms.toLikePattern(search), byName);
 
         return PagedResponse.of(page, page.getContent().stream()
                 .map(this::mapToResponse)
@@ -168,9 +179,16 @@ public class TerminalService {
     // экранам платежей — все, иначе старый платёж теряет подпись терминала.
     @Transactional(readOnly = true)
     public List<TerminalOptionResponse> listTerminalOptions(UserPrincipal principal) {
-        List<Terminal> terminals = isGlobalReader(principal)
-                ? terminalRepository.findAllByOrderByNameAscIdAsc()
-                : terminalRepository.findAllByCompanyIdOrderByNameAscIdAsc(requireOwnCompany(principal));
+        List<Terminal> terminals;
+        if (isGlobalReader(principal)) {
+            terminals = terminalRepository.findAllByOrderByNameAscIdAsc();
+        } else {
+            String companyId = requireOwnCompany(principal);
+            Set<Integer> assigned = employeeScope(principal, companyId);
+            terminals = terminalRepository.findAllByCompanyIdOrderByNameAscIdAsc(companyId).stream()
+                    .filter(t -> assigned == null || assigned.contains(t.getId()))
+                    .toList();
+        }
 
         return terminals.stream()
                 .map(t -> new TerminalOptionResponse(t.getId(), t.getName(), t.getLogin(), t.getTerminalRid(), t.getStatus(),
@@ -219,6 +237,14 @@ public class TerminalService {
         return providerLogins.activeMerchantRidsOf(providerLogin.substring(CompanyService.MULTI_MERCHANT_PREFIX.length()));
     }
 
+    // Р-131: терминалы, видимые сотруднику, — назначенные ему из его компании; null — роль видит всю компанию.
+    private Set<Integer> employeeScope(UserPrincipal principal, String companyId) {
+        if (UserPrincipal.getRole(principal) != Role.COMPANY_EMPLOYEE) {
+            return null;
+        }
+        return employeeTerminals.assignedTerminalIds(UserPrincipal.getUserId(principal), companyId);
+    }
+
     // Возвращает не только флаг: роль без права на список получает отказ прямо здесь.
     private boolean isGlobalReader(UserPrincipal principal) {
         Role actorRole = UserPrincipal.getRole(principal);
@@ -254,6 +280,14 @@ public class TerminalService {
                 .orElseThrow(() -> new BusinessException("Terminal not found"));
 
         validateReadAccessToCompany(terminal.getCompanyId(), principal, String.valueOf(id));
+        Set<Integer> assigned = employeeScope(principal, terminal.getCompanyId());
+        if (assigned != null && !assigned.contains(terminal.getId())) {
+            // Терминал своей компании, но не назначенный — отказ с компанией актора, её руководитель его увидит.
+            auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(id), AuditAction.READ,
+                    UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                    "Denied: employee attempted to read terminal " + id + " not assigned to it");
+            throw new InvalidStateException("Access denied");
+        }
         return mapToResponse(terminal);
     }
 
@@ -295,6 +329,11 @@ public class TerminalService {
             }
             changes.append("CompanyId changed from '").append(terminal.getCompanyId()).append("' to '").append(request.companyId()).append("'. ");
             terminal.setCompanyId(request.companyId());
+            // Сотрудникам прежней компании терминал больше не принадлежит (Р-131).
+            int dropped = employeeTerminals.dropAssignmentsOf(terminal.getId());
+            if (dropped > 0) {
+                changes.append("Unassigned from ").append(dropped).append(" employee(s) of the previous company. ");
+            }
         }
 
         // Статус — последним: только его правка трогает ссылки. Тот же статус — не изменение, иначе

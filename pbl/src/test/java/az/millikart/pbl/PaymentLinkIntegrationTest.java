@@ -118,6 +118,9 @@ class PaymentLinkIntegrationTest {
     private AcquiringClient acquiringClient;
 
     private static final int TERMINAL_ID = 123456789;
+    // Р-131: сотрудник видит только назначенные терминалы, назначения ищутся по UUID пользователя из токена.
+    private static final String EMPLOYEE_ID = "55555555-5555-5555-5555-555555555555";
+    private static final int SIBLING_TERMINAL_ID = 123456790;
     private static final int FOREIGN_TERMINAL_ID = 987654321;
 
     // Повторяет pbl.link.default-ttl тестового профиля, который повторяет продакшн.
@@ -141,6 +144,7 @@ class PaymentLinkIntegrationTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        jdbcTemplate.update("DELETE FROM user_terminals");
         CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "test-company", "other-company");
 
         Terminal terminal = Terminal.builder()
@@ -161,7 +165,9 @@ class PaymentLinkIntegrationTest {
 
         adminToken = createMockJwtToken("admin-user", "SYSTEM_ADMIN", null);
         headToken = createMockJwtToken("head-user", "COMPANY_HEAD", "test-company");
-        employeeToken = createMockJwtToken("emp-user", "COMPANY_EMPLOYEE", "test-company");
+        employeeToken = createMockJwtToken(EMPLOYEE_ID, "COMPANY_EMPLOYEE", "test-company");
+        jdbcTemplate.update("INSERT INTO user_terminals (user_id, terminal_id, assigned_by, assigned_at) VALUES (?, ?, ?, ?)",
+                UUID.fromString(EMPLOYEE_ID), TERMINAL_ID, "head-user@test.com", java.sql.Timestamp.from(Instant.now()));
         auditorToken = createMockJwtToken("aud-user", "AUDITOR", "test-company");
         globalAuditorToken = createMockJwtToken("aud2", "AUDITOR", null);
         foreignToken = createMockJwtToken("other-user", "COMPANY_HEAD", "other-company");
@@ -218,6 +224,68 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.link", containsString("/open")))
                 // P1-9: созданная ссылка всегда несёт момент, когда перестаёт быть оплачиваемой.
                 .andExpect(jsonPath("$.expiresAt", notNullValue()));
+    }
+
+    // Р-131: сотрудник видит и трогает только назначенные терминалы своей компании — список ссылок и операций,
+    // ссылку и операцию по номеру, создание ссылки, статус и списание. Соседний терминал той же компании
+    // ему чужой: 403 (статус — 404, как у чужой компании) и отказ в журнале с его компанией. Руководитель
+    // видит всё.
+    @Test
+    void employee_seesAndActsOnlyOnAssignedTerminals() throws Exception {
+        terminalRepository.save(Terminal.builder()
+                .id(SIBLING_TERMINAL_ID)
+                .name("Sibling Terminal")
+                .login("TerminalSys/Sibling").terminalRid("TID-Sibling")
+                .companyId("test-company")
+                .build());
+        UUID ownLink = createLinkAndGetId(headToken);
+        ObjectNode siblingRequest = validCreateRequest();
+        siblingRequest.put("terminal", SIBLING_TERMINAL_ID);
+        UUID siblingLink = UUID.fromString(objectMapper.readTree(mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(siblingRequest)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asText());
+        createTransaction(TERMINAL_ID, "TX-OWN");
+        Transaction sibling = createTransaction(SIBLING_TERMINAL_ID, "TX-SIBLING");
+
+        mockMvc.perform(authed(get("/api/v1/payment-links"), employeeToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(2)))
+                .andExpect(jsonPath("$.content[0].terminal", is(TERMINAL_ID)))
+                .andExpect(jsonPath("$.content[1].terminal", is(TERMINAL_ID)));
+        mockMvc.perform(authed(get("/api/v1/payment-links"), headToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(4)));
+        mockMvc.perform(authed(get("/api/v1/payment-links"), employeeToken).param("terminal", String.valueOf(SIBLING_TERMINAL_ID)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(authed(get("/api/v1/payment-links/{id}", ownLink), employeeToken))
+                .andExpect(status().isOk());
+        mockMvc.perform(authed(get("/api/v1/payment-links/{id}", siblingLink), employeeToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(authed(post("/api/v1/payment-links"), employeeToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(siblingRequest)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(authed(get("/api/v1/transactions"), employeeToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.content[0].terminalId", is(TERMINAL_ID)));
+        mockMvc.perform(authed(get("/api/v1/transactions/{id}", sibling.getId()), employeeToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", sibling.getId()), employeeToken))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(authed(post("/api/v1/transactions/{id}/complete", sibling.getId()), employeeToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\": 10.00}"))
+                .andExpect(status().isForbidden());
+
+        Integer denials = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE outcome = 'DENIED' AND company_id = 'test-company' "
+                        + "AND details LIKE '%not assigned to it%'", Integer.class);
+        Assertions.assertTrue(denials != null && denials >= 1, "the head sees the employee's refused attempts");
     }
 
     @Test

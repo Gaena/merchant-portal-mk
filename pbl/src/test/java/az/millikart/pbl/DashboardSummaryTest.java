@@ -66,6 +66,7 @@ public class DashboardSummaryTest {
     @Autowired private TransactionRefundRepository transactionRefundRepository;
     @Autowired private AcquiringClient acquiringClient;
     @Autowired private DashboardRepository dashboardRepository;
+    @Autowired private az.millikart.pbl.service.TerminalScope terminalScope;
 
     private ZoneId reportZone;
     private String adminToken;
@@ -76,6 +77,7 @@ public class DashboardSummaryTest {
     @BeforeEach
     public void setup() {
         Mockito.reset(acquiringClient);
+        jdbcTemplate.update("DELETE FROM user_terminals");
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
@@ -299,7 +301,7 @@ public class DashboardSummaryTest {
     @Test
     public void bucketsFollowTheConfiguredZone_notTheMachineZone() {
         ZoneId tokyo = ZoneId.of("Asia/Tokyo");
-        DashboardService tokyoService = new DashboardService(dashboardRepository, terminalRepository, tokyo.getId());
+        DashboardService tokyoService = new DashboardService(dashboardRepository, terminalRepository, terminalScope, tokyo.getId());
         LocalDate before = LocalDate.now(tokyo).minusDays(2);
         LocalDate after = LocalDate.now(tokyo).minusDays(1);
         PaymentLink link = link(TERMINAL_A, "AZN");
@@ -391,6 +393,29 @@ public class DashboardSummaryTest {
         Assertions.assertEquals(3, content.size());
         Assertions.assertEquals(newest.getId().toString(), content.get(0).get("id").asText(),
                 "the newest payment comes first, or 'recent transactions' means nothing");
+    }
+
+    // Р-131: сотрудник видит статистику только по назначенным терминалам — деньги, попытки и воронку.
+    // Соседний терминал той же компании в его цифры не входит; руководитель видит оба.
+    @Test
+    public void employee_countsOnlyAssignedTerminals() throws Exception {
+        int sibling = TERMINAL_A + 1;
+        terminalRepository.save(terminal(sibling, "Sibling terminal", COMPANY_A));
+        String employeeId = "66666666-6666-6666-6666-666666666666";
+        jdbcTemplate.update("INSERT INTO user_terminals (user_id, terminal_id, assigned_by, assigned_at) VALUES (?, ?, ?, now())",
+                UUID.fromString(employeeId), TERMINAL_A, "head-a@test.com");
+        paid(link(TERMINAL_A, "AZN"), "100.00");
+        paid(link(sibling, "AZN"), "40.00");
+        String employeeToken = "Bearer " + jwtProvider.generateToken(employeeId, "emp-a@test.com", "COMPANY_EMPLOYEE", COMPANY_A);
+
+        JsonNode employee = summary(employeeToken, "");
+        Assertions.assertEquals(1, totals(employee, "AZN").get("paidCount").asLong());
+        Assertions.assertEquals(new BigDecimal("100.00"), amount(totals(employee, "AZN"), "paidAmount"));
+        Assertions.assertEquals(1, employee.get("linkFunnel").get("created").asLong());
+
+        JsonNode head = summary(headAToken, "");
+        Assertions.assertEquals(2, totals(head, "AZN").get("paidCount").asLong());
+        Assertions.assertEquals(2, head.get("linkFunnel").get("created").asLong());
     }
 
     // ─── воронка ссылок и время до оплаты (Р-128) ────────────────────────────

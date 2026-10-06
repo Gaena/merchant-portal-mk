@@ -72,6 +72,11 @@ Every endpoint that addresses a link, a transaction or a terminal goes through o
 | role not allowed for the action, or not recognised | `403 Access denied: role <ROLE> is not authorized for this action` | `TERMINAL` / `READ` / `DENIED`, entity — the terminal id |
 | terminal row not found | `404 Terminal not found: <id>` | — |
 | terminal of another company | `403 Access denied to terminal: <id>` | `TERMINAL` / `READ` / `DENIED` |
+| `COMPANY_EMPLOYEE`, terminal of its company not assigned to it (Р-131) | `403 Access denied to terminal: <id>` | `TERMINAL` / `READ` / `DENIED` under the employee's company, `… not assigned to it` |
+
+**An employee sees only its assigned terminals** (`user_terminals`, Р-131): every list and the summary below
+narrow to them through `TerminalScope`, an employee without assignments gets empty pages and zeros. The head
+and the managers see every terminal of the company.
 
 The lists (§5.4, §5.7) and the summary (§5.13) check the role only: an unrecognised role gets the same
 `403` without a journal record, a known role without a company (or with a company that has no
@@ -281,7 +286,8 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 
 -   **Method:** `GET /api/v1/payment-links`
 -   **Access:** every role. `SYSTEM_ADMIN` and `AUDITOR` see all links, the other roles — links on their
-    company's terminals; no company or no terminals — an empty page.
+    company's terminals, `COMPANY_EMPLOYEE` — on its assigned ones (§4.1); no company or no terminals — an empty
+    page.
 -   **Query Parameters:**
 
 | Parameter | Default | Meaning |
@@ -449,8 +455,8 @@ and `noindex`.
 
 -   **Method:** `GET /api/v1/transactions`
 -   **Access:** every role; an unrecognised role — `403` (§4.1). `SYSTEM_ADMIN` and `AUDITOR` see every
-    company, the other roles — transactions of links on their company's terminals; no company or no
-    terminals — an empty page.
+    company, the other roles — transactions of links on their company's terminals, `COMPANY_EMPLOYEE` — on its
+    assigned ones (§4.1); no company or no terminals — an empty page.
 -   **Query Parameters:** `page` (default `0`, a negative one is read as `0`), `size` (default `20`, clamped to
     `1…200`) — clamped, not refused.
 -   **Ordering:** `createdAt DESC, id DESC`. No filters. The portal UI does not call this endpoint: it
@@ -465,7 +471,8 @@ and `noindex`.
     transaction: `404 Transaction not found: <identifier>`, the same as for one that does not exist (Р-114).
     Provider order ids are sequential, and a `403` would let anyone list the portal's orders and the
     terminals of other companies. The refusal goes to the journal without a company — only `SYSTEM_ADMIN`
-    and `AUDITOR` see it.
+    and `AUDITOR` see it. An employee asking about a transaction on a terminal of its company not assigned to it
+    gets the same `404`; that refusal is journaled under its company (Р-131).
 -   **`identifier`:** the transaction UUID or the provider order id (`providerOrderId`).
 -   **Behaviour:**
     -   `PENDING` and `AUTHORIZED` — the acquirer is polled once (`GET /order/{id}` with

@@ -98,6 +98,7 @@ public class PaymentLinkService {
     private final MoneyOperationAttemptRepository attemptRepository;
     private final TerminalRepository terminalRepository;
     private final PaymentReceipts paymentReceipts;
+    private final TerminalScope terminalScope;
     private final AcquiringClient acquiringClient;
     private final ProviderCredentialsService providerCredentials;
     private final PaymentLinkMapper mapper;
@@ -120,6 +121,7 @@ public class PaymentLinkService {
                                ApplicationEventPublisher eventPublisher,
                                PlatformTransactionManager transactionManager,
                                PaymentReceipts paymentReceipts,
+                               TerminalScope terminalScope,
                                @Value("${pbl.base-url}") String baseUrl,
                                @Value("${pbl.link.default-ttl}") Duration defaultLinkTtl,
                                @Value("${pbl.link.max-ttl}") Duration maxLinkTtl) {
@@ -135,6 +137,7 @@ public class PaymentLinkService {
         this.eventPublisher = eventPublisher;
         this.txTemplate = new TransactionTemplate(transactionManager);
         this.paymentReceipts = paymentReceipts;
+        this.terminalScope = terminalScope;
         this.baseUrl = baseUrl;
         this.defaultLinkTtl = defaultLinkTtl;
         this.maxLinkTtl = maxLinkTtl;
@@ -481,9 +484,8 @@ public class PaymentLinkService {
                 Page<PaymentLink> emptyPage = new PageImpl<>(Collections.emptyList(), pageable, 0);
                 return PagedResponse.of(emptyPage, Collections.emptyList());
             }
-            allowedTerminals = terminalRepository.findAllByCompanyId(companyId).stream()
-                    .map(Terminal::getId)
-                    .toList();
+            // Сотруднику — только назначенные терминалы (Р-131).
+            allowedTerminals = terminalScope.companyTerminalIds(principal);
 
             log.debug("Found allowed terminals for company {}: {}", companyId, allowedTerminals);
             if (allowedTerminals.isEmpty()) {
@@ -952,9 +954,8 @@ public class PaymentLinkService {
             return;
         }
         String companyId = UserPrincipal.getCompanyId(principal);
-        boolean ownTerminal = companyId != null && terminalRepository.findById(terminalId)
-                .map(terminal -> companyId.equals(terminal.getCompanyId()))
-                .orElse(false);
+        Terminal terminal = terminalRepository.findById(terminalId).orElse(null);
+        boolean ownTerminal = companyId != null && terminal != null && companyId.equals(terminal.getCompanyId());
         if (!ownTerminal) {
             log.warn("Status of transaction {} refused to company {}: terminal {} belongs to another company; "
                     + "answered as not found", identifier, companyId, terminalId);
@@ -962,6 +963,17 @@ public class PaymentLinkService {
                     UserPrincipal.getUsername(principal), null,
                     "Denied: role " + role + " of company " + companyId + " asked for the status of transaction "
                             + identifier + " on terminal " + terminalId + " of another company");
+            throw new ResourceNotFoundException("Transaction not found: " + identifier);
+        }
+        // Свой терминал, не назначенный сотруднику (Р-131), — тот же 404; отказ с компанией: перебора чужих
+        // номеров здесь нет, а руководитель должен видеть, куда заглядывает сотрудник.
+        if (!terminalScope.allows(principal, terminal)) {
+            log.warn("Status of transaction {} refused: terminal {} is not assigned to the employee; answered as "
+                    + "not found", identifier, terminalId);
+            auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(terminalId), AuditAction.READ,
+                    UserPrincipal.getUsername(principal), companyId,
+                    "Denied: employee of company " + companyId + " asked for the status of transaction "
+                            + identifier + " on terminal " + terminalId + " not assigned to it");
             throw new ResourceNotFoundException("Transaction not found: " + identifier);
         }
     }
@@ -1258,9 +1270,8 @@ public class PaymentLinkService {
                 log.warn("Missing companyId claim for non-admin user: {}", userId);
                 return PagedResponse.of(new PageImpl<>(Collections.emptyList(), pageable, 0), Collections.emptyList());
             }
-            List<Integer> allowedTerminals = terminalRepository.findAllByCompanyId(companyId).stream()
-                    .map(Terminal::getId)
-                    .toList();
+            // Сотруднику — только назначенные терминалы (Р-131).
+            List<Integer> allowedTerminals = terminalScope.companyTerminalIds(principal);
 
             log.debug("Found allowed terminals for company {}: {}", companyId, allowedTerminals);
             if (allowedTerminals.isEmpty()) {
@@ -1491,6 +1502,15 @@ public class PaymentLinkService {
                     UserPrincipal.getUsername(principal), companyId,
                     "Denied: role " + rawRole + " of company " + companyId
                             + " attempted to act on terminal " + terminalId + " of another company");
+            throw new InvalidStateException("Access denied to terminal: " + terminalId);
+        }
+        if (!terminalScope.allows(principal, terminal)) {
+            // Свой терминал, но не назначенный сотруднику (Р-131): отказ с его компанией — руководитель увидит.
+            log.warn("Access denied. Terminal {} is not assigned to the employee", terminalId);
+            auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(terminalId), AuditAction.READ,
+                    UserPrincipal.getUsername(principal), companyId,
+                    "Denied: employee of company " + companyId + " attempted to act on terminal " + terminalId
+                            + " not assigned to it");
             throw new InvalidStateException("Access denied to terminal: " + terminalId);
         }
         log.debug("Access granted for company: {}", companyId);

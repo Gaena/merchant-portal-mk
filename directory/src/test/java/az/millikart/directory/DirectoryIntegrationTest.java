@@ -51,6 +51,9 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 public class DirectoryIntegrationTest {
 
+    // Р-131: назначения терминалов ищутся по userId токена — он должен быть UUID, как у настоящего пользователя.
+    private static final String EMPLOYEE_ID = "44444444-4444-4444-4444-444444444444";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -92,6 +95,7 @@ public class DirectoryIntegrationTest {
     @BeforeEach
     public void setup() {
         auditLogRepository.deleteAll();
+        jdbcTemplate.update("DELETE FROM user_terminals");
         terminalRepository.deleteAll();
         companyRepository.deleteAll();
         DirectoryTestFixtures.providerLogins(jdbcTemplate, "comp-01", "comp-02", "comp-03", "new-login");
@@ -100,7 +104,7 @@ public class DirectoryIntegrationTest {
         headTokenCompany1 = "Bearer " + jwtProvider.generateToken("111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
         headTokenCompany2 = "Bearer " + jwtProvider.generateToken("222", "head@comp2.com", "COMPANY_HEAD", "comp-02");
         managerTokenCompany1 = "Bearer " + jwtProvider.generateToken("333", "manager@comp1.com", "COMPANY_MANAGER", "comp-01");
-        employeeTokenCompany1 = "Bearer " + jwtProvider.generateToken("444", "employee@comp1.com", "COMPANY_EMPLOYEE", "comp-01");
+        employeeTokenCompany1 = "Bearer " + jwtProvider.generateToken(EMPLOYEE_ID, "employee@comp1.com", "COMPANY_EMPLOYEE", "comp-01");
         auditorToken = "Bearer " + jwtProvider.generateToken("555", "auditor@millikart.az", "AUDITOR", null);
         // Role.fromValue не знает это значение, поэтому в сервисы принципал придёт с role == null.
         unknownRoleToken = "Bearer " + jwtProvider.generateToken("666", "hacker@comp1.com", "HACKER", "comp-01");
@@ -410,29 +414,59 @@ public class DirectoryIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
-    // Чтение не тронуто: COMPANY_EMPLOYEE по-прежнему видит терминалы своей компании
+    // Р-131: COMPANY_EMPLOYEE видит только назначенные ему терминалы своей компании — в списке, в вариантах
+    // для форм (на них строится форма ссылки) и по номеру. Руководитель видит все терминалы компании.
 
     @Test
-    public void listTerminals_asEmployee_returnsOwnCompanyTerminals() throws Exception {
+    public void listTerminals_asEmployee_returnsOnlyAssignedTerminals() throws Exception {
         createCompany("comp-01", "MilliKart LLC");
         createCompany("comp-02", "Other LLC");
         int own = createTerminal("Own Terminal", "comp-01", adminToken);
+        createTerminal("Unassigned Terminal", "comp-01", adminToken);
         createTerminal("Foreign Terminal", "comp-02", adminToken);
+        assignToEmployee(own);
 
         mockMvc.perform(get("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content", hasSize(1)))
                 .andExpect(jsonPath("$.content[0].id", is(own)))
-                .andExpect(jsonPath("$.content[0].companyId", is("comp-01")));
+                .andExpect(jsonPath("$.totalElements", is(1)));
+        mockMvc.perform(get("/api/v1/terminals/options")
+                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].id", is(own)));
+        mockMvc.perform(get("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(2)));
+    }
+
+    // Сотрудник без назначений видит пустой список, а не всю компанию: пустой скоуп — не «без ограничений».
+    @Test
+    public void listTerminals_asEmployeeWithoutAssignments_isEmpty() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createTerminal("Own Terminal", "comp-01", adminToken);
+
+        mockMvc.perform(get("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content", hasSize(0)));
+        mockMvc.perform(get("/api/v1/terminals/options")
+                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
     }
 
     @Test
-    public void getTerminal_asEmployee_returnsOwnCompanyTerminal() throws Exception {
+    public void getTerminal_asEmployee_onlyAnAssignedOne() throws Exception {
         createCompany("comp-01", "MilliKart LLC");
         createCompany("comp-02", "Other LLC");
         int own = createTerminal("Own Terminal", "comp-01", adminToken);
+        int unassigned = createTerminal("Unassigned Terminal", "comp-01", adminToken);
         int foreign = createTerminal("Foreign Terminal", "comp-02", adminToken);
+        assignToEmployee(own);
 
         mockMvc.perform(get("/api/v1/terminals/" + own)
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
@@ -440,9 +474,43 @@ public class DirectoryIntegrationTest {
                 .andExpect(jsonPath("$.id", is(own)))
                 .andExpect(jsonPath("$.companyId", is("comp-01")));
 
+        mockMvc.perform(get("/api/v1/terminals/" + unassigned)
+                        .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
+                .andExpect(status().isForbidden());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE entity_id = ? AND outcome = 'DENIED' AND company_id = 'comp-01'",
+                Integer.class, String.valueOf(unassigned)))
+                .as("the head of the company sees the employee reaching for a terminal not assigned to it")
+                .isEqualTo(1);
+
         mockMvc.perform(get("/api/v1/terminals/" + foreign)
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))
                 .andExpect(status().isForbidden());
+    }
+
+    // Р-131: терминал, перенесённый в другую компанию, сотрудникам прежней больше не принадлежит — назначения
+    // снимаются в той же правке и называются в её записи журнала.
+    @Test
+    public void movingATerminal_dropsItsEmployeeAssignments() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        createCompany("comp-02", "Other LLC");
+        int terminalId = createTerminal("Main Shop", "comp-01", adminToken);
+        String merchantRid = terminalRepository.findById(terminalId).orElseThrow().getMerchantRid();
+        DirectoryTestFixtures.linkMerchant(jdbcTemplate, "comp-02", merchantRid);
+        assignToEmployee(terminalId);
+
+        mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                .andExpect(status().isOk());
+
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_terminals WHERE terminal_id = ?",
+                Integer.class, terminalId)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT details FROM audit_logs WHERE entity_id = ? AND action = 'UPDATE' AND outcome = 'SUCCESS'",
+                String.class, String.valueOf(terminalId)))
+                .contains("Unassigned from 1 employee(s) of the previous company");
     }
 
     // Креды компании к провайдеру (Р-93)
@@ -1266,6 +1334,11 @@ public class DirectoryIntegrationTest {
     private String providerLoginIn(String companyJson) throws Exception {
         JsonNode login = objectMapper.readTree(companyJson).path("providerLogin");
         return login.isMissingNode() || login.isNull() ? null : login.asText();
+    }
+
+    private void assignToEmployee(int terminalId) {
+        jdbcTemplate.update("INSERT INTO user_terminals (user_id, terminal_id, assigned_by, assigned_at) VALUES (?, ?, ?, ?)",
+                UUID.fromString(EMPLOYEE_ID), terminalId, "head@comp1.com", java.sql.Timestamp.from(java.time.Instant.now()));
     }
 
     private void createCompany(String id, String name) throws Exception {

@@ -72,13 +72,16 @@ public class DashboardService {
 
     private final DashboardRepository dashboardRepository;
     private final TerminalRepository terminalRepository;
+    private final TerminalScope terminalScope;
     private final ZoneId zone;
 
     public DashboardService(DashboardRepository dashboardRepository,
                             TerminalRepository terminalRepository,
+                            TerminalScope terminalScope,
                             @Value("${pbl.dashboard.zone}") String zoneId) {
         this.dashboardRepository = dashboardRepository;
         this.terminalRepository = terminalRepository;
+        this.terminalScope = terminalScope;
         this.zone = ZoneId.of(zoneId);
     }
 
@@ -106,9 +109,8 @@ public class DashboardService {
                 log.warn("Missing companyId claim for non-admin user; empty dashboard");
                 return emptySummary(resolvedFrom, resolvedTo);
             }
-            terminalIds = terminalRepository.findAllByCompanyId(companyId).stream()
-                    .map(Terminal::getId)
-                    .toList();
+            // Сотруднику — только назначенные терминалы (Р-131).
+            terminalIds = terminalScope.companyTerminalIds(principal);
             if (terminalIds.isEmpty()) {
                 return emptySummary(resolvedFrom, resolvedTo);
             }

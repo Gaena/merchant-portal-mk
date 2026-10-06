@@ -460,6 +460,7 @@ erDiagram
 | `directory` | `009-terminal-rid.xml` | `terminals.terminal_rid` — номер терминала у провайдера (Р-96) |
 | `directory` | `010-terminal-version.xml` | `terminals.version`, если её ещё нет, с умолчанием 0 — для `@Version` (Р-115) |
 | `directory` | `011-company-tax-id.xml` | `companies.tax_id` (VÖEN), если её ещё нет: реквизит продавца на чеке (Р-129) |
+| `directory` | `012-user-terminals.xml` | `user_terminals`, если её ещё нет, в том же виде, что у `auth` (008), без внешнего ключа на `users` — его добавляет `auth` (Р-131) |
 | `pbl` | `001-initial-schema.xml` | `terminals`, если ещё нет (исходный вид: с `password`, без аудит-колонок); `payment_links`, `transactions` (колонка `merchant_rid`, её переименовывает `009`), внешние ключи `payment_links → terminals` и `transactions → payment_links` |
 | `pbl` | `002-add-indexes.xml` | индексы `payment_links (terminal_id, status)`, `payment_links (status, expires_at)`, `transactions (provider_order_id)` |
 | `pbl` | `003-add-client-ip-and-user-agent.xml` | `transactions.client_ip`, `user_agent` |
@@ -477,6 +478,7 @@ erDiagram
 | `pbl` | `015-money-operation-attempts.xml` | `money_operation_attempts` — возврат или списание, исход которого ещё не записан (Р-123) |
 | `pbl` | `016-transaction-card-submitted.xml` | `transactions.card_submitted`, если её ещё нет: плательщик отправил карту, шаг воронки ссылок (Р-128); на PostgreSQL — отметка старых строк по `trans[]` в `provider_response` |
 | `pbl` | `017-company-tax-id.xml` | `companies.tax_id`, если её ещё нет: VÖEN продавца на чеке плательщика, пишет `directory` (Р-129, Р-130) |
+| `pbl` | `018-user-terminals.xml` | `user_terminals`, если её ещё нет, — как `directory/012` (Р-131) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` и индекс по `login`; без преконтроля |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет; таблица `terminals` уже должна быть (§4.2) |
 | `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам — и индекс по `login` (Р-94) |

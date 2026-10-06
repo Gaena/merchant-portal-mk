@@ -173,7 +173,7 @@ export JWT_SECRET="$(openssl rand -base64 48)"   # одно значение н�
    | Таблица | Схему пишет | Кто ещё читает или пишет |
    |:---|:---|:---|
    | `users`, `refresh_tokens`, `password_history` | `auth` | — |
-   | `user_terminals` | `auth` | терминалы сотрудника (Р-131); `auth` читает `terminals`, чтобы проверить компанию терминала |
+   | `user_terminals` | `auth` (создаёт и пишет), `directory` и `pbl` (создают, если ещё нет) | терминалы сотрудника (Р-131): `auth` читает `terminals`, чтобы проверить компанию терминала; `directory` и `pbl` строят по ним скоуп сотрудника, `directory` снимает назначения терминала, перенесённого в другую компанию |
    | `companies` | `auth` (создаёт) + `directory` (дополняет), `pbl` (создаёт, если ещё нет, и добавляет колонки кредов) | `auth` читает название нативным запросом для поиска пользователей; `pbl` и `ecom` — креды компании к провайдеру (Р-93, Р-124); `ecom` — логин компании для скоупа выписки (Р-97) |
    | `terminals` | `directory` (создаёт и дополняет), `pbl` (создаёт, если ещё нет; `terminal_rid`, если ещё нет), `ecom` (`status_source`, `merchant_rid`, если ещё нет); внешний ключ на `companies` — `auth` | `pbl` читает напрямую, минуя REST; `ecom` — терминал мерчанта заказа выписки (Р-124) |
    | `payment_links`, `transactions`, `transaction_refunds` | `pbl` | `directory` меняет статусы ссылок нативным запросом при блокировке терминала (Р-39); `ecom` ищет в `transactions` операцию портала по номеру заказа выписки (Р-124) |
@@ -288,16 +288,16 @@ origin через nginx. Обоснование — в комментариях 
 | `GET /companies` (список) | ✅ | ❌ | ❌ | ❌ | ✅ |
 | `GET /companies/{id}` | ✅ | ✅ своя | ✅ своя | ✅ своя | ✅ |
 | `POST/PATCH/DELETE /companies`, `GET /companies/provider-logins` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `GET /terminals`, `/terminals/{id}`, `/terminals/options` | ✅ все | ✅ своя | ✅ своя | ✅ своя | ✅ все |
+| `GET /terminals`, `/terminals/{id}`, `/terminals/options` | ✅ все | ✅ своя | ✅ своя | ✅ назначенные | ✅ все |
 | `POST /terminals` | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `PATCH /terminals` | ✅ | ✅ своя | ✅ своя | ❌ | ❌ |
 | креды компании к провайдеру: задать и сменить в `POST/PATCH /companies`, логин в ответе | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `POST /acquiring/terminal-checks/{terminalId}` | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `GET /audit-logs` | ✅ все | ✅ своя | ✅ своя | ❌ | ✅ все |
-| `POST/PATCH /payment-links` | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `GET /payment-links`, `/{id}`, `/{id}/transactions` | ✅ все | ✅ своя | ✅ своя | ✅ своя | ✅ все |
-| `GET /transactions`, `/{id}`, `/{id}/status`, `GET /dashboard/summary` | ✅ все | ✅ своя | ✅ своя | ✅ своя | ✅ все |
-| `POST /transactions/{id}/complete` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `POST/PATCH /payment-links` | ✅ | ✅ | ✅ | ✅ назначенные | ❌ |
+| `GET /payment-links`, `/{id}`, `/{id}/transactions` | ✅ все | ✅ своя | ✅ своя | ✅ назначенные | ✅ все |
+| `GET /transactions`, `/{id}`, `/{id}/status`, `GET /dashboard/summary` | ✅ все | ✅ своя | ✅ своя | ✅ назначенные | ✅ все |
+| `POST /transactions/{id}/complete` | ✅ | ✅ | ✅ | ✅ назначенные | ❌ |
 | `POST /transactions/{id}/refund` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `POST /transactions/{id}/resolve-outcome` (Р-123) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `GET /ecom/transactions` и вложенные | ✅ мерчанты всех наших компаний | ✅ своя | ✅ своя | ✅ своя | ✅ мерчанты всех наших компаний |
@@ -312,8 +312,14 @@ origin через nginx. Обоснование — в комментариях 
   Терминал, выключенный синхронизацией с провайдером, вручную не включает никто (Р-66).
 - **AUDITOR — глобальный читатель во всех сервисах** (Р-1); в `pbl` — через
   `PaymentLinkService.isGlobalReader`. На запись это не влияет.
-- Скоуп компании в `pbl` идёт через её терминалы (`terminalRepository.findAllByCompanyId`); роль из
-  `READ_ROLES` без `companyId` получает пустую страницу, а не отказ. В `ecom` скоуп строит только
+- Скоуп компании в `pbl` идёт через её терминалы — только `TerminalScope`; роль из `READ_ROLES` без `companyId`
+  получает пустую страницу, а не отказ.
+- **Сотрудник (`COMPANY_EMPLOYEE`) — только назначенные терминалы** (Р-131, `user_terminals`): «назначенные» в
+  матрице. Правило — `TerminalScope` в `pbl` (списки, статистика, ворота `validateAccess`) и
+  `TerminalService.employeeScope` в `directory`. Назначения читаются из базы на каждом запросе, а не из токена;
+  терминал, ушедший в другую компанию, из скоупа выпадает сам. Пустой список — пустой ответ, а не «вся
+  компания». Соседний терминал своей компании — 403 (`/status` — 404, как чужой) с отказом в журнале под
+  компанией сотрудника. В `ecom` скоуп строит только
   `EcomScopeService`, и без компании там 403 с записью в журнал.
 - `DELETE /terminals` нет (405): терминалы блокируются (§10).
 
