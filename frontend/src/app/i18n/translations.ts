@@ -341,6 +341,16 @@ export interface TranslationDictionary {
       checkStatusFailed: string;
       /** Вернуть можно только остаток. */
       refundableLeft: string;
+      /** Сумма возврата и списания (Р-133): в окне сразу потолок, её можно уменьшить. */
+      amountLabel: string;
+      amountUpTo: string;
+      amountWholeRefund: string;
+      amountWholeCapture: string;
+      amountInvalid: string;
+      amountAboveMax: string;
+      refundRemains: string;
+      captureReleased: string;
+      capturePartialHint: string;
       /** Заголовок блока возврата и списания — общий у карточки операции и панели заказа выписки. */
       actionsTitle: string;
       /** Причина выключенной кнопки (Р-123) — ровно `MoneyActionReason` бэкенда; `other` — код незнакомый. */
@@ -1052,6 +1062,15 @@ export const translations: Record<Language, TranslationDictionary> = {
         statusChecked: 'Transaction status refreshed.',
         checkStatusFailed: 'Could not check the status. Try again.',
         refundableLeft: 'Left to refund',
+        amountLabel: 'Amount',
+        amountUpTo: 'Up to',
+        amountWholeRefund: 'Whole remainder',
+        amountWholeCapture: 'Whole amount',
+        amountInvalid: 'Enter an amount above zero with at most two decimal places',
+        amountAboveMax: 'The amount is above what is available',
+        refundRemains: 'Left to refund after this',
+        captureReleased: 'Not captured',
+        capturePartialHint: 'A hold is captured once: the portal will not capture the rest later, the bank releases it on its own schedule.',
         actionsTitle: 'Actions',
         moneyReasons: {
           NO_RIGHTS: 'Your role does not allow this action',
@@ -1698,6 +1717,15 @@ export const translations: Record<Language, TranslationDictionary> = {
         statusChecked: 'Əməliyyatın statusu yeniləndi.',
         checkStatusFailed: 'Statusu yoxlamaq mümkün olmadı. Yenidən cəhd edin.',
         refundableLeft: 'Qaytarıla bilən qalıq',
+        amountLabel: 'Məbləğ',
+        amountUpTo: 'Maksimum',
+        amountWholeRefund: 'Bütün qalıq',
+        amountWholeCapture: 'Bütün məbləğ',
+        amountInvalid: 'Sıfırdan böyük, ən çox iki onluq rəqəmli məbləğ daxil edin',
+        amountAboveMax: 'Məbləğ mövcud olandan çoxdur',
+        refundRemains: 'Bundan sonra qaytarıla bilən qalıq',
+        captureReleased: 'Silinməyəcək',
+        capturePartialHint: 'Blok bir dəfə silinir: portal qalığı sonra silməyəcək, bank onu öz müddətində azad edəcək.',
         actionsTitle: 'Əməliyyatlar',
         moneyReasons: {
           NO_RIGHTS: 'Rolunuz bu əməliyyata icazə vermir',
@@ -2344,6 +2372,15 @@ export const translations: Record<Language, TranslationDictionary> = {
         statusChecked: 'Статус операции обновлён.',
         checkStatusFailed: 'Не удалось проверить статус. Попробуйте ещё раз.',
         refundableLeft: 'Остаток к возврату',
+        amountLabel: 'Сумма',
+        amountUpTo: 'Не больше',
+        amountWholeRefund: 'Весь остаток',
+        amountWholeCapture: 'Вся сумма',
+        amountInvalid: 'Введите сумму больше нуля, не больше двух знаков после запятой',
+        amountAboveMax: 'Сумма больше доступной',
+        refundRemains: 'Останется к возврату',
+        captureReleased: 'Не будет списано',
+        capturePartialHint: 'Холд списывается один раз: остаток портал потом не спишет, банк снимет его по своим срокам.',
         actionsTitle: 'Действия',
         moneyReasons: {
           NO_RIGHTS: 'Ваша роль не позволяет это действие',

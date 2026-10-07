@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { Alert, AlertTitle, Box, Button, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, AlertTitle, Box, Button, InputAdornment, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material';
 import { Cancel as CancelIcon, DoneAll as CompleteIcon } from '@mui/icons-material';
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
@@ -26,10 +26,20 @@ interface MoneyActionsPanelProps {
   description?: React.ReactNode;
 }
 
+// Сумма — в копейках: числа с плавающей точкой ошибались бы на сотых при сравнении с потолком.
+const toCents = (value: number): number => Math.round(value * 100);
+const toInput = (value: number | undefined): string => (value === undefined ? '' : value.toFixed(2));
+// Как на сервере: больше нуля и не больше двух знаков; запятая — та же точка. Иначе — null.
+const parseAmount = (text: string): number | null => {
+  const normalized = text.trim().replace(',', '.');
+  return /^\d+(\.\d{1,2})?$/.test(normalized) ? Number(normalized) : null;
+};
+
 /**
  * Возврат, списание холда и итог неподтверждённой операции (Р-123, Р-125) — для карточки операции портала и
- * панели заказа выписки. Выключенная кнопка говорит причину; сумма — потолок с сервера: возвращается весь
- * остаток, списывается вся авторизованная сумма.
+ * панели заказа выписки. Выключенная кнопка говорит причину. Сумму вводит пользователь (Р-133): в окне сразу
+ * потолок с сервера — весь остаток или вся авторизованная сумма, — её можно уменьшить. Проверка здесь —
+ * подсказка, решает сервер.
  */
 export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
   actions,
@@ -43,6 +53,7 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
   const d = tObj.transactions.detail;
 
   const [dialog, setDialog] = useState<'refund' | 'capture' | null>(null);
+  const [amountText, setAmountText] = useState('');
   // Причина возврата — необязательная, только в журнал аудита (Р-126); бэкенд принимает до 255 символов.
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -63,14 +74,38 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
     return null;
   }
 
+  const openDialog = (kind: 'refund' | 'capture') => {
+    setAmountText(toInput((kind === 'refund' ? refund : capture)?.maxAmount));
+    setDialog(kind);
+  };
+
+  // Введённая сумма или причина, почему её не отправить; потолок — maxAmount действия.
+  const checkAmount = (action: MoneyAction | null | undefined): { amount: number | null; error: string | null } => {
+    const amount = parseAmount(amountText);
+    if (amount === null || toCents(amount) <= 0) {
+      return { amount: null, error: d.amountInvalid };
+    }
+    if (action?.maxAmount !== undefined && toCents(amount) > toCents(action.maxAmount)) {
+      return { amount: null, error: d.amountAboveMax };
+    }
+    return { amount, error: null };
+  };
+  const dialogAction = dialog === 'refund' ? refund : dialog === 'capture' ? capture : null;
+  const amountCheck = checkAmount(dialogAction);
+  // Что останется после частичной суммы: у возврата — к возврату, у списания — несписанный холд.
+  const remainder = dialogAction?.maxAmount !== undefined && amountCheck.amount !== null
+    ? (toCents(dialogAction.maxAmount) - toCents(amountCheck.amount)) / 100
+    : 0;
+
   const run = async (kind: 'refund' | 'capture') => {
     const action = kind === 'refund' ? refund : capture;
-    if (!action?.enabled) return;
+    const { amount } = checkAmount(action);
+    if (!action?.enabled || amount === null) return;
     setFailure(null);
     setBusy(true);
     try {
       const url = kind === 'refund' ? `${baseUrl}/refund` : `${baseUrl}/complete`;
-      const body = kind === 'refund' && reason.trim() ? { amount: action.maxAmount, reason: reason.trim() } : { amount: action.maxAmount };
+      const body = kind === 'refund' && reason.trim() ? { amount, reason: reason.trim() } : { amount };
       await apiClient.post(url, body);
       setDone(kind);
       setDialog(null);
@@ -108,7 +143,7 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
     </Alert>
   );
 
-  const frame = (amountLabel: string, amount: number | undefined) => (
+  const frame = (amountLabel: string, amount: number | null | undefined, remainderLabel?: string) => (
     <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
       {identifiers.map(item => (
         <Typography key={item.label} variant="body2" sx={{ fontWeight: 600 }}>
@@ -116,8 +151,39 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
         </Typography>
       ))}
       <Typography variant="body2">
-        {amountLabel}: {amount === undefined ? '—' : formatCurrency(amount, currency)}
+        {amountLabel}: {amount === undefined || amount === null ? '—' : formatCurrency(amount, currency)}
       </Typography>
+      {remainderLabel && remainder > 0 && (
+        <Typography variant="body2">
+          {remainderLabel}: {formatCurrency(remainder, currency)}
+        </Typography>
+      )}
+    </Box>
+  );
+
+  const amountField = (action: MoneyAction | null | undefined, wholeLabel: string) => (
+    <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+      <TextField
+        label={d.amountLabel}
+        value={amountText}
+        onChange={event => setAmountText(event.target.value)}
+        disabled={busy}
+        error={amountCheck.error !== null}
+        helperText={amountCheck.error
+          ?? (action?.maxAmount !== undefined ? `${d.amountUpTo}: ${formatCurrency(action.maxAmount, currency)}` : ' ')}
+        fullWidth
+        slotProps={{
+          input: { endAdornment: <InputAdornment position="end">{currency}</InputAdornment> },
+          htmlInput: { inputMode: 'decimal' },
+        }}
+      />
+      <Button
+        onClick={() => setAmountText(toInput(action?.maxAmount))}
+        disabled={busy}
+        sx={{ mt: 1, whiteSpace: 'nowrap' }}
+      >
+        {wholeLabel}
+      </Button>
     </Box>
   );
 
@@ -130,7 +196,7 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
           color={kind === 'refund' ? 'warning' : 'success'}
           startIcon={kind === 'refund' ? <CancelIcon /> : <CompleteIcon />}
           disabled={!action.enabled || outcomeUnknown}
-          onClick={() => setDialog(kind)}
+          onClick={() => openDialog(kind)}
           sx={{ py: 1.5, px: 3 }}
         >
           {kind === 'refund' ? d.refundAction : d.completeAction}
@@ -203,11 +269,13 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
         confirmColor="success"
         confirmIcon={<CompleteIcon />}
         busy={busy}
-        confirmDisabled={outcomeUnknown || !capture?.enabled}
+        confirmDisabled={outcomeUnknown || !capture?.enabled || amountCheck.error !== null}
         onConfirm={() => run('capture')}
         onCancel={() => setDialog(null)}
       >
-        {frame(d.captureAmount, capture?.maxAmount)}
+        {amountField(capture, d.amountWholeCapture)}
+        {frame(d.captureAmount, amountCheck.amount, d.captureReleased)}
+        {remainder > 0 && <Alert severity="info" sx={{ mt: 2 }}>{d.capturePartialHint}</Alert>}
         {failureNotice}
       </ConfirmDialog>
 
@@ -218,11 +286,12 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
         cancelLabel={d.keepTransaction}
         confirmLabel={d.confirmRefund}
         busy={busy}
-        confirmDisabled={outcomeUnknown || !refund?.enabled}
+        confirmDisabled={outcomeUnknown || !refund?.enabled || amountCheck.error !== null}
         onConfirm={() => run('refund')}
         onCancel={() => setDialog(null)}
       >
-        {frame(d.refundAmount, refund?.maxAmount)}
+        {amountField(refund, d.amountWholeRefund)}
+        {frame(d.refundAmount, amountCheck.amount, d.refundRemains)}
         <TextField
           label={d.refundReason}
           helperText={d.refundReasonHint}
