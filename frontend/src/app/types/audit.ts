@@ -5,12 +5,13 @@
 export const AUDIT_ACTIONS = [
   'CREATE', 'READ', 'UPDATE', 'DELETE', 'LIST', 'BLOCK', 'UNBLOCK', 'LOGIN', 'LOGOUT', 'LOCKOUT',
   'RATE_LIMIT', 'TOKEN_REUSE', 'PASSWORD_CHANGE', 'CAPTURE', 'REFUND', 'CANCEL', 'RESOLVE', 'STATUS_CHANGE',
+  'START', 'STOP',
 ] as const;
 
 export type AuditActionCode = (typeof AUDIT_ACTIONS)[number];
 
 export const AUDIT_ENTITIES = [
-  'COMPANY', 'TERMINAL', 'USER', 'AUTH', 'PAYMENT_LINK', 'TRANSACTION', 'PROVIDER_ORDER', 'AUDIT_LOG',
+  'COMPANY', 'TERMINAL', 'USER', 'AUTH', 'PAYMENT_LINK', 'TRANSACTION', 'PROVIDER_ORDER', 'AUDIT_LOG', 'SERVICE',
 ] as const;
 
 export type AuditEntityCode = (typeof AUDIT_ENTITIES)[number];

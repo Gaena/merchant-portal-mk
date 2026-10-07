@@ -28,11 +28,14 @@ public final class AuditAction {
     // Статус платежа или ссылки сменился без отдельного действия: ответ эквайера, истечение срока, исчерпанный
     // лимит. Исполнитель — кто запустил опрос, иначе system (журнал аудита, этап 2).
     public static final String STATUS_CHANGE = "STATUS_CHANGE";
+    // Запуск и штатная остановка сервиса — включение и выключение журнала (PCI DSS 10.2.1.6, Р-136).
+    public static final String START = "START";
+    public static final String STOP = "STOP";
 
     private static final Set<String> KNOWN = Set.of(
             CREATE, READ, UPDATE, DELETE, LIST, BLOCK, UNBLOCK,
             LOGIN, LOGOUT, LOCKOUT, RATE_LIMIT, TOKEN_REUSE, PASSWORD_CHANGE,
-            CAPTURE, REFUND, CANCEL, RESOLVE, STATUS_CHANGE);
+            CAPTURE, REFUND, CANCEL, RESOLVE, STATUS_CHANGE, START, STOP);
 
     private AuditAction() {
     }
