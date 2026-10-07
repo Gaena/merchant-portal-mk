@@ -3,6 +3,7 @@ import type { LinkStatus } from '../utils/payByLinkData';
 import type { TerminalStatus } from '../types/dto';
 import type { EcomOperationKind, EcomStatus, EcomPaymentType } from '../types/ecom';
 import type { Role } from '../types/role';
+import type { AuditActionCode, AuditEntityCode } from '../types/audit';
 
 export type Language = 'en' | 'az' | 'ru';
 
@@ -676,8 +677,14 @@ export interface TranslationDictionary {
     filterOutcome: string;
     dateFrom: string;
     dateTo: string;
-    entityAuth: string;
-    entityAuditLog: string;
+    /** Действие и объект записи словами (`types/audit.ts`); незнакомый код показывается как есть. */
+    actions: Record<AuditActionCode, string>;
+    entities: Record<AuditEntityCode, string>;
+    filterAction: string;
+    filterUser: string;
+    /** Только у SYSTEM_ADMIN и AUDITOR: остальные видят свою компанию. */
+    filterCompany: string;
+    empty: string;
     /** Карточка записи журнала: открывается кликом по строке. */
     detailsTitle: string;
     entityId: string;
@@ -685,6 +692,7 @@ export interface TranslationDictionary {
     recordId: string;
     openTransaction: string;
     openPaymentLink: string;
+    openEcomOrder: string;
   };
   auth: {
     unknownRole: string;
@@ -1369,14 +1377,27 @@ export const translations: Record<Language, TranslationDictionary> = {
       filterOutcome: 'Filter by Outcome',
       dateFrom: 'From',
       dateTo: 'To',
-      entityAuth: 'Authentication',
-      entityAuditLog: 'Audit Journal',
+      actions: {
+        CREATE: 'Creation', READ: 'Read', UPDATE: 'Change', DELETE: 'Deletion', LIST: 'List', BLOCK: 'Block',
+        UNBLOCK: 'Unblock', LOGIN: 'Sign-in', LOGOUT: 'Sign-out', LOCKOUT: 'Account lockout',
+        RATE_LIMIT: 'Sign-in attempt limit', TOKEN_REUSE: 'Refresh token reuse', PASSWORD_CHANGE: 'Password change',
+        CAPTURE: 'Capture', REFUND: 'Refund', CANCEL: 'Cancellation', RESOLVE: 'Outcome resolution',
+      },
+      entities: {
+        COMPANY: 'Company', TERMINAL: 'Terminal', USER: 'User', AUTH: 'Authentication', PAYMENT_LINK: 'Payment link',
+        TRANSACTION: 'Transaction', PROVIDER_ORDER: 'Statement order', AUDIT_LOG: 'Audit journal',
+      },
+      filterAction: 'Action',
+      filterUser: 'User',
+      filterCompany: 'Company',
+      empty: 'No records match the filters.',
       detailsTitle: 'Audit record',
       entityId: 'Entity ID',
       company: 'Company',
       recordId: 'Record ID',
       openTransaction: 'Open transaction',
       openPaymentLink: 'Open payment link',
+      openEcomOrder: 'Open statement order',
     },
     auth: {
       unknownRole: 'The server returned a role this application does not recognise. Sign-in was refused — contact your administrator.',
@@ -2025,14 +2046,27 @@ export const translations: Record<Language, TranslationDictionary> = {
       filterOutcome: 'Nəticə üzrə filtr',
       dateFrom: 'Tarixdən',
       dateTo: 'Tarixədək',
-      entityAuth: 'Autentifikasiya',
-      entityAuditLog: 'Audit jurnalı',
+      actions: {
+        CREATE: 'Yaradılma', READ: 'Oxuma', UPDATE: 'Dəyişiklik', DELETE: 'Qeydin silinməsi', LIST: 'Siyahı',
+        BLOCK: 'Bloklama', UNBLOCK: 'Blokdan çıxarma', LOGIN: 'Giriş', LOGOUT: 'Çıxış', LOCKOUT: 'Hesabın bloklanması',
+        RATE_LIMIT: 'Giriş cəhdləri limiti', TOKEN_REUSE: 'Refresh-tokenin təkrarı', PASSWORD_CHANGE: 'Şifrənin dəyişdirilməsi',
+        CAPTURE: 'Vəsaitin silinməsi', REFUND: 'Geri qaytarma', CANCEL: 'Ləğv', RESOLVE: 'Əməliyyatın nəticəsi',
+      },
+      entities: {
+        COMPANY: 'Şirkət', TERMINAL: 'Terminal', USER: 'İstifadəçi', AUTH: 'Autentifikasiya', PAYMENT_LINK: 'Ödəniş linki',
+        TRANSACTION: 'Əməliyyat', PROVIDER_ORDER: 'Çıxarış sifarişi', AUDIT_LOG: 'Audit jurnalı',
+      },
+      filterAction: 'Əməliyyat növü',
+      filterUser: 'İstifadəçi',
+      filterCompany: 'Şirkət',
+      empty: 'Filtrlərə uyğun qeyd yoxdur.',
       detailsTitle: 'Audit jurnalı qeydi',
       entityId: 'Obyektin ID-si',
       company: 'Şirkət',
       recordId: 'Qeydin ID-si',
       openTransaction: 'Əməliyyatı aç',
       openPaymentLink: 'Ödəniş linkini aç',
+      openEcomOrder: 'Çıxarış sifarişini aç',
     },
     auth: {
       unknownRole: 'Server bu tətbiqin tanımadığı bir rol qaytardı. Giriş rədd edildi — administratorla əlaqə saxlayın.',
@@ -2681,14 +2715,27 @@ export const translations: Record<Language, TranslationDictionary> = {
       filterOutcome: 'Фильтр по результату',
       dateFrom: 'С даты',
       dateTo: 'По дату',
-      entityAuth: 'Аутентификация',
-      entityAuditLog: 'Журнал аудита',
+      actions: {
+        CREATE: 'Создание', READ: 'Чтение', UPDATE: 'Изменение', DELETE: 'Удаление', LIST: 'Список',
+        BLOCK: 'Блокировка', UNBLOCK: 'Разблокировка', LOGIN: 'Вход', LOGOUT: 'Выход', LOCKOUT: 'Блокировка входа',
+        RATE_LIMIT: 'Лимит попыток входа', TOKEN_REUSE: 'Повтор refresh-токена', PASSWORD_CHANGE: 'Смена пароля',
+        CAPTURE: 'Списание', REFUND: 'Возврат', CANCEL: 'Отмена', RESOLVE: 'Итог операции',
+      },
+      entities: {
+        COMPANY: 'Компания', TERMINAL: 'Терминал', USER: 'Пользователь', AUTH: 'Вход в систему', PAYMENT_LINK: 'Платёжная ссылка',
+        TRANSACTION: 'Операция', PROVIDER_ORDER: 'Заказ выписки', AUDIT_LOG: 'Журнал аудита',
+      },
+      filterAction: 'Действие',
+      filterUser: 'Пользователь',
+      filterCompany: 'Компания',
+      empty: 'Записей по фильтрам нет.',
       detailsTitle: 'Запись журнала аудита',
       entityId: 'ID объекта',
       company: 'Компания',
       recordId: 'ID записи',
       openTransaction: 'Открыть операцию',
       openPaymentLink: 'Открыть платёжную ссылку',
+      openEcomOrder: 'Открыть заказ выписки',
     },
     auth: {
       unknownRole: 'Сервер вернул роль, неизвестную приложению. Вход отклонён — обратитесь к администратору.',

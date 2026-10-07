@@ -31,9 +31,11 @@ import axios from 'axios';
 import { useNavigate } from 'react-router';
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import { useDebounced } from '../hooks/useDebounced';
+import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '../types/audit';
 
-import type { AuditLogDto } from '../types/dto';
+import type { AuditLogDto, CompanyDto } from '../types/dto';
 
 // Неподтверждённая эквайером операция не должна выглядеть обычным успехом (P3-2); отказ эквайера (Р-134) —
 // не отказ портала в доступе.
@@ -78,6 +80,10 @@ export const AuditLogsPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [entityTypeFilter, setEntityTypeFilter] = useState('all');
   const [outcomeFilter, setOutcomeFilter] = useState('all');
+  const [actionFilter, setActionFilter] = useState('all');
+  const [userQuery, setUserQuery] = useState('');
+  const [companyFilter, setCompanyFilter] = useState('all');
+  const [companies, setCompanies] = useState<CompanyDto[]>([]);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   // Поиск и фильтры — серверные: клиентский фильтр видел бы только загруженную страницу (P3-1).
@@ -94,10 +100,38 @@ export const AuditLogsPage: React.FC = () => {
     DECLINED: tObj.auditLogs.outcomeDeclined,
   };
 
-  // Своя карточка есть только у операции и платёжной ссылки (entityId — UUID).
+  // Компанию в фильтре выбирают администратор и аудитор (их скоуп — все компании); список им открыт.
+  const { user } = useAuth();
+  const globalReader = user?.role === 'SYSTEM_ADMIN' || user?.role === 'AUDITOR';
+  const debouncedUser = useDebounced(userQuery, 300);
+  useEffect(() => {
+    if (!globalReader) return;
+    const controller = new AbortController();
+    apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 }, signal: controller.signal })
+      .then(res => setCompanies(Array.isArray(res.data?.content) ? res.data.content : []))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [globalReader]);
+
+  // Коды словаря — словами; незнакомый код (новый в common, не дошедший сюда) — как есть.
+  const actionLabel = (code?: string): string =>
+    (code && (tObj.auditLogs.actions as Record<string, string>)[code]) || code || '—';
+  const entityLabel = (code?: string): string =>
+    (code && (tObj.auditLogs.entities as Record<string, string>)[code]) || code || '—';
+  const companyLabel = (companyId?: string): string => {
+    if (!companyId) return '—';
+    const name = companies.find(company => company.id === companyId)?.name;
+    return name ? `${name} (${companyId})` : companyId;
+  };
+
+  // Своя карточка есть у операции и платёжной ссылки (entityId — UUID) и у заказа выписки (номер у провайдера).
   const selectedTarget = (() => {
     const entityId = selectedLog?.entityId;
-    if (!entityId || !UUID_PATTERN.test(entityId)) return null;
+    if (!entityId) return null;
+    if (selectedLog?.entityType === 'PROVIDER_ORDER') {
+      return { path: `/transactions/ecommerce/${encodeURIComponent(entityId)}`, label: tObj.auditLogs.openEcomOrder };
+    }
+    if (!UUID_PATTERN.test(entityId)) return null;
     if (selectedLog?.entityType === 'TRANSACTION') {
       return { path: `/transactions/${entityId}`, label: tObj.auditLogs.openTransaction };
     }
@@ -113,6 +147,9 @@ export const AuditLogsPage: React.FC = () => {
     if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
     if (entityTypeFilter !== 'all') params.entityType = entityTypeFilter;
     if (outcomeFilter !== 'all') params.outcome = outcomeFilter;
+    if (actionFilter !== 'all') params.action = actionFilter;
+    if (debouncedUser.trim()) params.performedBy = debouncedUser.trim();
+    if (globalReader && companyFilter !== 'all') params.companyId = companyFilter;
     // Дата из пикера — локальный день пользователя; границы дня переводятся в instant, чтобы
     // событие в 01:00 по Баку не выпало из «своего» дня из-за UTC.
     if (fromDate) params.from = new Date(`${fromDate}T00:00:00`).toISOString();
@@ -130,7 +167,8 @@ export const AuditLogsPage: React.FC = () => {
       .finally(() => {
         if (!signal?.aborted) setLoading(false);
       });
-  }, [page, rowsPerPage, debouncedSearch, entityTypeFilter, outcomeFilter, fromDate, toDate]);
+  }, [page, rowsPerPage, debouncedSearch, entityTypeFilter, outcomeFilter, actionFilter, debouncedUser, globalReader,
+    companyFilter, fromDate, toDate]);
 
   // Отмена предыдущего запроса при каждом изменении параметров: без неё ответ на «ив» может
   // прийти позже ответа на «ива» и перезаписать более точный результат. «Обновить» идёт тем же
@@ -183,15 +221,40 @@ export const AuditLogsPage: React.FC = () => {
           sx={{ minWidth: 200 }}
         >
           <MenuItem value="all">{tObj.common.all}</MenuItem>
-          <MenuItem value="COMPANY">{tObj.companies.title}</MenuItem>
-          <MenuItem value="TERMINAL">{tObj.terminals.title}</MenuItem>
-          <MenuItem value="USER">{tObj.users.title}</MenuItem>
           {/* AUTH — входы, блокировки, лимит по IP, кража refresh-токена; AUDIT_LOG — отказы в чтении журнала. */}
-          <MenuItem value="AUTH">{tObj.auditLogs.entityAuth}</MenuItem>
-          <MenuItem value="PAYMENT_LINK">{tObj.payByLink.title}</MenuItem>
-          <MenuItem value="TRANSACTION">{tObj.transactions.title}</MenuItem>
-          <MenuItem value="AUDIT_LOG">{tObj.auditLogs.entityAuditLog}</MenuItem>
+          {AUDIT_ENTITIES.map(code => <MenuItem key={code} value={code}>{tObj.auditLogs.entities[code]}</MenuItem>)}
         </TextField>
+        <TextField
+          select
+          size="small"
+          label={tObj.auditLogs.filterAction}
+          value={actionFilter}
+          onChange={e => { setActionFilter(e.target.value); setPage(0); }}
+          sx={{ minWidth: 180 }}
+        >
+          <MenuItem value="all">{tObj.common.all}</MenuItem>
+          {AUDIT_ACTIONS.map(code => <MenuItem key={code} value={code}>{tObj.auditLogs.actions[code]}</MenuItem>)}
+        </TextField>
+        <TextField
+          size="small"
+          label={tObj.auditLogs.filterUser}
+          value={userQuery}
+          onChange={e => { setUserQuery(e.target.value); setPage(0); }}
+          sx={{ minWidth: 200 }}
+        />
+        {globalReader && (
+          <TextField
+            select
+            size="small"
+            label={tObj.auditLogs.filterCompany}
+            value={companyFilter}
+            onChange={e => { setCompanyFilter(e.target.value); setPage(0); }}
+            sx={{ minWidth: 200 }}
+          >
+            <MenuItem value="all">{tObj.common.all}</MenuItem>
+            {companies.map(company => <MenuItem key={company.id} value={company.id}>{company.name}</MenuItem>)}
+          </TextField>
+        )}
         <TextField
           select
           size="small"
@@ -264,7 +327,7 @@ export const AuditLogsPage: React.FC = () => {
                     {log.createdAt ? new Date(log.createdAt).toLocaleString() : 'N/A'}
                   </TableCell>
                   <TableCell>
-                    <Chip label={log.action} size="small" color="info" variant="outlined" />
+                    <Chip label={actionLabel(log.action)} size="small" color="info" variant="outlined" />
                   </TableCell>
                   <TableCell>
                     <Chip
@@ -276,7 +339,7 @@ export const AuditLogsPage: React.FC = () => {
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{log.performedBy || 'System'}</TableCell>
                   <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{log.clientIp || '—'}</TableCell>
-                  <TableCell>{log.entityType || '—'}</TableCell>
+                  <TableCell>{entityLabel(log.entityType)}</TableCell>
                   <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{log.entityId || '—'}</TableCell>
                   <TableCell sx={{ fontSize: '0.8rem', color: 'text.secondary' }}>{log.details || '—'}</TableCell>
                 </TableRow>
@@ -284,7 +347,7 @@ export const AuditLogsPage: React.FC = () => {
               {auditLogsList.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
-                    <Typography color="text.secondary">No audit logs recorded yet.</Typography>
+                    <Typography color="text.secondary">{tObj.auditLogs.empty}</Typography>
                   </TableCell>
                 </TableRow>
               )}
@@ -308,7 +371,7 @@ export const AuditLogsPage: React.FC = () => {
             <DialogTitle sx={{ fontWeight: 700 }}>{tObj.auditLogs.detailsTitle}</DialogTitle>
             <DialogContent dividers>
               <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
-                <Chip label={selectedLog.action} size="small" color="info" variant="outlined" />
+                <Chip label={actionLabel(selectedLog.action)} size="small" color="info" variant="outlined" />
                 <Chip
                   label={outcomeLabels[selectedLog.outcome as string] || selectedLog.outcome || '—'}
                   size="small"
@@ -328,8 +391,8 @@ export const AuditLogsPage: React.FC = () => {
               </DetailRow>
               <DetailRow label={tObj.auditLogs.user}>{selectedLog.performedBy || 'System'}</DetailRow>
               <DetailRow label={tObj.auditLogs.ip} mono>{selectedLog.clientIp || '—'}</DetailRow>
-              <DetailRow label={tObj.auditLogs.company} mono>{selectedLog.companyId || '—'}</DetailRow>
-              <DetailRow label={tObj.auditLogs.resource}>{selectedLog.entityType || '—'}</DetailRow>
+              <DetailRow label={tObj.auditLogs.company} mono>{companyLabel(selectedLog.companyId)}</DetailRow>
+              <DetailRow label={tObj.auditLogs.resource}>{entityLabel(selectedLog.entityType)}</DetailRow>
               <DetailRow label={tObj.auditLogs.entityId} mono>{selectedLog.entityId || '—'}</DetailRow>
               <DetailRow label={tObj.auditLogs.recordId} mono>{selectedLog.id ?? '—'}</DetailRow>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>

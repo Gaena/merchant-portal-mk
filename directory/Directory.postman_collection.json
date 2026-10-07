@@ -524,6 +524,24 @@
 									"description": "P3-1: верхняя граница createdAt — ISO-instant или дата (весь день по UTC)"
 								},
 								{
+									"key": "action",
+									"value": "UPDATE",
+									"disabled": true,
+									"description": "Exact action code from the dictionary (AuditAction), case-insensitive"
+								},
+								{
+									"key": "performedBy",
+									"value": "head@",
+									"disabled": true,
+									"description": "Part of the actor login, case-insensitive; % and _ are literal"
+								},
+								{
+									"key": "companyId",
+									"value": "comp-01",
+									"disabled": true,
+									"description": "SYSTEM_ADMIN and AUDITOR only; ignored for company roles, whose scope is their company"
+								},
+								{
 									"key": "page",
 									"value": "0"
 								},
@@ -533,7 +551,7 @@
 								}
 							]
 						},
-						"description": "Audit log of all four services (P2-1, P3-1), newest first (createdAt DESC, then id DESC): a PagedResponse — {content, totalElements, totalPages, size, number}. SYSTEM_ADMIN and AUDITOR see every company; COMPANY_HEAD and COMPANY_MANAGER only records of their own company; other roles — 403. Filters are optional and independent: entityType, entityId, search (performedBy, action, entityId, details), outcome, from / to. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped. The event dictionary is in project_docs/guides/technical_handover.md §4.4."
+						"description": "Audit log of all four services (P2-1, P3-1), newest first (createdAt DESC, then id DESC): a PagedResponse — {content, totalElements, totalPages, size, number}. SYSTEM_ADMIN and AUDITOR see every company; COMPANY_HEAD and COMPANY_MANAGER only records of their own company; other roles — 403. Filters are optional and independent: entityType, entityId, search (performedBy, action, entityId, details), outcome (SUCCESS, DENIED, UNRESOLVED, DECLINED), from / to, action (exact code), performedBy (part of the login), companyId (SYSTEM_ADMIN and AUDITOR only). page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped. The event dictionary is in project_docs/guides/technical_handover.md §4.4."
 					},
 					"response": []
 				}

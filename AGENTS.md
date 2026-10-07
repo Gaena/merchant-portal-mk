@@ -935,7 +935,9 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
   журнала не пробрасывать.
   Машинерия одна на проект — `az.millikart.common.audit` (Р-41).
 - **`entityType` и `action` — только константы `AuditEntity` / `AuditAction`** (P3-2). Новое
-  значение — сначала в словарь и в таблицу `project_docs/guides/technical_handover.md` §4.4, потом в код.
+  значение — сначала в словарь и в таблицу `project_docs/guides/technical_handover.md` §4.4, потом в код; экран
+  журнала держит зеркало словарей — `frontend/src/app/types/audit.ts` и подписи `auditLogs.actions`/`entities` на
+  трёх языках: без них новое значение показывается кодом и не попадает в фильтры.
   Соглашения: `entityId` у `AUTH` — всегда логин; `"ALL"` — действие над списком; `"NEW"` — отказ
   в заведении терминала или платёжной ссылки, у которых ещё нет номера; смена статуса —
   `BLOCK`/`UNBLOCK`, а не текст в `UPDATE`; `companyId` у отказа — компания актора, кроме отказа,

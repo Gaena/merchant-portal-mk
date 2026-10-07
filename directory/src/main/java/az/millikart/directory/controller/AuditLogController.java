@@ -4,6 +4,7 @@ import az.millikart.common.audit.AuditOutcome;
 import az.millikart.common.dto.PagedResponse;
 import az.millikart.common.search.SearchTerms;
 import az.millikart.common.security.UserPrincipal;
+import az.millikart.directory.dto.AuditLogFilter;
 import az.millikart.directory.dto.AuditLogResponse;
 import az.millikart.directory.service.AuditLogQueryService;
 
@@ -44,16 +45,19 @@ public class AuditLogController {
             @RequestParam(value = "outcome", required = false) String outcome,
             @RequestParam(value = "from", required = false) String from,
             @RequestParam(value = "to", required = false) String to,
+            @RequestParam(value = "action", required = false) String action,
+            @RequestParam(value = "performedBy", required = false) String performedBy,
+            @RequestParam(value = "companyId", required = false) String companyId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal UserPrincipal principal) {
         Pageable pageable = PageRequest.of(
                 Math.max(page, 0),
                 Math.clamp(size, 1, MAX_PAGE_SIZE));
-        return auditLogQueryService.listAuditLogs(entityType, entityId,
-                SearchTerms.normalize(search), parseOutcome(outcome),
-                parseInstant(from, false), parseInstant(to, true),
-                pageable, principal);
+        AuditLogFilter filter = new AuditLogFilter(entityType, entityId, SearchTerms.normalize(search),
+                parseOutcome(outcome), parseInstant(from, false), parseInstant(to, true),
+                action, SearchTerms.normalize(performedBy), companyId);
+        return auditLogQueryService.listAuditLogs(filter, pageable, principal);
     }
 
     // Незнакомое значение — «нет фильтра», а не 400.

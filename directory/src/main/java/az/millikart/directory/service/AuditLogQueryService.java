@@ -10,6 +10,7 @@ import az.millikart.common.exception.InvalidStateException;
 import az.millikart.common.search.SearchTerms;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
+import az.millikart.directory.dto.AuditLogFilter;
 import az.millikart.directory.dto.AuditLogResponse;
 import az.millikart.directory.repository.AuditLogQueryRepository;
 import jakarta.persistence.criteria.Expression;
@@ -42,21 +43,22 @@ public class AuditLogQueryService {
     // Фильтры и страницы — в базе: журнал неограничен (P2-2). entityType — точное равенство в верхнем
     // регистре (писатели хранят константы AuditEntity): IgnoreCase убьёт индекс idx_audit_logs_entity.
     @Transactional(readOnly = true)
-    public PagedResponse<AuditLogResponse> listAuditLogs(String entityType, String entityId,
-                                                         String search, AuditOutcome outcome,
-                                                         Instant from, Instant to,
-                                                         Pageable pageable, UserPrincipal principal) {
+    public PagedResponse<AuditLogResponse> listAuditLogs(AuditLogFilter request, Pageable pageable,
+                                                         UserPrincipal principal) {
         Role actorRole = UserPrincipal.getRole(principal);
         String actorCompanyId = UserPrincipal.getCompanyId(principal);
         String actorUsername = UserPrincipal.getUsername(principal);
 
-        String canonicalEntityType = entityType != null && !entityType.isBlank()
-                ? entityType.trim().toUpperCase(Locale.ROOT) : null;
-        String cleanEntityId = entityId != null && !entityId.isBlank() ? entityId.trim() : null;
+        // action — тоже константы AuditAction в верхнем регистре, точное равенство.
+        String canonicalEntityType = upperOrNull(request.entityType());
+        String canonicalAction = upperOrNull(request.action());
+        String cleanEntityId = request.entityId() != null && !request.entityId().isBlank() ? request.entityId().trim() : null;
 
+        // Фильтр компании выбирают только глобальные читатели; у руководителя и менеджера скоуп — своя
+        // компания, присланный companyId его не меняет.
         String companyScope;
         if (actorRole == Role.SYSTEM_ADMIN || actorRole == Role.AUDITOR) {
-            companyScope = null;
+            companyScope = request.companyId() != null && !request.companyId().isBlank() ? request.companyId().trim() : null;
         } else if (actorRole == Role.COMPANY_HEAD || actorRole == Role.COMPANY_MANAGER) {
             if (actorCompanyId == null) {
                 auditLogService.logDenied(AuditEntity.AUDIT_LOG, "ALL", AuditAction.LIST, actorUsername, null,
@@ -77,8 +79,9 @@ public class AuditLogQueryService {
                 Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
 
         Page<AuditLog> page = auditLogQueryRepository.findAll(
-                filter(companyScope, canonicalEntityType, cleanEntityId,
-                        SearchTerms.toLikePattern(search), outcome, from, to),
+                filter(companyScope, canonicalEntityType, cleanEntityId, SearchTerms.toLikePattern(request.search()),
+                        request.outcome(), request.from(), request.to(), canonicalAction,
+                        SearchTerms.toLikePattern(request.performedBy())),
                 newestFirst);
 
         return PagedResponse.of(page, page.getContent().stream().map(AuditLogQueryService::mapToResponse).toList());
@@ -88,9 +91,17 @@ public class AuditLogQueryService {
     // ломаются, а так отсутствующий фильтр вообще не попадает в SQL.
     private static Specification<AuditLog> filter(String companyId, String entityType,
                                                   String entityId, String searchPattern,
-                                                  AuditOutcome outcome, Instant from, Instant to) {
+                                                  AuditOutcome outcome, Instant from, Instant to,
+                                                  String action, String performedByPattern) {
         return (root, query, cb) -> {
             List<Predicate> where = new ArrayList<>();
+            if (action != null) {
+                where.add(cb.equal(root.get("action"), action));
+            }
+            if (performedByPattern != null) {
+                where.add(cb.like(cb.lower(root.get("performedBy")), cb.lower(cb.literal(performedByPattern)),
+                        SearchTerms.LIKE_ESCAPE));
+            }
             if (companyId != null) {
                 where.add(cb.equal(root.get("companyId"), companyId));
             }
@@ -120,6 +131,10 @@ public class AuditLogQueryService {
             }
             return cb.and(where.toArray(new Predicate[0]));
         };
+    }
+
+    private static String upperOrNull(String value) {
+        return value != null && !value.isBlank() ? value.trim().toUpperCase(Locale.ROOT) : null;
     }
 
     private static AuditLogResponse mapToResponse(AuditLog log) {

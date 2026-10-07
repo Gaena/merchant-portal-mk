@@ -404,6 +404,53 @@ public class AuditLogQueryTest {
                 .andExpect(jsonPath("$.totalElements", Matchers.is(2)));
     }
 
+    // Действие — точное равенство кода в любом регистре; пользователь — часть логина без учёта регистра, с
+    // буквальными % и _ (SearchTerms): иначе «%» в поле выдал бы все записи.
+    @Test
+    public void actionAndPerformedByFilters_narrowTheJournal() throws Exception {
+        seedFull("USER", "u-1", "UPDATE", "comp-01", "Head@Comp1.com", "Changed role");
+        seedFull("USER", "u-2", "DELETE", "comp-01", "head@comp1.com", "Soft deleted");
+        seedFull("USER", "u-3", "UPDATE", "comp-01", "manager@comp1.com", "Changed fullName");
+
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("action", "update")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", Matchers.is(2)));
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("action", "UPDATE").param("performedBy", "HEAD@comp1")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", Matchers.is(1)))
+                .andExpect(jsonPath("$.content[0].entityId", Matchers.is("u-1")));
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("performedBy", "%")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", Matchers.is(0)));
+    }
+
+    // Компанию выбирают администратор и аудитор. Руководителю чужой companyId ничего не открывает: скоуп —
+    // его компания, параметр не применяется.
+    @Test
+    public void companyFilter_forGlobalReadersOnly() throws Exception {
+        seed("TERMINAL", "t-1", "CREATE", "comp-01");
+        seed("TERMINAL", "t-2", "CREATE", "comp-02");
+
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("companyId", "comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, auditorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", Matchers.is(1)))
+                .andExpect(jsonPath("$.content[0].entityId", Matchers.is("t-2")));
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("companyId", "comp-02")
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", Matchers.is(1)))
+                .andExpect(jsonPath("$.content[0].entityId", Matchers.is("t-1")));
+    }
+
     @Test
     public void fromAndTo_filterByCreatedAt_andAcceptThePlainDateForm() throws Exception {
         seedAt("old-1", Instant.parse("2026-01-10T12:00:00Z"));
