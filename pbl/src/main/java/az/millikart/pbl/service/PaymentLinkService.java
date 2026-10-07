@@ -814,6 +814,15 @@ public class PaymentLinkService {
         } catch (RuntimeException e) {
             // Отказ эквайера или разомкнутый breaker: деньги не двигались, запрет снимается.
             releaseAttempt(operation.transactionId());
+            // Отказ шлюза — BusinessException классификатора; в журнал, чтобы попытка не пропала (Р-134).
+            // Разомкнутый breaker вызова не делал — записи нет.
+            if (e instanceof BusinessException) {
+                auditLogService.logDeclined(AuditEntity.TRANSACTION, operation.transactionId().toString(),
+                        auditActionOf(operation.kind()), operation.actor(), operation.terminalCompanyId(),
+                        capitalized(operation.kind()) + " of " + operation.amount() + " " + operation.currency()
+                                + " declined by the acquirer (providerOrderId " + operation.providerOrderId() + "): "
+                                + e.getMessage() + operation.reasonSuffix());
+            }
             throw e;
         }
     }

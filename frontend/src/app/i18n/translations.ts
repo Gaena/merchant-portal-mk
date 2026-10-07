@@ -671,6 +671,8 @@ export interface TranslationDictionary {
     outcomeSuccess: string;
     outcomeDenied: string;
     outcomeUnresolved: string;
+    /** Возврат или списание отклонил эквайер (Р-134); не отказ портала в доступе. */
+    outcomeDeclined: string;
     filterOutcome: string;
     dateFrom: string;
     dateTo: string;
@@ -1363,6 +1365,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       outcomeSuccess: 'Success',
       outcomeDenied: 'Denied',
       outcomeUnresolved: 'Unresolved',
+      outcomeDeclined: 'Declined by acquirer',
       filterOutcome: 'Filter by Outcome',
       dateFrom: 'From',
       dateTo: 'To',
@@ -2018,6 +2021,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       outcomeSuccess: 'Uğurlu',
       outcomeDenied: 'Rədd edilib',
       outcomeUnresolved: 'Təsdiqlənməyib',
+      outcomeDeclined: 'Ekvayer rədd etdi',
       filterOutcome: 'Nəticə üzrə filtr',
       dateFrom: 'Tarixdən',
       dateTo: 'Tarixədək',
@@ -2673,6 +2677,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       outcomeSuccess: 'Успешно',
       outcomeDenied: 'Отказано',
       outcomeUnresolved: 'Не подтверждён',
+      outcomeDeclined: 'Отклонён эквайером',
       filterOutcome: 'Фильтр по результату',
       dateFrom: 'С даты',
       dateTo: 'По дату',

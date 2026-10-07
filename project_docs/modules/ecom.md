@@ -328,7 +328,8 @@ after dateFrom`; `400 The requested period exceeds the maximum of N days`.
 проводится через `pay-by-link.md` §5.9–5.10; `400` — сумма больше потолка или с тремя знаками; `400` — отказ
 провайдера; `502` — исход неизвестен; `503` — разомкнут предохранитель к провайдеру, вызов не ушёл.
 
-*Журнал*: `PROVIDER_ORDER` / `REFUND` или `CAPTURE` — успех, `UNRESOLVED` при `502`, `DENIED` при отказе в правах.
+*Журнал*: `PROVIDER_ORDER` / `REFUND` или `CAPTURE` — успех, `UNRESOLVED` при `502`, `DECLINED` при отказе провайдера
+(`400`, текст отказа шлюза в записи, Р-134), `DENIED` при отказе в правах.
 
 ### 2.7b. `POST /api/v1/ecom/transactions/{orderId}/resolve-outcome`
 

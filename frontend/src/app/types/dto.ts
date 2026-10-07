@@ -111,7 +111,7 @@ export interface AuditLogDto {
   entityId?: string;
   details?: string;
   clientIp?: string | null;
-  outcome?: 'SUCCESS' | 'DENIED' | 'UNRESOLVED';
+  outcome?: 'SUCCESS' | 'DENIED' | 'UNRESOLVED' | 'DECLINED';
   createdAt?: string;
 }
 

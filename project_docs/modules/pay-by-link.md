@@ -627,7 +627,8 @@ The same payload is returned by §5.7, §5.11 and §5.12; `actions` only by §5.
 | 502 | outcome unknown, §6 |
 | 503 | circuit breaker open, §6 |
 
-**Audit journal:** `TRANSACTION` / `CAPTURE`; on `502` — the same pair with outcome `UNRESOLVED`.
+**Audit journal:** `TRANSACTION` / `CAPTURE`; on `502` — the same pair with outcome `UNRESOLVED`; on an acquirer
+decline (`400`) — with outcome `DECLINED` and the gateway's text (Р-134).
 
 ### 5.10. Refund Transaction
 
@@ -701,7 +702,8 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
 | 502 | outcome unknown, §6 |
 | 503 | circuit breaker open, §6 |
 
-**Audit journal:** `TRANSACTION` / `REFUND`; on `502` — the same pair with outcome `UNRESOLVED`.
+**Audit journal:** `TRANSACTION` / `REFUND`; on `502` — the same pair with outcome `UNRESOLVED`; on an acquirer
+decline (`400`) — with outcome `DECLINED` and the gateway's text (Р-134).
 
 ### 5.11. Get Payment Link Transactions
 

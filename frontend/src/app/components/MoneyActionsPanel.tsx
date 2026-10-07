@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Alert, AlertTitle, Box, Button, InputAdornment, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material';
 import { Cancel as CancelIcon, DoneAll as CompleteIcon } from '@mui/icons-material';
@@ -63,6 +63,15 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
   const [resolveTarget, setResolveTarget] = useState<boolean | null>(null);
   const [resolveBusy, setResolveBusy] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
+
+  // Отказ в окне — над полем суммы и в поле зрения: внизу прокручиваемого окна его не видели, и казалось,
+  // что после подтверждения ничего не произошло.
+  const failureRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (failure && dialog) {
+      failureRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [failure, dialog]);
 
   const { refund, capture, unresolved } = actions;
   const outcomeUnknown = failure?.outcome === 'unknown';
@@ -136,7 +145,7 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
   };
 
   const failureNotice = failure && (
-    <Alert severity={outcomeUnknown ? 'warning' : 'error'} sx={{ mt: 2 }}>
+    <Alert ref={failureRef} severity={outcomeUnknown ? 'warning' : 'error'} sx={{ mt: 2 }}>
       {outcomeUnknown && <AlertTitle sx={{ fontWeight: 700 }}>{d.unresolvedTitle}</AlertTitle>}
       {failure.message}
       {outcomeUnknown && ` ${d.unresolvedHint}`}
@@ -273,10 +282,10 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
         onConfirm={() => run('capture')}
         onCancel={() => setDialog(null)}
       >
+        {failureNotice}
         {amountField(capture, d.amountWholeCapture)}
         {frame(d.captureAmount, amountCheck.amount, d.captureReleased)}
         {remainder > 0 && <Alert severity="info" sx={{ mt: 2 }}>{d.capturePartialHint}</Alert>}
-        {failureNotice}
       </ConfirmDialog>
 
       <ConfirmDialog
@@ -290,6 +299,7 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
         onConfirm={() => run('refund')}
         onCancel={() => setDialog(null)}
       >
+        {failureNotice}
         {amountField(refund, d.amountWholeRefund)}
         {frame(d.refundAmount, amountCheck.amount, d.refundRemains)}
         <TextField
@@ -304,7 +314,6 @@ export const MoneyActionsPanel: React.FC<MoneyActionsPanelProps> = ({
           slotProps={{ htmlInput: { maxLength: 255 } }}
           sx={{ mt: 2 }}
         />
-        {failureNotice}
       </ConfirmDialog>
 
       {/* Итог неподтверждённой операции: что именно отмечают — вид, сумма и кто отправил — в рамке. */}

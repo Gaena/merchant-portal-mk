@@ -103,6 +103,27 @@ public class AuditLogService {
         }
     }
 
+    // Эквайер отклонил возврат или списание (Р-134): иначе попытка не оставляла в журнале следа — успех пишется
+    // событием, неизвестный исход — logUnresolved, а отказ шлюза ничем. В details — текст отказа шлюза.
+    public void logDeclined(String entityType, String entityId, String action,
+                            String performedBy, String companyId, String details) {
+        warnIfOutsideDictionary(entityType, action);
+        AuditLog record = AuditLog.builder()
+                .entityType(clip(entityType, ENTITY_TYPE_MAX))
+                .entityId(clip(entityId, ID_MAX))
+                .action(clip(action, ACTION_MAX))
+                .performedBy(clip(performedBy != null ? performedBy : "system", ID_MAX))
+                .companyId(clip(companyId, ID_MAX))
+                .details(clip(details, DETAILS_MAX))
+                .clientIp(ClientIpHolder.get())
+                .outcome(AuditOutcome.DECLINED)
+                .build();
+        Runnable write = () -> writeReporting(record, "decline record");
+        if (!AuditOutbox.defer(write)) {
+            write.run();
+        }
+    }
+
     // Ошибку записи не пробрасывать: журнал не роняет операцию.
     private void writeReporting(AuditLog record, String what) {
         try {

@@ -19,6 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import az.millikart.common.exception.BusinessException;
 import az.millikart.common.exception.PaymentOutcomeUnknownException;
+import az.millikart.txpg.AcquirerDeclinedException;
 import az.millikart.common.security.JwtProvider;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.pbl.dto.CompleteDmsRequest;
@@ -1004,6 +1005,32 @@ class MoneyOperationsIntegrationTest {
 
         verify(acquiringClient, times(2)).refund(anyString(), any(), any());
         Assertions.assertTrue(attemptRepository.findById(settled.getId()).isEmpty());
+    }
+
+    // Р-134: отказ эквайера оставляет в журнале запись DECLINED под компанией терминала, с суммой и текстом отказа
+    // шлюза. Раньше попытка не оставляла следа: успех пишется событием, неизвестный исход — UNRESOLVED, а отказ
+    // ничем, и мерчант, не заметивший плашку, не находил её и в журнале.
+    @Test
+    void aDeclinedRefund_isRecordedInTheJournal() throws Exception {
+        Transaction settled = transaction("DECLINED-LOG", TransactionStatus.SUCCESS);
+        when(acquiringClient.refund(anyString(), any(), any()))
+                .thenThrow(new AcquirerDeclinedException("Acquirer error: Can't reach PMO"));
+
+        mockMvc.perform(refund(settled, new BigDecimal("5.00")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Acquirer error: Can't reach PMO")));
+
+        List<Map<String, Object>> records = jdbcTemplate.queryForList(
+                "SELECT action, outcome, company_id, details FROM audit_logs WHERE entity_type = 'TRANSACTION' "
+                        + "AND entity_id = ?", settled.getId().toString());
+        Assertions.assertEquals(1, records.size(), records.toString());
+        Map<String, Object> record = records.getFirst();
+        Assertions.assertEquals("REFUND", record.get("action"));
+        Assertions.assertEquals("DECLINED", record.get("outcome"));
+        Assertions.assertNotNull(record.get("company_id"), "the record belongs to the terminal's company");
+        Assertions.assertTrue(String.valueOf(record.get("details")).startsWith("Refund of 5.00 "), record.toString());
+        Assertions.assertTrue(String.valueOf(record.get("details")).contains("declined by the acquirer"), record.toString());
+        Assertions.assertTrue(String.valueOf(record.get("details")).contains("Can't reach PMO"), record.toString());
     }
 
     // Сервис упал посреди вызова, и строка осталась «идёт». Пять минут она держит запрет как идущая операция,

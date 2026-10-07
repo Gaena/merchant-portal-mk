@@ -35,12 +35,14 @@ import { useDebounced } from '../hooks/useDebounced';
 
 import type { AuditLogDto } from '../types/dto';
 
-// Неподтверждённая эквайером операция не должна выглядеть обычным успехом (P3-2).
-const outcomeColor = (outcome?: string): 'success' | 'error' | 'warning' | 'default' => {
+// Неподтверждённая эквайером операция не должна выглядеть обычным успехом (P3-2); отказ эквайера (Р-134) —
+// не отказ портала в доступе.
+const outcomeColor = (outcome?: string): 'success' | 'error' | 'warning' | 'info' | 'default' => {
   switch (outcome) {
     case 'SUCCESS': return 'success';
     case 'DENIED': return 'error';
     case 'UNRESOLVED': return 'warning';
+    case 'DECLINED': return 'info';
     default: return 'default';
   }
 };
@@ -89,6 +91,7 @@ export const AuditLogsPage: React.FC = () => {
     SUCCESS: tObj.auditLogs.outcomeSuccess,
     DENIED: tObj.auditLogs.outcomeDenied,
     UNRESOLVED: tObj.auditLogs.outcomeUnresolved,
+    DECLINED: tObj.auditLogs.outcomeDeclined,
   };
 
   // Своя карточка есть только у операции и платёжной ссылки (entityId — UUID).
@@ -201,6 +204,7 @@ export const AuditLogsPage: React.FC = () => {
           <MenuItem value="SUCCESS">{tObj.auditLogs.outcomeSuccess}</MenuItem>
           <MenuItem value="DENIED">{tObj.auditLogs.outcomeDenied}</MenuItem>
           <MenuItem value="UNRESOLVED">{tObj.auditLogs.outcomeUnresolved}</MenuItem>
+          <MenuItem value="DECLINED">{tObj.auditLogs.outcomeDeclined}</MenuItem>
         </TextField>
         <TextField
           size="small"

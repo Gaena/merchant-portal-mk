@@ -351,7 +351,7 @@ erDiagram
         varchar company_id "Чья это запись — technical_handover.md §4.4"
         varchar details "До 4000 символов"
         varchar client_ip "До 45 символов, IPv6"
-        varchar outcome "SUCCESS / DENIED / UNRESOLVED"
+        varchar outcome "SUCCESS / DENIED / UNRESOLVED / DECLINED"
         timestamp created_at
     }
 
