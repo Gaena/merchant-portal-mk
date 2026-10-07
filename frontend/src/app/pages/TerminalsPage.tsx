@@ -17,7 +17,6 @@ import {
   TableHead,
   TableRow,
   Chip,
-  IconButton,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -25,7 +24,6 @@ import {
   Alert,
   Stack,
   TablePagination,
-  Tooltip,
   InputAdornment,
   Autocomplete,
   FormControlLabel,
@@ -34,7 +32,6 @@ import {
 import {
   PointOfSale as POSIcon,
   Add as AddIcon,
-  Edit as EditIcon,
   Block as BlockIcon,
   PlayArrow as UnblockIcon,
   Refresh as RefreshIcon,
@@ -91,10 +88,8 @@ export const TerminalsPage: React.FC = () => {
   const [editingTerminalId, setEditingTerminalId] = useState<number | null>(null);
   // dmsAllowed — разрешены ли DMS-ссылки (Р-132); меняет только SYSTEM_ADMIN.
   const [form, setForm] = useState({ name: '', companyId: '', dmsAllowed: true });
-  /** Ошибка внутри открытого окна (заведение, правка). */
+  /** Ошибка внутри открытого окна (заведение, правка); «Тест» и смена статуса — тоже из окна правки. */
   const [error, setError] = useState('');
-  /** Ошибка действия из таблицы («Тест», смена статуса): окна нет — полоса на странице. */
-  const [pageError, setPageError] = useState('');
   const [snackbar, setSnackbar] = useState('');
   const [creating, setCreating] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
@@ -264,12 +259,12 @@ export const TerminalsPage: React.FC = () => {
   // кредах или недоступном провайдере; ошибка — только отказ самого портала.
   const runCheck = async (terminalId: number) => {
     setChecking(terminalId);
-    setPageError('');
+    setError('');
     try {
       const result = await checkExistingTerminal(terminalId);
       setChecks(prev => ({ ...prev, [terminalId]: result }));
     } catch (err: any) {
-      setPageError(err.response?.data?.message || tObj.terminals.checkFailed);
+      setError(err.response?.data?.message || tObj.terminals.checkFailed);
     } finally {
       setChecking(null);
     }
@@ -377,13 +372,13 @@ export const TerminalsPage: React.FC = () => {
   const setTerminalStatus = async (terminal: TerminalDto, status: 'ACTIVE' | 'BLOCKED') => {
     if (busy) return;
     setBusy(true);
-    setPageError('');
+    setError('');
     try {
       const res = await apiClient.patch(`/api/v1/terminals/${terminal.id}`, { status });
       setTerminals(prev => prev.map(t => (t.id === terminal.id ? res.data : t)));
       setSnackbar(`${terminalDtoLabel(terminal)}: ${status === 'BLOCKED' ? tObj.terminals.blockedNotice : tObj.terminals.unblockedNotice}`);
     } catch (err: any) {
-      setPageError(err.response?.data?.message || tObj.terminals.statusChangeFailed);
+      setError(err.response?.data?.message || tObj.terminals.statusChangeFailed);
     } finally {
       setBusy(false);
       setStatusChange(null);
@@ -423,11 +418,6 @@ export const TerminalsPage: React.FC = () => {
           {snackbar}
         </Alert>
       )}
-      {pageError && (
-        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setPageError('')}>
-          {pageError}
-        </Alert>
-      )}
 
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider' }}>
         <TextField
@@ -457,14 +447,27 @@ export const TerminalsPage: React.FC = () => {
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.status}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.dmsColumn}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
-                <TableCell sx={{ fontWeight: 700 }} align="center">{tObj.common.actions}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {terminals.map((term) => {
                 const active = isTerminalActive(term);
                 return (
-                <TableRow key={term.id} hover sx={active ? undefined : { opacity: 0.6 }}>
+                // Правка, «Тест» и блокировка — в окне по клику на строку, только тем, чьи изменения сервер примет (Р-62).
+                <TableRow
+                  key={term.id}
+                  hover={canWrite}
+                  onClick={canWrite ? () => handleOpenEdit(term) : undefined}
+                  onKeyDown={canWrite ? e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleOpenEdit(term);
+                    }
+                  } : undefined}
+                  tabIndex={canWrite ? 0 : undefined}
+                  title={canWrite ? tObj.terminals.editTerminal : undefined}
+                  sx={{ ...(canWrite ? { cursor: 'pointer' } : {}), ...(active ? {} : { opacity: 0.6 }) }}
+                >
                   <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: active ? 'primary.main' : 'text.disabled' }}>
                     {terminalDtoLabel(term)}
                   </TableCell>
@@ -498,56 +501,12 @@ export const TerminalsPage: React.FC = () => {
                   <TableCell sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
                     {term.createdAt ? new Date(term.createdAt).toLocaleString() : '—'}
                   </TableCell>
-                  <TableCell align="center">
-                    <Stack direction="row" spacing={0.5} justifyContent="center" alignItems="center">
-                      {isAdmin && (
-                        <Tooltip title={checks[term.id]
-                          ? `${checkLabel(checks[term.id].outcome)}${checks[term.id].message ? ` — ${checks[term.id].message}` : ''}`
-                          : tObj.terminals.testAction}>
-                          <span>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              color={checks[term.id] ? checkSeverity(checks[term.id].outcome) : 'primary'}
-                              disabled={checking === term.id}
-                              onClick={() => runCheck(term.id)}
-                              sx={{ minWidth: 0, px: 1 }}
-                            >
-                              {checking === term.id ? '…' : tObj.terminals.testAction}
-                            </Button>
-                          </span>
-                        </Tooltip>
-                      )}
-                      {canWrite && (
-                        <Tooltip title={tObj.terminals.editTerminal}>
-                          <IconButton color="primary" size="small" onClick={() => handleOpenEdit(term)}>
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                      {canWrite && (active ? (
-                        <Tooltip title={tObj.terminals.blockAction}>
-                          <IconButton color="warning" size="small" disabled={busy}
-                                      onClick={() => handleAskStatus(term, 'BLOCKED')}>
-                            <BlockIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      ) : (
-                        <Tooltip title={tObj.terminals.unblockAction}>
-                          <IconButton color="success" size="small" disabled={busy}
-                                      onClick={() => handleAskStatus(term, 'ACTIVE')}>
-                            <UnblockIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      ))}
-                    </Stack>
-                  </TableCell>
                 </TableRow>
                 );
               })}
               {terminals.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
                     <POSIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                     <Typography color="text.secondary">{tObj.terminals.empty}</Typography>
                   </TableCell>
@@ -721,9 +680,40 @@ export const TerminalsPage: React.FC = () => {
               fullWidth
             />
             {isAdmin && dmsSwitch}
+            {/* «Тест» — пробный заказ с кредами компании (Р-70, Р-93), только администратору; итог — здесь же. */}
+            {isAdmin && editingTerminal && (
+              <Box>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={checking === editingTerminal.id}
+                  onClick={() => runCheck(editingTerminal.id)}
+                >
+                  {checking === editingTerminal.id ? tObj.common.loading : tObj.terminals.testAction}
+                </Button>
+                {checks[editingTerminal.id] && (
+                  <Alert severity={checkSeverity(checks[editingTerminal.id].outcome)} sx={{ mt: 1.5 }}>
+                    {checkLabel(checks[editingTerminal.id].outcome)}
+                    {checks[editingTerminal.id].message ? ` — ${checks[editingTerminal.id].message}` : ''}
+                  </Alert>
+                )}
+              </Box>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
+          {/* Блокировка — из окна правки, со своим подтверждением (Р-37): число затронутых ссылок — в нём. */}
+          {editingTerminal && (isTerminalActive(editingTerminal) ? (
+            <Button color="warning" startIcon={<BlockIcon />} disabled={editBusy || busy}
+                    onClick={() => handleAskStatus(editingTerminal, 'BLOCKED')} sx={{ mr: 'auto' }}>
+              {tObj.terminals.blockAction}
+            </Button>
+          ) : (
+            <Button color="success" startIcon={<UnblockIcon />} disabled={editBusy || busy}
+                    onClick={() => handleAskStatus(editingTerminal, 'ACTIVE')} sx={{ mr: 'auto' }}>
+              {tObj.terminals.unblockAction}
+            </Button>
+          ))}
           <Button onClick={() => setEditOpen(false)} disabled={editBusy}>{tObj.common.cancel}</Button>
           <Button variant="contained" onClick={handleAskUpdate} disabled={editBusy}>{tObj.common.save}</Button>
         </DialogActions>
