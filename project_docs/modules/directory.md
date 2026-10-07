@@ -302,7 +302,8 @@ DMS-ссылок на терминале (Р-132) —
     значение — как отсутствие фильтра; `action` — код действия из словаря (регистр не важен), точное совпадение;
     `performedBy` — часть логина актора без учёта регистра, `%` и `_` ищутся буквально; `companyId` — только у
     `SYSTEM_ADMIN` и `AUDITOR`, у руководителя и менеджера параметр не применяется: их скоуп — своя компания;
-    `page`, `size`.  
+    `attention=true` — «требует внимания» (Р-137): исход `UNRESOLVED` или действие `TOKEN_REUSE`, `LOCKOUT`,
+    `RATE_LIMIT`, вместе с остальными фильтрами; `page`, `size`.  
     *Порядок*: от новых к старым — `createdAt DESC`, при равенстве `id DESC`.  
     *Ответ*: `PagedResponse`:
     ```json
@@ -324,6 +325,17 @@ DMS-ссылок на терминале (Р-132) —
     вне HTTP-запроса. `traceId` — номер запроса или прогона планировщика: по нему находятся строки логов
     сервиса (Р-135); `null` у записей, сделанных до него. Журнал только пополняется. Словарь `entityType`/`action`, что лежит в `entityId`,
     `companyId` и `details` каждого события и когда запись ложится — `../guides/technical_handover.md` §4.4.
+-   `GET /api/v1/audit-logs/export` — выгрузка журнала в CSV (Р-137).  
+    *Доступ и отказы*: как у списка; отказ пишется в журнал `AUDIT_LOG` / `EXPORT` / `DENIED`.  
+    *Параметры*: те же фильтры, что у списка, без `page` и `size`; верхняя граница `to` прижата к моменту запроса.  
+    *Ответ `200`*: `text/csv;charset=UTF-8`, `Content-Disposition: attachment; filename="audit-log-<UTC yyyyMMdd-HHmmss>.csv"`,
+    в начале BOM; разделитель — `;` (так файл открывает Excel с русской и азербайджанской локалью), строки — `\r\n`.
+    Колонки: `createdAt` (ISO, UTC), `action`, `outcome`, `performedBy`, `clientIp`, `entityType`, `entityId`,
+    `companyId`, `details`, `traceId`, `id`; записи — от старых к новым. Значение с `;`, кавычкой или переводом
+    строки — в кавычках; начинающееся с `=`, `+`, `-`, `@` — с апострофом впереди (CSV-инъекция).  
+    *Отказы*: `400 The export is limited to 100000 records, the filters match <N>; narrow the period or the filters` —
+    до первого байта файла.  
+    *Журнал*: `AUDIT_LOG` / `EXPORT` `Exported <N> records up to <момент>, filters: …` под компанией актора.
 
 ---
 

@@ -25,6 +25,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -447,6 +448,72 @@ public class AuditLogQueryTest {
                 .andExpect(jsonPath("$.totalElements", Matchers.is(1)))
                 .andExpect(jsonPath("$.content[0].action", Matchers.is("LIST")))
                 .andExpect(jsonPath("$.content[0].traceId", Matchers.is("trace-journal-42")));
+    }
+
+    // Р-137: «Требует внимания» — неподтверждённое и признаки атаки на вход; обычный отказ и успех туда не попадают.
+    @Test
+    public void attentionFilter_keepsUnresolvedAndSignInAttacks() throws Exception {
+        seed("USER", "u-ok", "UPDATE", "comp-01");
+        auditLogRepository.saveAndFlush(AuditLog.builder().entityType("AUTH").entityId("login-denied").action("LOGIN")
+                .performedBy("x@comp1.com").outcome(az.millikart.common.audit.AuditOutcome.DENIED).build());
+        auditLogRepository.saveAndFlush(AuditLog.builder().entityType("AUTH").entityId("stolen").action("TOKEN_REUSE")
+                .performedBy("y@comp1.com").outcome(az.millikart.common.audit.AuditOutcome.DENIED).build());
+        auditLogRepository.saveAndFlush(AuditLog.builder().entityType("TRANSACTION").entityId("money-unknown")
+                .action("REFUND").performedBy("head@comp1.com").companyId("comp-01")
+                .outcome(az.millikart.common.audit.AuditOutcome.UNRESOLVED).build());
+
+        String body = mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("attention", "true")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", Matchers.is(2)))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body).contains("stolen", "money-unknown").doesNotContain("login-denied", "u-ok");
+    }
+
+    // Р-137: выгрузка — CSV с BOM и точкой с запятой, старые записи раньше, в скоупе роли; значение с разделителем —
+    // в кавычках, начало формулы — с апострофом (CSV-инъекция). Сама выгрузка — запись EXPORT в журнале.
+    @Test
+    public void export_isACsvOfTheScopedJournal_andIsItselfJournaled() throws Exception {
+        seedFull("USER", "first", "UPDATE", "comp-01", "head@comp1.com", "Changed role; status");
+        Thread.sleep(2);
+        seedFull("AUTH", "second", "LOGIN", "comp-01", "=HYPERLINK(\"x\")", "Login refused");
+        Thread.sleep(2);
+        seedFull("USER", "foreign", "UPDATE", "comp-02", "head@comp2.com", "Changed fullName");
+
+        MvcResult result = mockMvc.perform(get("/api/v1/audit-logs/export")
+                        .header(HttpHeaders.AUTHORIZATION, headTokenCompany1))
+                .andExpect(status().isOk())
+                .andReturn();
+        org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentType()).startsWith("text/csv");
+        org.assertj.core.api.Assertions.assertThat(result.getResponse().getHeader(HttpHeaders.CONTENT_DISPOSITION))
+                .startsWith("attachment; filename=\"audit-log-");
+        String csv = result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        String[] lines = csv.split("\r\n");
+        org.assertj.core.api.Assertions.assertThat(lines[0])
+                .isEqualTo("\uFEFFcreatedAt;action;outcome;performedBy;clientIp;entityType;entityId;companyId;details;traceId;id");
+        org.assertj.core.api.Assertions.assertThat(lines).hasSize(3);
+        org.assertj.core.api.Assertions.assertThat(lines[1]).contains(";first;").contains("\"Changed role; status\"");
+        org.assertj.core.api.Assertions.assertThat(lines[2]).contains(";second;").contains(";\"'=HYPERLINK(\"\"x\"\")\";");
+        org.assertj.core.api.Assertions.assertThat(csv).doesNotContain("foreign");
+
+        org.assertj.core.api.Assertions.assertThat(jdbcTemplate.queryForObject(
+                        "SELECT details FROM audit_logs WHERE action = 'EXPORT' AND performed_by = 'head@comp1.com'",
+                        String.class))
+                .startsWith("Exported 2 records up to ").endsWith(", filters: companyId=comp-01");
+    }
+
+    // Р-137: выгружать журнал может тот, кто его читает; остальным — 403 с отказом EXPORT в журнале.
+    @Test
+    public void export_isRefusedToRolesThatCannotReadTheJournal() throws Exception {
+        String employeeToken = "Bearer " + jwtProvider.generateToken("777", "clerk@comp1.com", "COMPANY_EMPLOYEE", "comp-01");
+
+        mockMvc.perform(get("/api/v1/audit-logs/export").header(HttpHeaders.AUTHORIZATION, employeeToken))
+                .andExpect(status().isForbidden());
+
+        org.assertj.core.api.Assertions.assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE action = 'EXPORT' AND outcome = 'DENIED'", Integer.class))
+                .isEqualTo(1);
     }
 
     // Компанию выбирают администратор и аудитор. Руководителю чужой companyId ничего не открывает: скоуп —

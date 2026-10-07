@@ -937,7 +937,8 @@ grep -rn "autoFocus" app/pages/*.tsx                                 # ниче�
   только через `StatusChangeAudit` в `pbl` (`STATUS_CHANGE`; исполнитель — вошедший, чей запрос запустил опрос,
   иначе `system`); возврат и списание пишут свои записи и туда не ходят. Запуск и штатная остановка сервиса —
   `SERVICE` / `START`, `STOP` (`ServiceLifecycleAudit`, Р-136); START после START без STOP того же экземпляра —
-  исходом `UNRESOLVED`: журнал прерывался.
+  исходом `UNRESOLVED`: журнал прерывался. Выгрузка журнала — `AUDIT_LOG` / `EXPORT` (Р-137); что «требует
+  внимания» — только `AuditLogQueryService` (`UNRESOLVED` и `ATTENTION_ACTIONS`).
   Машинерия одна на проект — `az.millikart.common.audit` (Р-41).
 - **`entityType` и `action` — только константы `AuditEntity` / `AuditAction`** (P3-2). Новое
   значение — сначала в словарь и в таблицу `project_docs/guides/technical_handover.md` §4.4, потом в код; экран

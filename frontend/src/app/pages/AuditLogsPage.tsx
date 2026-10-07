@@ -20,12 +20,16 @@ import {
   Stack,
   InputAdornment,
   CircularProgress,
-  TablePagination
+  TablePagination,
+  Alert,
+  Tooltip,
 } from '@mui/material';
 import {
   History as HistoryIcon,
   Search as SearchIcon,
-  Refresh as RefreshIcon
+  Refresh as RefreshIcon,
+  Download as DownloadIcon,
+  WarningAmber as AttentionIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useNavigate } from 'react-router';
@@ -84,6 +88,10 @@ export const AuditLogsPage: React.FC = () => {
   const [userQuery, setUserQuery] = useState('');
   const [companyFilter, setCompanyFilter] = useState('all');
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
+  // «Требует внимания» (Р-137): неподтверждённое и признаки атаки на вход — набор держит сервер.
+  const [attention, setAttention] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   // Поиск и фильтры — серверные: клиентский фильтр видел бы только загруженную страницу (P3-1).
@@ -141,9 +149,9 @@ export const AuditLogsPage: React.FC = () => {
     return null;
   })();
 
-  const fetchAuditLogs = useCallback((signal?: AbortSignal) => {
-    setLoading(true);
-    const params: Record<string, unknown> = { page, size: rowsPerPage };
+  // Фильтры — одни для страницы и для выгрузки (Р-137): файл — ровно то, что отобрано на экране.
+  const filterParams = useCallback((): Record<string, unknown> => {
+    const params: Record<string, unknown> = {};
     if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
     if (entityTypeFilter !== 'all') params.entityType = entityTypeFilter;
     if (outcomeFilter !== 'all') params.outcome = outcomeFilter;
@@ -154,7 +162,14 @@ export const AuditLogsPage: React.FC = () => {
     // событие в 01:00 по Баку не выпало из «своего» дня из-за UTC.
     if (fromDate) params.from = new Date(`${fromDate}T00:00:00`).toISOString();
     if (toDate) params.to = new Date(`${toDate}T23:59:59.999`).toISOString();
-    apiClient.get('/api/v1/audit-logs', { params, signal })
+    if (attention) params.attention = true;
+    return params;
+  }, [debouncedSearch, entityTypeFilter, outcomeFilter, actionFilter, debouncedUser, globalReader, companyFilter,
+    fromDate, toDate, attention]);
+
+  const fetchAuditLogs = useCallback((signal?: AbortSignal) => {
+    setLoading(true);
+    apiClient.get('/api/v1/audit-logs', { params: { ...filterParams(), page, size: rowsPerPage }, signal })
       .then(res => {
         setAuditLogsList(Array.isArray(res.data?.content) ? res.data.content : []);
         setTotalElements(res.data?.totalElements ?? 0);
@@ -167,8 +182,40 @@ export const AuditLogsPage: React.FC = () => {
       .finally(() => {
         if (!signal?.aborted) setLoading(false);
       });
-  }, [page, rowsPerPage, debouncedSearch, entityTypeFilter, outcomeFilter, actionFilter, debouncedUser, globalReader,
-    companyFilter, fromDate, toDate]);
+  }, [page, rowsPerPage, filterParams]);
+
+  // CSV собирает сервер (Р-137): потолок строк и права — там же; отказ приходит JSON внутри Blob.
+  const handleExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setExportError('');
+    try {
+      const res = await apiClient.get<Blob>('/api/v1/audit-logs/export', { params: filterParams(), responseType: 'blob' });
+      const disposition = String(res.headers['content-disposition'] ?? '');
+      const fileName = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'audit-log.csv';
+      const url = URL.createObjectURL(res.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      let message: string | null = null;
+      if (axios.isAxiosError(err) && err.response?.data instanceof Blob) {
+        try {
+          const parsed: unknown = JSON.parse(await err.response.data.text());
+          if (parsed && typeof parsed === 'object' && typeof (parsed as { message?: unknown }).message === 'string') {
+            message = (parsed as { message: string }).message;
+          }
+        } catch {
+          message = null;
+        }
+      }
+      setExportError(message ?? tObj.auditLogs.exportFailed);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // Отмена предыдущего запроса при каждом изменении параметров: без неё ответ на «ив» может
   // прийти позже ответа на «ива» и перезаписать более точный результат. «Обновить» идёт тем же
@@ -192,10 +239,22 @@ export const AuditLogsPage: React.FC = () => {
             {tObj.auditLogs.subtitle}
           </Typography>
         </Box>
-        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => setReloadKey(k => k + 1)}>
-          {tObj.common.refresh}
-        </Button>
+        <Stack direction="row" spacing={1.5}>
+          <Tooltip title={tObj.auditLogs.exportHint}>
+            <span>
+              <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExport} disabled={exporting}>
+                {exporting ? tObj.common.loading : tObj.auditLogs.exportAction}
+              </Button>
+            </span>
+          </Tooltip>
+          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => setReloadKey(k => k + 1)}>
+            {tObj.common.refresh}
+          </Button>
+        </Stack>
       </Box>
+      {exportError && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setExportError('')}>{exportError}</Alert>
+      )}
 
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         <TextField
@@ -287,6 +346,16 @@ export const AuditLogsPage: React.FC = () => {
           InputLabelProps={{ shrink: true }}
           sx={{ minWidth: 170 }}
         />
+        <Tooltip title={tObj.auditLogs.attentionHint}>
+          <Chip
+            icon={<AttentionIcon />}
+            label={tObj.auditLogs.attention}
+            color={attention ? 'warning' : 'default'}
+            variant={attention ? 'filled' : 'outlined'}
+            onClick={() => { setAttention(value => !value); setPage(0); }}
+            sx={{ alignSelf: 'center' }}
+          />
+        </Tooltip>
       </Paper>
 
       <TableContainer component={Paper} variant="outlined">

@@ -685,6 +685,12 @@ export interface TranslationDictionary {
     /** Только у SYSTEM_ADMIN и AUDITOR: остальные видят свою компанию. */
     filterCompany: string;
     empty: string;
+    /** Фильтр «Требует внимания» и выгрузка CSV (Р-137). */
+    attention: string;
+    attentionHint: string;
+    exportAction: string;
+    exportHint: string;
+    exportFailed: string;
     /** Карточка записи журнала: открывается кликом по строке. */
     detailsTitle: string;
     entityId: string;
@@ -1384,6 +1390,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         RATE_LIMIT: 'Sign-in attempt limit', TOKEN_REUSE: 'Refresh token reuse', PASSWORD_CHANGE: 'Password change',
         CAPTURE: 'Capture', REFUND: 'Refund', CANCEL: 'Cancellation', RESOLVE: 'Outcome resolution',
         STATUS_CHANGE: 'Status change', START: 'Service start', STOP: 'Service stop',
+        EXPORT: 'Export',
       },
       entities: {
         COMPANY: 'Company', TERMINAL: 'Terminal', USER: 'User', AUTH: 'Authentication', PAYMENT_LINK: 'Payment link',
@@ -1393,6 +1400,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       filterUser: 'User',
       filterCompany: 'Company',
       empty: 'No records match the filters.',
+      attention: 'Requires attention',
+      attentionHint: 'Unconfirmed money operations and journal gaps, refresh token reuse, account lockouts and sign-in attempt limits',
+      exportAction: 'Export CSV',
+      exportHint: 'All records matching the filters, oldest first, up to 100 000. The export is recorded in the journal.',
+      exportFailed: 'Could not export the journal',
       detailsTitle: 'Audit record',
       entityId: 'Entity ID',
       company: 'Company',
@@ -2055,6 +2067,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         RATE_LIMIT: 'Giriş cəhdləri limiti', TOKEN_REUSE: 'Refresh-tokenin təkrarı', PASSWORD_CHANGE: 'Şifrənin dəyişdirilməsi',
         CAPTURE: 'Vəsaitin silinməsi', REFUND: 'Geri qaytarma', CANCEL: 'Ləğv', RESOLVE: 'Əməliyyatın nəticəsi',
         STATUS_CHANGE: 'Statusun dəyişməsi', START: 'Servisin işə salınması', STOP: 'Servisin dayandırılması',
+        EXPORT: 'İxrac',
       },
       entities: {
         COMPANY: 'Şirkət', TERMINAL: 'Terminal', USER: 'İstifadəçi', AUTH: 'Autentifikasiya', PAYMENT_LINK: 'Ödəniş linki',
@@ -2064,6 +2077,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       filterUser: 'İstifadəçi',
       filterCompany: 'Şirkət',
       empty: 'Filtrlərə uyğun qeyd yoxdur.',
+      attention: 'Diqqət tələb edir',
+      attentionHint: 'Təsdiqlənməmiş pul əməliyyatları və jurnal fasilələri, refresh-tokenin təkrarı, hesabın bloklanması və giriş cəhdləri limiti',
+      exportAction: 'CSV ixracı',
+      exportHint: 'Filtrlərə uyğun bütün qeydlər, köhnələr əvvəl, 100 000-ə qədər. İxrac jurnala yazılır.',
+      exportFailed: 'Jurnalı ixrac etmək mümkün olmadı',
       detailsTitle: 'Audit jurnalı qeydi',
       entityId: 'Obyektin ID-si',
       company: 'Şirkət',
@@ -2726,6 +2744,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         RATE_LIMIT: 'Лимит попыток входа', TOKEN_REUSE: 'Повтор refresh-токена', PASSWORD_CHANGE: 'Смена пароля',
         CAPTURE: 'Списание', REFUND: 'Возврат', CANCEL: 'Отмена', RESOLVE: 'Итог операции',
         STATUS_CHANGE: 'Смена статуса', START: 'Запуск сервиса', STOP: 'Остановка сервиса',
+        EXPORT: 'Выгрузка',
       },
       entities: {
         COMPANY: 'Компания', TERMINAL: 'Терминал', USER: 'Пользователь', AUTH: 'Вход в систему', PAYMENT_LINK: 'Платёжная ссылка',
@@ -2735,6 +2754,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       filterUser: 'Пользователь',
       filterCompany: 'Компания',
       empty: 'Записей по фильтрам нет.',
+      attention: 'Требует внимания',
+      attentionHint: 'Неподтверждённые денежные операции и перерывы журнала, повтор refresh-токена, блокировки учёток и лимит попыток входа',
+      exportAction: 'Выгрузить CSV',
+      exportHint: 'Все записи по фильтрам, старые раньше, до 100 000. Выгрузка записывается в журнал.',
+      exportFailed: 'Не удалось выгрузить журнал',
       detailsTitle: 'Запись журнала аудита',
       entityId: 'ID объекта',
       company: 'Компания',

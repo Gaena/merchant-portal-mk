@@ -14,6 +14,8 @@ public record AuditLogFilter(
         Instant to,
         String action,
         String performedBy,
-        String companyId
+        String companyId,
+        // «Требует внимания» (Р-137): неподтверждённое и признаки атаки на вход — AuditLogQueryService.
+        boolean attention
 ) {
 }
