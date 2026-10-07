@@ -152,6 +152,7 @@ public class SharedSchemaMigrationTest {
         assertTrue(tableExists("audit_logs"), "auth must create audit_logs when nobody else has");
         assertTrue(columnExists("audit_logs", "client_ip"), "and in its final shape, not the 2026-07 one");
         assertTrue(columnExists("audit_logs", "outcome"));
+        assertTrue(columnExists("audit_logs", "trace_id"), "auth adds the trace id like the other two creators");
 
         assertDoesNotThrow(this::runDirectoryChangelog,
                 "directory must migrate onto an audit_logs table auth created");

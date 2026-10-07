@@ -102,6 +102,7 @@ public class PaymentLinkService {
     private final TerminalRepository terminalRepository;
     private final PaymentReceipts paymentReceipts;
     private final TerminalScope terminalScope;
+    private final StatusChangeAudit statusChanges;
     private final AcquiringClient acquiringClient;
     private final ProviderCredentialsService providerCredentials;
     private final PaymentLinkMapper mapper;
@@ -125,6 +126,7 @@ public class PaymentLinkService {
                                PlatformTransactionManager transactionManager,
                                PaymentReceipts paymentReceipts,
                                TerminalScope terminalScope,
+                               StatusChangeAudit statusChanges,
                                @Value("${pbl.base-url}") String baseUrl,
                                @Value("${pbl.link.default-ttl}") Duration defaultLinkTtl,
                                @Value("${pbl.link.max-ttl}") Duration maxLinkTtl) {
@@ -141,6 +143,7 @@ public class PaymentLinkService {
         this.txTemplate = new TransactionTemplate(transactionManager);
         this.paymentReceipts = paymentReceipts;
         this.terminalScope = terminalScope;
+        this.statusChanges = statusChanges;
         this.baseUrl = baseUrl;
         this.defaultLinkTtl = defaultLinkTtl;
         this.maxLinkTtl = maxLinkTtl;
@@ -622,6 +625,7 @@ public class PaymentLinkService {
         transaction.setCapturedAmount(amount);
         transaction.setStatus(TransactionStatus.SUCCESS);
         transactionRepository.save(transaction);
+        PaymentLinkStatus linkBefore = link.getStatus();
 
         // Использования, а не строки SUCCESS (P2-16): возвращённый платёж держит свой слот. В колонку —
         // то же число, что в API.
@@ -633,6 +637,10 @@ public class PaymentLinkService {
         } else if (link.getUsageType() == UsageType.MULTIPLE && link.getMaxPayments() != null && usedCount >= link.getMaxPayments()) {
             log.info("Multi-use link {} reached max payments limit. Transitioned to COMPLETED.", link.getId());
             link.setStatus(PaymentLinkStatus.COMPLETED);
+        }
+        if (link.getStatus() != linkBefore) {
+            statusChanges.link(link.getId(), companyOfTerminal(link.getTerminalId()), linkBefore, link.getStatus(),
+                    "payment limit reached by the capture of transaction " + transaction.getId());
         }
         return paymentLinkRepository.save(link);
     }
@@ -1121,6 +1129,8 @@ public class PaymentLinkService {
         tx.setProviderResponse(mergedResponse);
         tx.setStatus(TransactionStatus.FAILED);
         transactionRepository.save(tx);
+        statusChanges.transaction(tx.getId(), companyOfTerminal(tx.getLink().getTerminalId()), TransactionStatus.PENDING,
+                TransactionStatus.FAILED, "abandoned by the payer: the acquirer order is still non-final after " + maxAge);
 
         // Ссылку не трогать: одноразовая остаётся ACTIVE для новой попытки.
         log.info("Transaction {} abandoned by the payer (older than {}, acquirer still non-final); marked FAILED",
@@ -1177,6 +1187,7 @@ public class PaymentLinkService {
                 transactionId, raw, outcome);
 
         boolean holdReleased = false;
+        PaymentLinkStatus linkBefore = link.getStatus();
         switch (outcome) {
             case PAID -> {
                 tx.setStatus(TransactionStatus.SUCCESS);
@@ -1263,11 +1274,23 @@ public class PaymentLinkService {
         // Опрос без перемены — не событие: сверка делает их сотнями в день.
         if (tx.getStatus() != before) {
             log.info("Transaction {} is now {} (was {}), acquirer status \"{}\"", tx.getId(), tx.getStatus(), before, raw);
+            statusChanges.transaction(tx.getId(), terminal.getCompanyId(), before, tx.getStatus(),
+                    (holdReleased ? "authorization released by the acquirer without capture"
+                            : "acquirer reports \"" + raw + "\"") + " (providerOrderId " + tx.getProviderOrderId() + ")");
+            if (link.getStatus() != linkBefore) {
+                statusChanges.link(link.getId(), terminal.getCompanyId(), linkBefore, link.getStatus(),
+                        "payment limit reached by transaction " + tx.getId());
+            }
         } else {
             log.debug("Transaction {} stays {}, acquirer status \"{}\"", tx.getId(), tx.getStatus(), raw);
         }
 
         return new StatusRefresh(tx, outcome);
+    }
+
+    // Компания записи журнала — компания терминала ссылки (Р-104); терминала нет — запись без компании.
+    private String companyOfTerminal(Integer terminalId) {
+        return terminalRepository.findById(terminalId).map(Terminal::getCompanyId).orElse(null);
     }
 
     // Потолок — чтобы память не росла без конца, если такие строки никто не разбирает.

@@ -127,7 +127,8 @@ public class AuditLogQueryService {
                         cb.like(cb.lower(root.get("performedBy")), pattern, SearchTerms.LIKE_ESCAPE),
                         cb.like(cb.lower(root.get("action")), pattern, SearchTerms.LIKE_ESCAPE),
                         cb.like(cb.lower(root.get("entityId")), pattern, SearchTerms.LIKE_ESCAPE),
-                        cb.like(cb.lower(root.get("details")), pattern, SearchTerms.LIKE_ESCAPE)));
+                        cb.like(cb.lower(root.get("details")), pattern, SearchTerms.LIKE_ESCAPE),
+                        cb.like(cb.lower(root.get("traceId")), pattern, SearchTerms.LIKE_ESCAPE)));
             }
             return cb.and(where.toArray(new Predicate[0]));
         };
@@ -148,7 +149,8 @@ public class AuditLogQueryService {
                 log.getDetails(),
                 log.getClientIp(),
                 log.getOutcome(),
-                log.getCreatedAt()
+                log.getCreatedAt(),
+                log.getTraceId()
         );
     }
 }

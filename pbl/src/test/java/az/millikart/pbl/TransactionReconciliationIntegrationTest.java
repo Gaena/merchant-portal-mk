@@ -143,6 +143,14 @@ class TransactionReconciliationIntegrationTest {
         Assertions.assertFalse(reload(tx).isCardSubmitted());
         // Одноразовая ссылка остаётся ACTIVE, чтобы клиент мог попробовать снова.
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE, linkStatusOf(tx));
+        // Журнал аудита, этап 2: брошенный платёж — запись STATUS_CHANGE от system под компанией терминала.
+        Map<String, Object> record = jdbcTemplate.queryForMap(
+                "SELECT performed_by, company_id, details FROM audit_logs WHERE entity_type = 'TRANSACTION' "
+                        + "AND entity_id = ? AND action = 'STATUS_CHANGE'", tx.getId().toString());
+        Assertions.assertEquals("system", record.get("performed_by"));
+        Assertions.assertEquals("test-company", record.get("company_id"));
+        Assertions.assertTrue(String.valueOf(record.get("details")).startsWith("Status PENDING -> FAILED: abandoned by the payer"),
+                record.toString());
     }
 
     // По max-age гасится только старое: Preparing моложе суток — заказ ещё можно оплатить, строка

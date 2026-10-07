@@ -690,6 +690,7 @@ export interface TranslationDictionary {
     entityId: string;
     company: string;
     recordId: string;
+    traceId: string;
     openTransaction: string;
     openPaymentLink: string;
     openEcomOrder: string;
@@ -1368,7 +1369,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       timestamp: 'Timestamp',
       ip: 'IP Address',
       filterEntity: 'Filter by Resource Entity',
-      searchPlaceholder: 'Search actor, action, entity ID or details...',
+      searchPlaceholder: 'Search actor, action, entity ID, details or trace ID...',
       outcome: 'Outcome',
       outcomeSuccess: 'Success',
       outcomeDenied: 'Denied',
@@ -1382,6 +1383,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         UNBLOCK: 'Unblock', LOGIN: 'Sign-in', LOGOUT: 'Sign-out', LOCKOUT: 'Account lockout',
         RATE_LIMIT: 'Sign-in attempt limit', TOKEN_REUSE: 'Refresh token reuse', PASSWORD_CHANGE: 'Password change',
         CAPTURE: 'Capture', REFUND: 'Refund', CANCEL: 'Cancellation', RESOLVE: 'Outcome resolution',
+        STATUS_CHANGE: 'Status change',
       },
       entities: {
         COMPANY: 'Company', TERMINAL: 'Terminal', USER: 'User', AUTH: 'Authentication', PAYMENT_LINK: 'Payment link',
@@ -1395,6 +1397,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       entityId: 'Entity ID',
       company: 'Company',
       recordId: 'Record ID',
+      traceId: 'Trace ID (service logs)',
       openTransaction: 'Open transaction',
       openPaymentLink: 'Open payment link',
       openEcomOrder: 'Open statement order',
@@ -2037,7 +2040,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       timestamp: 'Tarix və Vaxt',
       ip: 'IP Ünvanı',
       filterEntity: 'Resurs Əsasında Filtr',
-      searchPlaceholder: 'İstifadəçi, əməliyyat, ID və ya təfərrüat üzrə axtarış...',
+      searchPlaceholder: 'İstifadəçi, əməliyyat, ID, təfərrüat və ya trace ID üzrə axtarış...',
       outcome: 'Nəticə',
       outcomeSuccess: 'Uğurlu',
       outcomeDenied: 'Rədd edilib',
@@ -2051,6 +2054,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         BLOCK: 'Bloklama', UNBLOCK: 'Blokdan çıxarma', LOGIN: 'Giriş', LOGOUT: 'Çıxış', LOCKOUT: 'Hesabın bloklanması',
         RATE_LIMIT: 'Giriş cəhdləri limiti', TOKEN_REUSE: 'Refresh-tokenin təkrarı', PASSWORD_CHANGE: 'Şifrənin dəyişdirilməsi',
         CAPTURE: 'Vəsaitin silinməsi', REFUND: 'Geri qaytarma', CANCEL: 'Ləğv', RESOLVE: 'Əməliyyatın nəticəsi',
+        STATUS_CHANGE: 'Statusun dəyişməsi',
       },
       entities: {
         COMPANY: 'Şirkət', TERMINAL: 'Terminal', USER: 'İstifadəçi', AUTH: 'Autentifikasiya', PAYMENT_LINK: 'Ödəniş linki',
@@ -2064,6 +2068,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       entityId: 'Obyektin ID-si',
       company: 'Şirkət',
       recordId: 'Qeydin ID-si',
+      traceId: 'Trace ID (servis logları)',
       openTransaction: 'Əməliyyatı aç',
       openPaymentLink: 'Ödəniş linkini aç',
       openEcomOrder: 'Çıxarış sifarişini aç',
@@ -2706,7 +2711,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       timestamp: 'Дата и Время',
       ip: 'IP адрес',
       filterEntity: 'Фильтр по ресурсу',
-      searchPlaceholder: 'Поиск по пользователю, действию, ID или деталям...',
+      searchPlaceholder: 'Поиск по пользователю, действию, ID, деталям или trace ID...',
       outcome: 'Результат',
       outcomeSuccess: 'Успешно',
       outcomeDenied: 'Отказано',
@@ -2720,6 +2725,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         BLOCK: 'Блокировка', UNBLOCK: 'Разблокировка', LOGIN: 'Вход', LOGOUT: 'Выход', LOCKOUT: 'Блокировка входа',
         RATE_LIMIT: 'Лимит попыток входа', TOKEN_REUSE: 'Повтор refresh-токена', PASSWORD_CHANGE: 'Смена пароля',
         CAPTURE: 'Списание', REFUND: 'Возврат', CANCEL: 'Отмена', RESOLVE: 'Итог операции',
+        STATUS_CHANGE: 'Смена статуса',
       },
       entities: {
         COMPANY: 'Компания', TERMINAL: 'Терминал', USER: 'Пользователь', AUTH: 'Вход в систему', PAYMENT_LINK: 'Платёжная ссылка',
@@ -2733,6 +2739,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       entityId: 'ID объекта',
       company: 'Компания',
       recordId: 'ID записи',
+      traceId: 'Trace ID (логи сервиса)',
       openTransaction: 'Открыть операцию',
       openPaymentLink: 'Открыть платёжную ссылку',
       openEcomOrder: 'Открыть заказ выписки',

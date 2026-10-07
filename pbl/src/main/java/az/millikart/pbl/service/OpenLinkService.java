@@ -62,6 +62,7 @@ public class OpenLinkService {
     private final TransactionRepository transactionRepository;
     private final TerminalRepository terminalRepository;
     private final PaymentLinkService paymentLinkService;
+    private final StatusChangeAudit statusChanges;
     private final ProviderCredentialsService providerCredentials;
     private final String baseUrl;
 
@@ -70,6 +71,7 @@ public class OpenLinkService {
                            TransactionRepository transactionRepository,
                            TerminalRepository terminalRepository,
                            PaymentLinkService paymentLinkService,
+                           StatusChangeAudit statusChanges,
                            ProviderCredentialsService providerCredentials,
                            @Value("${pbl.base-url}") String baseUrl) {
         this.acquiringClient = acquiringClient;
@@ -77,6 +79,7 @@ public class OpenLinkService {
         this.transactionRepository = transactionRepository;
         this.terminalRepository = terminalRepository;
         this.paymentLinkService = paymentLinkService;
+        this.statusChanges = statusChanges;
         this.providerCredentials = providerCredentials;
         this.baseUrl = baseUrl;
     }
@@ -112,6 +115,8 @@ public class OpenLinkService {
         if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(Instant.now())) {
             log.info("Payment link {} has expired, changing status to EXPIRED", id);
             // Остаётся и после отказа, как COMPLETED ниже (Р-113).
+            statusChanges.link(link.getId(), terminal.getCompanyId(), link.getStatus(), PaymentLinkStatus.EXPIRED,
+                    "opened by a payer after its expiry " + link.getExpiresAt());
             link.setStatus(PaymentLinkStatus.EXPIRED);
             paymentLinkRepository.save(link);
             throw new InvalidStateException("Payment link has expired");
@@ -175,6 +180,8 @@ public class OpenLinkService {
             long paidPayments = transactionRepository.countByLinkIdAndStatusIn(id, TransactionStatus.PAID_STATUSES);
             if (paidPayments >= link.getMaxPayments()) {
                 log.info("Payment link {} has reached max payments limit: {}, setting status to COMPLETED", id, link.getMaxPayments());
+                statusChanges.link(link.getId(), terminal.getCompanyId(), link.getStatus(), PaymentLinkStatus.COMPLETED,
+                        "opened by a payer with all " + link.getMaxPayments() + " payments made");
                 link.setStatus(PaymentLinkStatus.COMPLETED);
                 paymentLinkRepository.save(link);
                 throw new InvalidStateException("Payment link has reached its usage limit");

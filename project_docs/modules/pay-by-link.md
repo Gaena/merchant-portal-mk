@@ -575,6 +575,13 @@ The same payload is returned by §5.7, §5.11 and §5.12; `actions` only by §5.
     service died in the middle). While it exists, both buttons are disabled and §5.9 and §5.10 answer `409`.
     `resolvable` is `true` only for `SYSTEM_ADMIN` and only when `UNKNOWN` (§5.15).
 
+**Audit journal:** a check that changes the status — `TRANSACTION` / `STATUS_CHANGE` by the caller, with the
+acquirer's word; a single-use link closed by the payment, or a multi-use one at its limit, — `PAYMENT_LINK` /
+`STATUS_CHANGE`. The payer's return page (§5.6), opening a link (§5.5) and the reconciliation write the same
+records by `system`; the reconciliation's abandonment timeout as `Status PENDING -> FAILED: abandoned by the
+payer…`, the expiry job each expired link as `Status ACTIVE -> EXPIRED: the expiry time has passed` (Р-135).
+A check without a change writes nothing.
+
 ### 5.9. Complete DMS Payment
 
 -   **Method:** `POST /api/v1/transactions/{transactionId}/complete`

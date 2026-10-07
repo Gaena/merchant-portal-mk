@@ -14,6 +14,8 @@ public record AuditLogResponse(
         String details,
         String clientIp,
         AuditOutcome outcome,
-        Instant createdAt
+        Instant createdAt,
+        // traceId запроса или прогона планировщика: по нему находятся строки логов сервиса; у старых записей null.
+        String traceId
 ) {
 }

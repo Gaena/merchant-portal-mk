@@ -1,8 +1,10 @@
 package az.millikart.common.audit;
 
+import az.millikart.common.security.TraceIdFilter;
 import az.millikart.common.web.ClientIpHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -53,6 +55,7 @@ public class AuditLogService {
                 .companyId(clip(event.companyId(), ID_MAX))
                 .details(clip(event.details(), DETAILS_MAX))
                 .clientIp(event.clientIp())
+                .traceId(event.traceId())
                 .outcome(AuditOutcome.SUCCESS)
                 .build();
         if (AuditOutbox.defer(() -> writeReporting(record, "audit record"))) {
@@ -74,6 +77,7 @@ public class AuditLogService {
                 .companyId(clip(companyId, ID_MAX))
                 .details(clip(details, DETAILS_MAX))
                 .clientIp(ClientIpHolder.get())
+                .traceId(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY))
                 .outcome(AuditOutcome.DENIED)
                 .build();
         Runnable write = () -> writeReporting(record, "denial record");
@@ -95,6 +99,7 @@ public class AuditLogService {
                 .companyId(clip(companyId, ID_MAX))
                 .details(clip(details, DETAILS_MAX))
                 .clientIp(ClientIpHolder.get())
+                .traceId(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY))
                 .outcome(AuditOutcome.UNRESOLVED)
                 .build();
         Runnable write = () -> writeReporting(record, "record");
@@ -116,6 +121,7 @@ public class AuditLogService {
                 .companyId(clip(companyId, ID_MAX))
                 .details(clip(details, DETAILS_MAX))
                 .clientIp(ClientIpHolder.get())
+                .traceId(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY))
                 .outcome(AuditOutcome.DECLINED)
                 .build();
         Runnable write = () -> writeReporting(record, "decline record");

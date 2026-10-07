@@ -395,6 +395,8 @@ export const AuditLogsPage: React.FC = () => {
               <DetailRow label={tObj.auditLogs.resource}>{entityLabel(selectedLog.entityType)}</DetailRow>
               <DetailRow label={tObj.auditLogs.entityId} mono>{selectedLog.entityId || '—'}</DetailRow>
               <DetailRow label={tObj.auditLogs.recordId} mono>{selectedLog.id ?? '—'}</DetailRow>
+              {/* По traceId — строки логов сервиса за этот запрос или прогон планировщика (этап 2). */}
+              <DetailRow label={tObj.auditLogs.traceId} mono>{selectedLog.traceId || '—'}</DetailRow>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
                 {tObj.common.details}
               </Typography>

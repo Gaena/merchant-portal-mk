@@ -296,7 +296,7 @@ DMS-ссылок на терминале (Р-132) —
     или менеджер без компании — `403 Access denied: User not assigned to a company`; остальные роли —
     `403 Access denied`.  
     *Параметры* (все необязательные и независимые): `entityType` (регистр не важен), `entityId` (без учёта
-    регистра), `search` — подстрока по `performedBy`, `action`, `entityId` и `details`; `outcome` (`SUCCESS` /
+    регистра), `search` — подстрока по `performedBy`, `action`, `entityId`, `details` и `traceId`; `outcome` (`SUCCESS` /
     `DENIED` / `UNRESOLVED` / `DECLINED`, неизвестное значение — как отсутствие фильтра); `from` и `to` — граница по
     `createdAt`, ISO-instant (`2026-08-24T10:15:30Z`) или дата (`2026-08-24` — весь день по UTC), неразбираемое
     значение — как отсутствие фильтра; `action` — код действия из словаря (регистр не важен), точное совпадение;
@@ -312,7 +312,7 @@ DMS-ссылок на терминале (Р-132) —
           "id": "…", "entityType": "COMPANY", "entityId": "comp-01", "action": "CREATE",
           "performedBy": "admin@millikart.az", "companyId": "comp-01",
           "details": "Created company: MilliKart LLC, provider login MultiMerchantSys/merchant@company.com",
-          "clientIp": "203.0.113.9", "outcome": "SUCCESS", "createdAt": "…"
+          "clientIp": "203.0.113.9", "outcome": "SUCCESS", "createdAt": "…", "traceId": "3f2a9c1b-…"
         }
       ],
       "totalElements": 1, "totalPages": 1, "size": 20, "number": 0
@@ -320,7 +320,8 @@ DMS-ссылок на терминале (Р-132) —
     ```
     `outcome`: `SUCCESS` — действие выполнено; `DENIED` — отказ в доступе; `UNRESOLVED` — денежная операция,
     исход которой эквайер не подтвердил; `DECLINED` — возврат или списание, которые эквайер отклонил (Р-134). `clientIp` — адрес клиента через доверенный прокси, `null` у действий
-    вне HTTP-запроса. Журнал только пополняется. Словарь `entityType`/`action`, что лежит в `entityId`,
+    вне HTTP-запроса. `traceId` — номер запроса или прогона планировщика: по нему находятся строки логов
+    сервиса (Р-135); `null` у записей, сделанных до него. Журнал только пополняется. Словарь `entityType`/`action`, что лежит в `entityId`,
     `companyId` и `details` каждого события и когда запись ложится — `../guides/technical_handover.md` §4.4.
 
 ---

@@ -32,6 +32,7 @@ import az.millikart.txpg.AcquiringClient;
 import az.millikart.txpg.ProviderCredentials;
 import az.millikart.pbl.provider.StubAcquirerConfig;
 import az.millikart.pbl.repository.PaymentLinkRepository;
+import az.millikart.pbl.service.StatusChangeAudit;
 import az.millikart.pbl.scheduler.PaymentLinkScheduler;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
@@ -104,6 +105,9 @@ class PaymentLinkIntegrationTest {
 
     @Autowired
     private TerminalRepository terminalRepository;
+
+    @Autowired
+    private StatusChangeAudit statusChangeAudit;
 
     @Autowired
     private CredentialCipher credentialCipher;
@@ -1858,12 +1862,65 @@ class PaymentLinkIntegrationTest {
         // Сам планировщик, а не его запрос: ловит и сломанный планировщик, и сломанный запрос. Бин в тестах
         // выключен (pbl.link-expiry.enabled), поэтому метод зовётся на своём экземпляре в транзакции, как у прокси.
         new TransactionTemplate(transactionManager).executeWithoutResult(status ->
-                new PaymentLinkScheduler(paymentLinkRepository).cleanupExpiredLinksAndSessions());
+                new PaymentLinkScheduler(paymentLinkRepository, statusChangeAudit).cleanupExpiredLinksAndSessions());
 
         Assertions.assertEquals(PaymentLinkStatus.EXPIRED,
                 paymentLinkRepository.findById(overdue.getId()).orElseThrow().getStatus());
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE,
                 paymentLinkRepository.findById(live.getId()).orElseThrow().getStatus());
+    }
+
+    // Журнал аудита, этап 2: каждая ссылка, переведённая планировщиком в EXPIRED, — своя запись STATUS_CHANGE от
+    // system с traceId прогона; живая ссылка записи не получает.
+    @Test
+    void expiredLinks_areJournaledOneByOne_bySystem() {
+        PaymentLink overdue = linkFixture(UsageType.SINGLE, null, Instant.now().minus(Duration.ofMinutes(1)));
+        PaymentLink live = linkFixture(UsageType.SINGLE, null, Instant.now().plus(DEFAULT_TTL));
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                new PaymentLinkScheduler(paymentLinkRepository, statusChangeAudit).cleanupExpiredLinksAndSessions());
+
+        List<Map<String, Object>> records = jdbcTemplate.queryForList(
+                "SELECT performed_by, company_id, details, trace_id FROM audit_logs WHERE entity_type = 'PAYMENT_LINK' "
+                        + "AND entity_id = ? AND action = 'STATUS_CHANGE'", overdue.getId().toString());
+        Assertions.assertEquals(1, records.size(), records.toString());
+        Assertions.assertEquals("system", records.getFirst().get("performed_by"));
+        Assertions.assertEquals("test-company", records.getFirst().get("company_id"));
+        Assertions.assertEquals("Status ACTIVE -> EXPIRED: the expiry time has passed", records.getFirst().get("details"));
+        Assertions.assertTrue(String.valueOf(records.getFirst().get("trace_id")).startsWith("link-expiry-"),
+                records.toString());
+        Assertions.assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE entity_id = ?", Integer.class, live.getId().toString()));
+    }
+
+    // Журнал аудита, этап 2: смена статуса по ответу эквайера — запись STATUS_CHANGE под компанией терминала;
+    // исполнитель — вошедший, нажавший «Проверить статус», traceId — его запроса. Одноразовая ссылка, закрытая
+    // оплатой, — своя запись. Повторный опрос без перемены записей не добавляет.
+    @Test
+    void aStatusChangeFromTheAcquirer_isJournaledUnderWhoeverAskedForIt() throws Exception {
+        Transaction pending = createTransaction(TERMINAL_ID, "TX-JOURNAL", TransactionStatus.PENDING);
+        doReturn(Map.of("status", "FullyPaid")).when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken)
+                        .header("X-Trace-Id", "trace-status-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("SUCCESS")));
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken))
+                .andExpect(status().isOk());
+
+        List<Map<String, Object>> records = jdbcTemplate.queryForList(
+                "SELECT performed_by, company_id, details, trace_id FROM audit_logs WHERE entity_type = 'TRANSACTION' "
+                        + "AND entity_id = ? AND action = 'STATUS_CHANGE'", pending.getId().toString());
+        Assertions.assertEquals(1, records.size(), records.toString());
+        Map<String, Object> record = records.getFirst();
+        Assertions.assertEquals("head-user@test.com", record.get("performed_by"));
+        Assertions.assertEquals("test-company", record.get("company_id"));
+        Assertions.assertEquals("trace-status-1", record.get("trace_id"));
+        Assertions.assertEquals("Status PENDING -> SUCCESS: acquirer reports \"FullyPaid\" (providerOrderId ORD-TX-JOURNAL)",
+                record.get("details"));
+        Assertions.assertEquals("Status ACTIVE -> COMPLETED: payment limit reached by transaction " + pending.getId(),
+                jdbcTemplate.queryForObject("SELECT details FROM audit_logs WHERE entity_type = 'PAYMENT_LINK' "
+                        + "AND entity_id = ? AND action = 'STATUS_CHANGE'", String.class, pending.getLink().getId().toString()));
     }
 
     // Истечение поднимает версию: ссылка, прочитанная до него, при сохранении получает конфликт, а не
@@ -1874,7 +1931,7 @@ class PaymentLinkIntegrationTest {
         PaymentLink stale = paymentLinkRepository.findById(overdue.getId()).orElseThrow();
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status ->
-                new PaymentLinkScheduler(paymentLinkRepository).cleanupExpiredLinksAndSessions());
+                new PaymentLinkScheduler(paymentLinkRepository, statusChangeAudit).cleanupExpiredLinksAndSessions());
 
         stale.setDescription("Edited from a copy read before the expiry");
         Assertions.assertThrows(OptimisticLockingFailureException.class, () -> paymentLinkRepository.save(stale));

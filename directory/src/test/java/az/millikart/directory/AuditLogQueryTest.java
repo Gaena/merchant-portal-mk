@@ -430,6 +430,25 @@ public class AuditLogQueryTest {
                 .andExpect(jsonPath("$.totalElements", Matchers.is(0)));
     }
 
+    // Этап 2: запись несёт traceId запроса — из заголовка X-Trace-Id или выданный фильтром, — ответ его отдаёт, а
+    // общий поиск находит запись по нему: от записи журнала — к строкам логов сервиса и обратно.
+    @Test
+    public void aRecord_carriesTheTraceIdOfItsRequest_andSearchFindsIt() throws Exception {
+        String employeeToken = "Bearer " + jwtProvider.generateToken("777", "clerk@comp1.com", "COMPANY_EMPLOYEE", "comp-01");
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .header("X-Trace-Id", "trace-journal-42")
+                        .header(HttpHeaders.AUTHORIZATION, employeeToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/v1/audit-logs")
+                        .param("search", "trace-journal-42")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", Matchers.is(1)))
+                .andExpect(jsonPath("$.content[0].action", Matchers.is("LIST")))
+                .andExpect(jsonPath("$.content[0].traceId", Matchers.is("trace-journal-42")));
+    }
+
     // Компанию выбирают администратор и аудитор. Руководителю чужой companyId ничего не открывает: скоуп —
     // его компания, параметр не применяется.
     @Test

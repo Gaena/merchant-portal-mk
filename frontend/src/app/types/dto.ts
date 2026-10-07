@@ -112,6 +112,8 @@ export interface AuditLogDto {
   details?: string;
   clientIp?: string | null;
   outcome?: 'SUCCESS' | 'DENIED' | 'UNRESOLVED' | 'DECLINED';
+  /** traceId запроса или прогона планировщика — по нему находятся строки логов сервиса; у старых записей нет. */
+  traceId?: string | null;
   createdAt?: string;
 }
 

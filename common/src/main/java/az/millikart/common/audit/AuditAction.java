@@ -25,11 +25,14 @@ public final class AuditAction {
     public static final String CANCEL = "CANCEL";
     // Неизвестный исход денежной операции разрешён администратором после сверки с провайдером (Р-123).
     public static final String RESOLVE = "RESOLVE";
+    // Статус платежа или ссылки сменился без отдельного действия: ответ эквайера, истечение срока, исчерпанный
+    // лимит. Исполнитель — кто запустил опрос, иначе system (журнал аудита, этап 2).
+    public static final String STATUS_CHANGE = "STATUS_CHANGE";
 
     private static final Set<String> KNOWN = Set.of(
             CREATE, READ, UPDATE, DELETE, LIST, BLOCK, UNBLOCK,
             LOGIN, LOGOUT, LOCKOUT, RATE_LIMIT, TOKEN_REUSE, PASSWORD_CHANGE,
-            CAPTURE, REFUND, CANCEL, RESOLVE);
+            CAPTURE, REFUND, CANCEL, RESOLVE, STATUS_CHANGE);
 
     private AuditAction() {
     }
