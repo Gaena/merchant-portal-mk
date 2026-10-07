@@ -25,6 +25,8 @@ export interface TerminalDto {
   companyId: string;
   /** Бэкенд присылает всегда; необязательное намеренно — без поля терминал не прячется (`isTerminalActive`). */
   status?: TerminalStatus;
+  /** Разрешены ли DMS-ссылки (Р-132); меняет только `SYSTEM_ADMIN`. */
+  dmsAllowed?: boolean;
   createdAt?: string;
 }
 
@@ -40,6 +42,8 @@ export interface TerminalOptionDto {
   status?: TerminalStatus;
   /** Компания терминала: по ней администратор выбирает терминалы сотрудника (Р-131). */
   companyId?: string | null;
+  /** Разрешены ли DMS-ссылки (Р-132): без них форма ссылки гасит DMS. */
+  dmsAllowed?: boolean;
 }
 
 // Только явно заблокированный: без поля `status` (старый бэкенд) форма ссылки осталась бы пустой
@@ -94,6 +98,8 @@ export interface UserDto {
   passwordChangeRequired?: boolean;
   /** Терминалы сотрудника (Р-131): он видит только их; у остальных ролей — пусто. */
   terminalIds?: number[];
+  /** Может ли создавать DMS-ссылки (Р-132); у ролей вне компании всегда `true`. */
+  dmsLinksAllowed?: boolean;
 }
 
 export interface AuditLogDto {

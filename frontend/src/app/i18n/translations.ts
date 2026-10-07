@@ -211,6 +211,8 @@ export interface TranslationDictionary {
     createFailed: string;
     smsHint: string;
     dmsHint: string;
+    dmsForbiddenUser: string;
+    dmsForbiddenTerminal: string;
     maxUsesHint: string;
     descriptionHint: string;
     customerSection: string;
@@ -514,6 +516,11 @@ export interface TranslationDictionary {
     /** Пояснение к выбору компании в формах; виден только тем, кто выбирает (SYSTEM_ADMIN). */
     companyHint: string;
     nameFromProvider: string;
+    dmsColumn: string;
+    dmsAllowed: string;
+    dmsForbidden: string;
+    dmsSwitch: string;
+    dmsSwitchHint: string;
     formIncomplete: string;
     created: string;
     createFailed: string;
@@ -627,6 +634,12 @@ export interface TranslationDictionary {
     ownPasswordSignsOut: string;
     /** Свою роль и статус в этом окне не поменять: так себя легко лишить доступа. */
     selfHint: string;
+    dmsLinks: string;
+    dmsLinksAllowed: string;
+    dmsLinksForbidden: string;
+    dmsLinksSwitch: string;
+    dmsLinksHint: string;
+    noDmsLinks: string;
     updated: string;
     updateFailed: string;
     statuses: {
@@ -922,6 +935,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       createFailed: 'Could not create the payment link',
       smsHint: 'SMS: funds are charged as soon as the customer pays.',
       dmsHint: 'DMS: funds are reserved on the card; capture them from the transaction card.',
+      dmsForbiddenUser: 'You are not allowed to create DMS links. Ask the company head or the administrator.',
+      dmsForbiddenTerminal: 'DMS links are not allowed on this terminal. Ask the administrator.',
       maxUsesHint: 'The link closes after this many successful payments',
       descriptionHint: 'Shown to the customer on the payment page',
       customerSection: 'Customer',
@@ -1205,6 +1220,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       searchPlaceholder: 'Search terminals by name, ID or login...',
       companyHint: 'The company that owns the terminal',
       nameFromProvider: 'The name comes from the provider directory: rename the terminal at the provider',
+      dmsColumn: 'DMS',
+      dmsAllowed: 'Allowed',
+      dmsForbidden: 'Forbidden',
+      dmsSwitch: 'DMS links allowed',
+      dmsSwitchHint: 'Without DMS only SMS links can be created on the terminal. Existing DMS links keep working.',
       formIncomplete: 'Fill in every required field',
       created: 'Terminal registered',
       createFailed: 'Could not register the terminal',
@@ -1300,6 +1320,12 @@ export const translations: Record<Language, TranslationDictionary> = {
       passwordWillChange: 'The password will be replaced',
       ownPasswordSignsOut: 'All your sessions will end, this one too: sign in again with the new password',
       selfHint: 'You cannot change your own role or status here.',
+      dmsLinks: 'DMS links',
+      dmsLinksAllowed: 'allowed',
+      dmsLinksForbidden: 'forbidden',
+      dmsLinksSwitch: 'May create DMS links',
+      dmsLinksHint: 'Without it the user creates SMS links only. A change takes effect within 15 minutes.',
+      noDmsLinks: 'No DMS',
       updated: 'User updated',
       updateFailed: 'Could not update the user',
       statuses: { ACTIVE: 'Active', BLOCKED: 'Blocked' },
@@ -1555,6 +1581,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       createFailed: 'Ödəniş linkini yaratmaq mümkün olmadı',
       smsHint: 'SMS: vəsait müştəri ödəyən kimi tutulur.',
       dmsHint: 'DMS: vəsait kartda bloklanır; silinməsi əməliyyat kartından edilir.',
+      dmsForbiddenUser: 'DMS linkləri yaratmağa icazəniz yoxdur. Şirkət rəhbərinə və ya administratora müraciət edin.',
+      dmsForbiddenTerminal: 'Bu terminalda DMS linkləri qadağandır. Administratora müraciət edin.',
       maxUsesHint: 'Bu qədər uğurlu ödənişdən sonra link bağlanır',
       descriptionHint: 'Ödəniş səhifəsində müştəriyə göstərilir',
       customerSection: 'Müştəri',
@@ -1838,6 +1866,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       searchPlaceholder: 'Ad, ID və ya login üzrə axtarış...',
       companyHint: 'Terminalın aid olduğu şirkət',
       nameFromProvider: 'Ad provayderin kataloqundan gəlir: terminalın adını provayderdə dəyişin',
+      dmsColumn: 'DMS',
+      dmsAllowed: 'İcazəlidir',
+      dmsForbidden: 'Qadağandır',
+      dmsSwitch: 'DMS linklərinə icazə verilir',
+      dmsSwitchHint: 'DMS olmadan terminalda yalnız SMS linkləri yaradılır. Mövcud DMS linkləri işləməyə davam edir.',
       formIncomplete: 'Bütün məcburi sahələri doldurun',
       created: 'Terminal qeydiyyatdan keçdi',
       createFailed: 'Terminalı qeydiyyatdan keçirmək mümkün olmadı',
@@ -1933,6 +1966,12 @@ export const translations: Record<Language, TranslationDictionary> = {
       passwordWillChange: 'Parol dəyişdiriləcək',
       ownPasswordSignsOut: 'Bütün sessiyalarınız, bu da daxil olmaqla, bitəcək: yeni parolla yenidən daxil olun',
       selfHint: 'Öz rolunuzu və statusunuzu burada dəyişə bilməzsiniz.',
+      dmsLinks: 'DMS linkləri',
+      dmsLinksAllowed: 'icazəlidir',
+      dmsLinksForbidden: 'qadağandır',
+      dmsLinksSwitch: 'DMS linkləri yarada bilər',
+      dmsLinksHint: 'İcazə olmadan istifadəçi yalnız SMS linkləri yaradır. Dəyişiklik 15 dəqiqə ərzində qüvvəyə minir.',
+      noDmsLinks: 'DMS yoxdur',
       updated: 'İstifadəçi yeniləndi',
       updateFailed: 'İstifadəçini yeniləmək mümkün olmadı',
       statuses: { ACTIVE: 'Aktiv', BLOCKED: 'Bloklanıb' },
@@ -2188,6 +2227,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       createFailed: 'Не удалось создать ссылку на оплату',
       smsHint: 'SMS: деньги списываются сразу, как только клиент платит.',
       dmsHint: 'DMS: деньги резервируются на карте; списание — с карточки операции.',
+      dmsForbiddenUser: 'Вам не разрешено создавать DMS-ссылки. Обратитесь к руководителю компании или администратору.',
+      dmsForbiddenTerminal: 'На этом терминале DMS-ссылки запрещены. Обратитесь к администратору.',
       maxUsesHint: 'После этого числа успешных платежей ссылка закрывается',
       descriptionHint: 'Показывается клиенту на странице оплаты',
       customerSection: 'Клиент',
@@ -2471,6 +2512,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       searchPlaceholder: 'Поиск по названию, ID или логину...',
       companyHint: 'Компания, которой принадлежит терминал',
       nameFromProvider: 'Название приходит из справочника провайдера: переименуйте терминал у провайдера',
+      dmsColumn: 'DMS',
+      dmsAllowed: 'Разрешён',
+      dmsForbidden: 'Запрещён',
+      dmsSwitch: 'DMS-ссылки разрешены',
+      dmsSwitchHint: 'Без DMS на терминале создаются только SMS-ссылки. Уже созданные DMS-ссылки продолжают работать.',
       formIncomplete: 'Заполните все обязательные поля',
       created: 'Терминал заведён',
       createFailed: 'Не удалось завести терминал',
@@ -2566,6 +2612,12 @@ export const translations: Record<Language, TranslationDictionary> = {
       passwordWillChange: 'Пароль будет заменён',
       ownPasswordSignsOut: 'Все ваши сессии, и эта тоже, завершатся: войдите снова с новым паролем',
       selfHint: 'Свою роль и статус здесь поменять нельзя.',
+      dmsLinks: 'DMS-ссылки',
+      dmsLinksAllowed: 'разрешены',
+      dmsLinksForbidden: 'запрещены',
+      dmsLinksSwitch: 'Может создавать DMS-ссылки',
+      dmsLinksHint: 'Без права пользователь создаёт только SMS-ссылки. Изменение действует в течение 15 минут.',
+      noDmsLinks: 'Без DMS',
       updated: 'Пользователь обновлён',
       updateFailed: 'Не удалось обновить пользователя',
       statuses: { ACTIVE: 'Активен', BLOCKED: 'Заблокирован' },

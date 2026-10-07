@@ -46,6 +46,11 @@ public class Terminal {
     @Builder.Default
     private TerminalStatus status = TerminalStatus.ACTIVE;
 
+    // Разрешены ли DMS-ссылки (Р-132). Пишет directory; запрет касается только создания новых ссылок.
+    @Column(name = "dms_allowed", nullable = false)
+    @Builder.Default
+    private boolean dmsAllowed = true;
+
     public boolean isBlocked() {
         return status == TerminalStatus.BLOCKED;
     }

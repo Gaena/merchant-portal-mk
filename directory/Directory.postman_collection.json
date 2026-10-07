@@ -239,7 +239,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"companyId\": \"comp-01\",\n  \"merchantRid\": \"E1120020\"\n}",
+							"raw": "{\n  \"companyId\": \"comp-01\",\n  \"merchantRid\": \"E1120020\",\n  \"dmsAllowed\": true\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -257,7 +257,7 @@
 								"terminals"
 							]
 						},
-						"description": "Creates a terminal (201) from the provider directory, SYSTEM_ADMIN only (Р-93): name, login (stored as TerminalSys/<login>) and terminal number (terminalRid) come from the directory row of merchantRid; a terminal has no password. The terminal id is issued by the database (Р-81) and saved to `terminalId`. The merchant must be active at the provider and linked to the company multimerchant login (Р-96) — pick one from Provider Terminals for a Company."
+						"description": "Creates a terminal (201) from the provider directory, SYSTEM_ADMIN only (Р-93): name, login (stored as TerminalSys/<login>) and terminal number (terminalRid) come from the directory row of merchantRid; a terminal has no password. The terminal id is issued by the database (Р-81) and saved to `terminalId`. The merchant must be active at the provider and linked to the company multimerchant login (Р-96) — pick one from Provider Terminals for a Company. dmsAllowed — are DMS links allowed on the terminal (Р-132), absent means true."
 					},
 					"response": []
 				},
@@ -420,7 +420,7 @@
 								"{{terminalId}}"
 							]
 						},
-						"description": "Updates the terminal name, company or status: SYSTEM_ADMIN, or COMPANY_HEAD / COMPANY_MANAGER of the terminal's company (COMPANY_EMPLOYEE and AUDITOR — 403). Every field is optional. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93). The name of a terminal linked to the provider directory (providerLinked: true) is the provider's (Р-67): a different name is 400 — this sample renames only a terminal registered without the directory. Only SYSTEM_ADMIN moves a terminal to another company, and only to one whose multimerchant login has an active link with the terminal's provider merchant, as on creation (Р-96, Р-97); otherwise 400, and a terminal without a provider merchant cannot be moved at all. For status see Block Terminal."
+						"description": "Updates the terminal name, company or status: SYSTEM_ADMIN, or COMPANY_HEAD / COMPANY_MANAGER of the terminal's company (COMPANY_EMPLOYEE and AUDITOR — 403). Every field is optional. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93). The name of a terminal linked to the provider directory (providerLinked: true) is the provider's (Р-67): a different name is 400 — this sample renames only a terminal registered without the directory. Only SYSTEM_ADMIN moves a terminal to another company, and only to one whose multimerchant login has an active link with the terminal's provider merchant, as on creation (Р-96, Р-97); otherwise 400, and a terminal without a provider merchant cannot be moved at all. dmsAllowed (are DMS links allowed, Р-132) — SYSTEM_ADMIN only, 403 \"Only a system administrator can allow or forbid DMS links on a terminal\" for others; existing DMS links are not affected. For status see Block Terminal."
 					},
 					"response": []
 				},

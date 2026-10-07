@@ -163,7 +163,7 @@ class InactiveAccountIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + user(CLERK).getId())
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "ACTIVE", null, null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "ACTIVE", null, null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("ACTIVE")));
 

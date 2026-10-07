@@ -15,7 +15,7 @@
 
 ## 2. База данных
 
-Таблицы `auth` — `users`, `refresh_tokens`, `password_history`, `user_terminals` (терминалы сотрудника, Р-131); схема — `../guides/application_description.md`
+Таблицы `auth` — `users` (в том числе право на DMS-ссылки, Р-132), `refresh_tokens`, `password_history`, `user_terminals` (терминалы сотрудника, Р-131); схема — `../guides/application_description.md`
 §4 (ER — §4.1, миграции — §4.3). Таблицу `companies` `auth` создаёт, если её ещё нет, и читает: существование
 компании при создании и переводе пользователя, название — для поиска в списке пользователей. Таблицу
 `terminals` (directory) читает: терминал сотрудника должен принадлежать его компании. Журнал пишется
@@ -36,13 +36,16 @@
   "userId": "550e8400-e29b-41d4-a716-446655440000",
   "role": "COMPANY_HEAD",
   "companyId": "comp-01",
+  "dmsLinks": true,
   "iat": 1787011200,
   "exp": 1787012100
 }
 ```
 
 `companyId` — только у пользователя с компанией; у `SYSTEM_ADMIN` и `AUDITOR` без компании этого claim'а нет.
-Роль и компания берутся из строки пользователя при каждом выпуске токена — на входе и на `/refresh`.
+`dmsLinks` — право создавать DMS-ссылки (Р-132, `users.dms_links_allowed`): по нему `pbl` отказывает в DMS-ссылке
+(`pay-by-link.md`); токен без claim'а права не даёт. Роль, компания и право берутся из строки пользователя при
+каждом выпуске токена — на входе и на `/refresh`.
 
 ---
 
@@ -225,8 +228,11 @@ Refresh и отзыв одной цепочки могут идти одновр
     -   *Тело*:
         ```json
         { "username": "manager@comp01.com", "password": "<12+ символов: заглавная, строчная, цифра, спецсимвол>",
-          "fullName": "…", "role": "COMPANY_EMPLOYEE", "companyId": "comp-01", "terminalIds": [1001, 1002] }
+          "fullName": "…", "role": "COMPANY_EMPLOYEE", "companyId": "comp-01", "terminalIds": [1001, 1002],
+          "dmsLinksAllowed": false }
         ```
+        **`dmsLinksAllowed`** (Р-132) — может ли создавать DMS-ссылки; не передан — `true`. Запретить можно только
+        ролям компании, у `SYSTEM_ADMIN` и `AUDITOR` право всегда `true`.
         **`terminalIds`** (Р-131) — терминалы, которые видит сотрудник: `COMPANY_EMPLOYEE` обязателен хотя бы
         один, и все — его компании (заблокированные тоже); остальным ролям список не передаётся — руководитель и
         менеджер видят все терминалы компании, администратор и аудитор — все компании. Повторы схлопываются.
@@ -253,9 +259,10 @@ Refresh и отзыв одной цепочки могут идти одновр
         | `400` | `Terminals [<id>, …] do not belong to company <id>` | терминала нет или он чужой компании | — |
         | `400` | `Terminals are assigned to employees only` | `terminalIds` у роли не `COMPANY_EMPLOYEE` | — |
         | `400` | `At most 500 terminals can be assigned`, `Terminal ID must not be null` | не прошла валидация списка | — |
+        | `400` | `DMS links can be forbidden to company roles only` | `dmsLinksAllowed: false` у `SYSTEM_ADMIN` или `AUDITOR` (Р-132) | — |
         | `409` | `The request conflicts with existing data` | одновременный запрос успел занять тот же ключ между проверкой и записью; повтор получит отказ выше | — |
 
-    -   *Журнал*: `USER` / `CREATE` `Created user <логин> with role <роль> in company <id>[ with terminals [<id>, …]]`.
+    -   *Журнал*: `USER` / `CREATE` `Created user <логин> with role <роль> in company <id>[ with terminals [<id>, …]][, DMS links forbidden]`.
 2.  **Список пользователей** (`GET /api/v1/users`) — постранично (P2-1).
     -   *Админ* видит всех; *руководитель* — только пользователей своей компании, руководитель без компании —
         пустую страницу. Остальные роли — `403 Access denied`, без записи в журнал.
@@ -278,7 +285,8 @@ Refresh и отзыв одной цепочки могут идти одновр
             {
               "id": "…", "username": "head@comp01.com", "fullName": "…",
               "role": "COMPANY_HEAD", "companyId": "comp-01",
-              "status": "ACTIVE", "createdAt": "…", "passwordChangeRequired": false, "terminalIds": []
+              "status": "ACTIVE", "createdAt": "…", "passwordChangeRequired": false, "dmsLinksAllowed": true,
+              "terminalIds": []
             }
           ],
           "totalElements": 1, "totalPages": 1, "size": 20, "number": 0
@@ -296,7 +304,7 @@ Refresh и отзыв одной цепочки могут идти одновр
         пробелов `password` — тоже «не менять», политикой паролей он не проверяется:
         ```json
         { "fullName": "…", "role": "COMPANY_MANAGER", "password": "…", "status": "BLOCKED", "companyId": "comp-02",
-          "terminalIds": [1001] }
+          "terminalIds": [1001], "dmsLinksAllowed": false }
         ```
     -   *Кто кого*: *админ* — любого; *руководитель* — пользователей своей компании с ролями
         `COMPANY_MANAGER`, `COMPANY_EMPLOYEE` и себя; выдаёт только эти две роли (Р-85). Роль, совпадающая с
@@ -312,6 +320,9 @@ Refresh и отзыв одной цепочки могут идти одновр
         заблокировать, не раздавая ему терминалы. Стать сотрудником — только с терминалами в том же запросе;
         перевод сотрудника в другую компанию — только с её терминалами (прежние ей не принадлежат). Ставший
         не сотрудником назначения теряет. Отказ откатывает весь запрос.
+    -   *`dmsLinksAllowed`* (Р-132) — право создавать DMS-ссылки. Меняет *админ* — любому, *руководитель* — тем, кого
+        правит, но не себе, как роль и статус. Запретить можно только ролям компании; ставший `SYSTEM_ADMIN` или
+        `AUDITOR` право получает обратно. Действует со следующего токена пользователя, как новая роль (до 15 минут).
     -   *Роль компании без компании запрещена*: если запрос меняет роль или компанию и в итоге у
         `COMPANY_HEAD`, `COMPANY_MANAGER` или `COMPANY_EMPLOYEE` нет `companyId` —
         `400 Role … requires a company`, и откатывается весь запрос. Запросы, которые роль и компанию
@@ -324,7 +335,7 @@ Refresh и отзыв одной цепочки могут идти одновр
         не повторяет ни один из четырёх последних; чужой с историей не сверяется — отказ сказал бы
         администратору, какие пароли пользователь недавно использовал. Прежний пароль в обоих случаях уходит
         в `password_history`.
-    -   *Сессии*: новая роль и компания вступают в силу при следующем `/refresh` — он выпускает токен по текущей
+    -   *Сессии*: новая роль, компания и право на DMS-ссылки вступают в силу при следующем `/refresh` — он выпускает токен по текущей
         строке пользователя; до того живёт выданный access-токен (до 15 минут).
     -   *Ответ `200`*: `UserResponse`.
     -   *Отказы* — в порядке проверки:
@@ -343,9 +354,11 @@ Refresh и отзыв одной цепочки могут идти одновр
         | `400` | `Company not found` | админ переводит в несуществующую или удалённую компанию | — |
         | `400` | `Role <ROLE> requires a company` | итог — роль компании без компании | — |
         | `400` | `An employee needs at least one terminal`, `Terminals [<id>, …] do not belong to company <id>`, `Terminals are assigned to employees only` | итог по терминалам (Р-131) | — |
+        | `403` | `Cannot change your own DMS link permission` | руководитель меняет право на DMS-ссылки себе (Р-132) | `USER` / `UPDATE` / `DENIED` |
+        | `400` | `DMS links can be forbidden to company roles only` | `dmsLinksAllowed: false`, а итоговая роль — `SYSTEM_ADMIN` или `AUDITOR` | — |
 
     -   *Журнал*: одна запись `UPDATE` с перечнем изменений (`role A -> B`, `companyId A -> B`, `status …`,
-        `terminals [1001, 1002] -> [1002]`, `fullName`, `password` — фактом); смена пароля и статуса — ещё и свои `PASSWORD_CHANGE`,
+        `terminals [1001, 1002] -> [1002]`, `dmsLinksAllowed true -> false`, `fullName`, `password` — фактом); смена пароля и статуса — ещё и свои `PASSWORD_CHANGE`,
         `BLOCK`/`UNBLOCK`.
 5.  **Удалить пользователя** (`DELETE /api/v1/users/{id}`) — мягкое удаление: `status = DELETED`.
     -   *Кто*: как у правки — *админ* любого, *руководитель* себя и `COMPANY_MANAGER`/`COMPANY_EMPLOYEE` своей

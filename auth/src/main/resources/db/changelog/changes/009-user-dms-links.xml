@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Р-132: право пользователя создавать DMS-ссылки. По умолчанию разрешено — у заведённых до Р-132 тоже:
+         после выкладки ничего не меняется, запрещают точечно. Уходит в access-токен claim'ом dmsLinks. -->
+    <changeSet id="9-auth-users-dms-links-allowed" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="users" columnName="dms_links_allowed"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="users">
+            <column name="dms_links_allowed" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

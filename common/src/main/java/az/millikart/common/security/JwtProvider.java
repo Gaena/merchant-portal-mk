@@ -37,6 +37,9 @@ public class JwtProvider {
             The key is read from the JWT_SECRET environment variable (property pbl.security.jwt.secret).
             Never commit it: put it in the environment only, see .env.example.""";
 
+    // Право пользователя создавать DMS-ссылки (Р-132); разбирает JwtAuthFilter.
+    public static final String DMS_LINKS_CLAIM = "dmsLinks";
+
     private final Key signingKey;
     // Наружу — чтобы expiresIn ответа входа шёл из того же значения, что и подпись.
     @Getter
@@ -80,7 +83,13 @@ public class JwtProvider {
         }
     }
 
+    // Токен без права создавать DMS-ссылки (Р-132): так его выдают тесты, которым право не нужно.
     public String generateToken(String userId, String username, String role, String companyId) {
+        return generateToken(userId, username, role, companyId, false);
+    }
+
+    public String generateToken(String userId, String username, String role, String companyId,
+                                boolean dmsLinksAllowed) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expirationMs);
 
@@ -90,6 +99,7 @@ public class JwtProvider {
         if (companyId != null) {
             claims.put("companyId", companyId);
         }
+        claims.put(DMS_LINKS_CLAIM, dmsLinksAllowed);
 
         return Jwts.builder()
                 .setClaims(claims)

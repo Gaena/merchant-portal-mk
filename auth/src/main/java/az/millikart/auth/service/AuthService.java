@@ -358,7 +358,8 @@ public class AuthService {
                 user.getId().toString(),
                 user.getUsername(),
                 user.getRole(),
-                user.getCompanyId()
+                user.getCompanyId(),
+                user.isDmsLinksAllowed()
         );
         RefreshTokenService.IssuedRefreshToken refresh = refreshTokenService.issue(user.getId(), familyId, now);
         return new LoginResponse(

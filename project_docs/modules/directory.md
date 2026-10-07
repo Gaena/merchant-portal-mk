@@ -24,7 +24,8 @@
 ## 2. База данных
 
 ### 2.1. Таблицы `companies` и `terminals`
-Схема обеих таблиц — включая креды компании к провайдеру (Р-93) и номера терминала (Р-81, Р-96) —
+Схема обеих таблиц — включая креды компании к провайдеру (Р-93), номера терминала (Р-81, Р-96) и разрешение
+DMS-ссылок на терминале (Р-132) —
 `../guides/application_description.md` §4.1, миграции — §4.3.
 
 ---
@@ -150,7 +151,7 @@
 (`user_terminals`, Р-131; без назначений — пустые списки), `SYSTEM_ADMIN` и `AUDITOR` — все.
 
 `TerminalResponse` — `id`, `name`, `login`, `terminalRid`, `providerLinked` (связан со справочником провайдера: у
-терминала есть `merchant_rid`, название — провайдера), `companyId`, `status`, `createdBy`, `createdAt`,
+терминала есть `merchant_rid`, название — провайдера), `companyId`, `status`, `dmsAllowed`, `createdBy`, `createdAt`,
 `updatedBy`, `updatedAt`:
 
 -   `id` — внутренний номер терминала в портале из последовательности `terminals_id_seq` (Р-81), а не номер у
@@ -160,13 +161,16 @@
     (ниже), находя терминал по `merchant_rid`;
 -   `terminalRid` — номер терминала у провайдера (Р-96): с ним `pbl` создаёт заказ, им терминал подписан на
     экранах. Пусто у терминалов, заведённых до Р-96 без справочника: платежи по ним — `400`;
--   `status` — `ACTIVE` или `BLOCKED`; `createdAt`/`updatedAt` старых записей без дат — `null`.
+-   `status` — `ACTIVE` или `BLOCKED`; `createdAt`/`updatedAt` старых записей без дат — `null`;
+-   `dmsAllowed` — разрешены ли на терминале DMS-ссылки (Р-132): `pbl` отказывает в DMS-ссылке на терминале с
+    `false` (`pay-by-link.md`). Меняет только `SYSTEM_ADMIN`; уже созданные DMS-ссылки запрет не трогает.
 
 Мерчант провайдера (`merchant_rid`, Р-69) в ответ не входит.
 
 -   `POST /api/v1/terminals` — Создать терминал.  
     *Доступ*: только `SYSTEM_ADMIN`.  
-    *Запрос*: `{"companyId": "comp-01", "merchantRid": "E1120020"}` — оба поля обязательны. Терминал
+    *Запрос*: `{"companyId": "comp-01", "merchantRid": "E1120020", "dmsAllowed": false}` — первые два поля
+    обязательны, `dmsAllowed` не передан — `true` (Р-132). Терминал
     выбирается из справочника провайдера `provider_terminals` (`ecom.md` §3): `name`, `login` и `terminalRid`
     берутся из строки с этим `merchantRid`, пароля у терминала нет — к провайдеру ходят с кредами компании.
     **Мерчант должен быть связан с логином компании** (Р-96): активная связь в слепке `provider_logins`
@@ -187,7 +191,7 @@
     | `400` | `Provider terminal <rid> is not active at the provider` | строка справочника неактивна | — |
     | `400` | `Provider terminal <rid> does not belong to the multimerchant login of company <id>` | мерчант не связан с логином компании | — |
 
-    *Журнал*: `TERMINAL` / `CREATE` `Created terminal: <name> for company <id>`.
+    *Журнал*: `TERMINAL` / `CREATE` `Created terminal: <name> for company <id>[, DMS links forbidden]`.
 -   `GET /api/v1/terminals/provider-terminals?companyId=…` — терминалы провайдера для формы заведения (Р-96).  
     *Доступ*: только `SYSTEM_ADMIN`; остальным — `403 Access denied` с записью `TERMINAL` / `LIST` / `DENIED`.  
     *Ответ*: `[{"rid": "223456789054323", "title": "BazarStore PortBaku", "login": "BS00003",
@@ -209,8 +213,9 @@
     *Ответ*: голый массив без пагинации, по `name`, затем `id`:
     ```json
     [ {"id": 1001, "name": "Main Terminal", "login": "TerminalSys/BS00003", "terminalRid": "BS00003", "status": "ACTIVE",
-       "companyId": "comp-01"} ]
+       "companyId": "comp-01", "dmsAllowed": true} ]
     ```
+    `dmsAllowed` — по нему форма ссылки гасит DMS (Р-132).
     Отдаёт и `BLOCKED`: подпись старых платежей по заблокированному терминалу должна остаться, фильтрует потребитель (Р-45).
 -   `GET /api/v1/terminals/{id}` — Детали терминала.  
     *Доступ*: `SYSTEM_ADMIN`, `AUDITOR`, руководитель и менеджер компании терминала, `COMPANY_EMPLOYEE` — только
@@ -222,7 +227,8 @@
 -   `PATCH /api/v1/terminals/{id}` — Редактировать терминал **и его статус**.  
     *Доступ*: `SYSTEM_ADMIN`, `COMPANY_HEAD`/`COMPANY_MANAGER` (своей компании).  
     *Запрос* (все поля необязательны, пустое — «не менять»): `{"name": "...", "companyId": "...", "status":
-    "ACTIVE" | "BLOCKED"}`. Логин не правится — его меняет только сверка со справочником; `login` и
+    "ACTIVE" | "BLOCKED", "dmsAllowed": false}`. `dmsAllowed` меняет **только `SYSTEM_ADMIN`** (Р-132): это
+    возможность терминала у провайдера, а не настройка компании; то же значение — не изменение. Логин не правится — его меняет только сверка со справочником; `login` и
     `password` в теле игнорируются. Название терминала из справочника (`providerLinked`) — тоже провайдера
     (Р-67, Р-116): другое значение `name` — 400; переименовать можно только терминал без справочника.  
     *Компания*: переносит терминал в другую компанию **только `SYSTEM_ADMIN`** — для руководителя и менеджера
@@ -245,13 +251,14 @@
     | `400` | `Terminal <id> takes its name from the provider directory; rename it at the provider` | новое `name` у терминала из справочника (после проверки прав) | — |
     | `403` | `Access denied: AUDITOR is read-only` / `Access denied` | аудитор / роль без права записи или чужой терминал | `TERMINAL` / `UPDATE` / `DENIED` |
     | `403` | `Access denied` | не администратор переносит терминал в другую компанию | `TERMINAL` / `UPDATE` / `DENIED` |
+    | `403` | `Only a system administrator can allow or forbid DMS links on a terminal` | не администратор меняет `dmsAllowed` (Р-132) | `TERMINAL` / `UPDATE` / `DENIED` |
     | `400` | `Company with ID '<id>' not found` | целевой компании нет или она удалена | — |
     | `400` | `Terminal <id> cannot be moved to company <id>: its provider merchant is not linked to the multimerchant login of that company` | мерчант не связан с логином целевой компании или у терминала нет `merchant_rid` | — |
     | `403` | `Terminal <id> is out of service at the provider and will be unblocked automatically once the provider brings it back` | ручное включение терминала, выключенного сверкой (`status_source = PROVIDER`, Р-66) | `TERMINAL` / `UNBLOCK` / `DENIED` |
     | `409` | `The resource was updated concurrently, please retry` | терминал изменила сверка или другая правка, пока шла эта (Р-115); ничего не сохранено | — |
 
     *Журнал*: `TERMINAL` / `UPDATE` с перечнем изменений (`Name changed from 'X' to 'Y'.`, `CompanyId changed
-    from 'X' to 'Y'.`, смена статуса); смена статуса — ещё `BLOCK` `Blocked terminal <id>, suspended N links`
+    from 'X' to 'Y'.`, `DMS links changed from allowed to forbidden.`, смена статуса); смена статуса — ещё `BLOCK` `Blocked terminal <id>, suspended N links`
     или `UNBLOCK` `Unblocked terminal <id>, resumed N links, expired M links`. В перечень попадают только
     изменившиеся поля; PATCH без изменений отвечает `200` и не пишет ничего, `updatedAt` не меняется (Р-108).
 -   `DELETE /api/v1/terminals/{id}` — нет: `405` (§3). Терминалы не удаляются, а блокируются (Р-37): на них

@@ -11,6 +11,8 @@ export interface UserProfile {
   role: Role;
   /** claim `companyId` из JWT; у `SYSTEM_ADMIN` и системного `AUDITOR` отсутствует. */
   companyId?: string;
+  /** claim `dmsLinks` (Р-132): может ли создавать DMS-ссылки. Только явное `true`; решает сервер. */
+  dmsLinksAllowed: boolean;
 }
 
 /** Ответ `/login` и `/refresh` (`auth.dto.LoginResponse`). */
@@ -198,13 +200,14 @@ export const applyLoginResponse = (data: LoginResponse, emailHint?: string): Use
   accessToken = data.token;
   writeRefreshToken(data.refreshToken);
   lastTokenAt = Date.now();
-  currentUser = { email, role, companyId };
+  currentUser = { email, role, companyId, dmsLinksAllowed: claims?.dmsLinks === true };
   notify();
   return currentUser;
 };
 
-// Payload без проверки подписи — только для показа email и companyId. Решений о доступе на этих
-// claims не принимать: подпись проверяет бэкенд, роль берётся из поля `role` через `parseRole`.
+// Payload без проверки подписи — только для показа email и companyId и для подсказок формы (`dmsLinks`).
+// Решений о доступе на этих claims не принимать: подпись проверяет бэкенд, роль берётся из поля `role`
+// через `parseRole`.
 const decodeJwtClaims = (token: string): Record<string, unknown> | null => {
   try {
     const payload = token.split('.')[1];

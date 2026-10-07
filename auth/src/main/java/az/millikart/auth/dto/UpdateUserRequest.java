@@ -17,6 +17,8 @@ public record UpdateUserRequest(
         String companyId,
         // Р-131: null — не менять, список — заменить целиком. Сотруднику — хотя бы один терминал его компании.
         @Size(max = 500, message = "At most 500 terminals can be assigned")
-        List<@NotNull(message = "Terminal ID must not be null") Integer> terminalIds
+        List<@NotNull(message = "Terminal ID must not be null") Integer> terminalIds,
+        // Р-132: null — не менять. Запрет — только ролям компании; руководитель себе не меняет.
+        Boolean dmsLinksAllowed
 ) {
 }

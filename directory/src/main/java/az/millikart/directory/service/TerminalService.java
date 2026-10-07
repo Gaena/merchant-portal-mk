@@ -136,6 +136,7 @@ public class TerminalService {
                 .terminalRid(row.terminalRid())
                 .companyId(request.companyId())
                 .merchantRid(merchantRid)
+                .dmsAllowed(request.dmsAllowed() == null || request.dmsAllowed())
                 .createdBy(actorUsername)
                 .updatedBy(actorUsername)
                 .build();
@@ -149,6 +150,7 @@ public class TerminalService {
                 actorUsername,
                 terminal.getCompanyId(),
                 "Created terminal: " + terminal.getName() + " for company " + terminal.getCompanyId()
+                        + (terminal.isDmsAllowed() ? "" : ", DMS links forbidden")
         ));
 
         return mapToResponse(terminal);
@@ -192,7 +194,7 @@ public class TerminalService {
 
         return terminals.stream()
                 .map(t -> new TerminalOptionResponse(t.getId(), t.getName(), t.getLogin(), t.getTerminalRid(), t.getStatus(),
-                        t.getCompanyId()))
+                        t.getCompanyId(), t.isDmsAllowed()))
                 .collect(Collectors.toList());
     }
 
@@ -336,6 +338,20 @@ public class TerminalService {
             }
         }
 
+        // DMS разрешает и запрещает только SYSTEM_ADMIN (Р-132): это возможность терминала у провайдера, а не
+        // настройка компании. Уже созданные DMS-ссылки запрет не трогает.
+        if (request.dmsAllowed() != null && request.dmsAllowed() != terminal.isDmsAllowed()) {
+            if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN) {
+                auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(id), AuditAction.UPDATE, actorUsername,
+                        UserPrincipal.getCompanyId(principal), "Denied: role " + UserPrincipal.getRawRole(principal)
+                                + " attempted to change DMS links of terminal " + id);
+                throw new InvalidStateException("Only a system administrator can allow or forbid DMS links on a terminal");
+            }
+            changes.append("DMS links changed from ").append(terminal.isDmsAllowed() ? "allowed" : "forbidden")
+                    .append(" to ").append(request.dmsAllowed() ? "allowed" : "forbidden").append(". ");
+            terminal.setDmsAllowed(request.dmsAllowed());
+        }
+
         // Статус — последним: только его правка трогает ссылки. Тот же статус — не изменение, иначе
         // PATCH с объектом целиком переприостанавливал бы ссылки на каждом сохранении.
         String statusChange = null;
@@ -465,6 +481,7 @@ public class TerminalService {
                 terminal.getMerchantRid() != null,
                 terminal.getCompanyId(),
                 terminal.getStatus(),
+                terminal.isDmsAllowed(),
                 terminal.getCreatedBy(),
                 terminal.getCreatedAt(),
                 terminal.getUpdatedBy(),

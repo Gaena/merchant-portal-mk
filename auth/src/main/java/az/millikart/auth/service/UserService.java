@@ -125,6 +125,12 @@ public class UserService {
             throw new BusinessException(TERMINALS_FOR_EMPLOYEES_ONLY);
         }
 
+        // Р-132: запрещают DMS только ролям компании — у остальных право ничего не значит.
+        boolean dmsLinksAllowed = request.dmsLinksAllowed() == null || request.dmsLinksAllowed();
+        if (!dmsLinksAllowed && !COMPANY_ROLES.contains(Role.fromValue(request.role()).orElse(null))) {
+            throw new BusinessException(DMS_FOR_COMPANY_ROLES_ONLY);
+        }
+
         User user = User.builder()
                 .username(cleanEmail)
                 .passwordHash(passwordEncoder.encode(request.password()))
@@ -134,6 +140,7 @@ public class UserService {
                 .status(STATUS_ACTIVE)
                 // Пароль задал не владелец — сменит при первом входе (PCI DSS 8.3.5, Р-100).
                 .passwordChangeRequired(true)
+                .dmsLinksAllowed(dmsLinksAllowed)
                 .build();
 
         // saveAndFlush: назначения пишутся JDBC мимо Hibernate, и строка users должна быть в базе раньше них —
@@ -147,7 +154,8 @@ public class UserService {
                 actorUsername, user.getCompanyId(),
                 "Created user " + user.getUsername() + " with role " + user.getRole()
                         + (user.getCompanyId() != null ? " in company " + user.getCompanyId() : "")
-                        + (employee ? " with terminals " + terminalIds : "")));
+                        + (employee ? " with terminals " + terminalIds : "")
+                        + (dmsLinksAllowed ? "" : ", DMS links forbidden")));
 
         log.info("User created successfully: id={}, username={}", user.getId(), user.getUsername());
         return mapToResponse(user, employee ? terminalIds : List.of());
@@ -318,6 +326,29 @@ public class UserService {
         boolean terminalsChanged = !targetTerminals.equals(currentTerminals);
         if (terminalsChanged) {
             changes.add("terminals " + currentTerminals + " -> " + targetTerminals);
+        }
+
+        // Р-132: право на DMS-ссылки. Себе руководитель его не меняет — как роль и статус; ставший ролью вне
+        // компании получает true: у него право ничего не значит. Действует со следующего токена пользователя.
+        boolean targetDmsLinks;
+        if (COMPANY_ROLES.contains(Role.fromValue(user.getRole()).orElse(null))) {
+            targetDmsLinks = request.dmsLinksAllowed() != null ? request.dmsLinksAllowed() : user.isDmsLinksAllowed();
+            if (targetDmsLinks != user.isDmsLinksAllowed() && actorRole != Role.SYSTEM_ADMIN
+                    && user.getId().toString().equals(UserPrincipal.getUserId(principal))) {
+                auditLogService.logDenied(AuditEntity.USER, id.toString(), AuditAction.UPDATE, actorUsername, actorCompanyId,
+                        "Denied: role " + UserPrincipal.getRawRole(principal)
+                                + " attempted to change its own DMS link permission");
+                throw new InvalidStateException("Cannot change your own DMS link permission");
+            }
+        } else {
+            if (Boolean.FALSE.equals(request.dmsLinksAllowed())) {
+                throw new BusinessException(DMS_FOR_COMPANY_ROLES_ONLY);
+            }
+            targetDmsLinks = true;
+        }
+        if (targetDmsLinks != user.isDmsLinksAllowed()) {
+            changes.add("dmsLinksAllowed " + user.isDmsLinksAllowed() + " -> " + targetDmsLinks);
+            user.setDmsLinksAllowed(targetDmsLinks);
         }
 
         boolean nonActiveStatusSet = false;
@@ -498,11 +529,13 @@ public class UserService {
                 user.getStatus(),
                 user.getCreatedAt(),
                 user.isPasswordChangeRequired(),
+                user.isDmsLinksAllowed(),
                 terminalIds
         );
     }
 
     private static final String TERMINALS_FOR_EMPLOYEES_ONLY = "Terminals are assigned to employees only";
+    private static final String DMS_FOR_COMPANY_ROLES_ONLY = "DMS links can be forbidden to company roles only";
 
     // Без повторов и по возрастанию: так список сравнивается с назначенным и так же пишется в журнал.
     private static List<Integer> normalizedTerminals(List<Integer> terminalIds) {

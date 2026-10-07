@@ -139,7 +139,7 @@ class PasswordChangeIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, "ResetPassword789!", null, null, null))))
+                                new UpdateUserRequest(null, null, "ResetPassword789!", null, null, null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.passwordChangeRequired", is(true)));
 
@@ -163,7 +163,7 @@ class PasswordChangeIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, "AdminPassword456!", null, null, null))))
+                                new UpdateUserRequest(null, null, "AdminPassword456!", null, null, null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.passwordChangeRequired", is(false)));
 
@@ -195,7 +195,7 @@ class PasswordChangeIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateUserRequest(
                                 CLERK, ISSUED_PASSWORD, "Clerk", "COMPANY_EMPLOYEE", "comp-01",
-                                java.util.List.of(TerminalFixture.terminalOf(jdbcTemplate, "comp-01"))))))
+                                java.util.List.of(TerminalFixture.terminalOf(jdbcTemplate, "comp-01")), null))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.passwordChangeRequired", is(true))));
         return UUID.fromString(created.get("id").asText());

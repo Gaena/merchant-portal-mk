@@ -24,7 +24,9 @@ import {
   CircularProgress,
   TablePagination,
   Tooltip,
-  Autocomplete
+  Autocomplete,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -56,6 +58,7 @@ const EDITABLE_STATUSES = ['ACTIVE', 'BLOCKED'] as const;
 
 type EditForm = {
   fullName: string; role: string; companyId: string; status: string; password: string; terminalIds: number[];
+  dmsLinksAllowed: boolean;
 };
 
 /** Р-131: терминалы назначаются только сотруднику; руководитель и менеджер видят всю компанию. */
@@ -101,6 +104,7 @@ export const UsersPage: React.FC = () => {
     role: defaultRole,
     companyId: '',
     terminalIds: [] as number[],
+    dmsLinksAllowed: true,
   });
   const [notice, setNotice] = useState('');
   // Все терминалы, видимые актору: администратору — всех компаний, руководителю — своей (Р-131).
@@ -108,7 +112,7 @@ export const UsersPage: React.FC = () => {
   // Правка пользователя (Р-90): окно формы, затем подтверждение со списком изменений.
   const [editing, setEditing] = useState<UserDto | null>(null);
   const [editForm, setEditForm] = useState<EditForm>(
-    { fullName: '', role: '', companyId: '', status: '', password: '', terminalIds: [] });
+    { fullName: '', role: '', companyId: '', status: '', password: '', terminalIds: [], dmsLinksAllowed: true });
   const [editError, setEditError] = useState('');
   const [editConfirm, setEditConfirm] = useState<string[] | null>(null);
   const [editBusy, setEditBusy] = useState(false);
@@ -244,6 +248,8 @@ export const UsersPage: React.FC = () => {
         role: userForm.role,
         companyId: (isAdmin ? userForm.companyId : ownCompanyId) || undefined,
         terminalIds: userForm.role === EMPLOYEE ? userForm.terminalIds : undefined,
+        // Р-132: право на DMS-ссылки — только у ролей компании, у остальных бэкенд запрета не примет.
+        dmsLinksAllowed: isCompanyRole(userForm.role) ? userForm.dmsLinksAllowed : undefined,
       };
       await apiClient.post('/api/v1/users', payload);
       // Перечитываем, а не дописываем: новая учётная запись может оказаться на другой странице.
@@ -256,6 +262,7 @@ export const UsersPage: React.FC = () => {
         role: defaultRole,
         companyId: isAdmin ? (companiesList[0]?.id || '') : '',
         terminalIds: [],
+        dmsLinksAllowed: true,
       });
     } catch (err: any) {
       setUserError(err.response?.data?.message || tObj.users.createFailed);
@@ -304,8 +311,28 @@ export const UsersPage: React.FC = () => {
       status: u.status || 'ACTIVE',
       password: '',
       terminalIds: u.terminalIds ?? [],
+      dmsLinksAllowed: u.dmsLinksAllowed !== false,
     });
   };
+
+  // Р-132: право на DMS-ссылки — у ролей компании; ставший ролью вне компании его получает (бэкенд ставит true).
+  const editDmsLinks = (): { before: boolean; after: boolean } => ({
+    before: editing?.dmsLinksAllowed !== false,
+    after: isCompanyRole(editForm.role) ? editForm.dmsLinksAllowed : true,
+  });
+  const dmsText = (allowed: boolean) => (allowed ? tObj.users.dmsLinksAllowed : tObj.users.dmsLinksForbidden);
+
+  const dmsSwitch = (checked: boolean, onChange: (checked: boolean) => void, disabled: boolean) => (
+    <Box>
+      <FormControlLabel
+        control={<Switch checked={checked} disabled={disabled} onChange={e => onChange(e.target.checked)} />}
+        label={tObj.users.dmsLinksSwitch}
+      />
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+        {tObj.users.dmsLinksHint}
+      </Typography>
+    </Box>
+  );
 
   // Что уйдёт в terminalIds правки: только сотруднику и только когда менялись терминалы, роль или компания —
   // сотрудника без терминалов, заведённого до назначений, можно переименовать, не раздавая их (Р-131).
@@ -339,6 +366,10 @@ export const UsersPage: React.FC = () => {
     if (!sameIds(terminals.before, terminals.after)) {
       changes.push(`${tObj.users.terminals}: ${terminalNames(terminals.before)} → ${terminalNames(terminals.after)}`);
     }
+    const dms = editDmsLinks();
+    if (dms.before !== dms.after) {
+      changes.push(`${tObj.users.dmsLinks}: ${dmsText(dms.before)} → ${dmsText(dms.after)}`);
+    }
     if (editForm.password) {
       changes.push(isSelf(editing) ? `${tObj.users.passwordWillChange}. ${tObj.users.ownPasswordSignsOut}`
         : tObj.users.passwordWillChange);
@@ -371,13 +402,16 @@ export const UsersPage: React.FC = () => {
     setEditBusy(true);
     try {
       // Только изменившиеся поля. Компанию шлёт только администратор; пустая строка — снять компанию.
-      const payload: Record<string, string | number[]> = {};
+      const payload: Record<string, string | number[] | boolean> = {};
       if (editForm.fullName.trim() !== (editing.fullName || '')) payload.fullName = editForm.fullName.trim();
       if (editForm.role !== (editing.role || '')) payload.role = editForm.role;
       if (isAdmin && editForm.companyId !== (editing.companyId || '')) payload.companyId = editForm.companyId;
       if (editForm.status !== (editing.status || '')) payload.status = editForm.status;
       if (editForm.password) payload.password = editForm.password;
       if (editTerminals().send) payload.terminalIds = editForm.terminalIds;
+      // Роли вне компании право не шлём: бэкенд сам ставит ему true.
+      const dms = editDmsLinks();
+      if (isCompanyRole(editForm.role) && dms.before !== dms.after) payload.dmsLinksAllowed = dms.after;
       const res = await apiClient.patch<UserDto>(`/api/v1/users/${editing.id}`, payload);
       // Свой пароль сервер сменил и погасил все сессии, эту тоже (PATCH-SELF-PASSWORD): выход сейчас, а не
       // молчаливый обрыв при следующем обновлении токена.
@@ -526,6 +560,9 @@ export const UsersPage: React.FC = () => {
                   <TableCell>{u.fullName || '—'}</TableCell>
                   <TableCell>
                     <Chip label={roleText(u.role)} color="primary" size="small" variant="outlined" />
+                    {u.dmsLinksAllowed === false && (
+                      <Chip label={tObj.users.noDmsLinks} color="warning" size="small" variant="outlined" sx={{ ml: 1 }} />
+                    )}
                   </TableCell>
                   <TableCell>{getCompanyName(u.companyId) || '—'}</TableCell>
                   <TableCell>{terminalsCell(u)}</TableCell>
@@ -628,6 +665,11 @@ export const UsersPage: React.FC = () => {
               userForm.terminalIds,
               ids => setUserForm(f => ({ ...f, terminalIds: ids })),
             )}
+            {isCompanyRole(userForm.role) && dmsSwitch(
+              userForm.dmsLinksAllowed,
+              checked => setUserForm(f => ({ ...f, dmsLinksAllowed: checked })),
+              false,
+            )}
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -702,6 +744,12 @@ export const UsersPage: React.FC = () => {
                 isAdmin ? editForm.companyId : ownCompanyId,
                 editForm.terminalIds,
                 ids => setEditForm(f => ({ ...f, terminalIds: ids })),
+              )}
+              {/* Себе руководитель право не меняет, как роль и статус (Р-132). */}
+              {isCompanyRole(editForm.role) && dmsSwitch(
+                editForm.dmsLinksAllowed,
+                checked => setEditForm(f => ({ ...f, dmsLinksAllowed: checked })),
+                isSelf(editing) && !isAdmin,
               )}
               <TextField
                 select

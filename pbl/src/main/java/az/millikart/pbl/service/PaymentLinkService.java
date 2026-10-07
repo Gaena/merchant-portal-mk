@@ -92,6 +92,9 @@ public class PaymentLinkService {
     private static final int NOTICED_STATUSES_CEILING = 10_000;
     private final Map<UUID, String> noticedProviderStatuses = new ConcurrentHashMap<>();
 
+    // entityId отказа в создании ссылки: номера у неё ещё нет (как у терминала в directory).
+    private static final String NEW_LINK = "NEW";
+
     private final PaymentLinkRepository paymentLinkRepository;
     private final TransactionRepository transactionRepository;
     private final TransactionRefundRepository transactionRefundRepository;
@@ -156,6 +159,23 @@ public class PaymentLinkService {
             log.warn("Refusing to create a payment link on blocked terminal {}", request.terminal());
             throw new BusinessException("terminal " + request.terminal()
                     + " is blocked and cannot take new payments; unblock it or use another terminal");
+        }
+        // Р-132: DMS-ссылку создаёт пользователь с правом на неё (claim токена, у администратора не проверяется) и
+        // только на терминале, где DMS разрешён. Уже созданные DMS-ссылки запрет не трогает: открытие и списание
+        // холда идут как прежде, как у заблокированного терминала (Р-38).
+        if (request.paymentType() == PaymentType.DMS) {
+            if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN && !UserPrincipal.isDmsLinksAllowed(principal)) {
+                log.warn("Refusing a DMS link on terminal {}: the user may not create DMS links", request.terminal());
+                auditLogService.logDenied(AuditEntity.PAYMENT_LINK, NEW_LINK, AuditAction.CREATE,
+                        UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                        "Denied: user may not create DMS links, attempted one on terminal " + request.terminal());
+                throw new InvalidStateException("You are not allowed to create DMS links");
+            }
+            if (!terminal.isDmsAllowed()) {
+                log.warn("Refusing a DMS link on terminal {}: DMS links are forbidden on it", request.terminal());
+                throw new BusinessException("DMS links are not allowed on terminal " + request.terminal()
+                        + "; create an SMS link or ask the system administrator to allow DMS on the terminal");
+            }
         }
         // Без кредов компании и номера терминала ссылка тоже родилась бы нерабочей (Р-93, Р-96).
         providerCredentials.forTerminal(terminal);

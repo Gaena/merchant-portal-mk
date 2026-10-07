@@ -69,6 +69,11 @@ public class User {
     @Builder.Default
     private Instant lastActivityAt = Instant.now();
 
+    // Право создавать DMS-ссылки (Р-132): уходит в access-токен. У ролей вне компании всегда true.
+    @Column(name = "dms_links_allowed", nullable = false)
+    @Builder.Default
+    private boolean dmsLinksAllowed = true;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

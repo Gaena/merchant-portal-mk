@@ -13,6 +13,8 @@ public record TerminalResponse(
         boolean providerLinked,
         String companyId,
         TerminalStatus status,
+        // Разрешены ли DMS-ссылки (Р-132).
+        boolean dmsAllowed,
         String createdBy,
         Instant createdAt,
         String updatedBy,

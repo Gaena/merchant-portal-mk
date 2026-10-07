@@ -7,6 +7,8 @@ public record CreateTerminalRequest(
         @NotBlank(message = "Company ID is required")
         String companyId,
         @NotBlank(message = "Provider terminal (merchantRid) is required")
-        String merchantRid
+        String merchantRid,
+        // Р-132: разрешены ли DMS-ссылки, null — разрешены.
+        Boolean dmsAllowed
 ) {
 }

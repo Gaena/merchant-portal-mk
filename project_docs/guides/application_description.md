@@ -265,6 +265,7 @@ erDiagram
         timestamp lockout_until "До какого момента вход закрыт"
         boolean password_change_required "Пароль задал не владелец — сменить при входе (Р-100)"
         timestamp last_activity_at "Последняя активность; 90 дней без неё — блокировка (Р-101)"
+        boolean dms_links_allowed "Может создавать DMS-ссылки; уходит в access-токен (Р-132)"
         timestamp created_at
     }
 
@@ -302,6 +303,7 @@ erDiagram
         varchar status "ACTIVE / BLOCKED"
         varchar status_source "MANUAL / PROVIDER — кто поставил статус (Р-66)"
         varchar merchant_rid UK "merchant.rid провайдера за терминалом (Р-69); пусто у заведённых без справочника"
+        boolean dms_allowed "Разрешены ли DMS-ссылки; меняет только SYSTEM_ADMIN (Р-132)"
         varchar created_by
         timestamp created_at
         varchar updated_by
@@ -451,6 +453,7 @@ erDiagram
 | `auth` | `006-last-activity.xml` | `users.last_activity_at`; существующим строкам — момент миграции (Р-101) |
 | `auth` | `007-password-history.xml` | `password_history`, индекс по `user_id`, внешний ключ на `users` с каскадом (Р-102) |
 | `auth` | `008-user-terminals.xml` | `user_terminals` — терминалы сотрудника (Р-131): ключ «пользователь + терминал», внешний ключ на `users` с каскадом, индекс по `terminal_id`; внешнего ключа на `terminals` нет — таблица чужая и может появиться позже |
+| `auth` | `009-user-dms-links.xml` | `users.dms_links_allowed`, по умолчанию `true` — и у существующих строк (Р-132) |
 | `directory` | `003-directory-schema.xml` | `companies` и `terminals` (с колонкой `password`, её удаляет `008`), если их ещё нет; недостающие аудит-колонки (`created_by`, `created_at`, `updated_by`, `updated_at`) к таблицам, созданным другим сервисом; `audit_logs` в исходном виде, без `client_ip` и `outcome` |
 | `directory` | `004-audit-log-ip-and-indexes.xml` | `audit_logs.client_ip`, `outcome` (по умолчанию `SUCCESS`) и индексы `(company_id, created_at desc)`, `(entity_type, entity_id)`, `(created_at desc)` |
 | `directory` | `005-terminal-status.xml` | `terminals.status`, по умолчанию `ACTIVE` |
@@ -461,6 +464,7 @@ erDiagram
 | `directory` | `010-terminal-version.xml` | `terminals.version`, если её ещё нет, с умолчанием 0 — для `@Version` (Р-115) |
 | `directory` | `011-company-tax-id.xml` | `companies.tax_id` (VÖEN), если её ещё нет: реквизит продавца на чеке (Р-129) |
 | `directory` | `012-user-terminals.xml` | `user_terminals`, если её ещё нет, в том же виде, что у `auth` (008), без внешнего ключа на `users` — его добавляет `auth` (Р-131) |
+| `directory` | `013-terminal-dms-allowed.xml` | `terminals.dms_allowed`, если её ещё нет, по умолчанию `true` — и у существующих строк (Р-132) |
 | `pbl` | `001-initial-schema.xml` | `terminals`, если ещё нет (исходный вид: с `password`, без аудит-колонок); `payment_links`, `transactions` (колонка `merchant_rid`, её переименовывает `009`), внешние ключи `payment_links → terminals` и `transactions → payment_links` |
 | `pbl` | `002-add-indexes.xml` | индексы `payment_links (terminal_id, status)`, `payment_links (status, expires_at)`, `transactions (provider_order_id)` |
 | `pbl` | `003-add-client-ip-and-user-agent.xml` | `transactions.client_ip`, `user_agent` |
@@ -479,6 +483,7 @@ erDiagram
 | `pbl` | `016-transaction-card-submitted.xml` | `transactions.card_submitted`, если её ещё нет: плательщик отправил карту, шаг воронки ссылок (Р-128); на PostgreSQL — отметка старых строк по `trans[]` в `provider_response` |
 | `pbl` | `017-company-tax-id.xml` | `companies.tax_id`, если её ещё нет: VÖEN продавца на чеке плательщика, пишет `directory` (Р-129, Р-130) |
 | `pbl` | `018-user-terminals.xml` | `user_terminals`, если её ещё нет, — как `directory/012` (Р-131) |
+| `pbl` | `019-terminal-dms-allowed.xml` | `terminals.dms_allowed`, если её ещё нет, — как `directory/013` (Р-132) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` и индекс по `login`; без преконтроля |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет; таблица `terminals` уже должна быть (§4.2) |
 | `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам — и индекс по `login` (Р-94) |

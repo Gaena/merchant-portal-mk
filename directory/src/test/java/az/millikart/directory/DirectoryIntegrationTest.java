@@ -198,7 +198,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateTerminalRequest("comp-01", "E1120020"))))
+                                new CreateTerminalRequest("comp-01", "E1120020", null))))
                 .andExpect(status().isForbidden());
     }
 
@@ -215,7 +215,7 @@ public class DirectoryIntegrationTest {
         String created = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "E1120020"))))
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "E1120020", null))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id", notNullValue()))
                 .andExpect(jsonPath("$.name", is("Main Terminal")))
@@ -226,7 +226,7 @@ public class DirectoryIntegrationTest {
         int terminalId = objectMapper.readTree(created).get("id").asInt();
 
         DirectoryTestFixtures.providerTerminal(jdbcTemplate, "E1120021", "Unauthorized Terminal", "BS00002");
-        CreateTerminalRequest createTerminalForbidden = new CreateTerminalRequest("comp-01", "E1120021");
+        CreateTerminalRequest createTerminalForbidden = new CreateTerminalRequest("comp-01", "E1120021", null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany2)
@@ -247,7 +247,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED))))
+                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("BLOCKED")));
 
@@ -327,7 +327,7 @@ public class DirectoryIntegrationTest {
         createCompany("comp-01", "MilliKart LLC");
         DirectoryTestFixtures.providerTerminal(jdbcTemplate, "RID-EMPLOYEE", "Employee Terminal", "BS00003");
 
-        CreateTerminalRequest request = new CreateTerminalRequest("comp-01", "RID-EMPLOYEE");
+        CreateTerminalRequest request = new CreateTerminalRequest("comp-01", "RID-EMPLOYEE", null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
@@ -341,7 +341,7 @@ public class DirectoryIntegrationTest {
         createCompany("comp-01", "MilliKart LLC");
         int terminalId = createTerminal("Main Terminal", "comp-01", adminToken);
 
-        UpdateTerminalRequest request = new UpdateTerminalRequest("Renamed by employee", null, null);
+        UpdateTerminalRequest request = new UpdateTerminalRequest("Renamed by employee", null, null, null);
 
         mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
@@ -382,7 +382,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, managerTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-MANAGER"))))
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-MANAGER", null))))
                 .andExpect(status().isForbidden());
 
         assertThat(terminalRepository.findByMerchantRid("RID-MANAGER")).isEmpty();
@@ -392,7 +392,7 @@ public class DirectoryIntegrationTest {
     public void createTerminal_withUnknownRole_returns403() throws Exception {
         createCompany("comp-01", "MilliKart LLC");
 
-        CreateTerminalRequest request = new CreateTerminalRequest("comp-01", "RID-UNKNOWN");
+        CreateTerminalRequest request = new CreateTerminalRequest("comp-01", "RID-UNKNOWN", null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, unknownRoleToken)
@@ -405,7 +405,7 @@ public class DirectoryIntegrationTest {
     public void createTerminal_asAuditor_returns403() throws Exception {
         createCompany("comp-01", "MilliKart LLC");
 
-        CreateTerminalRequest request = new CreateTerminalRequest("comp-01", "RID-AUDITOR");
+        CreateTerminalRequest request = new CreateTerminalRequest("comp-01", "RID-AUDITOR", null);
 
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, auditorToken)
@@ -502,7 +502,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null, null))))
                 .andExpect(status().isOk());
 
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_terminals WHERE terminal_id = ?",
@@ -856,7 +856,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Renamed", null, null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Renamed", null, null, null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Terminal " + terminalId
                         + " takes its name from the provider directory; rename it at the provider")));
@@ -972,7 +972,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-OFF"))))
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-OFF", null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Provider terminal RID-OFF is not active at the provider")));
 
@@ -983,7 +983,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-ON"))))
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-ON", null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Company with ID 'comp-01' not found")));
         assertThat(terminalRepository.findByMerchantRid("RID-OFF")).isEmpty();
@@ -998,7 +998,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-FOREIGN"))))
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-FOREIGN", null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("does not belong to the multimerchant login of company comp-01")));
 
@@ -1018,7 +1018,7 @@ public class DirectoryIntegrationTest {
         String created = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-SHARED"))))
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-SHARED", null))))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         int terminalId = objectMapper.readTree(created).get("id").asInt();
@@ -1027,7 +1027,7 @@ public class DirectoryIntegrationTest {
             mockMvc.perform(post("/api/v1/terminals")
                             .header(HttpHeaders.AUTHORIZATION, adminToken)
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(new CreateTerminalRequest(companyId, "RID-SHARED"))))
+                            .content(objectMapper.writeValueAsString(new CreateTerminalRequest(companyId, "RID-SHARED", null))))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.message", is("Provider terminal RID-SHARED is already linked to terminal " + terminalId)));
         }
@@ -1063,7 +1063,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null, null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("not linked to the multimerchant login of that company")));
         assertThat(terminalRepository.findById(terminalId).orElseThrow().getCompanyId()).isEqualTo("comp-01");
@@ -1073,7 +1073,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.companyId", is("comp-02")));
     }
@@ -1092,12 +1092,12 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/terminals/700401")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null, null))))
                 .andExpect(status().isBadRequest());
         mockMvc.perform(patch("/api/v1/terminals/700401")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Manual Shop 2", "comp-01", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest("Manual Shop 2", "comp-01", null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name", is("Manual Shop 2")))
                 .andExpect(jsonPath("$.providerLinked", is(false)));
@@ -1116,7 +1116,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-TAKEN"))))
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", "RID-TAKEN", null))))
                 .andExpect(status().isCreated());
 
         mockMvc.perform(get("/api/v1/terminals/provider-terminals").param("companyId", "comp-01")
@@ -1147,7 +1147,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null, null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Company with ID 'comp-02' not found")));
         assertThat(terminalRepository.findById(terminalId).orElseThrow().getCompanyId()).isEqualTo("comp-01");
@@ -1174,7 +1174,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, "comp-02", TerminalStatus.BLOCKED))))
+                                new UpdateTerminalRequest(null, "comp-02", TerminalStatus.BLOCKED, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("BLOCKED")))
                 .andExpect(jsonPath("$.companyId", is("comp-02")));
@@ -1185,6 +1185,63 @@ public class DirectoryIntegrationTest {
                 .toList();
         assertThat(updates).singleElement()
                 .satisfies(record -> assertThat(record.getDetails()).doesNotContain("CompanyId changed"));
+    }
+
+    // Р-132: DMS на терминале разрешает и запрещает только администратор — это возможность терминала у
+    // провайдера, а не настройка компании. Руководителю и менеджеру — 403 с отказом в журнале; повтор текущего
+    // значения — не изменение. Ответ, варианты для формы ссылки и журнал называют новое значение.
+    @Test
+    public void onlyTheAdmin_allowsOrForbidsDmsLinksOnATerminal() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int terminalId = createTerminal("Main Shop", "comp-01", adminToken);
+        auditLogRepository.deleteAll();
+
+        for (String token : new String[] {headTokenCompany1, managerTokenCompany1}) {
+            patchDms(terminalId, token, false).andExpect(status().isForbidden());
+        }
+        patchDms(terminalId, headTokenCompany1, true)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dmsAllowed", is(true)));
+        assertThat(terminalRepository.findById(terminalId).orElseThrow().isDmsAllowed()).isTrue();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE entity_id = ? AND outcome = 'DENIED' AND company_id = 'comp-01' "
+                        + "AND details LIKE '%attempted to change DMS links of terminal%'",
+                Integer.class, String.valueOf(terminalId))).isEqualTo(2);
+
+        patchDms(terminalId, adminToken, false)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dmsAllowed", is(false)));
+        mockMvc.perform(get("/api/v1/terminals/options").header(HttpHeaders.AUTHORIZATION, headTokenCompany1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].dmsAllowed", is(false)));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT details FROM audit_logs WHERE entity_id = ? AND action = 'UPDATE' AND outcome = 'SUCCESS'",
+                String.class, String.valueOf(terminalId))).isEqualTo("DMS links changed from allowed to forbidden. ");
+    }
+
+    // Р-132: администратор заводит терминал сразу без DMS; без поля — разрешён, как все заведённые до Р-132.
+    @Test
+    public void aTerminalIsCreatedWithDmsAllowedUnlessTheAdminForbidsIt() throws Exception {
+        createCompany("comp-01", "MilliKart LLC");
+        int allowed = createTerminal("Main Shop", "comp-01", adminToken);
+        assertThat(terminalRepository.findById(allowed).orElseThrow().isDmsAllowed()).isTrue();
+
+        String rid = "RID-" + UUID.randomUUID().toString().substring(0, 8);
+        DirectoryTestFixtures.companyTerminal(jdbcTemplate, "comp-01", rid, "Second Shop", "term_login");
+        mockMvc.perform(post("/api/v1/terminals")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", rid, false))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.dmsAllowed", is(false)));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions patchDms(int terminalId, String token, boolean allowed)
+            throws Exception {
+        return mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
+                .header(HttpHeaders.AUTHORIZATION, token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, null, null, allowed))));
     }
 
     // Р-108: журнал пишет только настоящие изменения. Ловит «Name changed from 'X' to 'X'» у терминала и
@@ -1200,7 +1257,7 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(terminalName, "comp-02", TerminalStatus.ACTIVE))))
+                                new UpdateTerminalRequest(terminalName, "comp-02", TerminalStatus.ACTIVE, null))))
                 .andExpect(status().isOk());
         mockMvc.perform(patch("/api/v1/companies/comp-02")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
@@ -1241,9 +1298,9 @@ public class DirectoryIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany2))
                 .andExpect(status().isForbidden());
         for (UpdateTerminalRequest attempt : List.of(
-                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED),
-                new UpdateTerminalRequest("Hijacked", null, null),
-                new UpdateTerminalRequest(null, "comp-02", null))) {
+                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED, null),
+                new UpdateTerminalRequest("Hijacked", null, null, null),
+                new UpdateTerminalRequest(null, "comp-02", null, null))) {
             mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                             .header(HttpHeaders.AUTHORIZATION, headTokenCompany2)
                             .contentType(MediaType.APPLICATION_JSON)
@@ -1271,7 +1328,7 @@ public class DirectoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/terminals/" + terminalId)
                         .header(HttpHeaders.AUTHORIZATION, headTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateTerminalRequest(null, "comp-02", null, null))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message", is("Access denied")));
 
@@ -1354,7 +1411,7 @@ public class DirectoryIntegrationTest {
     private int createTerminal(String name, String companyId, String token) throws Exception {
         String rid = "RID-" + UUID.randomUUID().toString().substring(0, 8);
         DirectoryTestFixtures.companyTerminal(jdbcTemplate, companyId, rid, name, "term_login");
-        CreateTerminalRequest request = new CreateTerminalRequest(companyId, rid);
+        CreateTerminalRequest request = new CreateTerminalRequest(companyId, rid, null);
         String body = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, token)
                         .contentType(MediaType.APPLICATION_JSON)

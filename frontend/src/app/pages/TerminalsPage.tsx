@@ -28,6 +28,8 @@ import {
   Tooltip,
   InputAdornment,
   Autocomplete,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import {
   PointOfSale as POSIcon,
@@ -87,7 +89,8 @@ export const TerminalsPage: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editingTerminalId, setEditingTerminalId] = useState<number | null>(null);
-  const [form, setForm] = useState({ name: '', companyId: '' });
+  // dmsAllowed — разрешены ли DMS-ссылки (Р-132); меняет только SYSTEM_ADMIN.
+  const [form, setForm] = useState({ name: '', companyId: '', dmsAllowed: true });
   /** Ошибка внутри открытого окна (заведение, правка). */
   const [error, setError] = useState('');
   /** Ошибка действия из таблицы («Тест», смена статуса): окна нет — полоса на странице. */
@@ -212,7 +215,7 @@ export const TerminalsPage: React.FC = () => {
     setError('');
     setEditingTerminalId(null);
     const companyId = defaultCompanyId();
-    setForm({ name: '', companyId });
+    setForm({ name: '', companyId, dmsAllowed: true });
     setSyncResult(null);
     loadProviderTerminals(companyId);
     setCreateOpen(true);
@@ -224,7 +227,8 @@ export const TerminalsPage: React.FC = () => {
     // Компания — та, что у терминала: первая из списка молча перевесила бы его при правке названия.
     setForm({
       name: term.name || '',
-      companyId: term.companyId || ''
+      companyId: term.companyId || '',
+      dmsAllowed: term.dmsAllowed !== false,
     });
     setEditOpen(true);
   };
@@ -242,11 +246,12 @@ export const TerminalsPage: React.FC = () => {
       await apiClient.post('/api/v1/terminals', {
         companyId: form.companyId,
         merchantRid: selectedProvider.rid,
+        dmsAllowed: form.dmsAllowed,
       });
       // Перечитываем, а не дописываем: новый терминал может оказаться на другой странице.
       fetchTerminals();
       setCreateOpen(false);
-      setForm({ name: '', companyId: defaultCompanyId() });
+      setForm({ name: '', companyId: defaultCompanyId(), dmsAllowed: true });
       setSnackbar(tObj.terminals.created);
     } catch (err: any) {
       setError(err.response?.data?.message || tObj.terminals.createFailed);
@@ -270,6 +275,19 @@ export const TerminalsPage: React.FC = () => {
     }
   };
 
+  // Переключатель DMS — окна заведения и правки; заводит и меняет DMS только SYSTEM_ADMIN (Р-132).
+  const dmsSwitch = (
+    <Box>
+      <FormControlLabel
+        control={<Switch checked={form.dmsAllowed} onChange={e => setForm(f => ({ ...f, dmsAllowed: e.target.checked }))} />}
+        label={tObj.terminals.dmsSwitch}
+      />
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+        {tObj.terminals.dmsSwitchHint}
+      </Typography>
+    </Box>
+  );
+
   // В заголовках окон — та же подпись; внутренний номер терминала не показывается (Р-81).
   const editingTerminal = terminals.find(t => t.id === editingTerminalId);
   const editingLogin = editingTerminal ? terminalDtoLabel(editingTerminal) : '';
@@ -282,14 +300,15 @@ export const TerminalsPage: React.FC = () => {
     setEditBusy(true);
     try {
       // Только изменившееся: PATCH с прежними значениями пишет в журнал «Name changed from X to X».
-      const payload: Record<string, string> = {};
+      const payload: Record<string, string | boolean> = {};
       if (form.name.trim() !== (original.name || '')) payload.name = form.name.trim();
       if (form.companyId !== (original.companyId || '')) payload.companyId = form.companyId;
+      if (isAdmin && form.dmsAllowed !== (original.dmsAllowed !== false)) payload.dmsAllowed = form.dmsAllowed;
       const res = await apiClient.patch(`/api/v1/terminals/${editingTerminalId}`, payload);
       setTerminals(prev => prev.map(t => (t.id === editingTerminalId ? res.data : t)));
       setEditOpen(false);
       setEditingTerminalId(null);
-      setForm({ name: '', companyId: defaultCompanyId() });
+      setForm({ name: '', companyId: defaultCompanyId(), dmsAllowed: true });
       setSnackbar(tObj.terminals.updated);
     } catch (err: any) {
       setError(err.response?.data?.message || tObj.terminals.updateFailed);
@@ -321,6 +340,8 @@ export const TerminalsPage: React.FC = () => {
     }
   };
 
+  const dmsLabel = (allowed: boolean) => (allowed ? tObj.terminals.dmsAllowed : tObj.terminals.dmsForbidden);
+
   // Пустой список — PATCH не уходит: даже пустой он оставил бы запись в журнале аудита.
   const pendingEditChanges = (): string[] => {
     const original = terminals.find(t => t.id === editingTerminalId);
@@ -331,6 +352,9 @@ export const TerminalsPage: React.FC = () => {
     }
     if (form.companyId !== (original.companyId || '')) {
       changes.push(`${tObj.terminals.company}: ${getCompanyName(original.companyId || '')} → ${getCompanyName(form.companyId)}`);
+    }
+    if (isAdmin && form.dmsAllowed !== (original.dmsAllowed !== false)) {
+      changes.push(`${tObj.terminals.dmsColumn}: ${dmsLabel(original.dmsAllowed !== false)} → ${dmsLabel(form.dmsAllowed)}`);
     }
     return changes;
   };
@@ -431,6 +455,7 @@ export const TerminalsPage: React.FC = () => {
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.name}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.company}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.status}</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.terminals.dmsColumn}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }} align="center">{tObj.common.actions}</TableCell>
               </TableRow>
@@ -460,6 +485,14 @@ export const TerminalsPage: React.FC = () => {
                       color={active ? 'success' : 'warning'}
                       variant={active ? 'outlined' : 'filled'}
                       sx={{ fontWeight: 600 }}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={dmsLabel(term.dmsAllowed !== false)}
+                      size="small"
+                      color={term.dmsAllowed !== false ? 'default' : 'warning'}
+                      variant="outlined"
                     />
                   </TableCell>
                   <TableCell sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
@@ -514,7 +547,7 @@ export const TerminalsPage: React.FC = () => {
               })}
               {terminals.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
                     <POSIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                     <Typography color="text.secondary">{tObj.terminals.empty}</Typography>
                   </TableCell>
@@ -645,6 +678,7 @@ export const TerminalsPage: React.FC = () => {
                 {syncing ? tObj.common.loading : tObj.terminals.syncDirectory}
               </Button>
             </Box>
+            {dmsSwitch}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
@@ -686,6 +720,7 @@ export const TerminalsPage: React.FC = () => {
               helperText={editingTerminal?.providerLinked === true ? tObj.terminals.nameFromProvider : undefined}
               fullWidth
             />
+            {isAdmin && dmsSwitch}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>

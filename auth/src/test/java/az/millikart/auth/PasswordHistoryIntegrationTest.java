@@ -106,7 +106,7 @@ class PasswordHistoryIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + user(CLERK).getId())
                         .header(HttpHeaders.AUTHORIZATION, tokenOf(ADMIN, PASSWORDS[0]))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, PASSWORDS[0], null, null, null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, PASSWORDS[0], null, null, null, null))))
                 .andExpect(status().isOk());
 
         changePassword(CLERK, PASSWORDS[0], PASSWORDS[1]).andExpect(status().isBadRequest())
@@ -148,7 +148,7 @@ class PasswordHistoryIntegrationTest {
         return mockMvc.perform(patch("/api/v1/users/" + user(ADMIN).getId())
                 .header(HttpHeaders.AUTHORIZATION, token)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, next, null, null, null))));
+                .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, next, null, null, null, null))));
     }
 
     private static MockHttpServletRequestBuilder fromClient(MockHttpServletRequestBuilder request) {

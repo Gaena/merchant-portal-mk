@@ -175,8 +175,9 @@ class PaymentLinkIntegrationTest {
         unknownRoleToken = createMockJwtToken("hacker-user", "HACKER", "test-company");
     }
 
+    // С правом на DMS-ссылки (Р-132): validCreateRequest — DMS, а тесты здесь не про это право.
     private String createMockJwtToken(String userId, String role, String companyId) {
-        return "Bearer " + jwtProvider.generateToken(userId, userId + "@test.com", role, companyId);
+        return "Bearer " + jwtProvider.generateToken(userId, userId + "@test.com", role, companyId, true);
     }
 
     private MockHttpServletRequestBuilder authed(MockHttpServletRequestBuilder builder, String token) {
@@ -286,6 +287,55 @@ class PaymentLinkIntegrationTest {
                 "SELECT COUNT(*) FROM audit_logs WHERE outcome = 'DENIED' AND company_id = 'test-company' "
                         + "AND details LIKE '%not assigned to it%'", Integer.class);
         Assertions.assertTrue(denials != null && denials >= 1, "the head sees the employee's refused attempts");
+    }
+
+    // Р-132: DMS-ссылку создаёт только пользователь с правом на неё (claim dmsLinks) и только на терминале, где
+    // DMS разрешён. Пользователю без права — 403 с отказом в журнале под его компанией, терминалу без DMS — 400.
+    // SMS запрет не трогает; администратор правом пользователя не ограничен, запретом терминала — ограничен.
+    @Test
+    void dmsLinks_needTheUsersRightAndATerminalThatAllowsDms() throws Exception {
+        String withoutRight = "Bearer " + jwtProvider.generateToken("head-no-dms", "head-no-dms@test.com",
+                "COMPANY_HEAD", "test-company", false);
+        String adminWithoutClaim = "Bearer " + jwtProvider.generateToken("admin-no-claim", "admin2@test.com",
+                "SYSTEM_ADMIN", null);
+        int deniedBefore = dmsDenials();
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), withoutRight)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validCreateRequest())))
+                .andExpect(status().isForbidden());
+        Assertions.assertEquals(deniedBefore + 1, dmsDenials(), "the head sees the refused DMS link in the journal");
+        mockMvc.perform(authed(post("/api/v1/payment-links"), withoutRight)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(smsSingleCreateRequest())))
+                .andExpect(status().isCreated());
+        mockMvc.perform(authed(post("/api/v1/payment-links"), adminWithoutClaim)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validCreateRequest())))
+                .andExpect(status().isCreated());
+
+        Terminal terminal = terminalRepository.findById(TERMINAL_ID).orElseThrow();
+        terminal.setDmsAllowed(false);
+        terminalRepository.save(terminal);
+        for (String token : new String[] {headToken, adminToken}) {
+            mockMvc.perform(authed(post("/api/v1/payment-links"), token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(validCreateRequest())))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", containsString("DMS links are not allowed on terminal " + TERMINAL_ID)));
+        }
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(smsSingleCreateRequest())))
+                .andExpect(status().isCreated());
+    }
+
+    private int dmsDenials() {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE outcome = 'DENIED' AND entity_type = 'PAYMENT_LINK' "
+                        + "AND entity_id = 'NEW' AND action = 'CREATE' AND company_id = 'test-company' "
+                        + "AND details LIKE '%may not create DMS links%'", Integer.class);
+        return count == null ? 0 : count;
     }
 
     @Test

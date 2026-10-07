@@ -124,7 +124,7 @@ with the company's links. Event dictionary — `../guides/technical_handover.md`
 | `terminal` | required, our terminal id. The terminal must be `ACTIVE` (a blocked terminal takes no new payments, Р-38), its company must have acquirer credentials, and it must carry the provider terminal number (`terminal_rid`, Р-96) |
 | `amount` | required, > 0, at most two decimal places as written (`10.555` and `10.500` are refused, like a capture or a refund: the column keeps two and would round the rest) and at most 17 integer digits |
 | `currency` | required, exactly 3 characters; only the length is checked, not ISO 4217 |
-| `paymentType` | required, `SMS` or `DMS` |
+| `paymentType` | required, `SMS` or `DMS`. `DMS` needs both the caller's right (`dmsLinks` claim of the token, `auth.md` §3; not checked for `SYSTEM_ADMIN`) and a terminal with `dmsAllowed` (`directory.md` §3.2), Р-132. Existing DMS links are not affected by either: they open and capture as before |
 | `usageType` | required, `SINGLE` or `MULTIPLE` |
 | `maxPayments` | required and > 0 for `MULTIPLE`; ignored and not stored for `SINGLE` |
 | `merchantOrderId`, `description` | optional, free text, at most 255 characters |
@@ -189,6 +189,8 @@ The same body is returned by §5.2, §5.3 and §5.9.
 | 400 | `Invalid request payload format or parameter value` | malformed JSON, unknown `paymentType` / `usageType` |
 | 403, 404 | §4.1 | role, terminal, company |
 | 400 | `terminal <id> is blocked and cannot take new payments; unblock it or use another terminal` | terminal `BLOCKED` |
+| 403 | `You are not allowed to create DMS links` | `DMS` by a user without the right (Р-132); journal `PAYMENT_LINK` / `CREATE` / `DENIED`, `entityId` = `NEW`, under the caller's company |
+| 400 | `DMS links are not allowed on terminal <id>; create an SMS link or ask the system administrator to allow DMS on the terminal` | `DMS` on a terminal with `dmsAllowed: false` (Р-132) |
 | 400 | credentials and terminal number texts, §6 | company without credentials, terminal without company or provider number |
 | 400 | `customer can only be set on a single-use link` | customer on a `MULTIPLE` link |
 | 400 | `customer.phone must be an Azerbaijani number: +994 and 9 digits` | phone format |

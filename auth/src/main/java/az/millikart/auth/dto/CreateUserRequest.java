@@ -28,6 +28,9 @@ public record CreateUserRequest(
 
         // Р-131: терминалы сотрудника — обязательны ему и запрещены остальным ролям; только своей компании.
         @Size(max = 500, message = "At most 500 terminals can be assigned")
-        List<@NotNull(message = "Terminal ID must not be null") Integer> terminalIds
+        List<@NotNull(message = "Terminal ID must not be null") Integer> terminalIds,
+
+        // Р-132: право создавать DMS-ссылки, null — разрешено. Запрет — только ролям компании.
+        Boolean dmsLinksAllowed
 ) {
 }

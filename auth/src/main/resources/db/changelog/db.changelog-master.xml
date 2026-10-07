@@ -12,5 +12,6 @@
     <include file="changes/006-last-activity.xml" relativeToChangelogFile="true"/>
     <include file="changes/007-password-history.xml" relativeToChangelogFile="true"/>
     <include file="changes/008-user-terminals.xml" relativeToChangelogFile="true"/>
+    <include file="changes/009-user-dms-links.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

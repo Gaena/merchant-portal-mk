@@ -10,6 +10,8 @@ public record TerminalOptionResponse(
         String terminalRid,
         TerminalStatus status,
         // Компания терминала: администратор выбирает терминалы сотрудника той компании, куда его заводит (Р-131).
-        String companyId
+        String companyId,
+        // Форма ссылки гасит DMS на терминале, где он запрещён (Р-132).
+        boolean dmsAllowed
 ) {
 }

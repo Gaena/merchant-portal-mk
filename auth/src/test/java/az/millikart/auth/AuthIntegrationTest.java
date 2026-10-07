@@ -156,7 +156,7 @@ public class AuthIntegrationTest {
                 "Company Head User",
                 "COMPANY_HEAD",
                 "comp-01"
-        , null);
+        , null, null);
 
         MvcResult createResult = mockMvc.perform(post("/api/v1/users")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
@@ -195,7 +195,7 @@ public class AuthIntegrationTest {
                 "Employee User",
                 "COMPANY_EMPLOYEE",
                 "comp-01"
-        , List.of(TerminalFixture.terminalOf(jdbcTemplate, "comp-01")));
+        , List.of(TerminalFixture.terminalOf(jdbcTemplate, "comp-01")), null);
 
         mockMvc.perform(post("/api/v1/users")
                         .header(HttpHeaders.AUTHORIZATION, headToken)
@@ -212,7 +212,7 @@ public class AuthIntegrationTest {
                 "Other User",
                 "COMPANY_EMPLOYEE",
                 "comp-different"
-        , null);
+        , null, null);
 
         mockMvc.perform(post("/api/v1/users")
                         .header(HttpHeaders.AUTHORIZATION, headToken)
@@ -227,7 +227,7 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$.content", hasSize(2)))
                 .andExpect(jsonPath("$.totalElements", is(2)));
 
-        UpdateUserRequest updateRequest = new UpdateUserRequest("Updated Name", null, "NewSecurePass123!", "ACTIVE", null, null);
+        UpdateUserRequest updateRequest = new UpdateUserRequest("Updated Name", null, "NewSecurePass123!", "ACTIVE", null, null, null);
         mockMvc.perform(patch("/api/v1/users/" + headId)
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -262,7 +262,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateUserRequest(
-                                "spy@comp01.com", USER_PASSWORD, "Spy", "AUDITOR", "comp-01", null))))
+                                "spy@comp01.com", USER_PASSWORD, "Spy", "AUDITOR", "comp-01", null, null))))
                 .andExpect(status().isForbidden());
     }
 
@@ -277,7 +277,7 @@ public class AuthIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + secondAdminId)
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, "Takeover12345!", null, null, null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, "Takeover12345!", null, null, null, null))))
                 .andExpect(status().isForbidden());
     }
 
@@ -290,13 +290,13 @@ public class AuthIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + headId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null, null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null, null, null))))
                 .andExpect(status().isOk());
 
         mockMvc.perform(patch("/api/v1/users/" + headId)
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "ACTIVE", null, null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "ACTIVE", null, null, null))))
                 .andExpect(status().isForbidden());
         Assertions.assertEquals("BLOCKED", userRepository.findById(headId).orElseThrow().getStatus());
     }
@@ -314,7 +314,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, "COMPANY_MANAGER", null, null, "comp-02", null))))
+                                new UpdateUserRequest(null, "COMPANY_MANAGER", null, null, "comp-02", null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.companyId", is("comp-02")))
                 .andExpect(jsonPath("$.role", is("COMPANY_MANAGER")));
@@ -337,7 +337,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, null, null, "comp-02", null))))
+                                new UpdateUserRequest(null, null, null, null, "comp-02", null, null))))
                 .andExpect(status().isForbidden());
         Assertions.assertEquals("comp-01", userRepository.findById(employeeId).orElseThrow().getCompanyId());
 
@@ -346,7 +346,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest("Renamed", null, null, null, "comp-01", null))))
+                                new UpdateUserRequest("Renamed", null, null, null, "comp-01", null, null))))
                 .andExpect(status().isOk());
     }
 
@@ -358,7 +358,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, null, null, "no-such-company", null))))
+                                new UpdateUserRequest(null, null, null, null, "no-such-company", null, null))))
                 .andExpect(status().isBadRequest());
         Assertions.assertEquals("comp-01", userRepository.findById(userId).orElseThrow().getCompanyId());
     }
@@ -373,7 +373,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest("Should Not Stick", null, null, null, "", null))))
+                                new UpdateUserRequest("Should Not Stick", null, null, null, "", null, null))))
                 .andExpect(status().isBadRequest());
         User untouched = userRepository.findById(headId).orElseThrow();
         Assertions.assertEquals("comp-01", untouched.getCompanyId());
@@ -383,7 +383,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, "AUDITOR", null, null, "", null))))
+                                new UpdateUserRequest(null, "AUDITOR", null, null, "", null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.companyId").doesNotExist());
     }
@@ -401,7 +401,7 @@ public class AuthIntegrationTest {
                             .header(HttpHeaders.AUTHORIZATION, adminToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(new CreateUserRequest(
-                                    "nocompany@comp01.com", USER_PASSWORD, "No Company", "COMPANY_EMPLOYEE", companyId, null))))
+                                    "nocompany@comp01.com", USER_PASSWORD, "No Company", "COMPANY_EMPLOYEE", companyId, null, null))))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.message", is("Role COMPANY_EMPLOYEE requires a company")));
         }
@@ -411,7 +411,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateUserRequest(
-                                "auditor@millikart.az", USER_PASSWORD, "Auditor", "AUDITOR", null, null))))
+                                "auditor@millikart.az", USER_PASSWORD, "Auditor", "AUDITOR", null, null, null))))
                 .andExpect(status().isCreated());
     }
 
@@ -423,7 +423,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateUserRequest(
-                                "auditor2@millikart.az", USER_PASSWORD, "Auditor", "AUDITOR", "", null))))
+                                "auditor2@millikart.az", USER_PASSWORD, "Auditor", "AUDITOR", "", null, null))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.companyId").doesNotExist());
 
@@ -455,7 +455,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateUserRequest(
-                                "longname@comp01.com", USER_PASSWORD, "x".repeat(256), "COMPANY_EMPLOYEE", "comp-01", null))))
+                                "longname@comp01.com", USER_PASSWORD, "x".repeat(256), "COMPANY_EMPLOYEE", "comp-01", null, null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Full name must be at most 255 characters")));
 
@@ -472,7 +472,7 @@ public class AuthIntegrationTest {
             mockMvc.perform(patch("/api/v1/users/" + userId)
                             .header(HttpHeaders.AUTHORIZATION, adminToken)
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, status, null, null))))
+                            .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, status, null, null, null))))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.message", is("User status must be ACTIVE or BLOCKED")));
         }
@@ -481,7 +481,7 @@ public class AuthIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + userId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null, null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null, null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("BLOCKED")));
     }
@@ -497,7 +497,7 @@ public class AuthIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateUserRequest(
-                                "newcomer@gone.com", USER_PASSWORD, "Newcomer", "COMPANY_EMPLOYEE", "comp-gone", null))))
+                                "newcomer@gone.com", USER_PASSWORD, "Newcomer", "COMPANY_EMPLOYEE", "comp-gone", null, null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Company not found")));
         Assertions.assertTrue(userRepository.findByUsername("newcomer@gone.com").isEmpty());
@@ -505,7 +505,7 @@ public class AuthIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + userId)
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, null, "comp-gone", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, null, "comp-gone", null, null))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("Company not found")));
         Assertions.assertEquals("comp-01", userRepository.findById(userId).orElseThrow().getCompanyId());
@@ -519,7 +519,7 @@ public class AuthIntegrationTest {
                         .content(objectMapper.writeValueAsString(new CreateUserRequest(
                                 username, USER_PASSWORD, "Test User", role, companyId,
                                 "COMPANY_EMPLOYEE".equals(role)
-                                        ? List.of(TerminalFixture.terminalOf(jdbcTemplate, companyId)) : null))))
+                                        ? List.of(TerminalFixture.terminalOf(jdbcTemplate, companyId)) : null, null))))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         UUID id = UUID.fromString(objectMapper.readTree(body).get("id").asText());

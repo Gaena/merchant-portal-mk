@@ -116,16 +116,16 @@ class UserTerminalAssignmentTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].terminalIds", contains(first, second)));
 
-        update(headToken, id, new UpdateUserRequest(null, null, null, null, null, List.of(second)))
+        update(headToken, id, new UpdateUserRequest(null, null, null, null, null, List.of(second), null))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.terminalIds", contains(second)));
         Assertions.assertEquals("Changed terminals [" + first + ", " + second + "] -> [" + second + "]",
                 lastUpdateDetails(id));
 
-        update(headToken, id, new UpdateUserRequest(null, null, null, null, null, List.of()))
+        update(headToken, id, new UpdateUserRequest(null, null, null, null, null, List.of(), null))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("An employee needs at least one terminal")));
-        update(headToken, id, new UpdateUserRequest("Renamed", null, null, null, null, null))
+        update(headToken, id, new UpdateUserRequest("Renamed", null, null, null, null, null, null))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.terminalIds", contains(second)));
     }
@@ -144,7 +144,7 @@ class UserTerminalAssignmentTest {
                 .status("ACTIVE")
                 .build());
 
-        update(headToken, legacy.getId(), new UpdateUserRequest("Legacy Renamed", null, null, "BLOCKED", null, null))
+        update(headToken, legacy.getId(), new UpdateUserRequest("Legacy Renamed", null, null, "BLOCKED", null, null, null))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.terminalIds", empty()));
     }
@@ -156,24 +156,24 @@ class UserTerminalAssignmentTest {
         UUID id = idOf(create(adminToken, "clerk@comp01.com", "COMPANY_EMPLOYEE", "comp-01", List.of(first))
                 .andExpect(status().isCreated()));
 
-        update(adminToken, id, new UpdateUserRequest(null, "COMPANY_MANAGER", null, null, null, null))
+        update(adminToken, id, new UpdateUserRequest(null, "COMPANY_MANAGER", null, null, null, null, null))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.terminalIds", empty()));
         Assertions.assertEquals(0, assignmentsOf(id));
 
-        update(adminToken, id, new UpdateUserRequest(null, "COMPANY_EMPLOYEE", null, null, null, null))
+        update(adminToken, id, new UpdateUserRequest(null, "COMPANY_EMPLOYEE", null, null, null, null, null))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("An employee needs at least one terminal")));
-        update(adminToken, id, new UpdateUserRequest(null, "COMPANY_EMPLOYEE", null, null, null, List.of(first)))
+        update(adminToken, id, new UpdateUserRequest(null, "COMPANY_EMPLOYEE", null, null, null, List.of(first), null))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.terminalIds", contains(first)));
 
-        update(adminToken, id, new UpdateUserRequest(null, null, null, null, "comp-02", null))
+        update(adminToken, id, new UpdateUserRequest(null, null, null, null, "comp-02", null, null))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("An employee needs at least one terminal")));
         Assertions.assertEquals("comp-01", userRepository.findById(id).orElseThrow().getCompanyId(),
                 "the refused move is rolled back as a whole");
-        update(adminToken, id, new UpdateUserRequest(null, null, null, null, "comp-02", List.of(foreign)))
+        update(adminToken, id, new UpdateUserRequest(null, null, null, null, "comp-02", List.of(foreign), null))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.companyId", is("comp-02")))
                 .andExpect(jsonPath("$.terminalIds", contains(foreign)));
@@ -197,7 +197,7 @@ class UserTerminalAssignmentTest {
                 .header(HttpHeaders.AUTHORIZATION, token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(
-                        new CreateUserRequest(username, PASSWORD, "Test User", role, companyId, terminalIds))));
+                        new CreateUserRequest(username, PASSWORD, "Test User", role, companyId, terminalIds, null))));
     }
 
     private ResultActions update(String token, UUID id, UpdateUserRequest body) throws Exception {
