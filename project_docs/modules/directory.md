@@ -337,6 +337,23 @@ DMS-ссылок на терминале (Р-132) —
     до первого байта файла.  
     *Журнал*: `AUDIT_LOG` / `EXPORT` `Exported <N> records up to <момент>, filters: …` под компанией актора.
 
+-   `POST /api/v1/audit-logs/integrity-checks` — проверка цепочки журнала (Р-138).  
+    *Доступ*: `SYSTEM_ADMIN` и `AUDITOR` — цепочка общая для всех компаний; остальным `403 Access denied` с записью
+    `AUDIT_LOG` / `VERIFY` / `DENIED`.  
+    *Ответ `200`*:
+    ```json
+    { "intact": false, "checkedRecords": 1520, "headSeq": 1520, "chainStartedAt": "…", "notCovered": 812,
+      "unsealedRecords": 0, "problems": [ {"kind": "RECORD_CHANGED", "seq": 731, "auditId": "…",
+      "detail": "the record no longer matches its seal"} ], "problemsTruncated": false, "verifiedAt": "…" }
+    ```
+    `kind`: `RECORD_CHANGED` — запись не совпадает со звеном; `RECORD_DELETED` — звено без записи; `LINKS_MISSING` —
+    дыра в номерах звеньев; `TIME_CHANGED` — `createdAt` дальше пяти минут от момента звена; `HEAD_MISMATCH` —
+    цепочка кончается не там, где голова; `RECORDS_OUTSIDE_CHAIN` — записи после начала цепочки без звена. Находок
+    в ответе — до 20, остальные — `problemsTruncated`. `notCovered` — записи до начала цепочки (до Р-138).  
+    *Журнал*: цела — `AUDIT_LOG` / `VERIFY` `Audit chain intact: N records checked up to seq S`; разорвана —
+    исходом `UNRESOLVED` `Audit chain broken: …` и ERROR с маркером `AUDIT_CHAIN_BROKEN`. Ту же проверку ночью
+    запускает `AuditIntegrityScheduler` от `system`.
+
 ---
 
 ## 4. Коллекция Postman

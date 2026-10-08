@@ -33,11 +33,13 @@ public final class AuditAction {
     public static final String STOP = "STOP";
     // Выгрузка журнала в файл — массовый доступ к журналу (PCI DSS 10.2.1.3, Р-137).
     public static final String EXPORT = "EXPORT";
+    // Проверка цепочки журнала (Р-138): разрыв — исходом UNRESOLVED.
+    public static final String VERIFY = "VERIFY";
 
     private static final Set<String> KNOWN = Set.of(
             CREATE, READ, UPDATE, DELETE, LIST, BLOCK, UNBLOCK,
             LOGIN, LOGOUT, LOCKOUT, RATE_LIMIT, TOKEN_REUSE, PASSWORD_CHANGE,
-            CAPTURE, REFUND, CANCEL, RESOLVE, STATUS_CHANGE, START, STOP, EXPORT);
+            CAPTURE, REFUND, CANCEL, RESOLVE, STATUS_CHANGE, START, STOP, EXPORT, VERIFY);
 
     private AuditAction() {
     }

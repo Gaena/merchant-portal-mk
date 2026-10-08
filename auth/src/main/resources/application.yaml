@@ -50,6 +50,10 @@ auth:
     cron: "${AUTH_INACTIVITY_CRON:0 45 3 * * *}"
 
 mp:
+  audit:
+    # Ключ HMAC цепочки журнала аудита (Р-138): одно значение во всех четырёх сервисах, не короче 32 байт.
+    # Без значения по умолчанию намеренно: с известным ключом цепочку после правки журнала пересчитал бы любой.
+    chain-key: ${AUDIT_CHAIN_KEY}
   # Whose X-Real-IP / X-Forwarded-For we believe: our nginx over loopback. Other peers' headers are
   # ignored; empty value = never believe them. See ClientIp.
   trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}

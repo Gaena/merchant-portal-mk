@@ -31,14 +31,18 @@ public class AuditLogService {
     private static final int DETAILS_MAX = 4000;
 
     private final AuditLogRepository auditLogRepository;
+    // Звено цепочки — в той же транзакции, что запись (Р-138).
+    private final AuditChain chain;
 
     // Шаблоном, а не @Transactional(REQUIRES_NEW): запись идёт и внутренним вызовом, и отложенно из
     // AuditOutbox — мимо прокси, где аннотация не действует.
     private final TransactionTemplate ownTransaction;
 
     public AuditLogService(AuditLogRepository auditLogRepository,
-                           PlatformTransactionManager transactionManager) {
+                           PlatformTransactionManager transactionManager,
+                           AuditChain chain) {
         this.auditLogRepository = auditLogRepository;
+        this.chain = chain;
         this.ownTransaction = new TransactionTemplate(transactionManager);
         this.ownTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -61,7 +65,7 @@ public class AuditLogService {
         if (AuditOutbox.defer(() -> writeReporting(record, "audit record"))) {
             return;
         }
-        ownTransaction.executeWithoutResult(status -> auditLogRepository.save(record));
+        ownTransaction.executeWithoutResult(status -> chain.seal(auditLogRepository.save(record)));
     }
 
     // Звать прямо перед throw. companyId — компания актора, не названная в запросе: иначе любой пишет
@@ -133,7 +137,7 @@ public class AuditLogService {
     // Ошибку записи не пробрасывать: журнал не роняет операцию.
     private void writeReporting(AuditLog record, String what) {
         try {
-            ownTransaction.executeWithoutResult(status -> auditLogRepository.save(record));
+            ownTransaction.executeWithoutResult(status -> chain.seal(auditLogRepository.save(record)));
         } catch (Exception e) {
             log.error("{}: {} lost for {} {} {} by {}: {}",
                     AUDIT_WRITE_FAILED_MARKER, what, record.getAction(), record.getEntityType(),

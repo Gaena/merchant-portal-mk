@@ -66,6 +66,8 @@ pbl:
 # to check the management port itself on a real container.
 mp:
   audit:
+    # Тот же ключ во всех модулях, как ключ подписи токенов; нигде больше не используется.
+    chain-key: test-only-audit-chain-key-not-used-anywhere-else-0123456789
     # Запуск и остановка сервиса в журнале (Р-136) — не в тестах: контекст живёт весь прогон, и его записи
     # попадали бы в счёт журнала чужих тестов. Слушатель проверяет ServiceLifecycleAuditTest в common.
     lifecycle:

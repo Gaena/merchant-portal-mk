@@ -634,6 +634,31 @@
 						},
 						"description": "CSV of the audit log (Р-137): the same filters and access as List Audit Logs, no paging; records oldest first, at most 100000 (400 otherwise, before any byte). UTF-8 with BOM, ';' as the separator, columns createdAt;action;outcome;performedBy;clientIp;entityType;entityId;companyId;details;traceId;id. Values starting with = + - @ get a leading apostrophe (CSV injection). The export itself is journaled as AUDIT_LOG / EXPORT."
 					}
+				},
+				{
+					"name": "Verify Audit Chain",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/audit-logs/integrity-checks",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"audit-logs",
+								"integrity-checks"
+							]
+						},
+						"description": "Checks the audit chain (Р-138): every link in order, its record, the HMAC over the previous link and the record, and the record time next to the link time. SYSTEM_ADMIN and AUDITOR only (403 otherwise). intact=false lists up to 20 problems: RECORD_CHANGED, RECORD_DELETED, LINKS_MISSING, TIME_CHANGED, HEAD_MISMATCH, RECORDS_OUTSIDE_CHAIN. The check itself is journaled as AUDIT_LOG / VERIFY - UNRESOLVED when broken."
+					}
 				}
 			]
 		}

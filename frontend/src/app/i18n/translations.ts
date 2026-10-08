@@ -3,7 +3,7 @@ import type { LinkStatus } from '../utils/payByLinkData';
 import type { TerminalStatus } from '../types/dto';
 import type { EcomOperationKind, EcomStatus, EcomPaymentType } from '../types/ecom';
 import type { Role } from '../types/role';
-import type { AuditActionCode, AuditEntityCode } from '../types/audit';
+import type { AuditActionCode, AuditEntityCode, IntegrityProblemKind } from '../types/audit';
 
 export type Language = 'en' | 'az' | 'ru';
 
@@ -691,6 +691,19 @@ export interface TranslationDictionary {
     exportAction: string;
     exportHint: string;
     exportFailed: string;
+    /** Проверка цепочки журнала (Р-138): SYSTEM_ADMIN и AUDITOR. */
+    integrityAction: string;
+    integrityTitle: string;
+    integrityIntact: string;
+    integrityBroken: string;
+    integrityChecked: string;
+    integrityHead: string;
+    integrityStartedAt: string;
+    integrityNotCovered: string;
+    integrityUnsealed: string;
+    integrityMore: string;
+    integrityFailed: string;
+    integrityProblems: Record<IntegrityProblemKind, string>;
     /** Карточка записи журнала: открывается кликом по строке. */
     detailsTitle: string;
     entityId: string;
@@ -1390,7 +1403,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         RATE_LIMIT: 'Sign-in attempt limit', TOKEN_REUSE: 'Refresh token reuse', PASSWORD_CHANGE: 'Password change',
         CAPTURE: 'Capture', REFUND: 'Refund', CANCEL: 'Cancellation', RESOLVE: 'Outcome resolution',
         STATUS_CHANGE: 'Status change', START: 'Service start', STOP: 'Service stop',
-        EXPORT: 'Export',
+        EXPORT: 'Export', VERIFY: 'Integrity check',
       },
       entities: {
         COMPANY: 'Company', TERMINAL: 'Terminal', USER: 'User', AUTH: 'Authentication', PAYMENT_LINK: 'Payment link',
@@ -1405,6 +1418,21 @@ export const translations: Record<Language, TranslationDictionary> = {
       exportAction: 'Export CSV',
       exportHint: 'All records matching the filters, oldest first, up to 100 000. The export is recorded in the journal.',
       exportFailed: 'Could not export the journal',
+      integrityAction: 'Verify integrity',
+      integrityTitle: 'Audit journal integrity',
+      integrityIntact: 'The journal chain is intact: no record was changed, deleted or added around the portal.',
+      integrityBroken: 'The journal chain is broken: records were changed in the database around the portal.',
+      integrityChecked: 'Records checked',
+      integrityHead: 'Last link',
+      integrityStartedAt: 'Chain kept since',
+      integrityNotCovered: 'Records before the chain (not covered)',
+      integrityUnsealed: 'Records written around the portal',
+      integrityMore: 'And more — see the journal record of this check.',
+      integrityFailed: 'Could not verify the journal',
+      integrityProblems: {
+        RECORD_CHANGED: 'Record changed', RECORD_DELETED: 'Record deleted', LINKS_MISSING: 'Links missing',
+        TIME_CHANGED: 'Record time changed', HEAD_MISMATCH: 'Chain end does not match', RECORDS_OUTSIDE_CHAIN: 'Records outside the chain',
+      },
       detailsTitle: 'Audit record',
       entityId: 'Entity ID',
       company: 'Company',
@@ -2067,7 +2095,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         RATE_LIMIT: 'Giriş cəhdləri limiti', TOKEN_REUSE: 'Refresh-tokenin təkrarı', PASSWORD_CHANGE: 'Şifrənin dəyişdirilməsi',
         CAPTURE: 'Vəsaitin silinməsi', REFUND: 'Geri qaytarma', CANCEL: 'Ləğv', RESOLVE: 'Əməliyyatın nəticəsi',
         STATUS_CHANGE: 'Statusun dəyişməsi', START: 'Servisin işə salınması', STOP: 'Servisin dayandırılması',
-        EXPORT: 'İxrac',
+        EXPORT: 'İxrac', VERIFY: 'Bütövlük yoxlaması',
       },
       entities: {
         COMPANY: 'Şirkət', TERMINAL: 'Terminal', USER: 'İstifadəçi', AUTH: 'Autentifikasiya', PAYMENT_LINK: 'Ödəniş linki',
@@ -2082,6 +2110,21 @@ export const translations: Record<Language, TranslationDictionary> = {
       exportAction: 'CSV ixracı',
       exportHint: 'Filtrlərə uyğun bütün qeydlər, köhnələr əvvəl, 100 000-ə qədər. İxrac jurnala yazılır.',
       exportFailed: 'Jurnalı ixrac etmək mümkün olmadı',
+      integrityAction: 'Bütövlüyü yoxla',
+      integrityTitle: 'Audit jurnalının bütövlüyü',
+      integrityIntact: 'Jurnal zənciri bütövdür: heç bir qeyd portaldan kənar dəyişdirilməyib, silinməyib və əlavə olunmayıb.',
+      integrityBroken: 'Jurnal zənciri pozulub: qeydlər verilənlər bazasında portaldan kənar dəyişdirilib.',
+      integrityChecked: 'Yoxlanılan qeydlər',
+      integrityHead: 'Son halqa',
+      integrityStartedAt: 'Zəncir aparılır',
+      integrityNotCovered: 'Zəncirdən əvvəlki qeydlər (əhatə olunmur)',
+      integrityUnsealed: 'Portaldan kənar yazılmış qeydlər',
+      integrityMore: 'Və digərləri — bu yoxlamanın jurnal qeydinə baxın.',
+      integrityFailed: 'Jurnalı yoxlamaq mümkün olmadı',
+      integrityProblems: {
+        RECORD_CHANGED: 'Qeyd dəyişdirilib', RECORD_DELETED: 'Qeyd silinib', LINKS_MISSING: 'Halqalar çatışmır',
+        TIME_CHANGED: 'Qeydin vaxtı dəyişdirilib', HEAD_MISMATCH: 'Zəncirin sonu uyğun gəlmir', RECORDS_OUTSIDE_CHAIN: 'Zəncirdən kənar qeydlər',
+      },
       detailsTitle: 'Audit jurnalı qeydi',
       entityId: 'Obyektin ID-si',
       company: 'Şirkət',
@@ -2744,7 +2787,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         RATE_LIMIT: 'Лимит попыток входа', TOKEN_REUSE: 'Повтор refresh-токена', PASSWORD_CHANGE: 'Смена пароля',
         CAPTURE: 'Списание', REFUND: 'Возврат', CANCEL: 'Отмена', RESOLVE: 'Итог операции',
         STATUS_CHANGE: 'Смена статуса', START: 'Запуск сервиса', STOP: 'Остановка сервиса',
-        EXPORT: 'Выгрузка',
+        EXPORT: 'Выгрузка', VERIFY: 'Проверка целостности',
       },
       entities: {
         COMPANY: 'Компания', TERMINAL: 'Терминал', USER: 'Пользователь', AUTH: 'Вход в систему', PAYMENT_LINK: 'Платёжная ссылка',
@@ -2759,6 +2802,21 @@ export const translations: Record<Language, TranslationDictionary> = {
       exportAction: 'Выгрузить CSV',
       exportHint: 'Все записи по фильтрам, старые раньше, до 100 000. Выгрузка записывается в журнал.',
       exportFailed: 'Не удалось выгрузить журнал',
+      integrityAction: 'Проверить целостность',
+      integrityTitle: 'Целостность журнала аудита',
+      integrityIntact: 'Цепочка журнала цела: ни одна запись не изменена, не удалена и не добавлена мимо портала.',
+      integrityBroken: 'Цепочка журнала разорвана: записи меняли в базе мимо портала.',
+      integrityChecked: 'Проверено записей',
+      integrityHead: 'Последнее звено',
+      integrityStartedAt: 'Цепочка ведётся с',
+      integrityNotCovered: 'Записей до начала цепочки (не покрыты)',
+      integrityUnsealed: 'Записей мимо портала',
+      integrityMore: 'И другие — см. запись этой проверки в журнале.',
+      integrityFailed: 'Не удалось проверить журнал',
+      integrityProblems: {
+        RECORD_CHANGED: 'Запись изменена', RECORD_DELETED: 'Запись удалена', LINKS_MISSING: 'Пропали звенья',
+        TIME_CHANGED: 'Изменено время записи', HEAD_MISMATCH: 'Конец цепочки не сходится', RECORDS_OUTSIDE_CHAIN: 'Записи вне цепочки',
+      },
       detailsTitle: 'Запись журнала аудита',
       entityId: 'ID объекта',
       company: 'Компания',

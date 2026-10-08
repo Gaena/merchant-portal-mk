@@ -4,8 +4,10 @@ import az.millikart.common.audit.AuditOutcome;
 import az.millikart.common.dto.PagedResponse;
 import az.millikart.common.search.SearchTerms;
 import az.millikart.common.security.UserPrincipal;
+import az.millikart.directory.dto.AuditIntegrityReport;
 import az.millikart.directory.dto.AuditLogFilter;
 import az.millikart.directory.dto.AuditLogResponse;
+import az.millikart.directory.service.AuditIntegrityService;
 import az.millikart.directory.service.AuditLogQueryService;
 
 import jakarta.servlet.http.HttpServletResponse;
@@ -23,6 +25,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,9 +35,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuditLogController {
 
     private final AuditLogQueryService auditLogQueryService;
+    private final AuditIntegrityService auditIntegrityService;
 
-    public AuditLogController(AuditLogQueryService auditLogQueryService) {
+    public AuditLogController(AuditLogQueryService auditLogQueryService, AuditIntegrityService auditIntegrityService) {
         this.auditLogQueryService = auditLogQueryService;
+        this.auditIntegrityService = auditIntegrityService;
+    }
+
+    // Проверка цепочки журнала (Р-138): POST, потому что сама пишет запись VERIFY в журнал.
+    @PostMapping("/integrity-checks")
+    public AuditIntegrityReport verifyIntegrity(@AuthenticationPrincipal UserPrincipal principal) {
+        return auditIntegrityService.verify(principal);
     }
 
     // Потолок страницы: таблица только растёт, размер без предела вытянет её в heap одним запросом.

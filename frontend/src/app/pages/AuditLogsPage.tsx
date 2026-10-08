@@ -29,6 +29,7 @@ import {
   Search as SearchIcon,
   Refresh as RefreshIcon,
   Download as DownloadIcon,
+  VerifiedUser as IntegrityIcon,
   WarningAmber as AttentionIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
@@ -37,7 +38,7 @@ import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { useDebounced } from '../hooks/useDebounced';
-import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '../types/audit';
+import { AUDIT_ACTIONS, AUDIT_ENTITIES, type AuditIntegrityReport } from '../types/audit';
 
 import type { AuditLogDto, CompanyDto } from '../types/dto';
 
@@ -92,6 +93,9 @@ export const AuditLogsPage: React.FC = () => {
   const [attention, setAttention] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
+  // Проверка цепочки (Р-138) — SYSTEM_ADMIN и AUDITOR: цепочка общая для всех компаний.
+  const [integrity, setIntegrity] = useState<AuditIntegrityReport | null>(null);
+  const [integrityBusy, setIntegrityBusy] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   // Поиск и фильтры — серверные: клиентский фильтр видел бы только загруженную страницу (P3-1).
@@ -184,6 +188,26 @@ export const AuditLogsPage: React.FC = () => {
       });
   }, [page, rowsPerPage, filterParams]);
 
+  const handleIntegrityCheck = async () => {
+    if (integrityBusy) return;
+    setIntegrityBusy(true);
+    setExportError('');
+    try {
+      const res = await apiClient.post<AuditIntegrityReport>('/api/v1/audit-logs/integrity-checks');
+      setIntegrity(res.data);
+      // Проверка пишет свою запись — список перечитывается, чтобы её было видно.
+      setReloadKey(k => k + 1);
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.message : undefined;
+      setExportError(typeof message === 'string' && message ? message : tObj.auditLogs.integrityFailed);
+    } finally {
+      setIntegrityBusy(false);
+    }
+  };
+
+  const problemLabel = (kind: string): string =>
+    (tObj.auditLogs.integrityProblems as Record<string, string>)[kind] || kind;
+
   // CSV собирает сервер (Р-137): потолок строк и права — там же; отказ приходит JSON внутри Blob.
   const handleExport = async () => {
     if (exporting) return;
@@ -240,6 +264,11 @@ export const AuditLogsPage: React.FC = () => {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.5}>
+          {globalReader && (
+            <Button variant="outlined" startIcon={<IntegrityIcon />} onClick={handleIntegrityCheck} disabled={integrityBusy}>
+              {integrityBusy ? tObj.common.loading : tObj.auditLogs.integrityAction}
+            </Button>
+          )}
           <Tooltip title={tObj.auditLogs.exportHint}>
             <span>
               <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExport} disabled={exporting}>
@@ -433,6 +462,50 @@ export const AuditLogsPage: React.FC = () => {
           onRowsPerPageChange={e => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
         />
       </TableContainer>
+
+      <Dialog open={integrity !== null} onClose={() => setIntegrity(null)} maxWidth="sm" fullWidth>
+        {integrity && (
+          <>
+            <DialogTitle sx={{ fontWeight: 700 }}>{tObj.auditLogs.integrityTitle}</DialogTitle>
+            <DialogContent dividers>
+              <Alert severity={integrity.intact ? 'success' : 'error'} sx={{ mb: 2 }}>
+                {integrity.intact ? tObj.auditLogs.integrityIntact : tObj.auditLogs.integrityBroken}
+              </Alert>
+              <DetailRow label={tObj.auditLogs.integrityChecked}>{integrity.checkedRecords}</DetailRow>
+              <DetailRow label={tObj.auditLogs.integrityHead} mono>{integrity.headSeq}</DetailRow>
+              <DetailRow label={tObj.auditLogs.integrityStartedAt}>
+                {integrity.chainStartedAt ? new Date(integrity.chainStartedAt).toLocaleString() : '—'}
+              </DetailRow>
+              <DetailRow label={tObj.auditLogs.integrityNotCovered}>{integrity.notCovered}</DetailRow>
+              <DetailRow label={tObj.auditLogs.integrityUnsealed}>{integrity.unsealedRecords}</DetailRow>
+              {integrity.problems.length > 0 && (
+                <Stack spacing={1} sx={{ mt: 2 }}>
+                  {integrity.problems.map((problem, index) => (
+                    <Box key={`${problem.kind}-${problem.seq ?? index}`}
+                         sx={{ p: 1.5, borderRadius: 1, border: '1px solid', borderColor: 'error.light' }}>
+                      <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                        {problemLabel(problem.kind)}{problem.seq !== null ? ` · #${problem.seq}` : ''}
+                      </Typography>
+                      {problem.auditId && (
+                        <Typography variant="caption" sx={{ fontFamily: 'monospace', display: 'block' }}>
+                          {problem.auditId}
+                        </Typography>
+                      )}
+                      <Typography variant="caption" color="text.secondary">{problem.detail}</Typography>
+                    </Box>
+                  ))}
+                  {integrity.problemsTruncated && (
+                    <Typography variant="caption" color="text.secondary">{tObj.auditLogs.integrityMore}</Typography>
+                  )}
+                </Stack>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button variant="contained" onClick={() => setIntegrity(null)}>{tObj.common.close}</Button>
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
 
       <Dialog open={selectedLog !== null} onClose={() => setSelectedLog(null)} maxWidth="sm" fullWidth>
         {selectedLog && (

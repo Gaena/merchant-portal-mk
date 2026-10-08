@@ -72,6 +72,10 @@ pbl:
     get-order-path: "${PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
 
 mp:
+  audit:
+    # Ключ HMAC цепочки журнала аудита (Р-138): одно значение во всех четырёх сервисах, не короче 32 байт.
+    # Без значения по умолчанию намеренно: с известным ключом цепочку после правки журнала пересчитал бы любой.
+    chain-key: ${AUDIT_CHAIN_KEY}
   # Forwarding headers are believed only from these addresses — nginx on loopback (P2-10).
   # Empty = never believe them.
   trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
