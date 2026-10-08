@@ -47,6 +47,9 @@ import type { CompanyDto, ProviderLoginOption, ProviderTerminalSyncOutcome } fro
 
 type CompanyStatus = 'ACTIVE' | 'INACTIVE';
 
+// VÖEN — ровно 10 цифр, зеркало проверки CreateCompanyRequest/UpdateCompanyRequest (Р-129).
+const TAX_ID = /^\d{10}$/;
+
 // Статус без значения — активный: так его читают и список, и форма правки.
 const statusOf = (company: CompanyDto): CompanyStatus =>
   (company.status === 'ACTIVE' || !company.status ? 'ACTIVE' : 'INACTIVE');
@@ -60,7 +63,7 @@ export const CompaniesPage: React.FC = () => {
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ id: '', name: '', providerLogin: '', providerPassword: '' });
+  const [form, setForm] = useState({ id: '', name: '', providerLogin: '', providerPassword: '', taxId: '' });
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState('');
   // Удаление необратимо из портала: удалённую компанию API не находит, вернуть её нечем.
@@ -68,8 +71,8 @@ export const CompaniesPage: React.FC = () => {
   const [confirmBusy, setConfirmBusy] = useState(false);
   // Пароль в форме правки пуст: прочитать его нельзя, только заменить (Р-93).
   const [editCompany, setEditCompany] = useState<CompanyDto | null>(null);
-  const [editForm, setEditForm] = useState<{ name: string; providerLogin: string; providerPassword: string; status: CompanyStatus }>(
-    { name: '', providerLogin: '', providerPassword: '', status: 'ACTIVE' });
+  const [editForm, setEditForm] = useState<{ name: string; providerLogin: string; providerPassword: string; taxId: string; status: CompanyStatus }>(
+    { name: '', providerLogin: '', providerPassword: '', taxId: '', status: 'ACTIVE' });
   const [editError, setEditError] = useState('');
   const [editConfirm, setEditConfirm] = useState<string[] | null>(null);
   const [editBusy, setEditBusy] = useState(false);
@@ -116,10 +119,14 @@ export const CompaniesPage: React.FC = () => {
     return () => controller.abort();
   }, [fetchCompanies]);
 
-  // Креды к провайдеру обязательны (Р-93).
+  // Креды к провайдеру обязательны (Р-93); VÖEN — нет, но если задан, то как проверит бэкенд (Р-129).
   const handleCreate = async () => {
     if (!form.id.trim() || !form.name.trim() || !form.providerLogin.trim() || !form.providerPassword.trim()) {
       setError(tObj.companies.formIncomplete);
+      return;
+    }
+    if (form.taxId.trim() && !TAX_ID.test(form.taxId.trim())) {
+      setError(tObj.companies.taxIdInvalid);
       return;
     }
     setError('');
@@ -129,11 +136,12 @@ export const CompaniesPage: React.FC = () => {
         name: form.name.trim(),
         providerLogin: form.providerLogin.trim(),
         providerPassword: form.providerPassword.trim(),
+        taxId: form.taxId.trim() || null,
       });
       // Перечитываем, а не дописываем: новая компания может оказаться на другой странице.
       fetchCompanies();
       setCreateOpen(false);
-      setForm({ id: '', name: '', providerLogin: '', providerPassword: '' });
+      setForm({ id: '', name: '', providerLogin: '', providerPassword: '', taxId: '' });
       setSnackbar(tObj.companies.created);
     } catch (err: any) {
       setError(err.response?.data?.message || tObj.companies.createFailed);
@@ -154,7 +162,10 @@ export const CompaniesPage: React.FC = () => {
 
   const openEdit = (company: CompanyDto) => {
     setEditCompany(company);
-    setEditForm({ name: company.name ?? '', providerLogin: company.providerLogin ?? '', providerPassword: '', status: statusOf(company) });
+    setEditForm({
+      name: company.name ?? '', providerLogin: company.providerLogin ?? '', providerPassword: '',
+      taxId: company.taxId ?? '', status: statusOf(company),
+    });
     setEditError('');
     setSyncResult(null);
     setSyncError('');
@@ -246,6 +257,8 @@ export const CompaniesPage: React.FC = () => {
     if (name !== (editCompany.name ?? '')) payload.name = name;
     if (login && login !== (editCompany.providerLogin ?? '')) payload.providerLogin = login;
     if (editForm.providerPassword.trim()) payload.providerPassword = editForm.providerPassword.trim();
+    const taxId = editForm.taxId.trim();
+    if (taxId && taxId !== (editCompany.taxId ?? '')) payload.taxId = taxId;
     if (editForm.status !== statusOf(editCompany)) payload.status = editForm.status;
     return payload;
   };
@@ -260,6 +273,7 @@ export const CompaniesPage: React.FC = () => {
       changes.push(`${tObj.companies.providerLogin}: ${editCompany.providerLogin || '—'} → ${payload.providerLogin}`);
     }
     if (payload.providerPassword !== undefined) changes.push(tObj.companies.providerPasswordReplaced);
+    if (payload.taxId !== undefined) changes.push(`${tObj.companies.taxId}: ${editCompany.taxId || '—'} → ${payload.taxId}`);
     if (payload.status !== undefined) {
       changes.push(`${tObj.companies.status}: ${statusLabel(statusOf(editCompany))} → ${statusLabel(payload.status as CompanyStatus)}`);
     }
@@ -271,6 +285,12 @@ export const CompaniesPage: React.FC = () => {
     if (!editCompany) return;
     if (!editForm.name.trim() || (!editForm.providerLogin.trim() && editCompany.providerLogin)) {
       setEditError(tObj.companies.formIncomplete);
+      return;
+    }
+    // Стереть VÖEN бэкенд не даёт (пустое — «не менять»), поэтому пустое поле у заданного — тоже ошибка.
+    const taxId = editForm.taxId.trim();
+    if (taxId ? !TAX_ID.test(taxId) : Boolean(editCompany.taxId)) {
+      setEditError(tObj.companies.taxIdInvalid);
       return;
     }
     setEditError('');
@@ -379,6 +399,7 @@ export const CompaniesPage: React.FC = () => {
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.companyId}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.name}</TableCell>
                 {isAdmin && <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.providerLogin}</TableCell>}
+                <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.taxId}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.companies.status}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>{tObj.common.date}</TableCell>
                 <TableCell sx={{ fontWeight: 700 }} align="center">{tObj.common.actions}</TableCell>
@@ -396,6 +417,7 @@ export const CompaniesPage: React.FC = () => {
                     {isAdmin && (
                       <TableCell sx={{ fontFamily: 'monospace' }}>{comp.providerLogin || '—'}</TableCell>
                     )}
+                    <TableCell sx={{ fontFamily: 'monospace' }}>{comp.taxId || '—'}</TableCell>
                     <TableCell>
                       <Chip
                         icon={isActive ? <CheckCircleIcon fontSize="small" /> : <BlockIcon fontSize="small" />}
@@ -429,7 +451,7 @@ export const CompaniesPage: React.FC = () => {
               })}
               {companies.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={isAdmin ? 6 : 5} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={isAdmin ? 7 : 6} align="center" sx={{ py: 6 }}>
                     <BusinessIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
                     <Typography color="text.secondary">No companies found in directory.</Typography>
                   </TableCell>
@@ -479,6 +501,14 @@ export const CompaniesPage: React.FC = () => {
               autoComplete="new-password"
               fullWidth
             />
+            <TextField
+              label={tObj.companies.taxId}
+              value={form.taxId}
+              onChange={e => setForm(f => ({ ...f, taxId: e.target.value }))}
+              helperText={tObj.companies.taxIdHint}
+              slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 10 } }}
+              fullWidth
+            />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
@@ -509,6 +539,14 @@ export const CompaniesPage: React.FC = () => {
               onChange={e => setEditForm(f => ({ ...f, providerPassword: e.target.value }))}
               helperText={tObj.companies.newProviderPasswordHint}
               autoComplete="new-password"
+              fullWidth
+            />
+            <TextField
+              label={tObj.companies.taxId}
+              value={editForm.taxId}
+              onChange={e => setEditForm(f => ({ ...f, taxId: e.target.value }))}
+              helperText={tObj.companies.taxIdHint}
+              slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 10 } }}
               fullWidth
             />
             <TextField

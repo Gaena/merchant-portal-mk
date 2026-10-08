@@ -177,7 +177,7 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 | `controller` | `CompanyController` (в том числе свободные логины справочника `provider-logins`), `TerminalController` (в том числе лёгкий список `options` и терминалы провайдера для формы заведения `provider-terminals`), `AuditLogController` |
 | `service` | `CompanyService` (компании; креды к провайдеру — шифрование через `CredentialCipher`, проверка логина по слепку `provider_logins` — Р-94, список свободных логинов — Р-95), `TerminalService` (права, заведение из справочника провайдера с проверкой мерчанта по логину компании — Р-96, блокировка с приостановкой ссылок), `AuditLogQueryService` (чтение журнала), `TerminalStatusReconciliationService` (статусы, название, логин и номер наших терминалов по слепку провайдера) |
 | `repository` | `CompanyRepository`, `TerminalRepository` (номер нового терминала — `nextId` из `terminals_id_seq`, Р-81), `AuditLogQueryRepository`; нативные запросы к чужим таблицам — `PaymentLinkStatusRepository` (статусы ссылок `pbl`), `ProviderTerminalStatusRepository` (`provider_terminals`) и `ProviderLoginSnapshotRepository` (`provider_logins`) |
-| `scheduler` | `TerminalStatusReconciliationScheduler` |
+| `scheduler` | `TerminalStatusReconciliationScheduler`, `AuditIntegrityScheduler` (Р-138) |
 | `config` | `CredentialCipherConfig` — бин шифра паролей компаний |
 | `domain` | `Company`, `Terminal`, `TerminalStatus`, `TerminalStatusSource` |
 
@@ -227,6 +227,8 @@ erDiagram
     companies |o--o{ users : "company_id"
     users ||--o{ refresh_tokens : "user_id, каскад на удаление"
     users ||--o{ password_history : "user_id, каскад на удаление"
+    users ||--o{ user_terminals : "user_id, каскад на удаление"
+    terminals ||--o{ user_terminals : "terminal_id, без внешнего ключа"
     companies |o--o{ terminals : "company_id"
     companies |o--o{ audit_logs : "company_id, без внешнего ключа"
     terminals ||--o{ payment_links : "terminal_id"
@@ -244,6 +246,7 @@ erDiagram
         varchar status "ACTIVE / INACTIVE / DELETED — мягкое удаление"
         varchar provider_login UK "Логин мультимерчанта целиком: MultiMerchantSys/логин (Р-93, Р-94)"
         varchar provider_password "Шифротекст AES-256-GCM, наружу не выходит"
+        varchar tax_id "VÖEN, 10 цифр: реквизит продавца на чеке (Р-129)"
         varchar created_by
         timestamp created_at
         varchar updated_by
@@ -262,6 +265,7 @@ erDiagram
         timestamp lockout_until "До какого момента вход закрыт"
         boolean password_change_required "Пароль задал не владелец — сменить при входе (Р-100)"
         timestamp last_activity_at "Последняя активность; 90 дней без неё — блокировка (Р-101)"
+        boolean dms_links_allowed "Может создавать DMS-ссылки; уходит в access-токен (Р-132)"
         timestamp created_at
     }
 
@@ -270,6 +274,13 @@ erDiagram
         uuid user_id FK "→ users.id"
         varchar password_hash "BCrypt прежнего пароля; хранятся три последних (Р-102)"
         timestamp replaced_at
+    }
+
+    user_terminals {
+        uuid user_id PK "→ users.id; сотрудник"
+        integer terminal_id PK "→ terminals.id; своей компании, проверяет auth"
+        varchar assigned_by "Логин назначившего"
+        timestamp assigned_at
     }
 
     refresh_tokens {
@@ -292,6 +303,7 @@ erDiagram
         varchar status "ACTIVE / BLOCKED"
         varchar status_source "MANUAL / PROVIDER — кто поставил статус (Р-66)"
         varchar merchant_rid UK "merchant.rid провайдера за терминалом (Р-69); пусто у заведённых без справочника"
+        boolean dms_allowed "Разрешены ли DMS-ссылки; меняет только SYSTEM_ADMIN (Р-132)"
         varchar created_by
         timestamp created_at
         varchar updated_by
@@ -339,8 +351,22 @@ erDiagram
         varchar company_id "Чья это запись — technical_handover.md §4.4"
         varchar details "До 4000 символов"
         varchar client_ip "До 45 символов, IPv6"
-        varchar outcome "SUCCESS / DENIED / UNRESOLVED"
+        varchar outcome "SUCCESS / DENIED / UNRESOLVED / DECLINED"
+        varchar trace_id "traceId запроса или прогона планировщика — ключ к логам сервиса (Р-135)"
         timestamp created_at
+    }
+
+    audit_chain {
+        bigint seq PK "Номер звена, без дыр (Р-138)"
+        uuid audit_id UK "→ audit_logs.id, без внешнего ключа: удалённая запись оставляет звено"
+        bigint sealed_at_micros "Момент звена, микросекунды от эпохи"
+        varchar hash "HMAC-SHA256 от звена перед ним и полей записи"
+    }
+
+    audit_chain_head {
+        integer id PK "Одна строка, id = 1"
+        bigint last_seq "Последнее звено; его блокировка пускает звенья по одному"
+        varchar last_hash
     }
 
     payment_links {
@@ -382,6 +408,7 @@ erDiagram
         timestamp created_at
         timestamp updated_at
         timestamp last_reconciled_at "Когда сверка последний раз брала в пакет (Р-110)"
+        boolean card_submitted "Плательщик отправил карту: запись в order.trans[] (Р-128)"
     }
 
     transaction_refunds {
@@ -439,6 +466,10 @@ erDiagram
 | `auth` | `005-password-change-required.xml` | `users.password_change_required`, по умолчанию `false` (Р-100) |
 | `auth` | `006-last-activity.xml` | `users.last_activity_at`; существующим строкам — момент миграции (Р-101) |
 | `auth` | `007-password-history.xml` | `password_history`, индекс по `user_id`, внешний ключ на `users` с каскадом (Р-102) |
+| `auth` | `008-user-terminals.xml` | `user_terminals` — терминалы сотрудника (Р-131): ключ «пользователь + терминал», внешний ключ на `users` с каскадом, индекс по `terminal_id`; внешнего ключа на `terminals` нет — таблица чужая и может появиться позже |
+| `auth` | `009-user-dms-links.xml` | `users.dms_links_allowed`, по умолчанию `true` — и у существующих строк (Р-132) |
+| `auth` | `010-audit-log-trace-id.xml` | `audit_logs.trace_id`, если её ещё нет (Р-135) |
+| `auth` | `011-audit-chain.xml` | `audit_chain` и `audit_chain_head` с первой строкой (`last_seq = 0`, хеш из нулей), если их ещё нет (Р-138) |
 | `directory` | `003-directory-schema.xml` | `companies` и `terminals` (с колонкой `password`, её удаляет `008`), если их ещё нет; недостающие аудит-колонки (`created_by`, `created_at`, `updated_by`, `updated_at`) к таблицам, созданным другим сервисом; `audit_logs` в исходном виде, без `client_ip` и `outcome` |
 | `directory` | `004-audit-log-ip-and-indexes.xml` | `audit_logs.client_ip`, `outcome` (по умолчанию `SUCCESS`) и индексы `(company_id, created_at desc)`, `(entity_type, entity_id)`, `(created_at desc)` |
 | `directory` | `005-terminal-status.xml` | `terminals.status`, по умолчанию `ACTIVE` |
@@ -447,6 +478,11 @@ erDiagram
 | `directory` | `008-company-provider-credentials.xml` | `companies.provider_login` и `provider_password`, уникальный индекс `ux_companies_provider_login`; удаление `terminals.password` (Р-93) |
 | `directory` | `009-terminal-rid.xml` | `terminals.terminal_rid` — номер терминала у провайдера (Р-96) |
 | `directory` | `010-terminal-version.xml` | `terminals.version`, если её ещё нет, с умолчанием 0 — для `@Version` (Р-115) |
+| `directory` | `011-company-tax-id.xml` | `companies.tax_id` (VÖEN), если её ещё нет: реквизит продавца на чеке (Р-129) |
+| `directory` | `012-user-terminals.xml` | `user_terminals`, если её ещё нет, в том же виде, что у `auth` (008), без внешнего ключа на `users` — его добавляет `auth` (Р-131) |
+| `directory` | `013-terminal-dms-allowed.xml` | `terminals.dms_allowed`, если её ещё нет, по умолчанию `true` — и у существующих строк (Р-132) |
+| `directory` | `014-audit-log-trace-id.xml` | `audit_logs.trace_id`, если её ещё нет, — как `auth/010` (Р-135) |
+| `directory` | `015-audit-chain.xml` | цепочка журнала, если её ещё нет, — как `auth/011` (Р-138) |
 | `pbl` | `001-initial-schema.xml` | `terminals`, если ещё нет (исходный вид: с `password`, без аудит-колонок); `payment_links`, `transactions` (колонка `merchant_rid`, её переименовывает `009`), внешние ключи `payment_links → terminals` и `transactions → payment_links` |
 | `pbl` | `002-add-indexes.xml` | индексы `payment_links (terminal_id, status)`, `payment_links (status, expires_at)`, `transactions (provider_order_id)` |
 | `pbl` | `003-add-client-ip-and-user-agent.xml` | `transactions.client_ip`, `user_agent` |
@@ -462,6 +498,12 @@ erDiagram
 | `pbl` | `013-transaction-rid-index.xml` | уникальный индекс `transactions (rid_by_merchant)` — по нему ищет публичная страница возврата |
 | `pbl` | `014-transaction-last-reconciled.xml` | `transactions.last_reconciled_at`, если её ещё нет: очередь сверки (Р-110) |
 | `pbl` | `015-money-operation-attempts.xml` | `money_operation_attempts` — возврат или списание, исход которого ещё не записан (Р-123) |
+| `pbl` | `016-transaction-card-submitted.xml` | `transactions.card_submitted`, если её ещё нет: плательщик отправил карту, шаг воронки ссылок (Р-128); на PostgreSQL — отметка старых строк по `trans[]` в `provider_response` |
+| `pbl` | `017-company-tax-id.xml` | `companies.tax_id`, если её ещё нет: VÖEN продавца на чеке плательщика, пишет `directory` (Р-129, Р-130) |
+| `pbl` | `018-user-terminals.xml` | `user_terminals`, если её ещё нет, — как `directory/012` (Р-131) |
+| `pbl` | `019-terminal-dms-allowed.xml` | `terminals.dms_allowed`, если её ещё нет, — как `directory/013` (Р-132) |
+| `pbl` | `020-audit-log-trace-id.xml` | `audit_logs.trace_id`, если её ещё нет, — как `auth/010` (Р-135) |
+| `pbl` | `021-audit-chain.xml` | цепочка журнала, если её ещё нет, — как `auth/011` (Р-138) |
 | `ecom` | `001-provider-terminals.xml` | `provider_terminals` и индекс по `login`; без преконтроля |
 | `ecom` | `002-terminal-status-source.xml` | те же `status_source`, `merchant_rid` и уникальный индекс, что в `directory/006`, если их ещё нет; таблица `terminals` уже должна быть (§4.2) |
 | `ecom` | `003-provider-logins.xml` | `provider_logins` — слепок логинов мультимерчантов со связями к мерчантам — и индекс по `login` (Р-94) |
@@ -680,6 +722,7 @@ sequenceDiagram
 | `auth` | `InactiveAccountScheduler` | `0 45 3 * * *` | блокировка учёток без активности дольше 90 дней (PCI DSS 8.2.6, Р-101) | `auth.inactivity.enabled` |
 | `ecom` | `ProviderTerminalSyncScheduler` | `0 */15 * * * *` | обновление справочника терминалов провайдера и слепка логинов мультимерчантов (Р-94) | `ecom.terminal-sync.enabled` |
 | `directory` | `TerminalStatusReconciliationScheduler` | `0 */15 * * * *` | статусы, названия, логины и номера наших терминалов по справочнику провайдера | `directory.terminal-reconciliation.enabled` |
+| `directory` | `AuditIntegrityScheduler` | `0 30 3 * * *` | проверка цепочки журнала аудита (Р-138): разрыв — ERROR `AUDIT_CHAIN_BROKEN` и запись `UNRESOLVED` | `mp.audit.integrity.enabled` |
 
 Расписание, кроме `PaymentLinkScheduler`, меняется переменной окружения — перечень в
 [`deployment_guide.md`](deployment_guide.md) §20.1. Каждый прогон пишет лог под своим `traceId`

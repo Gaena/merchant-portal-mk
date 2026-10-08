@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Р-132: разрешены ли на терминале DMS-ссылки — pbl отвергает создание DMS-ссылки на терминале с false. Пишет
+      directory (013); pbl добавляет колонку под тем же преконтролем, потому что порядок старта сервисов значения
+      не имеет (P1-2).
+    -->
+    <changeSet id="19-pbl-terminal-dms-allowed" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="terminals"/>
+            <not>
+                <columnExists tableName="terminals" columnName="dms_allowed"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="terminals">
+            <column name="dms_allowed" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

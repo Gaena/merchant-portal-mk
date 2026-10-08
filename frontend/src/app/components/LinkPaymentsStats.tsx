@@ -13,6 +13,8 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
 import type { DashboardSummary } from '../types/dto';
+import { parseTimeToPayRange } from '../types/dto';
+import type { TranslationDictionary } from '../i18n/translations';
 import { parseTransactionStatus } from '../types/transaction';
 import { formatCurrency } from '../utils/format';
 import { getLinkStatusColors, parseLinkStatus } from '../utils/payByLinkData';
@@ -30,6 +32,38 @@ import {
   TopBar,
   type PeriodKey,
 } from './DashboardParts';
+
+type StatsTexts = TranslationDictionary['linkStats']['charts'];
+
+// Доля шага от созданных ссылок; ширина полосы — та же доля, без минимальной ширины: пустой шаг пуст.
+function share(count: number, total: number): number {
+  return total > 0 ? Math.round((count / total) * 100) : 0;
+}
+
+// «2 ч 15 мин», «3 д 4 ч»: число и единица рядом, без подстановок во фразу (P3-5a).
+function formatElapsed(seconds: number, units: StatsTexts['units']): string {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return units.lessThanMinute;
+  if (minutes < 60) return `${minutes} ${units.minute}`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ${units.hour} ${minutes % 60} ${units.minute}`;
+  return `${Math.floor(hours / 24)} ${units.day} ${hours % 24} ${units.hour}`;
+}
+
+const ShareRow: React.FC<{ label: string; count: number; total: number }> = ({ label, count, total }) => (
+  <Box>
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.75 }}>
+      <Typography variant="body2">{label}</Typography>
+      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+        {count}
+        <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+          {total > 0 ? `${share(count, total)}%` : '—'}
+        </Typography>
+      </Typography>
+    </Box>
+    <TopBar width={`${share(count, total)}%`} />
+  </Box>
+);
 
 /**
  * Вкладка «Статистика» Pay by Link (Р-91). Сводку считает `pbl` (Р-89): оплаты, созданные в периоде,
@@ -120,6 +154,56 @@ export const LinkPaymentsStats: React.FC<{ period: PeriodKey; onPeriodChange: (p
           />
         </Box>
       ))}
+
+      {/* Воронка и время до оплаты (Р-128) — по ссылкам периода, поэтому и без единой оплаты: созданные,
+          но не открытые ссылки — тоже ответ. */}
+      {summary && (
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, 1fr)' }, gap: 3, mb: 3 }}>
+          <Panel title={t.charts.funnel} hint={t.charts.funnelHint}>
+            <Stack spacing={2}>
+              {([
+                ['created', summary.linkFunnel.created],
+                ['opened', summary.linkFunnel.opened],
+                ['paymentStarted', summary.linkFunnel.paymentStarted],
+                ['paid', summary.linkFunnel.paid],
+              ] as const).map(([step, count]) => (
+                <ShareRow key={step} label={t.charts.funnelSteps[step]} count={count} total={summary.linkFunnel.created} />
+              ))}
+            </Stack>
+          </Panel>
+
+          <Panel title={t.charts.timeToPay} hint={t.charts.timeToPayHint}>
+            {summary.timeToPay.medianSeconds === null ? (
+              <Typography color="text.secondary" sx={{ py: 2 }}>{t.charts.noPaidLinks}</Typography>
+            ) : (
+              <>
+                <Box sx={{ display: 'flex', gap: 4, mb: 3, flexWrap: 'wrap' }}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">{t.charts.median}</Typography>
+                    <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                      {formatElapsed(summary.timeToPay.medianSeconds, t.charts.units)}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">{t.charts.paidLinks}</Typography>
+                    <Typography variant="h5" sx={{ fontWeight: 700 }}>{summary.timeToPay.paidLinks}</Typography>
+                  </Box>
+                </Box>
+                <Stack spacing={2}>
+                  {summary.timeToPay.buckets.map(bucket => {
+                    const range = parseTimeToPayRange(bucket.range);
+                    return (
+                      <ShareRow key={bucket.range}
+                                label={range ? t.charts.timeToPayRanges[range] : bucket.range}
+                                count={bucket.count} total={summary.timeToPay.paidLinks} />
+                    );
+                  })}
+                </Stack>
+              </>
+            )}
+          </Panel>
+        </Box>
+      )}
 
       {summary && (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(3, 1fr)' }, gap: 3 }}>

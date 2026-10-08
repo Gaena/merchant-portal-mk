@@ -113,6 +113,12 @@ public class EcomMoneyOperationService {
             throw e;
         } catch (RuntimeException e) {
             release(orderId);
+            // Отказ шлюза — BusinessException классификатора; в журнал, чтобы попытка не пропала (Р-134).
+            if (e instanceof BusinessException) {
+                auditLogService.logDeclined(AuditEntity.PROVIDER_ORDER, orderId, auditAction(kind), actor, companyId,
+                        capitalized(kind) + " of " + amount + " " + order.currency() + " declined by the acquirer: "
+                                + e.getMessage() + reasonSuffix);
+            }
             throw e;
         }
 

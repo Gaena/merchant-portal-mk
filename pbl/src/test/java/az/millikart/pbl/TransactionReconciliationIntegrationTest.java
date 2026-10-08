@@ -139,8 +139,18 @@ class TransactionReconciliationIntegrationTest {
         Assertions.assertNotNull(providerResponse.get("reconciledAt"));
         // Последний payload провайдера слит, а не затёрт.
         Assertions.assertEquals("Preparing", providerResponse.get("status"));
+        // Брошена до ввода карты: записей операций нет, шаг «начата оплата» воронки не пройден (Р-128).
+        Assertions.assertFalse(reload(tx).isCardSubmitted());
         // Одноразовая ссылка остаётся ACTIVE, чтобы клиент мог попробовать снова.
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE, linkStatusOf(tx));
+        // Журнал аудита, этап 2: брошенный платёж — запись STATUS_CHANGE от system под компанией терминала.
+        Map<String, Object> record = jdbcTemplate.queryForMap(
+                "SELECT performed_by, company_id, details FROM audit_logs WHERE entity_type = 'TRANSACTION' "
+                        + "AND entity_id = ? AND action = 'STATUS_CHANGE'", tx.getId().toString());
+        Assertions.assertEquals("system", record.get("performed_by"));
+        Assertions.assertEquals("test-company", record.get("company_id"));
+        Assertions.assertTrue(String.valueOf(record.get("details")).startsWith("Status PENDING -> FAILED: abandoned by the payer"),
+                record.toString());
     }
 
     // По max-age гасится только старое: Preparing моложе суток — заказ ещё можно оплатить, строка
@@ -482,6 +492,36 @@ class TransactionReconciliationIntegrationTest {
     }
 
     // Фикстуры
+
+    // Р-128: отказ банка — плательщик карту отправил, и у провайдера есть запись операции. Без отметки
+    // воронка ссылок не отличила бы его от брошенной попытки: обе FAILED.
+    @Test
+    void reconcile_providerDeclinedWithCardOperation_marksCardSubmitted() {
+        Transaction tx = agedTransaction("DECLINED-CARD", TransactionStatus.PENDING, Duration.ofMinutes(10));
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
+                .thenReturn(Map.of("status", "Rejected",
+                        "trans", List.of(Map.of("description", "Purchase", "approvalCode", "000000"))));
+
+        Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
+
+        Transaction reloaded = reload(tx);
+        Assertions.assertEquals(TransactionStatus.FAILED, reloaded.getStatus());
+        Assertions.assertTrue(reloaded.isCardSubmitted());
+    }
+
+    // Отметка только ставится: следующий опрос с урезанным ответом не стирает уже увиденную карту.
+    @Test
+    void reconcile_pollWithoutCardOperation_keepsCardSubmitted() {
+        Transaction tx = agedTransaction("SEEN-CARD", TransactionStatus.PENDING, MAX_AGE.minusHours(1));
+        jdbcTemplate.update("UPDATE transactions SET card_submitted = TRUE WHERE id = ?", tx.getId());
+        providerAnswers("Preparing");
+
+        Assertions.assertEquals(1, reconciliationService.reconcilePendingTransactions());
+
+        Transaction reloaded = reload(tx);
+        Assertions.assertEquals(TransactionStatus.PENDING, reloaded.getStatus());
+        Assertions.assertTrue(reloaded.isCardSubmitted());
+    }
 
     private void providerAnswers(String providerStatus) {
         when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))

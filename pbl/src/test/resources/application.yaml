@@ -22,6 +22,9 @@ pbl:
     # would mean the suite checks a configuration nobody runs.
     zone: Asia/Baku
   base-url: https://pay.example.com/
+  receipt:
+    provider-name: Test Payment Provider LLC
+    provider-tax-id: "1700000001"
   security:
     # No test uses the static fallback token, and leaving it enabled would demand a real value.
     api-token-enabled: false
@@ -62,6 +65,13 @@ pbl:
 # and no port is bound during the build. ManagementPortIntegrationTest overrides this with port 0
 # to check the management port itself on a real container.
 mp:
+  audit:
+    # Тот же ключ во всех модулях, как ключ подписи токенов; нигде больше не используется.
+    chain-key: test-only-audit-chain-key-not-used-anywhere-else-0123456789
+    # Запуск и остановка сервиса в журнале (Р-136) — не в тестах: контекст живёт весь прогон, и его записи
+    # попадали бы в счёт журнала чужих тестов. Слушатель проверяет ServiceLifecycleAuditTest в common.
+    lifecycle:
+      enabled: false
   # Same as production: MockMvc reports 127.0.0.1 as the peer, so it counts as a trusted proxy.
   trusted-proxies: 127.0.0.1,::1
   credentials:

@@ -13,5 +13,10 @@
     <include file="changes/008-company-provider-credentials.xml" relativeToChangelogFile="true"/>
     <include file="changes/009-terminal-rid.xml" relativeToChangelogFile="true"/>
     <include file="changes/010-terminal-version.xml" relativeToChangelogFile="true"/>
+    <include file="changes/011-company-tax-id.xml" relativeToChangelogFile="true"/>
+    <include file="changes/012-user-terminals.xml" relativeToChangelogFile="true"/>
+    <include file="changes/013-terminal-dms-allowed.xml" relativeToChangelogFile="true"/>
+    <include file="changes/014-audit-log-trace-id.xml" relativeToChangelogFile="true"/>
+    <include file="changes/015-audit-chain.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

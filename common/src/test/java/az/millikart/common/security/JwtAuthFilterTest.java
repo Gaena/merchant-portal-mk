@@ -1,6 +1,7 @@
 package az.millikart.common.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -10,8 +11,14 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -101,6 +108,41 @@ class JwtAuthFilterTest {
         assertEquals(200, response.getStatus());
         assertEquals("head@comp1.com", seen.get());
         assertNull(MDC.get(JwtAuthFilter.MDC_USER_KEY), "the login must not outlive the request on this thread");
+    }
+
+    // Р-132: право на DMS-ссылки даёт только claim dmsLinks со значением true. Токен без claim (выданный до Р-132)
+    // и строка "true" права не дают: умолчание открыло бы DMS тому, кому его запретили.
+    @Test
+    void theDmsLinksClaim_grantsTheRightOnlyWhenItIsTrue() throws Exception {
+        assertTrue(principalOf(provider.generateToken("1", "head@comp1.com", "COMPANY_HEAD", "comp-01", true))
+                .isDmsLinksAllowed());
+        assertFalse(principalOf(provider.generateToken("1", "head@comp1.com", "COMPANY_HEAD", "comp-01", false))
+                .isDmsLinksAllowed());
+        assertFalse(principalOf(provider.generateToken("1", "head@comp1.com", "COMPANY_HEAD", "comp-01"))
+                .isDmsLinksAllowed());
+
+        String withoutTheClaim = Jwts.builder()
+                .setClaims(Map.of("userId", "1", "role", "COMPANY_HEAD"))
+                .setSubject("head@comp1.com")
+                .setExpiration(new Date(System.currentTimeMillis() + 60_000))
+                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), SignatureAlgorithm.HS256)
+                .compact();
+        assertFalse(principalOf(withoutTheClaim).isDmsLinksAllowed());
+        String asText = Jwts.builder()
+                .setClaims(Map.of("userId", "1", "role", "COMPANY_HEAD", JwtProvider.DMS_LINKS_CLAIM, "true"))
+                .setSubject("head@comp1.com")
+                .setExpiration(new Date(System.currentTimeMillis() + 60_000))
+                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), SignatureAlgorithm.HS256)
+                .compact();
+        assertFalse(principalOf(asText).isDmsLinksAllowed());
+    }
+
+    private UserPrincipal principalOf(String token) throws Exception {
+        AtomicReference<UserPrincipal> seen = new AtomicReference<>();
+        MockHttpServletResponse response = run(token, (request, ignored) ->
+                seen.set((UserPrincipal) SecurityContextHolder.getContext().getAuthentication().getPrincipal()));
+        assertEquals(200, response.getStatus());
+        return seen.get();
     }
 
     // Статический токен даёт SYSTEM_ADMIN без пароля. Включённый флаг без значения — отказ старта:

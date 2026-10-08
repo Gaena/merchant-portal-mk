@@ -20,5 +20,11 @@
     <include file="changes/013-transaction-rid-index.xml" relativeToChangelogFile="true"/>
     <include file="changes/014-transaction-last-reconciled.xml" relativeToChangelogFile="true"/>
     <include file="changes/015-money-operation-attempts.xml" relativeToChangelogFile="true"/>
+    <include file="changes/016-transaction-card-submitted.xml" relativeToChangelogFile="true"/>
+    <include file="changes/017-company-tax-id.xml" relativeToChangelogFile="true"/>
+    <include file="changes/018-user-terminals.xml" relativeToChangelogFile="true"/>
+    <include file="changes/019-terminal-dms-allowed.xml" relativeToChangelogFile="true"/>
+    <include file="changes/020-audit-log-trace-id.xml" relativeToChangelogFile="true"/>
+    <include file="changes/021-audit-chain.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

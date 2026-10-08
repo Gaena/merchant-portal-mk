@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router';
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LinkPaymentsStats } from '../components/LinkPaymentsStats';
 import { LinkQrCode } from '../components/LinkQrCode';
@@ -226,6 +227,19 @@ export const PayByLinkPage: React.FC = () => {
   };
 
   const [terminals, setTerminals] = useState<TerminalOptionDto[]>([]);
+
+  // Р-132: DMS — если разрешён и пользователю (у администратора не проверяется), и выбранному терминалу.
+  // Решает сервер, здесь — подсказка: недоступный DMS гаснет, а выбранный переключается на SMS.
+  const { user } = useAuth();
+  const formTerminal = terminals.find(t => t.id === (form.terminalId ? Number(form.terminalId) : terminals[0]?.id));
+  const dmsForbiddenToUser = user?.role !== 'SYSTEM_ADMIN' && user?.dmsLinksAllowed !== true;
+  const dmsForbiddenOnTerminal = formTerminal?.dmsAllowed === false;
+  const dmsAvailable = !dmsForbiddenToUser && !dmsForbiddenOnTerminal;
+  useEffect(() => {
+    if (!dmsAvailable && form.paymentType === 'DMS') {
+      setForm(f => ({ ...f, paymentType: 'SMS' }));
+    }
+  }, [dmsAvailable, form.paymentType]);
 
   const [totalElements, setTotalElements] = useState(0);
 
@@ -840,11 +854,16 @@ export const PayByLinkPage: React.FC = () => {
                       onChange={(_, v) => { if (v) setForm(f => ({ ...f, paymentType: v })); }}
                     >
                       <ToggleButton value="SMS">SMS</ToggleButton>
-                      <ToggleButton value="DMS">DMS</ToggleButton>
+                      <ToggleButton value="DMS" disabled={!dmsAvailable}>DMS</ToggleButton>
                     </ToggleButtonGroup>
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
                       {form.paymentType === 'SMS' ? tObj.payByLink.smsHint : tObj.payByLink.dmsHint}
                     </Typography>
+                    {!dmsAvailable && (
+                      <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 0.5 }}>
+                        {dmsForbiddenToUser ? tObj.payByLink.dmsForbiddenUser : tObj.payByLink.dmsForbiddenTerminal}
+                      </Typography>
+                    )}
                   </Box>
 
                   <TextField

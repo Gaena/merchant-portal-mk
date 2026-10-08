@@ -72,6 +72,11 @@ Every endpoint that addresses a link, a transaction or a terminal goes through o
 | role not allowed for the action, or not recognised | `403 Access denied: role <ROLE> is not authorized for this action` | `TERMINAL` / `READ` / `DENIED`, entity — the terminal id |
 | terminal row not found | `404 Terminal not found: <id>` | — |
 | terminal of another company | `403 Access denied to terminal: <id>` | `TERMINAL` / `READ` / `DENIED` |
+| `COMPANY_EMPLOYEE`, terminal of its company not assigned to it (Р-131) | `403 Access denied to terminal: <id>` | `TERMINAL` / `READ` / `DENIED` under the employee's company, `… not assigned to it` |
+
+**An employee sees only its assigned terminals** (`user_terminals`, Р-131): every list and the summary below
+narrow to them through `TerminalScope`, an employee without assignments gets empty pages and zeros. The head
+and the managers see every terminal of the company.
 
 The lists (§5.4, §5.7) and the summary (§5.13) check the role only: an unrecognised role gets the same
 `403` without a journal record, a known role without a company (or with a company that has no
@@ -119,7 +124,7 @@ with the company's links. Event dictionary — `../guides/technical_handover.md`
 | `terminal` | required, our terminal id. The terminal must be `ACTIVE` (a blocked terminal takes no new payments, Р-38), its company must have acquirer credentials, and it must carry the provider terminal number (`terminal_rid`, Р-96) |
 | `amount` | required, > 0, at most two decimal places as written (`10.555` and `10.500` are refused, like a capture or a refund: the column keeps two and would round the rest) and at most 17 integer digits |
 | `currency` | required, exactly 3 characters; only the length is checked, not ISO 4217 |
-| `paymentType` | required, `SMS` or `DMS` |
+| `paymentType` | required, `SMS` or `DMS`. `DMS` needs both the caller's right (`dmsLinks` claim of the token, `auth.md` §3; not checked for `SYSTEM_ADMIN`) and a terminal with `dmsAllowed` (`directory.md` §3.2), Р-132. Existing DMS links are not affected by either: they open and capture as before |
 | `usageType` | required, `SINGLE` or `MULTIPLE` |
 | `maxPayments` | required and > 0 for `MULTIPLE`; ignored and not stored for `SINGLE` |
 | `merchantOrderId`, `description` | optional, free text, at most 255 characters |
@@ -184,6 +189,8 @@ The same body is returned by §5.2, §5.3 and §5.9.
 | 400 | `Invalid request payload format or parameter value` | malformed JSON, unknown `paymentType` / `usageType` |
 | 403, 404 | §4.1 | role, terminal, company |
 | 400 | `terminal <id> is blocked and cannot take new payments; unblock it or use another terminal` | terminal `BLOCKED` |
+| 403 | `You are not allowed to create DMS links` | `DMS` by a user without the right (Р-132); journal `PAYMENT_LINK` / `CREATE` / `DENIED`, `entityId` = `NEW`, under the caller's company |
+| 400 | `DMS links are not allowed on terminal <id>; create an SMS link or ask the system administrator to allow DMS on the terminal` | `DMS` on a terminal with `dmsAllowed: false` (Р-132) |
 | 400 | credentials and terminal number texts, §6 | company without credentials, terminal without company or provider number |
 | 400 | `customer can only be set on a single-use link` | customer on a `MULTIPLE` link |
 | 400 | `customer.phone must be an Azerbaijani number: +994 and 9 digits` | phone format |
@@ -281,13 +288,14 @@ Configuration: `pbl.link.default-ttl` (`PBL_LINK_DEFAULT_TTL`, default `PT24H`) 
 
 -   **Method:** `GET /api/v1/payment-links`
 -   **Access:** every role. `SYSTEM_ADMIN` and `AUDITOR` see all links, the other roles — links on their
-    company's terminals; no company or no terminals — an empty page.
+    company's terminals, `COMPANY_EMPLOYEE` — on its assigned ones (§4.1); no company or no terminals — an empty
+    page.
 -   **Query Parameters:**
 
 | Parameter | Default | Meaning |
 |:---|:---|:---|
 | `page` | `0` | page number |
-| `size` | `20` | page size; not clamped — `size=0` answers `500` (`../../AGENTS.md` §10) |
+| `size` | `20` | page size, clamped to `1…200`; a negative `page` is read as `0` — clamped, not refused |
 | `terminal` | — | our terminal id; a terminal of another company — `403`, an unknown one — `404` (§4.1) |
 | `status` | — | exactly `ACTIVE`, `EXPIRED`, `COMPLETED`, `CANCELED` or `SUSPENDED`; anything else — `400 Parameter 'status' has an invalid value` |
 
@@ -419,22 +427,40 @@ Refusals are the JSON of §6, not an HTML page: the payer's browser shows the ra
 
 | Transaction status | Page |
 |:---|:---|
-| `SUCCESS`, `REFUNDED`, `PARTIALLY_REFUNDED` | receipt "Paid": amount and currency, `merchantOrderId`, transaction id, date, description, customer name and email; "Print Receipt" and "Close Page" |
-| `AUTHORIZED` | the same receipt marked "Authorized (Hold)", "Amount On Hold" |
-| `FAILED` | "Payment failed" |
-| `PENDING` | "Your payment is being processed" |
-| unknown or malformed `tx` | "Payment information is unavailable" — the page does not disclose whether the transaction exists |
+| `SUCCESS`, `REFUNDED`, `PARTIALLY_REFUNDED` | the payer receipt "Ödəniş çeki · Transaction Receipt", "Uğurlu · Approved" — see below; "Çap et · Print" and "Bağla · Close" |
+| `AUTHORIZED` | the same receipt marked "Vəsait bloklanıb · Authorized (hold)", type "Avtorizasiya · Authorization", amount on hold |
+| `FAILED` | "Ödəniş alınmadı · Payment failed" |
+| `PENDING` | "Ödənişiniz emal olunur · Your payment is being processed" |
+| unknown or malformed `tx` | "Ödəniş məlumatı əlçatan deyil · Payment information is unavailable" — the page does not disclose whether the transaction exists |
 
-The page gets only these fields (`PaymentReceiptView`): no card mask, RRN, approval code, IP or provider
-order id.
+Every text is Azerbaijani with English beneath. **The receipt** (`PaymentReceiptView`, Р-130) carries the
+requisites of the payment services law (art. 17.1) and the CBAR rules No 12/3 of 13.03.2024 (14.1, 15.5),
+as on a POS slip:
+
+| Block | Lines | Source |
+|:---|:---|:---|
+| Payment service provider | name, VÖEN | `RECEIPT_PROVIDER_NAME`, `RECEIPT_PROVIDER_TAX_ID` (required, `deployment_guide.md` §20.1) |
+| Merchant | company name, company VÖEN, terminal name, terminal ID | `companies.name`, `companies.tax_id` (Р-129), `terminals.name`, `terminals.terminal_rid` |
+| Transaction | type, date and time, receipt No., reference No. (RRN), authorization code, payment system, card `**** 1234` | provider order id; the purchase record of the stored provider order (`trans[].regTime`, `rrn`, `approvalCode`), `srcToken.card.brand`, the last four digits of `srcToken.displayName` |
+| Amount | captured amount, otherwise the authorised one, with the link's currency | transaction |
+| Payment link | link No. (`RID-…`), `merchantOrderId`, description | link |
+| Customer | name, email, phone — only those set | link (single-use links only) |
+
+A line whose value is unknown is left out, never filled in (Р-48): a company without a VÖEN, a payment
+without a provider record. Without the provider's operation time the receipt shows the start of the
+attempt in `pbl.dashboard.zone`. The fee line of art. 17.1.4 is not printed: the portal does not know the
+payer's fee. The page never shows the first six card digits, the order password, the payer's IP or user
+agent, or the internal transaction id; its address is the only key to it, so the page carries `<meta name="referrer" content="no-referrer">`
+and `noindex`.
 
 ### 5.7. List Transactions
 
 -   **Method:** `GET /api/v1/transactions`
 -   **Access:** every role; an unrecognised role — `403` (§4.1). `SYSTEM_ADMIN` and `AUDITOR` see every
-    company, the other roles — transactions of links on their company's terminals; no company or no
-    terminals — an empty page.
--   **Query Parameters:** `page` (default `0`), `size` (default `20`, not clamped — `../../AGENTS.md` §10).
+    company, the other roles — transactions of links on their company's terminals, `COMPANY_EMPLOYEE` — on its
+    assigned ones (§4.1); no company or no terminals — an empty page.
+-   **Query Parameters:** `page` (default `0`, a negative one is read as `0`), `size` (default `20`, clamped to
+    `1…200`) — clamped, not refused.
 -   **Ordering:** `createdAt DESC, id DESC`. No filters. The portal UI does not call this endpoint: it
     shows transactions under their link (§5.11) and opens one by id (§5.12).
 
@@ -447,7 +473,8 @@ order id.
     transaction: `404 Transaction not found: <identifier>`, the same as for one that does not exist (Р-114).
     Provider order ids are sequential, and a `403` would let anyone list the portal's orders and the
     terminals of other companies. The refusal goes to the journal without a company — only `SYSTEM_ADMIN`
-    and `AUDITOR` see it.
+    and `AUDITOR` see it. An employee asking about a transaction on a terminal of its company not assigned to it
+    gets the same `404`; that refusal is journaled under its company (Р-131).
 -   **`identifier`:** the transaction UUID or the provider order id (`providerOrderId`).
 -   **Behaviour:**
     -   `PENDING` and `AUTHORIZED` — the acquirer is polled once (`GET /order/{id}` with
@@ -548,6 +575,13 @@ The same payload is returned by §5.7, §5.11 and §5.12; `actions` only by §5.
     service died in the middle). While it exists, both buttons are disabled and §5.9 and §5.10 answer `409`.
     `resolvable` is `true` only for `SYSTEM_ADMIN` and only when `UNKNOWN` (§5.15).
 
+**Audit journal:** a check that changes the status — `TRANSACTION` / `STATUS_CHANGE` by the caller, with the
+acquirer's word; a single-use link closed by the payment, or a multi-use one at its limit, — `PAYMENT_LINK` /
+`STATUS_CHANGE`. The payer's return page (§5.6), opening a link (§5.5) and the reconciliation write the same
+records by `system`; the reconciliation's abandonment timeout as `Status PENDING -> FAILED: abandoned by the
+payer…`, the expiry job each expired link as `Status ACTIVE -> EXPIRED: the expiry time has passed` (Р-135).
+A check without a change writes nothing.
+
 ### 5.9. Complete DMS Payment
 
 -   **Method:** `POST /api/v1/transactions/{transactionId}/complete`
@@ -600,7 +634,8 @@ The same payload is returned by §5.7, §5.11 and §5.12; `actions` only by §5.
 | 502 | outcome unknown, §6 |
 | 503 | circuit breaker open, §6 |
 
-**Audit journal:** `TRANSACTION` / `CAPTURE`; on `502` — the same pair with outcome `UNRESOLVED`.
+**Audit journal:** `TRANSACTION` / `CAPTURE`; on `502` — the same pair with outcome `UNRESOLVED`; on an acquirer
+decline (`400`) — with outcome `DECLINED` and the gateway's text (Р-134).
 
 ### 5.10. Refund Transaction
 
@@ -674,7 +709,8 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
 | 502 | outcome unknown, §6 |
 | 503 | circuit breaker open, §6 |
 
-**Audit journal:** `TRANSACTION` / `REFUND`; on `502` — the same pair with outcome `UNRESOLVED`.
+**Audit journal:** `TRANSACTION` / `REFUND`; on `502` — the same pair with outcome `UNRESOLVED`; on an acquirer
+decline (`400`) — with outcome `DECLINED` and the gateway's text (Р-134).
 
 ### 5.11. Get Payment Link Transactions
 
@@ -731,6 +767,12 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
     "byPaymentType": [ { "paymentType": "SMS", "count": 40 } ],
     "byUsageType": [ { "usageType": "SINGLE", "count": 50 } ],
     "byStatus": [ { "status": "ACTIVE", "count": 12 } ]
+  },
+  "linkFunnel": { "created": 57, "opened": 44, "paymentStarted": 38, "paid": 33 },
+  "timeToPay": {
+    "paidLinks": 29, "medianSeconds": 5400,
+    "buckets": [ { "range": "UP_TO_1_HOUR", "count": 11 }, { "range": "UP_TO_1_DAY", "count": 14 },
+                 { "range": "UP_TO_7_DAYS", "count": 4 }, { "range": "OVER_7_DAYS", "count": 0 } ]
   }
 }
 ```
@@ -757,7 +799,20 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
     three are `null` when the terminal row is gone.
 -   `paymentLinks` — links **created** in the window, by their current status, payment type and usage
     type; every value is listed, zeros included.
--   With nothing in scope `totals`, `dailyTotals` and `topTerminals` are empty arrays, the breakdowns are zeros.
+-   `linkFunnel` (Р-128) — the same links **created** in the window and how far each got, counting its
+    attempts whenever they happened (a cohort: a recent window keeps growing as links get paid). Each link
+    counts once per step: `created`; `opened` — it has an attempt (only an opening that reached the provider
+    creates one; refused openings are not recorded); `paymentStarted` — an attempt with a card submitted
+    (`transactions.card_submitted`: the provider's order carried a record in `trans[]` — paid, declined or cut
+    off at 3-D Secure) or with money taken; `paid` — an attempt in `SUCCESS`, `REFUNDED`,
+    `PARTIALLY_REFUNDED` or `AUTHORIZED` (a hold: the payer has done their part).
+-   `timeToPay` (Р-128) — **single-use** links created in the window that got paid (same paid statuses):
+    from the link's creation to the start of its paid attempt — the moment of payment itself is not stored
+    and trails it by the payer's session. `medianSeconds` is `null` when `paidLinks` is 0; `buckets` always
+    lists `UP_TO_1_HOUR`, `UP_TO_1_DAY`, `UP_TO_7_DAYS` (upper bounds exclusive) and `OVER_7_DAYS`, in that
+    order, zeros included. Multi-use links are left out: their time would mix with how long they stay live.
+-   With nothing in scope `totals`, `dailyTotals` and `topTerminals` are empty arrays, the breakdowns and
+    `linkFunnel` are zeros, `timeToPay.medianSeconds` is `null`.
 
 ### 5.14. Terminal Check
 

@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
 import {
   Alert,
   Box,
@@ -17,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import type { Language } from '../i18n/translations';
 import type { CompanyDto } from '../types/dto';
+import { useCompanyName } from '../hooks/useCompanyName';
 
 // Живы только название компании и язык; выдуманные вкладки и настройки не возвращать (P3-6).
 export const SettingsPage: React.FC = () => {
@@ -35,23 +35,14 @@ export const SettingsPage: React.FC = () => {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // Одна компания по id из токена: список GET /companies остальным ролям — 403 и отказ в журнале.
+  const company = useCompanyName(companyId);
   useEffect(() => {
-    if (!companyId) return;
-    const controller = new AbortController();
-    apiClient
-      .get<CompanyDto>(`/api/v1/companies/${encodeURIComponent(companyId)}`, { signal: controller.signal })
-      .then(res => {
-        const name = res.data?.name ?? '';
-        setCompanyName(name);
-        setLoadedName(name);
-        setLoadError(null);
-      })
-      .catch((err: any) => {
-        if (axios.isCancel(err)) return;
-        setLoadError(err.response?.data?.message || '');
-      });
-    return () => controller.abort();
-  }, [companyId]);
+    if (company.name !== null) {
+      setCompanyName(company.name);
+      setLoadedName(company.name);
+    }
+    setLoadError(company.error);
+  }, [company.name, company.error]);
 
   const trimmedName = companyName.trim();
   // Пустое имя бэкенд молча пропускает и отвечает 200 — «сохранено» было бы неправдой.

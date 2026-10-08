@@ -66,8 +66,22 @@ class PasswordChangeIntegrationTest {
 
     private String adminToken;
 
+    // Р-131: сотрудник заводится только с терминалом своей компании — терминалы из changelog directory.
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private javax.sql.DataSource dataSource;
+
+    @org.junit.jupiter.api.AfterEach
+    void cleanTerminals() {
+        TerminalFixture.clean(jdbcTemplate);
+    }
+
     @BeforeEach
     void setUp() throws Exception {
+        TerminalFixture.ensureSchema(dataSource);
+        TerminalFixture.clean(jdbcTemplate);
         userRepository.deleteAll();
         companyRepository.deleteAll();
         companyRepository.save(Company.builder().id("comp-01").name("MilliKart LLC").status("ACTIVE").build());
@@ -125,7 +139,7 @@ class PasswordChangeIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, "ResetPassword789!", null, null))))
+                                new UpdateUserRequest(null, null, "ResetPassword789!", null, null, null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.passwordChangeRequired", is(true)));
 
@@ -149,7 +163,7 @@ class PasswordChangeIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, "AdminPassword456!", null, null))))
+                                new UpdateUserRequest(null, null, "AdminPassword456!", null, null, null, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.passwordChangeRequired", is(false)));
 
@@ -180,7 +194,8 @@ class PasswordChangeIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new CreateUserRequest(
-                                CLERK, ISSUED_PASSWORD, "Clerk", "COMPANY_EMPLOYEE", "comp-01"))))
+                                CLERK, ISSUED_PASSWORD, "Clerk", "COMPANY_EMPLOYEE", "comp-01",
+                                java.util.List.of(TerminalFixture.terminalOf(jdbcTemplate, "comp-01")), null))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.passwordChangeRequired", is(true))));
         return UUID.fromString(created.get("id").asText());

@@ -13,11 +13,14 @@ import az.millikart.pbl.dto.DashboardSummaryResponse;
 import az.millikart.pbl.dto.DashboardSummaryResponse.CurrencyTotals;
 import az.millikart.pbl.dto.DashboardSummaryResponse.DailyTotal;
 import az.millikart.pbl.dto.DashboardSummaryResponse.HourlyCount;
+import az.millikart.pbl.dto.DashboardSummaryResponse.LinkFunnel;
 import az.millikart.pbl.dto.DashboardSummaryResponse.LinkStatusCount;
 import az.millikart.pbl.dto.DashboardSummaryResponse.PaymentLinkTotals;
 import az.millikart.pbl.dto.DashboardSummaryResponse.PaymentTypeCount;
 import az.millikart.pbl.dto.DashboardSummaryResponse.StatusCount;
 import az.millikart.pbl.dto.DashboardSummaryResponse.TerminalTotal;
+import az.millikart.pbl.dto.DashboardSummaryResponse.TimeToPay;
+import az.millikart.pbl.dto.DashboardSummaryResponse.TimeToPayBucket;
 import az.millikart.pbl.dto.DashboardSummaryResponse.UsageTypeCount;
 import az.millikart.pbl.dto.DashboardSummaryResponse.Window;
 import az.millikart.pbl.repository.DashboardRepository;
@@ -30,6 +33,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -68,13 +72,16 @@ public class DashboardService {
 
     private final DashboardRepository dashboardRepository;
     private final TerminalRepository terminalRepository;
+    private final TerminalScope terminalScope;
     private final ZoneId zone;
 
     public DashboardService(DashboardRepository dashboardRepository,
                             TerminalRepository terminalRepository,
+                            TerminalScope terminalScope,
                             @Value("${pbl.dashboard.zone}") String zoneId) {
         this.dashboardRepository = dashboardRepository;
         this.terminalRepository = terminalRepository;
+        this.terminalScope = terminalScope;
         this.zone = ZoneId.of(zoneId);
     }
 
@@ -102,9 +109,8 @@ public class DashboardService {
                 log.warn("Missing companyId claim for non-admin user; empty dashboard");
                 return emptySummary(resolvedFrom, resolvedTo);
             }
-            terminalIds = terminalRepository.findAllByCompanyId(companyId).stream()
-                    .map(Terminal::getId)
-                    .toList();
+            // Сотруднику — только назначенные терминалы (Р-131).
+            terminalIds = terminalScope.companyTerminalIds(principal);
             if (terminalIds.isEmpty()) {
                 return emptySummary(resolvedFrom, resolvedTo);
             }
@@ -120,6 +126,11 @@ public class DashboardService {
                 resolvedFrom, resolvedTo, unscoped, terminalIds);
         List<Object[]> links = dashboardRepository.aggregateLinks(
                 resolvedFrom, resolvedTo, unscoped, terminalIds);
+        List<Object[]> funnel = dashboardRepository.linkFunnel(
+                resolvedFrom, resolvedTo, unscoped, terminalIds, TransactionStatus.SLOT_OCCUPYING_STATUSES);
+        List<Object[]> paidTimes = dashboardRepository.paidLinkTimes(
+                resolvedFrom, resolvedTo, unscoped, terminalIds, UsageType.SINGLE,
+                TransactionStatus.SLOT_OCCUPYING_STATUSES);
 
         Map<String, Accumulator> perCurrency = new TreeMap<>();
         Map<TransactionStatus, Long> perStatus = new EnumMap<>(TransactionStatus.class);
@@ -136,7 +147,9 @@ public class DashboardService {
                 dailyTotals(resolvedFrom, resolvedTo, perCurrency.keySet(), perDay),
                 hourlyTotals(perHour),
                 topTerminals(byTerminal, refundsByTerminal),
-                linkTotals(links));
+                linkTotals(links),
+                linkFunnel(funnel),
+                timeToPay(paidTimes));
     }
 
     // Семь календарных суток, включая сегодня, а не «сейчас минус 168 часов»: на графике — семь
@@ -325,6 +338,40 @@ public class DashboardService {
         return new PaymentLinkTotals(total, types, usages, statuses);
     }
 
+    private LinkFunnel linkFunnel(List<Object[]> rows) {
+        if (rows.isEmpty()) {
+            return new LinkFunnel(0, 0, 0, 0);
+        }
+        Object[] row = rows.get(0);
+        return new LinkFunnel(countOrZero(row[0]), countOrZero(row[1]), countOrZero(row[2]), countOrZero(row[3]));
+    }
+
+    // Медиана, а не среднее: одна ссылка, оплаченная через месяц, сдвинула бы среднее на дни.
+    private TimeToPay timeToPay(List<Object[]> rows) {
+        List<Long> seconds = new ArrayList<>(rows.size());
+        Map<TimeToPayRange, Long> perRange = new EnumMap<>(TimeToPayRange.class);
+        for (Object[] row : rows) {
+            Duration elapsed = Duration.between(asInstant(row[0]), asInstant(row[1]));
+            // Попытка раньше ссылки невозможна; отрицательное — расхождение часов, а не оплата «до создания».
+            long value = Math.max(0L, elapsed.toSeconds());
+            seconds.add(value);
+            perRange.merge(TimeToPayRange.of(value), 1L, Long::sum);
+        }
+        Collections.sort(seconds);
+        Long median = null;
+        int size = seconds.size();
+        if (size > 0) {
+            median = size % 2 == 1
+                    ? seconds.get(size / 2)
+                    : (seconds.get(size / 2 - 1) + seconds.get(size / 2)) / 2;
+        }
+        List<TimeToPayBucket> buckets = new ArrayList<>();
+        for (TimeToPayRange range : TimeToPayRange.values()) {
+            buckets.add(new TimeToPayBucket(range.name(), perRange.getOrDefault(range, 0L)));
+        }
+        return new TimeToPay(size, median, buckets);
+    }
+
     // Нули в форме непустой сводки, а не 403 и не пустое тело: экран рисуется и показывает, что операций нет.
     private DashboardSummaryResponse emptySummary(Instant from, Instant to) {
         return new DashboardSummaryResponse(
@@ -334,7 +381,9 @@ public class DashboardService {
                 List.of(),
                 hourlyTotals(Map.of()),
                 List.of(),
-                linkTotals(List.of()));
+                linkTotals(List.of()),
+                linkFunnel(List.of()),
+                timeToPay(List.of()));
     }
 
     private static BigDecimal money(BigDecimal value) {
@@ -343,6 +392,11 @@ public class DashboardService {
 
     private static long asLong(Object value) {
         return ((Number) value).longValue();
+    }
+
+    // SUM без строк — null, а не ноль: в окне нет ни одной ссылки.
+    private static long countOrZero(Object value) {
+        return value == null ? 0L : asLong(value);
     }
 
     // null от SUM по непустой группе значит, что запрос изменили; ноль честнее падения.
@@ -364,6 +418,29 @@ public class DashboardService {
     }
 
     private record DayKey(LocalDate date, String currency) {
+    }
+
+    // Интервалы времени до оплаты (Р-128): верхняя граница не входит, последний — без границы.
+    private enum TimeToPayRange {
+        UP_TO_1_HOUR(Duration.ofHours(1)),
+        UP_TO_1_DAY(Duration.ofDays(1)),
+        UP_TO_7_DAYS(Duration.ofDays(7)),
+        OVER_7_DAYS(null);
+
+        private final Duration upperBound;
+
+        TimeToPayRange(Duration upperBound) {
+            this.upperBound = upperBound;
+        }
+
+        private static TimeToPayRange of(long seconds) {
+            for (TimeToPayRange range : values()) {
+                if (range.upperBound == null || seconds < range.upperBound.toSeconds()) {
+                    return range;
+                }
+            }
+            return OVER_7_DAYS;
+        }
     }
 
     private record TerminalKey(Integer terminalId, String currency) {

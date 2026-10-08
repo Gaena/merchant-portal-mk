@@ -27,6 +27,7 @@ class EcomScopeServiceTest {
     private CompanyLoginRepository companies;
     private ProviderLoginRepository providerLogins;
     private AuditLogService auditLogService;
+    private az.millikart.ecom.repository.EmployeeMerchantRepository employeeMerchants;
     private EcomScopeService service;
 
     @BeforeEach
@@ -34,7 +35,8 @@ class EcomScopeServiceTest {
         companies = mock(CompanyLoginRepository.class);
         providerLogins = mock(ProviderLoginRepository.class);
         auditLogService = mock(AuditLogService.class);
-        service = new EcomScopeService(companies, providerLogins, auditLogService);
+        employeeMerchants = mock(az.millikart.ecom.repository.EmployeeMerchantRepository.class);
+        service = new EcomScopeService(companies, providerLogins, auditLogService, employeeMerchants);
     }
 
     @Test
@@ -73,6 +75,33 @@ class EcomScopeServiceTest {
             EcomScope scope = service.scopeFor(new UserPrincipal("1", "head@comp1.com", "COMPANY_HEAD", company));
             Assertions.assertTrue(scope.merchantRids().isEmpty(), company);
         }
+        verify(providerLogins, never()).findLinkedMerchantRids(any());
+    }
+
+    // Р-131: сотрудник видит только мерчантов назначенных ему терминалов — и только тех, что связаны с логином
+    // его компании: назначение не расширяет скоуп компании, отвязанный мерчант уходит и у него.
+    @Test
+    void anEmployeeSeesOnlyTheMerchantsOfItsAssignedTerminals_withinTheCompanyLogin() {
+        when(companies.providerLoginOf("comp-01")).thenReturn(List.of("MultiMerchantSys/bazarstore@company.com"));
+        when(providerLogins.findLinkedMerchantRids(List.of("bazarstore@company.com")))
+                .thenReturn(List.of("M-1", "M-2", "M-3"));
+        when(employeeMerchants.assignedMerchantRids("u-7", "comp-01")).thenReturn(List.of("M-2", "M-9"));
+
+        EcomScope scope = service.scopeFor(new UserPrincipal("u-7", "clerk@comp1.com", "COMPANY_EMPLOYEE", "comp-01"));
+
+        Assertions.assertEquals(List.of("M-2"), scope.merchantRids());
+    }
+
+    // Без назначений — пустая выписка, и слепок логинов не спрашивается: пустой список не должен стать «всей
+    // компанией».
+    @Test
+    void anEmployeeWithoutAssignments_hasAnEmptyScope() {
+        when(employeeMerchants.assignedMerchantRids("u-7", "comp-01")).thenReturn(List.of());
+
+        EcomScope scope = service.scopeFor(new UserPrincipal("u-7", "clerk@comp1.com", "COMPANY_EMPLOYEE", "comp-01"));
+
+        Assertions.assertTrue(scope.merchantRids().isEmpty());
+        verify(companies, never()).providerLoginOf(anyString());
         verify(providerLogins, never()).findLinkedMerchantRids(any());
     }
 

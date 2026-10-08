@@ -29,6 +29,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/payment-links")
 public class PaymentLinkController {
 
+    // Общий потолок страницы всех списков проекта.
+    private static final int MAX_PAGE_SIZE = 200;
+
     private final PaymentLinkService paymentLinkService;
 
     public PaymentLinkController(PaymentLinkService paymentLinkService) {
@@ -63,7 +66,8 @@ public class PaymentLinkController {
             @RequestParam(required = false) PaymentLinkStatus status,
             @AuthenticationPrincipal UserPrincipal principal) {
         // id — уникальный хвост сортировки: без него строки переезжают между страницами (AGENTS.md §10).
-        Pageable pageable = PageRequest.of(page, size,
+        // Параметры приводятся, а не отвергаются: PageRequest.of бросает на page < 0 и size < 1 (P2-1).
+        Pageable pageable = PageRequest.of(Math.max(page, 0), Math.clamp(size, 1, MAX_PAGE_SIZE),
                 Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
         return paymentLinkService.list(terminal, status, pageable, principal);
     }

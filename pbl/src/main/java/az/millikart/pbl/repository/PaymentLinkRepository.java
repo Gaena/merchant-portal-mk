@@ -45,10 +45,27 @@ public interface PaymentLinkRepository extends JpaRepository<PaymentLink, UUID> 
                              @Param("status") PaymentLinkStatus status,
                              Pageable pageable);
 
-    // Версия поднимается: запись, прочитанная до истечения, получит конфликт, а не вернёт ACTIVE.
+    // Кандидаты на истечение с компанией терминала — для записи журнала по каждой ссылке.
+    interface ExpiringLink {
+        java.util.UUID getId();
+
+        String getCompanyId();
+    }
+
+    @Query("SELECT pl.id AS id, t.companyId AS companyId FROM PaymentLink pl, Terminal t WHERE t.id = pl.terminalId "
+            + "AND pl.status = az.millikart.pbl.domain.PaymentLinkStatus.ACTIVE AND pl.expiresAt IS NOT NULL AND pl.expiresAt < :now")
+    java.util.List<ExpiringLink> findExpiring(@Param("now") java.time.Instant now);
+
+    // Версия поднимается: запись, прочитанная до истечения, получит конфликт, а не вернёт ACTIVE. Условие статуса и
+    // срока повторено: ссылку, которую между выборкой и UPDATE оплатили или отменили, истечение не трогает.
     @Modifying
     @Query("UPDATE PaymentLink pl SET pl.status = az.millikart.pbl.domain.PaymentLinkStatus.EXPIRED, "
             + "pl.version = COALESCE(pl.version, 0) + 1 "
-            + "WHERE pl.status = az.millikart.pbl.domain.PaymentLinkStatus.ACTIVE AND pl.expiresAt IS NOT NULL AND pl.expiresAt < :now")
-    int expireActiveLinksBefore(@Param("now") java.time.Instant now);
+            + "WHERE pl.id IN :ids AND pl.status = az.millikart.pbl.domain.PaymentLinkStatus.ACTIVE "
+            + "AND pl.expiresAt IS NOT NULL AND pl.expiresAt < :now")
+    int expireLinks(@Param("ids") java.util.Collection<java.util.UUID> ids, @Param("now") java.time.Instant now);
+
+    @Query("SELECT pl.id FROM PaymentLink pl WHERE pl.id IN :ids "
+            + "AND pl.status = az.millikart.pbl.domain.PaymentLinkStatus.EXPIRED")
+    java.util.List<java.util.UUID> findExpiredAmong(@Param("ids") java.util.Collection<java.util.UUID> ids);
 }

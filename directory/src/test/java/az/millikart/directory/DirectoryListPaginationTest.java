@@ -60,15 +60,22 @@ public class DirectoryListPaginationTest {
     private String headTokenCompany1;
     private String employeeTokenCompany1;
 
+    // Р-131: сотрудник видит только назначенные терминалы; назначения ищутся по UUID пользователя из токена.
+    private static final String EMPLOYEE_ID = "33333333-3333-3333-3333-333333333333";
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate userTerminalsJdbc;
+
     @BeforeEach
     public void setup() {
+        userTerminalsJdbc.update("DELETE FROM user_terminals");
         terminalRepository.deleteAll();
         companyRepository.deleteAll();
 
         adminToken = "Bearer " + jwtProvider.generateToken("000", "admin@millikart.az", "SYSTEM_ADMIN", null);
         auditorToken = "Bearer " + jwtProvider.generateToken("555", "auditor@millikart.az", "AUDITOR", null);
         headTokenCompany1 = "Bearer " + jwtProvider.generateToken("111", "head@comp1.com", "COMPANY_HEAD", "comp-01");
-        employeeTokenCompany1 = "Bearer " + jwtProvider.generateToken("333", "emp@comp1.com", "COMPANY_EMPLOYEE", "comp-01");
+        employeeTokenCompany1 = "Bearer " + jwtProvider.generateToken(EMPLOYEE_ID, "emp@comp1.com", "COMPANY_EMPLOYEE", "comp-01");
     }
 
     private Company seedCompany(String id, String name, String status) {
@@ -493,8 +500,11 @@ public class DirectoryListPaginationTest {
         Assertions.assertFalse(raw.contains("password"), "the feed must not name a password field: " + raw);
 
         JsonNode json = objectMapper.readTree(raw);
-        Assertions.assertEquals(List.of("id", "name", "login", "terminalRid", "status"), fieldNames(json.get(0)),
-                "five fields, nothing else: terminalRid names the terminal on screens since Р-96");
+        Assertions.assertEquals(List.of("id", "name", "login", "terminalRid", "status", "companyId", "dmsAllowed"),
+                fieldNames(json.get(0)),
+                "seven fields, nothing else: terminalRid names the terminal on screens (Р-96), companyId lets the "
+                        + "admin pick an employee's terminals of its company (Р-131), dmsAllowed lets the link form "
+                        + "turn DMS off (Р-132)");
         Assertions.assertEquals("term_login_500701", json.get(0).get("login").asText(),
                 "the login is what names the terminal on the payment screens: " + raw);
     }
@@ -515,11 +525,17 @@ public class DirectoryListPaginationTest {
                 .andExpect(jsonPath("$[1].id", is(500801)));
     }
 
-    // COMPANY_EMPLOYEE читает терминалы: на этом селекторе строится форма создания ссылки.
+    // COMPANY_EMPLOYEE читает терминалы: на этом селекторе строится форма создания ссылки. Только назначенные
+    // ему (Р-131) — иначе форма предлагала бы терминал, ссылку на котором бэкенд отклонит.
     @Test
     public void options_forCompanyEmployee_areAllowed_asTheFullListIs() throws Exception {
         seedCompany("comp-01", "MilliKart LLC", "ACTIVE");
         seedTerminal(500901, "Own Terminal", "comp-01", TerminalStatus.ACTIVE);
+        seedTerminal(500902, "Unassigned Terminal", "comp-01", TerminalStatus.ACTIVE);
+        userTerminalsJdbc.update(
+                "INSERT INTO user_terminals (user_id, terminal_id, assigned_by, assigned_at) VALUES (?, ?, ?, ?)",
+                java.util.UUID.fromString(EMPLOYEE_ID), 500901, "head@comp1.com",
+                java.sql.Timestamp.from(java.time.Instant.now()));
 
         mockMvc.perform(get("/api/v1/terminals/options")
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1))

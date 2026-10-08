@@ -9,6 +9,8 @@ public record UpdateTerminalRequest(
         @Size(max = 255, message = "Terminal name must be at most 255 characters")
         String name,
         String companyId,
-        TerminalStatus status
+        TerminalStatus status,
+        // Р-132: разрешены ли DMS-ссылки; меняет только SYSTEM_ADMIN.
+        Boolean dmsAllowed
 ) {
 }

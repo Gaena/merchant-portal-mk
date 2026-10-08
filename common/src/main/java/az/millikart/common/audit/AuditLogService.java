@@ -1,8 +1,10 @@
 package az.millikart.common.audit;
 
+import az.millikart.common.security.TraceIdFilter;
 import az.millikart.common.web.ClientIpHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -29,14 +31,18 @@ public class AuditLogService {
     private static final int DETAILS_MAX = 4000;
 
     private final AuditLogRepository auditLogRepository;
+    // Звено цепочки — в той же транзакции, что запись (Р-138).
+    private final AuditChain chain;
 
     // Шаблоном, а не @Transactional(REQUIRES_NEW): запись идёт и внутренним вызовом, и отложенно из
     // AuditOutbox — мимо прокси, где аннотация не действует.
     private final TransactionTemplate ownTransaction;
 
     public AuditLogService(AuditLogRepository auditLogRepository,
-                           PlatformTransactionManager transactionManager) {
+                           PlatformTransactionManager transactionManager,
+                           AuditChain chain) {
         this.auditLogRepository = auditLogRepository;
+        this.chain = chain;
         this.ownTransaction = new TransactionTemplate(transactionManager);
         this.ownTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -53,12 +59,13 @@ public class AuditLogService {
                 .companyId(clip(event.companyId(), ID_MAX))
                 .details(clip(event.details(), DETAILS_MAX))
                 .clientIp(event.clientIp())
+                .traceId(event.traceId())
                 .outcome(AuditOutcome.SUCCESS)
                 .build();
         if (AuditOutbox.defer(() -> writeReporting(record, "audit record"))) {
             return;
         }
-        ownTransaction.executeWithoutResult(status -> auditLogRepository.save(record));
+        ownTransaction.executeWithoutResult(status -> chain.seal(auditLogRepository.save(record)));
     }
 
     // Звать прямо перед throw. companyId — компания актора, не названная в запросе: иначе любой пишет
@@ -74,6 +81,7 @@ public class AuditLogService {
                 .companyId(clip(companyId, ID_MAX))
                 .details(clip(details, DETAILS_MAX))
                 .clientIp(ClientIpHolder.get())
+                .traceId(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY))
                 .outcome(AuditOutcome.DENIED)
                 .build();
         Runnable write = () -> writeReporting(record, "denial record");
@@ -95,6 +103,7 @@ public class AuditLogService {
                 .companyId(clip(companyId, ID_MAX))
                 .details(clip(details, DETAILS_MAX))
                 .clientIp(ClientIpHolder.get())
+                .traceId(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY))
                 .outcome(AuditOutcome.UNRESOLVED)
                 .build();
         Runnable write = () -> writeReporting(record, "record");
@@ -103,10 +112,32 @@ public class AuditLogService {
         }
     }
 
+    // Эквайер отклонил возврат или списание (Р-134): иначе попытка не оставляла в журнале следа — успех пишется
+    // событием, неизвестный исход — logUnresolved, а отказ шлюза ничем. В details — текст отказа шлюза.
+    public void logDeclined(String entityType, String entityId, String action,
+                            String performedBy, String companyId, String details) {
+        warnIfOutsideDictionary(entityType, action);
+        AuditLog record = AuditLog.builder()
+                .entityType(clip(entityType, ENTITY_TYPE_MAX))
+                .entityId(clip(entityId, ID_MAX))
+                .action(clip(action, ACTION_MAX))
+                .performedBy(clip(performedBy != null ? performedBy : "system", ID_MAX))
+                .companyId(clip(companyId, ID_MAX))
+                .details(clip(details, DETAILS_MAX))
+                .clientIp(ClientIpHolder.get())
+                .traceId(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY))
+                .outcome(AuditOutcome.DECLINED)
+                .build();
+        Runnable write = () -> writeReporting(record, "decline record");
+        if (!AuditOutbox.defer(write)) {
+            write.run();
+        }
+    }
+
     // Ошибку записи не пробрасывать: журнал не роняет операцию.
     private void writeReporting(AuditLog record, String what) {
         try {
-            ownTransaction.executeWithoutResult(status -> auditLogRepository.save(record));
+            ownTransaction.executeWithoutResult(status -> chain.seal(auditLogRepository.save(record)));
         } catch (Exception e) {
             log.error("{}: {} lost for {} {} {} by {}: {}",
                     AUDIT_WRITE_FAILED_MARKER, what, record.getAction(), record.getEntityType(),

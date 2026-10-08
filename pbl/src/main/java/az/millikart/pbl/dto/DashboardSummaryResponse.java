@@ -14,7 +14,9 @@ public record DashboardSummaryResponse(
         List<DailyTotal> dailyTotals,
         List<HourlyCount> hourlyTotals,
         List<TerminalTotal> topTerminals,
-        PaymentLinkTotals paymentLinks
+        PaymentLinkTotals paymentLinks,
+        LinkFunnel linkFunnel,
+        TimeToPay timeToPay
 ) {
 
     // zone — чтобы подпись пояса на экране бралась из ответа: сутки и часы режет сервер.
@@ -75,5 +77,19 @@ public record DashboardSummaryResponse(
     }
 
     public record LinkStatusCount(String status, long count) {
+    }
+
+    // Р-128: ссылки, созданные в окне, — когорта: шаги считают их попытки и после окна, и недавний период
+    // дорастает. Оплачена — списание или холд: плательщик свою часть сделал.
+    public record LinkFunnel(long created, long opened, long paymentStarted, long paid) {
+    }
+
+    // Р-128: только одноразовые ссылки окна, от создания ссылки до начала оплаченной попытки.
+    // medianSeconds — null, когда оплаченных нет: ноль читался бы как «платят мгновенно».
+    public record TimeToPay(long paidLinks, Long medianSeconds, List<TimeToPayBucket> buckets) {
+    }
+
+    // Все четыре интервала, включая нулевые, по порядку: UP_TO_1_HOUR, UP_TO_1_DAY, UP_TO_7_DAYS, OVER_7_DAYS.
+    public record TimeToPayBucket(String range, long count) {
     }
 }

@@ -20,6 +20,7 @@ public interface TerminalRepository extends JpaRepository<Terminal, Integer> {
             select t from Terminal t
             left join Company c on c.id = t.companyId
             where (:companyId is null or t.companyId = :companyId)
+              and (:restricted = false or t.id in :terminalIds)
               and (:search is null
                    or lower(t.name) like lower(cast(:search as string)) escape '!'
                    or lower(t.login) like lower(cast(:search as string)) escape '!'
@@ -27,7 +28,10 @@ public interface TerminalRepository extends JpaRepository<Terminal, Integer> {
                    or lower(t.companyId) like lower(cast(:search as string)) escape '!'
                    or lower(c.name) like lower(cast(:search as string)) escape '!')
             """)
+    // restricted — скоуп сотрудника (Р-131): только terminalIds. Список связывается и без него — IN () невалиден.
     Page<Terminal> search(@Param("companyId") String companyId,
+                          @Param("restricted") boolean restricted,
+                          @Param("terminalIds") java.util.Collection<Integer> terminalIds,
                           @Param("search") String search,
                           Pageable pageable);
 

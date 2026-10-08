@@ -3,6 +3,7 @@ package az.millikart.ecom;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -79,6 +80,7 @@ class EcomApplicationIntegrationTest {
         portal.update("DELETE FROM provider_logins");
         portal.update("DELETE FROM provider_terminals");
         portal.update("DELETE FROM audit_logs");
+        portal.update("DELETE FROM user_terminals");
         portal.update("DELETE FROM terminals");
         portal.update("DELETE FROM companies");
     }
@@ -117,7 +119,7 @@ class EcomApplicationIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[*].merchantRid", contains("M-1")))
                 .andExpect(jsonPath("$[0].title", is("Shop One")));
-        mockMvc.perform(terminals(token("COMPANY_EMPLOYEE", "comp-other")))
+        mockMvc.perform(terminals(token("COMPANY_MANAGER", "comp-other")))
                 .andExpect(jsonPath("$[*].merchantRid", contains("M-3")));
         mockMvc.perform(terminals(token("COMPANY_MANAGER", "comp-plain")))
                 .andExpect(status().isOk())
@@ -127,6 +129,32 @@ class EcomApplicationIntegrationTest {
             mockMvc.perform(terminals(token(globalReader, null)))
                     .andExpect(jsonPath("$[*].merchantRid", contains("M-9", "M-3", "M-1")));
         }
+    }
+
+    // Р-131 на настоящей базе: сотрудник видит мерчантов только назначенных ему терминалов своей компании;
+    // без назначений — пусто, руководитель — все мерчанты логина. Тот же скоуп у выписки, итогов, главной и
+    // карточки заказа: все они берут его из EcomScopeService.
+    @Test
+    void anEmployeeSeesOnlyTheMerchantsOfItsAssignedTerminals() throws Exception {
+        company("comp-shop", "ACTIVE", "MultiMerchantSys/shop");
+        link("shop", "Active", "Active", "M-1", "Shop One");
+        link("shop", "Active", "Active", "M-5", "Shop Five");
+        terminal(701, "comp-shop", "M-1");
+        terminal(705, "comp-shop", "M-5");
+        String employeeId = "77777777-7777-7777-7777-777777777777";
+        portal.update("INSERT INTO user_terminals (user_id, terminal_id, assigned_by, assigned_at) "
+                + "VALUES (?, ?, 'head@shop.az', CURRENT_TIMESTAMP)", java.util.UUID.fromString(employeeId), 701);
+
+        mockMvc.perform(terminals("Bearer " + jwtProvider.generateToken(employeeId, "clerk@shop.az",
+                        "COMPANY_EMPLOYEE", "comp-shop")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].merchantRid", contains("M-1")));
+        mockMvc.perform(terminals("Bearer " + jwtProvider.generateToken("88888888-8888-8888-8888-888888888888",
+                        "newbie@shop.az", "COMPANY_EMPLOYEE", "comp-shop")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", empty()));
+        mockMvc.perform(terminals(token("COMPANY_HEAD", "comp-shop")))
+                .andExpect(jsonPath("$[*].merchantRid", containsInAnyOrder("M-1", "M-5")));
     }
 
     // Роль компании без компании — отказ с записью в журнал: пустой список выглядел бы как «платежей нет».
@@ -242,6 +270,11 @@ class EcomApplicationIntegrationTest {
 
     private String token(String role, String companyId) {
         return "Bearer " + jwtProvider.generateToken("u-1", "user@test.com", role, companyId);
+    }
+
+    private void terminal(int id, String companyId, String merchantRid) {
+        portal.update("INSERT INTO terminals (id, name, login, company_id, status, merchant_rid) VALUES (?, ?, ?, ?, 'ACTIVE', ?)",
+                id, "Terminal " + id, "TerminalSys/" + id, companyId, merchantRid);
     }
 
     private void company(String id, String status, String providerLogin) {

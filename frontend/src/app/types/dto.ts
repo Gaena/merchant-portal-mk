@@ -4,6 +4,8 @@ export interface CompanyDto {
   status?: 'ACTIVE' | 'INACTIVE' | 'DISABLED';
   /** Только у SYSTEM_ADMIN, остальным `null`; пароля в ответе нет вовсе (Р-93). */
   providerLogin?: string | null;
+  /** VÖEN — реквизит продавца на чеке плательщика (Р-129); `null`, пока не задан. */
+  taxId?: string | null;
   createdAt?: string;
 }
 
@@ -23,6 +25,8 @@ export interface TerminalDto {
   companyId: string;
   /** Бэкенд присылает всегда; необязательное намеренно — без поля терминал не прячется (`isTerminalActive`). */
   status?: TerminalStatus;
+  /** Разрешены ли DMS-ссылки (Р-132); меняет только `SYSTEM_ADMIN`. */
+  dmsAllowed?: boolean;
   createdAt?: string;
 }
 
@@ -36,6 +40,10 @@ export interface TerminalOptionDto {
   terminalRid?: string | null;
   /** Бэкенд присылает всегда; необязательное намеренно — без поля терминал не прячется (`isTerminalActive`). */
   status?: TerminalStatus;
+  /** Компания терминала: по ней администратор выбирает терминалы сотрудника (Р-131). */
+  companyId?: string | null;
+  /** Разрешены ли DMS-ссылки (Р-132): без них форма ссылки гасит DMS. */
+  dmsAllowed?: boolean;
 }
 
 // Только явно заблокированный: без поля `status` (старый бэкенд) форма ссылки осталась бы пустой
@@ -88,6 +96,10 @@ export interface UserDto {
   createdAt?: string;
   /** Пароль задал не владелец, и он ещё не сменил его при входе (Р-100). */
   passwordChangeRequired?: boolean;
+  /** Терминалы сотрудника (Р-131): он видит только их; у остальных ролей — пусто. */
+  terminalIds?: number[];
+  /** Может ли создавать DMS-ссылки (Р-132); у ролей вне компании всегда `true`. */
+  dmsLinksAllowed?: boolean;
 }
 
 export interface AuditLogDto {
@@ -99,7 +111,9 @@ export interface AuditLogDto {
   entityId?: string;
   details?: string;
   clientIp?: string | null;
-  outcome?: 'SUCCESS' | 'DENIED' | 'UNRESOLVED';
+  outcome?: 'SUCCESS' | 'DENIED' | 'UNRESOLVED' | 'DECLINED';
+  /** traceId запроса или прогона планировщика — по нему находятся строки логов сервиса; у старых записей нет. */
+  traceId?: string | null;
   createdAt?: string;
 }
 
@@ -120,6 +134,23 @@ export interface DashboardSummary {
     byUsageType: { usageType: string; count: number }[];
     byStatus: { status: string; count: number }[];
   };
+  /** Ссылки, созданные в периоде, и докуда они дошли (Р-128): когорта, недавний период ещё дорастает. */
+  linkFunnel: { created: number; opened: number; paymentStarted: number; paid: number };
+  /** Одноразовые ссылки периода: от создания до начала оплаченной попытки. Медианы нет — null, не ноль. */
+  timeToPay: {
+    paidLinks: number;
+    medianSeconds: number | null;
+    buckets: { range: string; count: number }[];
+  };
+}
+
+/** Интервалы времени до оплаты в порядке ответа сервера (`DashboardService.TimeToPayRange`). */
+export type TimeToPayRange = 'UP_TO_1_HOUR' | 'UP_TO_1_DAY' | 'UP_TO_7_DAYS' | 'OVER_7_DAYS';
+
+const TIME_TO_PAY_RANGES: readonly TimeToPayRange[] = ['UP_TO_1_HOUR', 'UP_TO_1_DAY', 'UP_TO_7_DAYS', 'OVER_7_DAYS'];
+
+export function parseTimeToPayRange(value: string): TimeToPayRange | null {
+  return (TIME_TO_PAY_RANGES as readonly string[]).includes(value) ? (value as TimeToPayRange) : null;
 }
 
 export interface DashboardCurrencyTotals {

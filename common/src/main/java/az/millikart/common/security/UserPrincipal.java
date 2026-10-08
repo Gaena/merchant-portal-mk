@@ -22,14 +22,22 @@ public class UserPrincipal implements UserDetails, Principal {
     private final Role role;
     @Getter
     private final String companyId;
+    // Право создавать DMS-ссылки (Р-132); у SYSTEM_ADMIN не проверяется.
+    @Getter
+    private final boolean dmsLinksAllowed;
     private final Collection<? extends GrantedAuthority> authorities;
 
     public UserPrincipal(String userId, String username, String role, String companyId) {
+        this(userId, username, role, companyId, false);
+    }
+
+    public UserPrincipal(String userId, String username, String role, String companyId, boolean dmsLinksAllowed) {
         this.userId = userId;
         this.username = username;
         this.rawRole = role;
         this.role = Role.fromValue(role).orElse(null);
         this.companyId = companyId;
+        this.dmsLinksAllowed = dmsLinksAllowed;
         if (role != null && !role.isBlank()) {
             String roleName = role.startsWith("ROLE_") ? role : "ROLE_" + role;
             this.authorities = Collections.singletonList(new SimpleGrantedAuthority(roleName));
@@ -97,5 +105,9 @@ public class UserPrincipal implements UserDetails, Principal {
 
     public static String getCompanyId(UserPrincipal principal) {
         return principal != null ? principal.getCompanyId() : null;
+    }
+
+    public static boolean isDmsLinksAllowed(UserPrincipal principal) {
+        return principal != null && principal.isDmsLinksAllowed();
     }
 }

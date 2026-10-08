@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -156,7 +157,8 @@ class EcomMoneyOperationServiceTest {
         verify(auditLogService).logUnresolved(eq("PROVIDER_ORDER"), eq(ORDER), eq("REFUND"), anyString(), eq("comp-01"), anyString());
     }
 
-    // Отказ провайдера — деньги не двигались: заказ свободен для следующей попытки.
+    // Отказ провайдера — деньги не двигались: заказ свободен для следующей попытки, а попытка остаётся в журнале
+    // записью DECLINED с текстом отказа (Р-134).
     @Test
     void aDecline_releasesTheOrder() {
         when(orders.order(ORDER, head)).thenReturn(order(refundable("40"), null));
@@ -166,6 +168,8 @@ class EcomMoneyOperationServiceTest {
 
         verify(attempts).release(ORDER);
         verify(attempts, never()).markUnknown(any());
+        verify(auditLogService).logDeclined(eq("PROVIDER_ORDER"), eq(ORDER), eq("REFUND"), anyString(), eq("comp-01"),
+                contains("declined by the acquirer: Acquirer error: declined"));
     }
 
     @Test

@@ -78,8 +78,22 @@ public class AuthAuditIntegrationTest {
 
     private String adminToken;
 
+    // Р-131: сотрудник заводится только с терминалом своей компании — терминалы из changelog directory.
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private javax.sql.DataSource dataSource;
+
+    @org.junit.jupiter.api.AfterEach
+    void cleanTerminals() {
+        TerminalFixture.clean(jdbcTemplate);
+    }
+
     @BeforeEach
     public void setup() throws Exception {
+        TerminalFixture.ensureSchema(dataSource);
+        TerminalFixture.clean(jdbcTemplate);
         auditLogs.deleteAll();
         userRepository.deleteAll();
         companyRepository.deleteAll();
@@ -123,7 +137,7 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, "SYSTEM_ADMIN", null, null, null))))
+                                new UpdateUserRequest(null, "SYSTEM_ADMIN", null, null, null, null, null))))
                 .andExpect(status().isOk());
 
         assertThat(single("UPDATE").getDetails())
@@ -154,7 +168,7 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, "BrandNewSecret123!", null, null))))
+                                new UpdateUserRequest(null, null, "BrandNewSecret123!", null, null, null, null))))
                 .andExpect(status().isOk());
 
         assertThat(single("PASSWORD_CHANGE").getDetails()).doesNotContain("BrandNewSecret123!");
@@ -191,12 +205,12 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateUserRequest("boss@comp1.com", USER_PASSWORD, "Boss", "SYSTEM_ADMIN", "comp-01"))))
+                                new CreateUserRequest("boss@comp1.com", USER_PASSWORD, "Boss", "SYSTEM_ADMIN", "comp-01", null, null))))
                 .andExpect(status().isForbidden());
         mockMvc.perform(patch("/api/v1/users/" + otherHead)
                         .header(HttpHeaders.AUTHORIZATION, headToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest("Renamed", null, null, null, null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest("Renamed", null, null, null, null, null, null))))
                 .andExpect(status().isForbidden());
         mockMvc.perform(delete("/api/v1/users/" + otherHead).header(HttpHeaders.AUTHORIZATION, headToken))
                 .andExpect(status().isForbidden());
@@ -223,7 +237,7 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, employeeToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateUserRequest("friend@comp1.com", USER_PASSWORD, "Friend", "COMPANY_EMPLOYEE", "comp-01"))))
+                                new CreateUserRequest("friend@comp1.com", USER_PASSWORD, "Friend", "COMPANY_EMPLOYEE", "comp-01", null, null))))
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/v1/users").header(HttpHeaders.AUTHORIZATION, employeeToken))
                 .andExpect(status().isForbidden());
@@ -254,14 +268,14 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, foreignHead)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateUserRequest("mole@comp1.com", USER_PASSWORD, "Mole", "COMPANY_EMPLOYEE", "comp-01"))))
+                                new CreateUserRequest("mole@comp1.com", USER_PASSWORD, "Mole", "COMPANY_EMPLOYEE", "comp-01", null, null))))
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/v1/users/" + clerk).header(HttpHeaders.AUTHORIZATION, foreignHead))
                 .andExpect(status().isForbidden());
         mockMvc.perform(patch("/api/v1/users/" + clerk)
                         .header(HttpHeaders.AUTHORIZATION, foreignHead)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null, null, null))))
                 .andExpect(status().isForbidden());
         mockMvc.perform(delete("/api/v1/users/" + clerk).header(HttpHeaders.AUTHORIZATION, foreignHead))
                 .andExpect(status().isForbidden());
@@ -300,7 +314,7 @@ public class AuthAuditIntegrationTest {
         mockMvc.perform(patch("/api/v1/users/" + target)
                         .header(HttpHeaders.AUTHORIZATION, blockedToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null))))
+                        .content(objectMapper.writeValueAsString(new UpdateUserRequest(null, null, null, "BLOCKED", null, null, null))))
                 .andExpect(status().isForbidden());
 
         AuditLog record = single("UPDATE");
@@ -492,7 +506,9 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CreateUserRequest(username, USER_PASSWORD, "Test User", role, "comp-01"))))
+                                new CreateUserRequest(username, USER_PASSWORD, "Test User", role, "comp-01",
+                                        "COMPANY_EMPLOYEE".equals(role)
+                                                ? List.of(TerminalFixture.terminalOf(jdbcTemplate, "comp-01")) : null, null))))
                 .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
@@ -503,7 +519,7 @@ public class AuthAuditIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateUserRequest(null, null, null, status, null))))
+                                new UpdateUserRequest(null, null, null, status, null, null, null))))
                 .andExpect(status().isOk());
     }
 
@@ -547,9 +563,6 @@ public class AuthAuditIntegrationTest {
     private List<String> everyDetail() {
         return auditLogs.findAll().stream().map(AuditLog::getDetails).filter(d -> d != null).toList();
     }
-
-    @Autowired
-    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     // Журнал ломается переименованием, а не DROP: база общая на все классы модуля, и таблица должна
     // вернуться ровно той, что была, — с индексами и умолчаниями, а не рукописной копией.

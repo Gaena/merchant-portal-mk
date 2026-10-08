@@ -207,7 +207,7 @@ public class TerminalBlockingIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, TerminalStatus.ACTIVE))))
+                                new UpdateTerminalRequest(null, null, TerminalStatus.ACTIVE, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("ACTIVE")));
 
@@ -223,7 +223,7 @@ public class TerminalBlockingIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED))))
+                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED, null))))
                 .andExpect(status().isOk());
 
         assertThat(statusOf(link)).isEqualTo("CANCELED");
@@ -238,7 +238,7 @@ public class TerminalBlockingIntegrationTest {
                 .when(paymentLinkStatusRepository).suspendActiveLinks(anyInt());
 
         assertThatThrownBy(() -> terminalService.updateTerminal(terminal,
-                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED),
+                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED, null),
                 adminPrincipal()))
                 .isInstanceOf(DataAccessResourceFailureException.class);
 
@@ -304,7 +304,7 @@ public class TerminalBlockingIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, employeeTokenCompany1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED))))
+                                new UpdateTerminalRequest(null, null, TerminalStatus.BLOCKED, null))))
                 .andExpect(status().isForbidden());
 
         assertThat(terminalRepository.findById(terminal).orElseThrow().getStatus())
@@ -331,7 +331,7 @@ public class TerminalBlockingIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new UpdateTerminalRequest(null, null, status))))
+                                new UpdateTerminalRequest(null, null, status, null))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is(status.name())));
     }
@@ -410,7 +410,7 @@ public class TerminalBlockingIntegrationTest {
         String body = mockMvc.perform(post("/api/v1/terminals")
                         .header(HttpHeaders.AUTHORIZATION, adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", rid))))
+                        .content(objectMapper.writeValueAsString(new CreateTerminalRequest("comp-01", rid, null))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status", is("ACTIVE")))
                 .andReturn().getResponse().getContentAsString();

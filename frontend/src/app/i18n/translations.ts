@@ -2,6 +2,8 @@ import type { TransactionStatus } from '../types/transaction';
 import type { LinkStatus } from '../utils/payByLinkData';
 import type { TerminalStatus } from '../types/dto';
 import type { EcomOperationKind, EcomStatus, EcomPaymentType } from '../types/ecom';
+import type { Role } from '../types/role';
+import type { AuditActionCode, AuditEntityCode, IntegrityProblemKind } from '../types/audit';
 
 export type Language = 'en' | 'az' | 'ru';
 
@@ -118,6 +120,18 @@ export interface TranslationDictionary {
       terminals: string;
       links: string;
       linksHint: string;
+      /** Воронка — по ссылкам, созданным в периоде (Р-128): оплаты после периода тоже засчитываются. */
+      funnel: string;
+      funnelHint: string;
+      funnelSteps: { created: string; opened: string; paymentStarted: string; paid: string };
+      timeToPay: string;
+      timeToPayHint: string;
+      median: string;
+      paidLinks: string;
+      noPaidLinks: string;
+      timeToPayRanges: { UP_TO_1_HOUR: string; UP_TO_1_DAY: string; UP_TO_7_DAYS: string; OVER_7_DAYS: string };
+      /** Единицы для «2 ч 15 мин»: число и единица ставятся рядом, фраз с подстановкой нет. */
+      units: { lessThanMinute: string; minute: string; hour: string; day: string };
     };
   };
   settings: {
@@ -198,6 +212,8 @@ export interface TranslationDictionary {
     createFailed: string;
     smsHint: string;
     dmsHint: string;
+    dmsForbiddenUser: string;
+    dmsForbiddenTerminal: string;
     maxUsesHint: string;
     descriptionHint: string;
     customerSection: string;
@@ -326,6 +342,16 @@ export interface TranslationDictionary {
       checkStatusFailed: string;
       /** Вернуть можно только остаток. */
       refundableLeft: string;
+      /** Сумма возврата и списания (Р-133): в окне сразу потолок, её можно уменьшить. */
+      amountLabel: string;
+      amountUpTo: string;
+      amountWholeRefund: string;
+      amountWholeCapture: string;
+      amountInvalid: string;
+      amountAboveMax: string;
+      refundRemains: string;
+      captureReleased: string;
+      capturePartialHint: string;
       /** Заголовок блока возврата и списания — общий у карточки операции и панели заказа выписки. */
       actionsTitle: string;
       /** Причина выключенной кнопки (Р-123) — ровно `MoneyActionReason` бэкенда; `other` — код незнакомый. */
@@ -501,6 +527,11 @@ export interface TranslationDictionary {
     /** Пояснение к выбору компании в формах; виден только тем, кто выбирает (SYSTEM_ADMIN). */
     companyHint: string;
     nameFromProvider: string;
+    dmsColumn: string;
+    dmsAllowed: string;
+    dmsForbidden: string;
+    dmsSwitch: string;
+    dmsSwitchHint: string;
     formIncomplete: string;
     created: string;
     createFailed: string;
@@ -549,6 +580,10 @@ export interface TranslationDictionary {
     credentialsWarning: string;
     statusWarning: string;
     providerPasswordReplaced: string;
+    /** VÖEN компании (Р-129): 10 цифр, печатается на чеке плательщика; стереть нельзя, только заменить. */
+    taxId: string;
+    taxIdHint: string;
+    taxIdInvalid: string;
     editNothingChanged: string;
     formIncomplete: string;
     created: string;
@@ -597,11 +632,25 @@ export interface TranslationDictionary {
     /** Пароль, заданный администратором, пользователь сменит при первом входе (Р-100). */
     issuedPasswordHint: string;
     passwordChangePending: string;
+    /** Р-131: сотрудник видит только назначенные терминалы; руководитель и менеджер — все терминалы компании. */
+    terminals: string;
+    terminalsHint: string;
+    terminalsRequired: string;
+    noCompanyTerminals: string;
+    allCompanyTerminals: string;
+    noTerminals: string;
+    noTerminalsHint: string;
     passwordWillChange: string;
     /** Свой пароль: сервер гасит все сессии, и эту тоже — после сохранения вход заново. */
     ownPasswordSignsOut: string;
     /** Свою роль и статус в этом окне не поменять: так себя легко лишить доступа. */
     selfHint: string;
+    dmsLinks: string;
+    dmsLinksAllowed: string;
+    dmsLinksForbidden: string;
+    dmsLinksSwitch: string;
+    dmsLinksHint: string;
+    noDmsLinks: string;
     updated: string;
     updateFailed: string;
     statuses: {
@@ -623,18 +672,47 @@ export interface TranslationDictionary {
     outcomeSuccess: string;
     outcomeDenied: string;
     outcomeUnresolved: string;
+    /** Возврат или списание отклонил эквайер (Р-134); не отказ портала в доступе. */
+    outcomeDeclined: string;
     filterOutcome: string;
     dateFrom: string;
     dateTo: string;
-    entityAuth: string;
-    entityAuditLog: string;
+    /** Действие и объект записи словами (`types/audit.ts`); незнакомый код показывается как есть. */
+    actions: Record<AuditActionCode, string>;
+    entities: Record<AuditEntityCode, string>;
+    filterAction: string;
+    filterUser: string;
+    /** Только у SYSTEM_ADMIN и AUDITOR: остальные видят свою компанию. */
+    filterCompany: string;
+    empty: string;
+    /** Фильтр «Требует внимания» и выгрузка CSV (Р-137). */
+    attention: string;
+    attentionHint: string;
+    exportAction: string;
+    exportHint: string;
+    exportFailed: string;
+    /** Проверка цепочки журнала (Р-138): SYSTEM_ADMIN и AUDITOR. */
+    integrityAction: string;
+    integrityTitle: string;
+    integrityIntact: string;
+    integrityBroken: string;
+    integrityChecked: string;
+    integrityHead: string;
+    integrityStartedAt: string;
+    integrityNotCovered: string;
+    integrityUnsealed: string;
+    integrityMore: string;
+    integrityFailed: string;
+    integrityProblems: Record<IntegrityProblemKind, string>;
     /** Карточка записи журнала: открывается кликом по строке. */
     detailsTitle: string;
     entityId: string;
     company: string;
     recordId: string;
+    traceId: string;
     openTransaction: string;
     openPaymentLink: string;
+    openEcomOrder: string;
   };
   auth: {
     unknownRole: string;
@@ -677,6 +755,22 @@ export const statusLabel = (
   status: TransactionStatus | null | undefined,
   raw?: string
 ): string => (status ? dict.transactions.statuses[status] : raw || '—');
+
+/** Роль словами; правило то же, что у `statusLabel`: роль вне словаря — как есть, не знакомой (Р-48). */
+export const roleLabel = (
+  dict: TranslationDictionary,
+  role: Role | null | undefined,
+  raw?: string
+): string => {
+  switch (role) {
+    case 'SYSTEM_ADMIN': return dict.users.roles.systemAdmin;
+    case 'AUDITOR': return dict.users.roles.auditor;
+    case 'COMPANY_HEAD': return dict.users.roles.companyHead;
+    case 'COMPANY_MANAGER': return dict.users.roles.companyManager;
+    case 'COMPANY_EMPLOYEE': return dict.users.roles.companyEmployee;
+    default: return raw || '—';
+  }
+};
 
 /** Правило то же, что у `statusLabel`. */
 export const linkStatusLabel = (
@@ -793,6 +887,16 @@ export const translations: Record<Language, TranslationDictionary> = {
         terminals: 'Terminals by revenue',
         links: 'Payment links created',
         linksHint: 'Current status of the links created in the period',
+        funnel: 'Link funnel',
+        funnelHint: 'Links created in the period and how far they got. Payments made after the period count too, so a recent period can still grow. Paid means charged or held.',
+        funnelSteps: { created: 'Created', opened: 'Opened', paymentStarted: 'Card submitted', paid: 'Paid' },
+        timeToPay: 'Time to payment',
+        timeToPayHint: 'Single-use links of the period: from creating the link to the start of the paid attempt.',
+        median: 'Median',
+        paidLinks: 'Paid links',
+        noPaidLinks: 'No paid single-use links in the period',
+        timeToPayRanges: { UP_TO_1_HOUR: 'Under 1 hour', UP_TO_1_DAY: '1–24 hours', UP_TO_7_DAYS: '1–7 days', OVER_7_DAYS: 'Over 7 days' },
+        units: { lessThanMinute: '< 1 min', minute: 'min', hour: 'h', day: 'd' },
       },
     },
     settings: {
@@ -871,6 +975,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       createFailed: 'Could not create the payment link',
       smsHint: 'SMS: funds are charged as soon as the customer pays.',
       dmsHint: 'DMS: funds are reserved on the card; capture them from the transaction card.',
+      dmsForbiddenUser: 'You are not allowed to create DMS links. Ask the company head or the administrator.',
+      dmsForbiddenTerminal: 'DMS links are not allowed on this terminal. Ask the administrator.',
       maxUsesHint: 'The link closes after this many successful payments',
       descriptionHint: 'Shown to the customer on the payment page',
       customerSection: 'Customer',
@@ -986,6 +1092,15 @@ export const translations: Record<Language, TranslationDictionary> = {
         statusChecked: 'Transaction status refreshed.',
         checkStatusFailed: 'Could not check the status. Try again.',
         refundableLeft: 'Left to refund',
+        amountLabel: 'Amount',
+        amountUpTo: 'Up to',
+        amountWholeRefund: 'Whole remainder',
+        amountWholeCapture: 'Whole amount',
+        amountInvalid: 'Enter an amount above zero with at most two decimal places',
+        amountAboveMax: 'The amount is above what is available',
+        refundRemains: 'Left to refund after this',
+        captureReleased: 'Not captured',
+        capturePartialHint: 'A hold is captured once: the portal will not capture the rest later, the bank releases it on its own schedule.',
         actionsTitle: 'Actions',
         moneyReasons: {
           NO_RIGHTS: 'Your role does not allow this action',
@@ -1154,6 +1269,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       searchPlaceholder: 'Search terminals by name, ID or login...',
       companyHint: 'The company that owns the terminal',
       nameFromProvider: 'The name comes from the provider directory: rename the terminal at the provider',
+      dmsColumn: 'DMS',
+      dmsAllowed: 'Allowed',
+      dmsForbidden: 'Forbidden',
+      dmsSwitch: 'DMS links allowed',
+      dmsSwitchHint: 'Without DMS only SMS links can be created on the terminal. Existing DMS links keep working.',
       formIncomplete: 'Fill in every required field',
       created: 'Terminal registered',
       createFailed: 'Could not register the terminal',
@@ -1187,6 +1307,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       newProviderPassword: 'New acquirer password (optional)',
       newProviderPasswordHint: 'Leave blank to keep the current password',
       providerPasswordReplaced: 'The acquirer password will be replaced',
+      taxId: 'Tax ID (VÖEN)',
+      taxIdHint: '10 digits, printed on the payer\'s receipt. It can be replaced but not cleared.',
+      taxIdInvalid: 'VÖEN must be exactly 10 digits',
       editNothingChanged: 'Nothing changed — no request was sent.',
       formIncomplete: 'Fill in every required field',
       created: 'Company created',
@@ -1236,9 +1359,22 @@ export const translations: Record<Language, TranslationDictionary> = {
       newPasswordHint: 'Leave empty to keep the current password. At least 12 characters with upper and lower case, a digit and a symbol.',
       issuedPasswordHint: 'The user will be asked to change this password at the first sign-in.',
       passwordChangePending: 'Password change pending',
+      terminals: 'Terminals',
+      terminalsHint: 'The employee sees only these terminals, their links and payments',
+      terminalsRequired: 'Choose at least one terminal for the employee.',
+      noCompanyTerminals: 'The company has no terminals',
+      allCompanyTerminals: 'All company terminals',
+      noTerminals: 'No terminals',
+      noTerminalsHint: 'Sees nothing in the portal until terminals are assigned',
       passwordWillChange: 'The password will be replaced',
       ownPasswordSignsOut: 'All your sessions will end, this one too: sign in again with the new password',
       selfHint: 'You cannot change your own role or status here.',
+      dmsLinks: 'DMS links',
+      dmsLinksAllowed: 'allowed',
+      dmsLinksForbidden: 'forbidden',
+      dmsLinksSwitch: 'May create DMS links',
+      dmsLinksHint: 'Without it the user creates SMS links only. A change takes effect within 15 minutes.',
+      noDmsLinks: 'No DMS',
       updated: 'User updated',
       updateFailed: 'Could not update the user',
       statuses: { ACTIVE: 'Active', BLOCKED: 'Blocked' },
@@ -1252,22 +1388,59 @@ export const translations: Record<Language, TranslationDictionary> = {
       timestamp: 'Timestamp',
       ip: 'IP Address',
       filterEntity: 'Filter by Resource Entity',
-      searchPlaceholder: 'Search actor, action, entity ID or details...',
+      searchPlaceholder: 'Search actor, action, entity ID, details or trace ID...',
       outcome: 'Outcome',
       outcomeSuccess: 'Success',
       outcomeDenied: 'Denied',
       outcomeUnresolved: 'Unresolved',
+      outcomeDeclined: 'Declined by acquirer',
       filterOutcome: 'Filter by Outcome',
       dateFrom: 'From',
       dateTo: 'To',
-      entityAuth: 'Authentication',
-      entityAuditLog: 'Audit Journal',
+      actions: {
+        CREATE: 'Creation', READ: 'Read', UPDATE: 'Change', DELETE: 'Deletion', LIST: 'List', BLOCK: 'Block',
+        UNBLOCK: 'Unblock', LOGIN: 'Sign-in', LOGOUT: 'Sign-out', LOCKOUT: 'Account lockout',
+        RATE_LIMIT: 'Sign-in attempt limit', TOKEN_REUSE: 'Refresh token reuse', PASSWORD_CHANGE: 'Password change',
+        CAPTURE: 'Capture', REFUND: 'Refund', CANCEL: 'Cancellation', RESOLVE: 'Outcome resolution',
+        STATUS_CHANGE: 'Status change', START: 'Service start', STOP: 'Service stop',
+        EXPORT: 'Export', VERIFY: 'Integrity check',
+      },
+      entities: {
+        COMPANY: 'Company', TERMINAL: 'Terminal', USER: 'User', AUTH: 'Authentication', PAYMENT_LINK: 'Payment link',
+        TRANSACTION: 'Transaction', PROVIDER_ORDER: 'Statement order', AUDIT_LOG: 'Audit journal', SERVICE: 'Service',
+      },
+      filterAction: 'Action',
+      filterUser: 'User',
+      filterCompany: 'Company',
+      empty: 'No records match the filters.',
+      attention: 'Requires attention',
+      attentionHint: 'Unconfirmed money operations and journal gaps, refresh token reuse, account lockouts and sign-in attempt limits',
+      exportAction: 'Export CSV',
+      exportHint: 'All records matching the filters, oldest first, up to 100 000. The export is recorded in the journal.',
+      exportFailed: 'Could not export the journal',
+      integrityAction: 'Verify integrity',
+      integrityTitle: 'Audit journal integrity',
+      integrityIntact: 'The journal chain is intact: no record was changed, deleted or added around the portal.',
+      integrityBroken: 'The journal chain is broken: records were changed in the database around the portal.',
+      integrityChecked: 'Records checked',
+      integrityHead: 'Last link',
+      integrityStartedAt: 'Chain kept since',
+      integrityNotCovered: 'Records before the chain (not covered)',
+      integrityUnsealed: 'Records written around the portal',
+      integrityMore: 'And more — see the journal record of this check.',
+      integrityFailed: 'Could not verify the journal',
+      integrityProblems: {
+        RECORD_CHANGED: 'Record changed', RECORD_DELETED: 'Record deleted', LINKS_MISSING: 'Links missing',
+        TIME_CHANGED: 'Record time changed', HEAD_MISMATCH: 'Chain end does not match', RECORDS_OUTSIDE_CHAIN: 'Records outside the chain',
+      },
       detailsTitle: 'Audit record',
       entityId: 'Entity ID',
       company: 'Company',
       recordId: 'Record ID',
+      traceId: 'Trace ID (service logs)',
       openTransaction: 'Open transaction',
       openPaymentLink: 'Open payment link',
+      openEcomOrder: 'Open statement order',
     },
     auth: {
       unknownRole: 'The server returned a role this application does not recognise. Sign-in was refused — contact your administrator.',
@@ -1406,6 +1579,16 @@ export const translations: Record<Language, TranslationDictionary> = {
         terminals: 'Gəlirə görə terminallar',
         links: 'Yaradılmış ödəniş linkləri',
         linksHint: 'Dövrdə yaradılmış linklərin cari statusu',
+        funnel: 'Linklərin ödəniş hunisi',
+        funnelHint: 'Dövrdə yaradılmış linklər və onların hansı mərhələyə çatdığı. Dövrdən sonra edilən ödənişlər də sayılır, ona görə son dövrün rəqəmləri hələ arta bilər. Ödənilib — məbləğ kartdan tutulub və ya bloklanıb.',
+        funnelSteps: { created: 'Yaradılıb', opened: 'Açılıb', paymentStarted: 'Kart göndərilib', paid: 'Ödənilib' },
+        timeToPay: 'Ödənişə qədər vaxt',
+        timeToPayHint: 'Dövrün birdəfəlik linkləri: linkin yaradılmasından ödənilmiş cəhdin başlanmasına qədər.',
+        median: 'Median',
+        paidLinks: 'Ödənilmiş linklər',
+        noPaidLinks: 'Dövrdə ödənilmiş birdəfəlik link yoxdur',
+        timeToPayRanges: { UP_TO_1_HOUR: '1 saatdan az', UP_TO_1_DAY: '1–24 saat', UP_TO_7_DAYS: '1–7 gün', OVER_7_DAYS: '7 gündən çox' },
+        units: { lessThanMinute: '< 1 dəq', minute: 'dəq', hour: 'saat', day: 'gün' },
       },
     },
     settings: {
@@ -1484,6 +1667,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       createFailed: 'Ödəniş linkini yaratmaq mümkün olmadı',
       smsHint: 'SMS: vəsait müştəri ödəyən kimi tutulur.',
       dmsHint: 'DMS: vəsait kartda bloklanır; silinməsi əməliyyat kartından edilir.',
+      dmsForbiddenUser: 'DMS linkləri yaratmağa icazəniz yoxdur. Şirkət rəhbərinə və ya administratora müraciət edin.',
+      dmsForbiddenTerminal: 'Bu terminalda DMS linkləri qadağandır. Administratora müraciət edin.',
       maxUsesHint: 'Bu qədər uğurlu ödənişdən sonra link bağlanır',
       descriptionHint: 'Ödəniş səhifəsində müştəriyə göstərilir',
       customerSection: 'Müştəri',
@@ -1599,6 +1784,15 @@ export const translations: Record<Language, TranslationDictionary> = {
         statusChecked: 'Əməliyyatın statusu yeniləndi.',
         checkStatusFailed: 'Statusu yoxlamaq mümkün olmadı. Yenidən cəhd edin.',
         refundableLeft: 'Qaytarıla bilən qalıq',
+        amountLabel: 'Məbləğ',
+        amountUpTo: 'Maksimum',
+        amountWholeRefund: 'Bütün qalıq',
+        amountWholeCapture: 'Bütün məbləğ',
+        amountInvalid: 'Sıfırdan böyük, ən çox iki onluq rəqəmli məbləğ daxil edin',
+        amountAboveMax: 'Məbləğ mövcud olandan çoxdur',
+        refundRemains: 'Bundan sonra qaytarıla bilən qalıq',
+        captureReleased: 'Silinməyəcək',
+        capturePartialHint: 'Blok bir dəfə silinir: portal qalığı sonra silməyəcək, bank onu öz müddətində azad edəcək.',
         actionsTitle: 'Əməliyyatlar',
         moneyReasons: {
           NO_RIGHTS: 'Rolunuz bu əməliyyata icazə vermir',
@@ -1767,6 +1961,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       searchPlaceholder: 'Ad, ID və ya login üzrə axtarış...',
       companyHint: 'Terminalın aid olduğu şirkət',
       nameFromProvider: 'Ad provayderin kataloqundan gəlir: terminalın adını provayderdə dəyişin',
+      dmsColumn: 'DMS',
+      dmsAllowed: 'İcazəlidir',
+      dmsForbidden: 'Qadağandır',
+      dmsSwitch: 'DMS linklərinə icazə verilir',
+      dmsSwitchHint: 'DMS olmadan terminalda yalnız SMS linkləri yaradılır. Mövcud DMS linkləri işləməyə davam edir.',
       formIncomplete: 'Bütün məcburi sahələri doldurun',
       created: 'Terminal qeydiyyatdan keçdi',
       createFailed: 'Terminalı qeydiyyatdan keçirmək mümkün olmadı',
@@ -1800,6 +1999,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       newProviderPassword: 'Yeni provayder şifrəsi (istəyə görə)',
       newProviderPasswordHint: 'Cari şifrəni saxlamaq üçün boş buraxın',
       providerPasswordReplaced: 'Provayder şifrəsi əvəz olunacaq',
+      taxId: 'VÖEN',
+      taxIdHint: '10 rəqəm, ödəyicinin çekində çap olunur. Dəyişmək olar, silmək olmaz.',
+      taxIdInvalid: 'VÖEN düz 10 rəqəmdən ibarət olmalıdır',
       editNothingChanged: 'Heç nə dəyişməyib — sorğu göndərilmədi.',
       formIncomplete: 'Bütün məcburi sahələri doldurun',
       created: 'Şirkət yaradıldı',
@@ -1849,9 +2051,22 @@ export const translations: Record<Language, TranslationDictionary> = {
       newPasswordHint: 'Cari parolu saxlamaq üçün boş buraxın. Ən azı 12 simvol: böyük və kiçik hərf, rəqəm və xüsusi simvol.',
       issuedPasswordHint: 'İstifadəçi ilk girişdə bu parolu dəyişməli olacaq.',
       passwordChangePending: 'Parol dəyişikliyi gözlənilir',
+      terminals: 'Terminallar',
+      terminalsHint: 'Əməkdaş yalnız bu terminalları, onların linklərini və ödənişlərini görür',
+      terminalsRequired: 'Əməkdaş üçün ən azı bir terminal seçin.',
+      noCompanyTerminals: 'Şirkətin terminalı yoxdur',
+      allCompanyTerminals: 'Şirkətin bütün terminalları',
+      noTerminals: 'Terminal yoxdur',
+      noTerminalsHint: 'Terminal təyin olunana qədər portalda heç nə görmür',
       passwordWillChange: 'Parol dəyişdiriləcək',
       ownPasswordSignsOut: 'Bütün sessiyalarınız, bu da daxil olmaqla, bitəcək: yeni parolla yenidən daxil olun',
       selfHint: 'Öz rolunuzu və statusunuzu burada dəyişə bilməzsiniz.',
+      dmsLinks: 'DMS linkləri',
+      dmsLinksAllowed: 'icazəlidir',
+      dmsLinksForbidden: 'qadağandır',
+      dmsLinksSwitch: 'DMS linkləri yarada bilər',
+      dmsLinksHint: 'İcazə olmadan istifadəçi yalnız SMS linkləri yaradır. Dəyişiklik 15 dəqiqə ərzində qüvvəyə minir.',
+      noDmsLinks: 'DMS yoxdur',
       updated: 'İstifadəçi yeniləndi',
       updateFailed: 'İstifadəçini yeniləmək mümkün olmadı',
       statuses: { ACTIVE: 'Aktiv', BLOCKED: 'Bloklanıb' },
@@ -1865,22 +2080,59 @@ export const translations: Record<Language, TranslationDictionary> = {
       timestamp: 'Tarix və Vaxt',
       ip: 'IP Ünvanı',
       filterEntity: 'Resurs Əsasında Filtr',
-      searchPlaceholder: 'İstifadəçi, əməliyyat, ID və ya təfərrüat üzrə axtarış...',
+      searchPlaceholder: 'İstifadəçi, əməliyyat, ID, təfərrüat və ya trace ID üzrə axtarış...',
       outcome: 'Nəticə',
       outcomeSuccess: 'Uğurlu',
       outcomeDenied: 'Rədd edilib',
       outcomeUnresolved: 'Təsdiqlənməyib',
+      outcomeDeclined: 'Ekvayer rədd etdi',
       filterOutcome: 'Nəticə üzrə filtr',
       dateFrom: 'Tarixdən',
       dateTo: 'Tarixədək',
-      entityAuth: 'Autentifikasiya',
-      entityAuditLog: 'Audit jurnalı',
+      actions: {
+        CREATE: 'Yaradılma', READ: 'Oxuma', UPDATE: 'Dəyişiklik', DELETE: 'Qeydin silinməsi', LIST: 'Siyahı',
+        BLOCK: 'Bloklama', UNBLOCK: 'Blokdan çıxarma', LOGIN: 'Giriş', LOGOUT: 'Çıxış', LOCKOUT: 'Hesabın bloklanması',
+        RATE_LIMIT: 'Giriş cəhdləri limiti', TOKEN_REUSE: 'Refresh-tokenin təkrarı', PASSWORD_CHANGE: 'Şifrənin dəyişdirilməsi',
+        CAPTURE: 'Vəsaitin silinməsi', REFUND: 'Geri qaytarma', CANCEL: 'Ləğv', RESOLVE: 'Əməliyyatın nəticəsi',
+        STATUS_CHANGE: 'Statusun dəyişməsi', START: 'Servisin işə salınması', STOP: 'Servisin dayandırılması',
+        EXPORT: 'İxrac', VERIFY: 'Bütövlük yoxlaması',
+      },
+      entities: {
+        COMPANY: 'Şirkət', TERMINAL: 'Terminal', USER: 'İstifadəçi', AUTH: 'Autentifikasiya', PAYMENT_LINK: 'Ödəniş linki',
+        TRANSACTION: 'Əməliyyat', PROVIDER_ORDER: 'Çıxarış sifarişi', AUDIT_LOG: 'Audit jurnalı', SERVICE: 'Servis',
+      },
+      filterAction: 'Əməliyyat növü',
+      filterUser: 'İstifadəçi',
+      filterCompany: 'Şirkət',
+      empty: 'Filtrlərə uyğun qeyd yoxdur.',
+      attention: 'Diqqət tələb edir',
+      attentionHint: 'Təsdiqlənməmiş pul əməliyyatları və jurnal fasilələri, refresh-tokenin təkrarı, hesabın bloklanması və giriş cəhdləri limiti',
+      exportAction: 'CSV ixracı',
+      exportHint: 'Filtrlərə uyğun bütün qeydlər, köhnələr əvvəl, 100 000-ə qədər. İxrac jurnala yazılır.',
+      exportFailed: 'Jurnalı ixrac etmək mümkün olmadı',
+      integrityAction: 'Bütövlüyü yoxla',
+      integrityTitle: 'Audit jurnalının bütövlüyü',
+      integrityIntact: 'Jurnal zənciri bütövdür: heç bir qeyd portaldan kənar dəyişdirilməyib, silinməyib və əlavə olunmayıb.',
+      integrityBroken: 'Jurnal zənciri pozulub: qeydlər verilənlər bazasında portaldan kənar dəyişdirilib.',
+      integrityChecked: 'Yoxlanılan qeydlər',
+      integrityHead: 'Son halqa',
+      integrityStartedAt: 'Zəncir aparılır',
+      integrityNotCovered: 'Zəncirdən əvvəlki qeydlər (əhatə olunmur)',
+      integrityUnsealed: 'Portaldan kənar yazılmış qeydlər',
+      integrityMore: 'Və digərləri — bu yoxlamanın jurnal qeydinə baxın.',
+      integrityFailed: 'Jurnalı yoxlamaq mümkün olmadı',
+      integrityProblems: {
+        RECORD_CHANGED: 'Qeyd dəyişdirilib', RECORD_DELETED: 'Qeyd silinib', LINKS_MISSING: 'Halqalar çatışmır',
+        TIME_CHANGED: 'Qeydin vaxtı dəyişdirilib', HEAD_MISMATCH: 'Zəncirin sonu uyğun gəlmir', RECORDS_OUTSIDE_CHAIN: 'Zəncirdən kənar qeydlər',
+      },
       detailsTitle: 'Audit jurnalı qeydi',
       entityId: 'Obyektin ID-si',
       company: 'Şirkət',
       recordId: 'Qeydin ID-si',
+      traceId: 'Trace ID (servis logları)',
       openTransaction: 'Əməliyyatı aç',
       openPaymentLink: 'Ödəniş linkini aç',
+      openEcomOrder: 'Çıxarış sifarişini aç',
     },
     auth: {
       unknownRole: 'Server bu tətbiqin tanımadığı bir rol qaytardı. Giriş rədd edildi — administratorla əlaqə saxlayın.',
@@ -2019,6 +2271,16 @@ export const translations: Record<Language, TranslationDictionary> = {
         terminals: 'Терминалы по выручке',
         links: 'Созданные платёжные ссылки',
         linksHint: 'Текущий статус ссылок, созданных за период',
+        funnel: 'Воронка ссылок',
+        funnelHint: 'Ссылки, созданные за период, и докуда они дошли. Оплаты после периода тоже засчитываются, поэтому цифры недавнего периода ещё растут. Оплачена — списание или холд.',
+        funnelSteps: { created: 'Создана', opened: 'Открыта', paymentStarted: 'Карта отправлена', paid: 'Оплачена' },
+        timeToPay: 'Время до оплаты',
+        timeToPayHint: 'Одноразовые ссылки периода: от создания ссылки до начала оплаченной попытки.',
+        median: 'Медиана',
+        paidLinks: 'Оплачено ссылок',
+        noPaidLinks: 'За период нет оплаченных одноразовых ссылок',
+        timeToPayRanges: { UP_TO_1_HOUR: 'До 1 часа', UP_TO_1_DAY: '1–24 часа', UP_TO_7_DAYS: '1–7 дней', OVER_7_DAYS: 'Больше 7 дней' },
+        units: { lessThanMinute: '< 1 мин', minute: 'мин', hour: 'ч', day: 'д' },
       },
     },
     settings: {
@@ -2097,6 +2359,8 @@ export const translations: Record<Language, TranslationDictionary> = {
       createFailed: 'Не удалось создать ссылку на оплату',
       smsHint: 'SMS: деньги списываются сразу, как только клиент платит.',
       dmsHint: 'DMS: деньги резервируются на карте; списание — с карточки операции.',
+      dmsForbiddenUser: 'Вам не разрешено создавать DMS-ссылки. Обратитесь к руководителю компании или администратору.',
+      dmsForbiddenTerminal: 'На этом терминале DMS-ссылки запрещены. Обратитесь к администратору.',
       maxUsesHint: 'После этого числа успешных платежей ссылка закрывается',
       descriptionHint: 'Показывается клиенту на странице оплаты',
       customerSection: 'Клиент',
@@ -2212,6 +2476,15 @@ export const translations: Record<Language, TranslationDictionary> = {
         statusChecked: 'Статус операции обновлён.',
         checkStatusFailed: 'Не удалось проверить статус. Попробуйте ещё раз.',
         refundableLeft: 'Остаток к возврату',
+        amountLabel: 'Сумма',
+        amountUpTo: 'Не больше',
+        amountWholeRefund: 'Весь остаток',
+        amountWholeCapture: 'Вся сумма',
+        amountInvalid: 'Введите сумму больше нуля, не больше двух знаков после запятой',
+        amountAboveMax: 'Сумма больше доступной',
+        refundRemains: 'Останется к возврату',
+        captureReleased: 'Не будет списано',
+        capturePartialHint: 'Холд списывается один раз: остаток портал потом не спишет, банк снимет его по своим срокам.',
         actionsTitle: 'Действия',
         moneyReasons: {
           NO_RIGHTS: 'Ваша роль не позволяет это действие',
@@ -2380,6 +2653,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       searchPlaceholder: 'Поиск по названию, ID или логину...',
       companyHint: 'Компания, которой принадлежит терминал',
       nameFromProvider: 'Название приходит из справочника провайдера: переименуйте терминал у провайдера',
+      dmsColumn: 'DMS',
+      dmsAllowed: 'Разрешён',
+      dmsForbidden: 'Запрещён',
+      dmsSwitch: 'DMS-ссылки разрешены',
+      dmsSwitchHint: 'Без DMS на терминале создаются только SMS-ссылки. Уже созданные DMS-ссылки продолжают работать.',
       formIncomplete: 'Заполните все обязательные поля',
       created: 'Терминал заведён',
       createFailed: 'Не удалось завести терминал',
@@ -2413,6 +2691,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       newProviderPassword: 'Новый пароль к провайдеру (необязательно)',
       newProviderPasswordHint: 'Оставьте пустым, чтобы не менять пароль',
       providerPasswordReplaced: 'Пароль к провайдеру будет заменён',
+      taxId: 'VÖEN (ИНН)',
+      taxIdHint: '10 цифр, печатается на чеке плательщика. Заменить можно, стереть нельзя.',
+      taxIdInvalid: 'VÖEN — ровно 10 цифр',
       editNothingChanged: 'Ничего не изменилось — запрос не отправлен.',
       formIncomplete: 'Заполните все обязательные поля',
       created: 'Компания создана',
@@ -2462,9 +2743,22 @@ export const translations: Record<Language, TranslationDictionary> = {
       newPasswordHint: 'Оставьте пустым, чтобы не менять. Не меньше 12 символов: заглавные и строчные буквы, цифра и спецсимвол.',
       issuedPasswordHint: 'Пользователь сменит этот пароль при первом входе.',
       passwordChangePending: 'Ждёт смены пароля',
+      terminals: 'Терминалы',
+      terminalsHint: 'Сотрудник видит только эти терминалы, их ссылки и платежи',
+      terminalsRequired: 'Выберите сотруднику хотя бы один терминал.',
+      noCompanyTerminals: 'У компании нет терминалов',
+      allCompanyTerminals: 'Все терминалы компании',
+      noTerminals: 'Нет терминалов',
+      noTerminalsHint: 'Пока не назначены терминалы, в портале ничего не видит',
       passwordWillChange: 'Пароль будет заменён',
       ownPasswordSignsOut: 'Все ваши сессии, и эта тоже, завершатся: войдите снова с новым паролем',
       selfHint: 'Свою роль и статус здесь поменять нельзя.',
+      dmsLinks: 'DMS-ссылки',
+      dmsLinksAllowed: 'разрешены',
+      dmsLinksForbidden: 'запрещены',
+      dmsLinksSwitch: 'Может создавать DMS-ссылки',
+      dmsLinksHint: 'Без права пользователь создаёт только SMS-ссылки. Изменение действует в течение 15 минут.',
+      noDmsLinks: 'Без DMS',
       updated: 'Пользователь обновлён',
       updateFailed: 'Не удалось обновить пользователя',
       statuses: { ACTIVE: 'Активен', BLOCKED: 'Заблокирован' },
@@ -2478,22 +2772,59 @@ export const translations: Record<Language, TranslationDictionary> = {
       timestamp: 'Дата и Время',
       ip: 'IP адрес',
       filterEntity: 'Фильтр по ресурсу',
-      searchPlaceholder: 'Поиск по пользователю, действию, ID или деталям...',
+      searchPlaceholder: 'Поиск по пользователю, действию, ID, деталям или trace ID...',
       outcome: 'Результат',
       outcomeSuccess: 'Успешно',
       outcomeDenied: 'Отказано',
       outcomeUnresolved: 'Не подтверждён',
+      outcomeDeclined: 'Отклонён эквайером',
       filterOutcome: 'Фильтр по результату',
       dateFrom: 'С даты',
       dateTo: 'По дату',
-      entityAuth: 'Аутентификация',
-      entityAuditLog: 'Журнал аудита',
+      actions: {
+        CREATE: 'Создание', READ: 'Чтение', UPDATE: 'Изменение', DELETE: 'Удаление', LIST: 'Список',
+        BLOCK: 'Блокировка', UNBLOCK: 'Разблокировка', LOGIN: 'Вход', LOGOUT: 'Выход', LOCKOUT: 'Блокировка входа',
+        RATE_LIMIT: 'Лимит попыток входа', TOKEN_REUSE: 'Повтор refresh-токена', PASSWORD_CHANGE: 'Смена пароля',
+        CAPTURE: 'Списание', REFUND: 'Возврат', CANCEL: 'Отмена', RESOLVE: 'Итог операции',
+        STATUS_CHANGE: 'Смена статуса', START: 'Запуск сервиса', STOP: 'Остановка сервиса',
+        EXPORT: 'Выгрузка', VERIFY: 'Проверка целостности',
+      },
+      entities: {
+        COMPANY: 'Компания', TERMINAL: 'Терминал', USER: 'Пользователь', AUTH: 'Вход в систему', PAYMENT_LINK: 'Платёжная ссылка',
+        TRANSACTION: 'Операция', PROVIDER_ORDER: 'Заказ выписки', AUDIT_LOG: 'Журнал аудита', SERVICE: 'Сервис',
+      },
+      filterAction: 'Действие',
+      filterUser: 'Пользователь',
+      filterCompany: 'Компания',
+      empty: 'Записей по фильтрам нет.',
+      attention: 'Требует внимания',
+      attentionHint: 'Неподтверждённые денежные операции и перерывы журнала, повтор refresh-токена, блокировки учёток и лимит попыток входа',
+      exportAction: 'Выгрузить CSV',
+      exportHint: 'Все записи по фильтрам, старые раньше, до 100 000. Выгрузка записывается в журнал.',
+      exportFailed: 'Не удалось выгрузить журнал',
+      integrityAction: 'Проверить целостность',
+      integrityTitle: 'Целостность журнала аудита',
+      integrityIntact: 'Цепочка журнала цела: ни одна запись не изменена, не удалена и не добавлена мимо портала.',
+      integrityBroken: 'Цепочка журнала разорвана: записи меняли в базе мимо портала.',
+      integrityChecked: 'Проверено записей',
+      integrityHead: 'Последнее звено',
+      integrityStartedAt: 'Цепочка ведётся с',
+      integrityNotCovered: 'Записей до начала цепочки (не покрыты)',
+      integrityUnsealed: 'Записей мимо портала',
+      integrityMore: 'И другие — см. запись этой проверки в журнале.',
+      integrityFailed: 'Не удалось проверить журнал',
+      integrityProblems: {
+        RECORD_CHANGED: 'Запись изменена', RECORD_DELETED: 'Запись удалена', LINKS_MISSING: 'Пропали звенья',
+        TIME_CHANGED: 'Изменено время записи', HEAD_MISMATCH: 'Конец цепочки не сходится', RECORDS_OUTSIDE_CHAIN: 'Записи вне цепочки',
+      },
       detailsTitle: 'Запись журнала аудита',
       entityId: 'ID объекта',
       company: 'Компания',
       recordId: 'ID записи',
+      traceId: 'Trace ID (логи сервиса)',
       openTransaction: 'Открыть операцию',
       openPaymentLink: 'Открыть платёжную ссылку',
+      openEcomOrder: 'Открыть заказ выписки',
     },
     auth: {
       unknownRole: 'Сервер вернул роль, неизвестную приложению. Вход отклонён — обратитесь к администратору.',

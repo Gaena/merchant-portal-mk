@@ -79,6 +79,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String userId;
         String role;
         String companyId;
+        boolean dmsLinksAllowed;
 
         // Сравнение за постоянное время: equals обрывается на первом несовпавшем символе, и токен, дающий
         // SYSTEM_ADMIN, подбирался бы по времени ответа посимвольно (API-TOKEN-COMPARE).
@@ -89,6 +90,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             userId = "00000000-0000-0000-0000-000000000000";
             role = Role.SYSTEM_ADMIN.name();
             companyId = null;
+            dmsLinksAllowed = false;
             log.debug("Fallback static token authentication successful for path: {}", path);
         } else {
             try {
@@ -100,6 +102,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 }
                 role = (String) claims.get("role");
                 companyId = (String) claims.get("companyId");
+                // Только явное true: токен без claim или со строкой "true" права не даёт (Р-132).
+                dmsLinksAllowed = Boolean.TRUE.equals(claims.get(JwtProvider.DMS_LINKS_CLAIM));
             } catch (ExpiredJwtException e) {
                 // Штатно раз в 15 минут у каждого вошедшего: фронтенд обновит токен сам.
                 log.debug("Rejected an expired token for {}", path);
@@ -134,7 +138,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String finalRole = role;
         String finalUsername = username;
 
-        UserPrincipal principal = new UserPrincipal(userId, finalUsername, finalRole, companyId);
+        UserPrincipal principal = new UserPrincipal(userId, finalUsername, finalRole, companyId, dmsLinksAllowed);
         UsernamePasswordAuthenticationToken authentication =
                 new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities());
         SecurityContextHolder.getContext().setAuthentication(authentication);

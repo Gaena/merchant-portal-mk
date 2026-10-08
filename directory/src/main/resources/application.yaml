@@ -37,6 +37,14 @@ pbl:
       expiration-ms: ${JWT_EXPIRATION_MS:900000} # 15 minutes
 
 mp:
+  audit:
+    # Ключ HMAC цепочки журнала аудита (Р-138): одно значение во всех четырёх сервисах, не короче 32 байт.
+    # Без значения по умолчанию намеренно: с известным ключом цепочку после правки журнала пересчитал бы любой.
+    chain-key: ${AUDIT_CHAIN_KEY}
+    integrity:
+      # Ночная проверка цепочки журнала (Р-138): разрыв — ERROR с маркером AUDIT_CHAIN_BROKEN и запись UNRESOLVED.
+      enabled: ${AUDIT_INTEGRITY_ENABLED:true}
+      cron: "${AUDIT_INTEGRITY_CRON:0 30 3 * * *}"
   # Whose X-Real-IP / X-Forwarded-For we trust; the same line as in auth, pbl and ecom (Р-103).
   trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
   credentials:

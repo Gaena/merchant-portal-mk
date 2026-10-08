@@ -7,6 +7,7 @@ import az.millikart.common.exception.InvalidStateException;
 import az.millikart.common.security.Role;
 import az.millikart.common.security.UserPrincipal;
 import az.millikart.ecom.repository.CompanyLoginRepository;
+import az.millikart.ecom.repository.EmployeeMerchantRepository;
 import az.millikart.ecom.repository.ProviderLoginRepository;
 import java.util.List;
 import java.util.Objects;
@@ -14,8 +15,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 // Чьи платежи видит пользователь: компания → её логин мультимерчанта → его мерчанты в слепке
-// provider_logins (Р-97). Пустой список — пустая выписка; ветки «мерчантов нет, значит показать всё»
-// быть не должно: так выглядит показ мерчанту А оборотов мерчанта Б.
+// provider_logins (Р-97); сотрудник — только мерчанты назначенных ему терминалов из них (Р-131). Пустой
+// список — пустая выписка; ветки «мерчантов нет, значит показать всё» быть не должно: так выглядит показ
+// мерчанту А оборотов мерчанта Б.
 @Service
 public class EcomScopeService {
 
@@ -25,12 +27,14 @@ public class EcomScopeService {
     private final CompanyLoginRepository companies;
     private final ProviderLoginRepository providerLogins;
     private final AuditLogService auditLogService;
+    private final EmployeeMerchantRepository employeeMerchants;
 
     public EcomScopeService(CompanyLoginRepository companies, ProviderLoginRepository providerLogins,
-                            AuditLogService auditLogService) {
+                            AuditLogService auditLogService, EmployeeMerchantRepository employeeMerchants) {
         this.companies = companies;
         this.providerLogins = providerLogins;
         this.auditLogService = auditLogService;
+        this.employeeMerchants = employeeMerchants;
     }
 
     @Transactional(readOnly = true)
@@ -56,6 +60,17 @@ public class EcomScopeService {
                     UserPrincipal.getUsername(principal), null,
                     "Denied: " + role + " without a company asked for acquiring transactions");
             throw new InvalidStateException("Access denied: User not assigned to a company");
+        }
+        if (role == Role.COMPANY_EMPLOYEE) {
+            // Пересечение, а не замена: назначение не расширяет скоуп компании — мерчант, отвязанный от её
+            // логина, уходит и у сотрудника. Без назначений — пусто без похода в слепок логинов.
+            List<String> assigned = employeeMerchants.assignedMerchantRids(UserPrincipal.getUserId(principal), companyId);
+            if (assigned.isEmpty()) {
+                return new EcomScope(List.of());
+            }
+            return new EcomScope(scopeOf(companies.providerLoginOf(companyId)).merchantRids().stream()
+                    .filter(assigned::contains)
+                    .toList());
         }
         return scopeOf(companies.providerLoginOf(companyId));
     }

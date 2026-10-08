@@ -25,6 +25,11 @@ pbl:
   # Public URL as the payer's browser sees it; sent to the acquirer as hppRedirectUrl. No default on
   # purpose (P1-10): a default would silently send production payers to localhost.
   base-url: ${PBL_BASE_URL}
+  receipt:
+    # Payment service provider printed on every payer receipt (payment services law, art. 17.1.1;
+    # Р-130). No defaults on purpose: a receipt without them is not lawful, so an unset value stops pbl.
+    provider-name: ${RECEIPT_PROVIDER_NAME}
+    provider-tax-id: ${RECEIPT_PROVIDER_TAX_ID}
   security:
     # Static token = SYSTEM_ADMIN without a password. Off and empty by default: a built-in value would
     # be a publicly known backdoor. Enabling it without PBL_API_TOKEN fails startup.
@@ -67,6 +72,10 @@ pbl:
     get-order-path: "${PROVIDER_GET_ORDER_PATH:/order/{orderId}}"
 
 mp:
+  audit:
+    # Ключ HMAC цепочки журнала аудита (Р-138): одно значение во всех четырёх сервисах, не короче 32 байт.
+    # Без значения по умолчанию намеренно: с известным ключом цепочку после правки журнала пересчитал бы любой.
+    chain-key: ${AUDIT_CHAIN_KEY}
   # Forwarding headers are believed only from these addresses — nginx on loopback (P2-10).
   # Empty = never believe them.
   trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}

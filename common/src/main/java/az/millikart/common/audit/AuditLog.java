@@ -53,6 +53,10 @@ public class AuditLog {
     @Column(name = "client_ip", length = 45)
     private String clientIp;
 
+    // traceId запроса или прогона планировщика (MDC): по нему запись находит строки логов. Вне того и другого null.
+    @Column(name = "trace_id", length = 64)
+    private String traceId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "outcome", nullable = false, length = 16)
     private AuditOutcome outcome = AuditOutcome.SUCCESS;
@@ -63,7 +67,7 @@ public class AuditLog {
 
     @Builder
     private AuditLog(String entityType, String entityId, String action, String performedBy, String companyId,
-                     String details, String clientIp, AuditOutcome outcome) {
+                     String details, String clientIp, String traceId, AuditOutcome outcome) {
         this.entityType = entityType;
         this.entityId = entityId;
         this.action = action;
@@ -71,6 +75,7 @@ public class AuditLog {
         this.companyId = companyId;
         this.details = details;
         this.clientIp = clientIp;
+        this.traceId = traceId;
         this.outcome = outcome != null ? outcome : AuditOutcome.SUCCESS;
     }
 }

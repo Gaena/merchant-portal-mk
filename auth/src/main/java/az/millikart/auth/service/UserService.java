@@ -6,6 +6,7 @@ import az.millikart.auth.dto.UpdateUserRequest;
 import az.millikart.auth.dto.UserResponse;
 import az.millikart.auth.repository.CompanyRepository;
 import az.millikart.auth.repository.UserRepository;
+import az.millikart.auth.repository.UserTerminalRepository;
 import az.millikart.common.audit.AuditAction;
 import az.millikart.common.audit.AuditEntity;
 import az.millikart.common.audit.AuditEvent;
@@ -19,9 +20,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -61,6 +64,7 @@ public class UserService {
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
     private final PasswordHistoryService passwordHistory;
+    private final UserTerminalRepository userTerminals;
 
     public UserService(UserRepository userRepository,
                        CompanyRepository companyRepository,
@@ -68,7 +72,8 @@ public class UserService {
                        RefreshTokenService refreshTokenService,
                        AuditLogService auditLogService,
                        ApplicationEventPublisher eventPublisher,
-                       PasswordHistoryService passwordHistory) {
+                       PasswordHistoryService passwordHistory,
+                       UserTerminalRepository userTerminals) {
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.passwordEncoder = passwordEncoder;
@@ -76,6 +81,7 @@ public class UserService {
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
         this.passwordHistory = passwordHistory;
+        this.userTerminals = userTerminals;
     }
 
     @Transactional
@@ -110,6 +116,21 @@ public class UserService {
             throw new BusinessException("Company not found");
         }
 
+        // Р-131: сотрудник без терминалов не заводится; другим ролям терминалы не назначаются.
+        List<Integer> terminalIds = normalizedTerminals(request.terminalIds());
+        boolean employee = Role.fromValue(request.role()).orElse(null) == Role.COMPANY_EMPLOYEE;
+        if (employee) {
+            requireCompanyTerminals(terminalIds, companyId);
+        } else if (!terminalIds.isEmpty()) {
+            throw new BusinessException(TERMINALS_FOR_EMPLOYEES_ONLY);
+        }
+
+        // Р-132: запрещают DMS только ролям компании — у остальных право ничего не значит.
+        boolean dmsLinksAllowed = request.dmsLinksAllowed() == null || request.dmsLinksAllowed();
+        if (!dmsLinksAllowed && !COMPANY_ROLES.contains(Role.fromValue(request.role()).orElse(null))) {
+            throw new BusinessException(DMS_FOR_COMPANY_ROLES_ONLY);
+        }
+
         User user = User.builder()
                 .username(cleanEmail)
                 .passwordHash(passwordEncoder.encode(request.password()))
@@ -119,17 +140,25 @@ public class UserService {
                 .status(STATUS_ACTIVE)
                 // Пароль задал не владелец — сменит при первом входе (PCI DSS 8.3.5, Р-100).
                 .passwordChangeRequired(true)
+                .dmsLinksAllowed(dmsLinksAllowed)
                 .build();
 
-        user = userRepository.save(user);
+        // saveAndFlush: назначения пишутся JDBC мимо Hibernate, и строка users должна быть в базе раньше них —
+        // иначе внешний ключ user_terminals отвергнет вставку.
+        user = userRepository.saveAndFlush(user);
+        if (employee) {
+            userTerminals.replace(user.getId(), terminalIds, actorUsername, Instant.now());
+        }
 
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(), AuditAction.CREATE,
                 actorUsername, user.getCompanyId(),
                 "Created user " + user.getUsername() + " with role " + user.getRole()
-                        + (user.getCompanyId() != null ? " in company " + user.getCompanyId() : "")));
+                        + (user.getCompanyId() != null ? " in company " + user.getCompanyId() : "")
+                        + (employee ? " with terminals " + terminalIds : "")
+                        + (dmsLinksAllowed ? "" : ", DMS links forbidden")));
 
         log.info("User created successfully: id={}, username={}", user.getId(), user.getUsername());
-        return mapToResponse(user);
+        return mapToResponse(user, employee ? terminalIds : List.of());
     }
 
     // Поиск, фильтры, отсев удалённых, порядок и скоуп компании — в запросе, не пост-фильтром (P2-1, P3-1).
@@ -158,8 +187,12 @@ public class UserService {
         Page<User> page = userRepository.search(companyScope, role,
                 SearchTerms.toLikePattern(search), pageOnly);
 
+        // Терминалы — одним запросом на страницу, а не на строку.
+        Map<UUID, List<Integer>> terminals = page.getContent().isEmpty()
+                ? Map.of()
+                : userTerminals.terminalIdsOf(page.getContent().stream().map(User::getId).toList());
         return PagedResponse.of(page, page.getContent().stream()
-                .map(this::mapToResponse)
+                .map(user -> mapToResponse(user, terminals.getOrDefault(user.getId(), List.of())))
                 .collect(Collectors.toList()));
     }
 
@@ -174,7 +207,7 @@ public class UserService {
             throw new BusinessException("User not found");
         }
 
-        return mapToResponse(user);
+        return mapToResponse(user, userTerminals.terminalIdsOf(user.getId()));
     }
 
     @Transactional
@@ -200,6 +233,8 @@ public class UserService {
         List<String> changes = new ArrayList<>();
         boolean passwordChanged = false;
         boolean roleOrCompanyChanged = false;
+        boolean roleChanged = false;
+        boolean companyChanged = false;
         String previousStatus = user.getStatus();
 
         if (request.fullName() != null && !request.fullName().equals(user.getFullName())) {
@@ -236,6 +271,7 @@ public class UserService {
                 changes.add("role " + user.getRole() + " -> " + request.role());
                 user.setRole(request.role());
                 roleOrCompanyChanged = true;
+                roleChanged = true;
             }
         }
         // Переводит между компаниями только SYSTEM_ADMIN: руководитель ограничен своей (Р-90).
@@ -254,6 +290,7 @@ public class UserService {
                 changes.add("companyId " + user.getCompanyId() + " -> " + requestedCompanyId);
                 user.setCompanyId(requestedCompanyId);
                 roleOrCompanyChanged = true;
+                companyChanged = true;
             }
         }
         // Проверяется итог, а не запрос: к роли компании без компании ведут и смена роли, и снятие компании.
@@ -262,6 +299,56 @@ public class UserService {
         if (roleOrCompanyChanged
                 && COMPANY_ROLES.contains(Role.fromValue(user.getRole()).orElse(null)) && user.getCompanyId() == null) {
             throw new BusinessException("Role " + user.getRole() + " requires a company");
+        }
+
+        // Р-131: итог проверяется, только когда терминалы, роль или компания менялись — сотрудника, заведённого
+        // до назначений, можно переименовать и заблокировать, не раздавая ему терминалы. Не сотрудник
+        // назначений не держит: ставший менеджером их теряет. Присвоенное выше откатит транзакция.
+        List<Integer> currentTerminals = userTerminals.terminalIdsOf(user.getId());
+        List<Integer> requestedTerminals = request.terminalIds() == null ? null : normalizedTerminals(request.terminalIds());
+        List<Integer> targetTerminals;
+        if (Role.fromValue(user.getRole()).orElse(null) == Role.COMPANY_EMPLOYEE) {
+            if (requestedTerminals != null) {
+                targetTerminals = requestedTerminals;
+            } else {
+                // Терминалы прежней компании новой не принадлежат; новый сотрудник назначений не имел.
+                targetTerminals = companyChanged ? List.of() : currentTerminals;
+            }
+            if (requestedTerminals != null || roleChanged || companyChanged) {
+                requireCompanyTerminals(targetTerminals, user.getCompanyId());
+            }
+        } else {
+            if (requestedTerminals != null && !requestedTerminals.isEmpty()) {
+                throw new BusinessException(TERMINALS_FOR_EMPLOYEES_ONLY);
+            }
+            targetTerminals = List.of();
+        }
+        boolean terminalsChanged = !targetTerminals.equals(currentTerminals);
+        if (terminalsChanged) {
+            changes.add("terminals " + currentTerminals + " -> " + targetTerminals);
+        }
+
+        // Р-132: право на DMS-ссылки. Себе руководитель его не меняет — как роль и статус; ставший ролью вне
+        // компании получает true: у него право ничего не значит. Действует со следующего токена пользователя.
+        boolean targetDmsLinks;
+        if (COMPANY_ROLES.contains(Role.fromValue(user.getRole()).orElse(null))) {
+            targetDmsLinks = request.dmsLinksAllowed() != null ? request.dmsLinksAllowed() : user.isDmsLinksAllowed();
+            if (targetDmsLinks != user.isDmsLinksAllowed() && actorRole != Role.SYSTEM_ADMIN
+                    && user.getId().toString().equals(UserPrincipal.getUserId(principal))) {
+                auditLogService.logDenied(AuditEntity.USER, id.toString(), AuditAction.UPDATE, actorUsername, actorCompanyId,
+                        "Denied: role " + UserPrincipal.getRawRole(principal)
+                                + " attempted to change its own DMS link permission");
+                throw new InvalidStateException("Cannot change your own DMS link permission");
+            }
+        } else {
+            if (Boolean.FALSE.equals(request.dmsLinksAllowed())) {
+                throw new BusinessException(DMS_FOR_COMPANY_ROLES_ONLY);
+            }
+            targetDmsLinks = true;
+        }
+        if (targetDmsLinks != user.isDmsLinksAllowed()) {
+            changes.add("dmsLinksAllowed " + user.isDmsLinksAllowed() + " -> " + targetDmsLinks);
+            user.setDmsLinksAllowed(targetDmsLinks);
         }
 
         boolean nonActiveStatusSet = false;
@@ -279,6 +366,9 @@ public class UserService {
         }
 
         user = userRepository.save(user);
+        if (terminalsChanged) {
+            userTerminals.replace(user.getId(), targetTerminals, actorUsername, Instant.now());
+        }
 
         String actorUsername2 = actorUsername;
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(), AuditAction.UPDATE,
@@ -312,7 +402,7 @@ public class UserService {
             log.info("User {} password {}: {} refresh token(s) revoked", user.getId(),
                     passwordResetByOther ? "reset by another user" : "changed by its owner", revoked);
         }
-        return mapToResponse(user);
+        return mapToResponse(user, targetTerminals);
     }
 
     @Transactional
@@ -325,6 +415,8 @@ public class UserService {
 
         user.setStatus(STATUS_DELETED);
         userRepository.save(user);
+        // Живой access-токен удалённого сотрудника доживает 15 минут — без назначений он не видит ничего (Р-131).
+        userTerminals.replace(user.getId(), List.of(), UserPrincipal.getUsername(principal), Instant.now());
 
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(), AuditAction.DELETE,
                 UserPrincipal.getUsername(principal), user.getCompanyId(),
@@ -427,7 +519,7 @@ public class UserService {
         throw new InvalidStateException("Access denied");
     }
 
-    private UserResponse mapToResponse(User user) {
+    private UserResponse mapToResponse(User user, List<Integer> terminalIds) {
         return new UserResponse(
                 user.getId(),
                 user.getUsername(),
@@ -436,7 +528,30 @@ public class UserService {
                 user.getCompanyId(),
                 user.getStatus(),
                 user.getCreatedAt(),
-                user.isPasswordChangeRequired()
+                user.isPasswordChangeRequired(),
+                user.isDmsLinksAllowed(),
+                terminalIds
         );
+    }
+
+    private static final String TERMINALS_FOR_EMPLOYEES_ONLY = "Terminals are assigned to employees only";
+    private static final String DMS_FOR_COMPANY_ROLES_ONLY = "DMS links can be forbidden to company roles only";
+
+    // Без повторов и по возрастанию: так список сравнивается с назначенным и так же пишется в журнал.
+    private static List<Integer> normalizedTerminals(List<Integer> terminalIds) {
+        return terminalIds == null ? List.of() : List.copyOf(new TreeSet<>(terminalIds));
+    }
+
+    // Р-131: сотруднику — хотя бы один терминал, и все — его компании. Чужой номер называется в отказе:
+    // администратор выбирает компанию и терминалы в одной форме и мог ошибиться.
+    private void requireCompanyTerminals(List<Integer> terminalIds, String companyId) {
+        if (terminalIds.isEmpty()) {
+            throw new BusinessException("An employee needs at least one terminal");
+        }
+        Set<Integer> owned = userTerminals.ownedByCompany(companyId, terminalIds);
+        List<Integer> foreign = terminalIds.stream().filter(id -> !owned.contains(id)).toList();
+        if (!foreign.isEmpty()) {
+            throw new BusinessException("Terminals " + foreign + " do not belong to company " + companyId);
+        }
     }
 }

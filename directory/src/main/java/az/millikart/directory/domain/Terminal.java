@@ -66,6 +66,11 @@ public class Terminal {
     @Column(name = "terminal_rid")
     private String terminalRid;
 
+    // Разрешены ли DMS-ссылки (Р-132); меняет только SYSTEM_ADMIN, проверяет pbl при создании ссылки.
+    @Column(name = "dms_allowed", nullable = false)
+    @Builder.Default
+    private boolean dmsAllowed = true;
+
     @Column(name = "created_by")
     private String createdBy;
 

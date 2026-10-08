@@ -66,6 +66,7 @@ public class DashboardSummaryTest {
     @Autowired private TransactionRefundRepository transactionRefundRepository;
     @Autowired private AcquiringClient acquiringClient;
     @Autowired private DashboardRepository dashboardRepository;
+    @Autowired private az.millikart.pbl.service.TerminalScope terminalScope;
 
     private ZoneId reportZone;
     private String adminToken;
@@ -76,6 +77,7 @@ public class DashboardSummaryTest {
     @BeforeEach
     public void setup() {
         Mockito.reset(acquiringClient);
+        jdbcTemplate.update("DELETE FROM user_terminals");
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
@@ -299,7 +301,7 @@ public class DashboardSummaryTest {
     @Test
     public void bucketsFollowTheConfiguredZone_notTheMachineZone() {
         ZoneId tokyo = ZoneId.of("Asia/Tokyo");
-        DashboardService tokyoService = new DashboardService(dashboardRepository, terminalRepository, tokyo.getId());
+        DashboardService tokyoService = new DashboardService(dashboardRepository, terminalRepository, terminalScope, tokyo.getId());
         LocalDate before = LocalDate.now(tokyo).minusDays(2);
         LocalDate after = LocalDate.now(tokyo).minusDays(1);
         PaymentLink link = link(TERMINAL_A, "AZN");
@@ -393,6 +395,101 @@ public class DashboardSummaryTest {
                 "the newest payment comes first, or 'recent transactions' means nothing");
     }
 
+    // Р-131: сотрудник видит статистику только по назначенным терминалам — деньги, попытки и воронку.
+    // Соседний терминал той же компании в его цифры не входит; руководитель видит оба.
+    @Test
+    public void employee_countsOnlyAssignedTerminals() throws Exception {
+        int sibling = TERMINAL_A + 1;
+        terminalRepository.save(terminal(sibling, "Sibling terminal", COMPANY_A));
+        String employeeId = "66666666-6666-6666-6666-666666666666";
+        jdbcTemplate.update("INSERT INTO user_terminals (user_id, terminal_id, assigned_by, assigned_at) VALUES (?, ?, ?, now())",
+                UUID.fromString(employeeId), TERMINAL_A, "head-a@test.com");
+        paid(link(TERMINAL_A, "AZN"), "100.00");
+        paid(link(sibling, "AZN"), "40.00");
+        String employeeToken = "Bearer " + jwtProvider.generateToken(employeeId, "emp-a@test.com", "COMPANY_EMPLOYEE", COMPANY_A);
+
+        JsonNode employee = summary(employeeToken, "");
+        Assertions.assertEquals(1, totals(employee, "AZN").get("paidCount").asLong());
+        Assertions.assertEquals(new BigDecimal("100.00"), amount(totals(employee, "AZN"), "paidAmount"));
+        Assertions.assertEquals(1, employee.get("linkFunnel").get("created").asLong());
+
+        JsonNode head = summary(headAToken, "");
+        Assertions.assertEquals(2, totals(head, "AZN").get("paidCount").asLong());
+        Assertions.assertEquals(2, head.get("linkFunnel").get("created").asLong());
+    }
+
+    // ─── воронка ссылок и время до оплаты (Р-128) ────────────────────────────
+
+    // Каждый шаг считает ссылку один раз, сколько бы попыток у неё ни было. Брошенная попытка (карта не
+    // отправлена) — только «открыта»; отказ банка — «начата»; оплата без отметки карты — тоже «начата»:
+    // строки до pbl/016 отметку могли не получить. Холд — «оплачена». Ссылка старше окна не входит, даже
+    // если оплачена в окне: воронка — когорта ссылок, а не события окна. Чужая компания не видна.
+    @Test
+    public void linkFunnel_countsEachLinkOncePerStep() throws Exception {
+        link(TERMINAL_A, "AZN");
+        attempt(link(TERMINAL_A, "AZN"), TransactionStatus.FAILED, false);
+        PaymentLink declined = link(TERMINAL_A, "AZN");
+        attempt(declined, TransactionStatus.FAILED, false);
+        attempt(declined, TransactionStatus.FAILED, true);
+        PaymentLink paidAfterAbandon = link(TERMINAL_A, "AZN");
+        attempt(paidAfterAbandon, TransactionStatus.FAILED, false);
+        attempt(paidAfterAbandon, TransactionStatus.SUCCESS, false);
+        attempt(link(TERMINAL_A, "AZN"), TransactionStatus.AUTHORIZED, true);
+        paid(backdatedLink(TERMINAL_A, UsageType.SINGLE, 10 * 24 * 3600L), "100.00");
+        paid(link(TERMINAL_B, "AZN"), "100.00");
+
+        JsonNode funnel = summary(headAToken, "").get("linkFunnel");
+        Assertions.assertEquals(5, funnel.get("created").asLong());
+        Assertions.assertEquals(4, funnel.get("opened").asLong());
+        Assertions.assertEquals(3, funnel.get("paymentStarted").asLong());
+        Assertions.assertEquals(2, funnel.get("paid").asLong());
+    }
+
+    // Только одноразовые ссылки: у многоразовой время до оплаты смешалось бы со сроком её жизни.
+    // Медиана — средняя из трёх; интервалы приходят все четыре, нулевой тоже.
+    @Test
+    public void timeToPay_singleUseLinksOnly_medianAndRanges() throws Exception {
+        paid(backdatedLink(TERMINAL_A, UsageType.SINGLE, 30 * 60L), "100.00");
+        paid(backdatedLink(TERMINAL_A, UsageType.SINGLE, 3 * 3600L), "100.00");
+        paid(backdatedLink(TERMINAL_A, UsageType.SINGLE, 2 * 24 * 3600L), "100.00");
+        paid(backdatedLink(TERMINAL_A, UsageType.MULTIPLE, 5 * 3600L), "100.00");
+        attempt(backdatedLink(TERMINAL_A, UsageType.SINGLE, 3600L), TransactionStatus.FAILED, true);
+
+        JsonNode timeToPay = summary(headAToken, "").get("timeToPay");
+        Assertions.assertEquals(3, timeToPay.get("paidLinks").asLong());
+        long median = timeToPay.get("medianSeconds").asLong();
+        // Попытка создаётся через миллисекунды после сдвига ссылки: секунды запаса, а не точное равенство.
+        Assertions.assertTrue(median >= 3 * 3600L && median < 3 * 3600L + 60, "median was " + median);
+
+        JsonNode buckets = timeToPay.get("buckets");
+        Assertions.assertEquals(4, buckets.size());
+        Assertions.assertEquals("UP_TO_1_HOUR", buckets.get(0).get("range").asText());
+        Assertions.assertEquals(1, buckets.get(0).get("count").asLong());
+        Assertions.assertEquals("UP_TO_1_DAY", buckets.get(1).get("range").asText());
+        Assertions.assertEquals(1, buckets.get(1).get("count").asLong());
+        Assertions.assertEquals("UP_TO_7_DAYS", buckets.get(2).get("range").asText());
+        Assertions.assertEquals(1, buckets.get(2).get("count").asLong());
+        Assertions.assertEquals("OVER_7_DAYS", buckets.get(3).get("range").asText());
+        Assertions.assertEquals(0, buckets.get(3).get("count").asLong());
+    }
+
+    // Окно без ссылок: суммы воронки у базы — null, на экран уходят нули, а медиана — null, а не ноль:
+    // ноль читался бы как «платят мгновенно».
+    @Test
+    public void linkFunnelAndTimeToPay_withoutLinks_areZeros() throws Exception {
+        JsonNode body = summary(headAToken, "");
+
+        JsonNode funnel = body.get("linkFunnel");
+        Assertions.assertEquals(0, funnel.get("created").asLong());
+        Assertions.assertEquals(0, funnel.get("opened").asLong());
+        Assertions.assertEquals(0, funnel.get("paymentStarted").asLong());
+        Assertions.assertEquals(0, funnel.get("paid").asLong());
+        JsonNode timeToPay = body.get("timeToPay");
+        Assertions.assertEquals(0, timeToPay.get("paidLinks").asLong());
+        Assertions.assertTrue(timeToPay.get("medianSeconds").isNull());
+        Assertions.assertEquals(4, timeToPay.get("buckets").size());
+    }
+
     // ─── фикстуры ────────────────────────────────────────────────────────────
 
     private String token(String userId, String role, String companyId) {
@@ -423,6 +520,39 @@ public class DashboardSummaryTest {
 
     private Transaction paid(PaymentLink link, String amount) {
         return seed(link, TransactionStatus.SUCCESS, amount, null, "0.00", Instant.now());
+    }
+
+    // Попытка с отметкой «карта отправлена» (Р-128) — так её ставит опрос статуса.
+    private Transaction attempt(PaymentLink link, TransactionStatus status, boolean cardSubmitted) {
+        Transaction saved = seed(link, status, "100.00", null, "0.00", Instant.now());
+        if (cardSubmitted) {
+            jdbcTemplate.update("UPDATE transactions SET card_submitted = TRUE WHERE id = ?", saved.getId());
+        }
+        return saved;
+    }
+
+    // Ссылка, созданная ageSeconds назад: created_at заполняет @CreationTimestamp, поэтому, как и у
+    // операций, сдвиг сохранённого значения.
+    private PaymentLink backdatedLink(int terminalId, UsageType usageType, long ageSeconds) {
+        PaymentLink saved = paymentLinkRepository.saveAndFlush(PaymentLink.builder()
+                .merchantOrderId("ORDER-" + UUID.randomUUID())
+                .providerReference("REF-" + UUID.randomUUID())
+                .terminalId(terminalId)
+                .amount(new BigDecimal("100.00"))
+                .currency("AZN")
+                .description("Link")
+                .paymentType(PaymentType.SMS)
+                .usageType(usageType)
+                .maxPayments(usageType == UsageType.SINGLE ? 1 : 10)
+                .currentPaymentsCount(0)
+                .status(PaymentLinkStatus.ACTIVE)
+                .expiresAt(Instant.now().plus(30, ChronoUnit.DAYS))
+                .build());
+        jdbcTemplate.update(
+                "UPDATE payment_links SET created_at = created_at - CAST(? AS double precision) "
+                        + "* INTERVAL '1 second' WHERE id = ?",
+                (double) ageSeconds, saved.getId());
+        return saved;
     }
 
     // created_at заполняет @CreationTimestamp, задать его вставкой нельзя — сдвигаем колонку

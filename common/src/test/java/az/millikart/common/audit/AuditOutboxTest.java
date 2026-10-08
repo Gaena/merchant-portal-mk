@@ -23,7 +23,7 @@ class AuditOutboxTest {
 
     private final AuditLogRepository repository = mock(AuditLogRepository.class);
     private final AuditLogService auditLogService =
-            new AuditLogService(repository, mock(PlatformTransactionManager.class));
+            new AuditLogService(repository, mock(PlatformTransactionManager.class), mock(AuditChain.class));
     private final AuditOutboxFilter filter = new AuditOutboxFilter();
 
     @AfterEach

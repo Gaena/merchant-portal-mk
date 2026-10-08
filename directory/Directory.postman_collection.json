@@ -25,7 +25,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"provider-password\"\n}",
+							"raw": "{\n  \"id\": \"comp-01\",\n  \"name\": \"MilliKart LLC\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"provider-password\",\n  \"taxId\": \"1234567890\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -43,7 +43,7 @@
 								"companies"
 							]
 						},
-						"description": "Creates a company (201), SYSTEM_ADMIN only. providerLogin (the full login with its owner prefix) and providerPassword are required (Р-93): every request to the acquirer goes with them. The login must be MultiMerchantSys/<login>, active in the provider login snapshot (provider_logins, refreshed by ecom) with at least one active merchant (Р-94) — pick one from Free Provider Logins; otherwise 400. A login already used by another company, deleted ones included — 409. An id already taken — 400. The password is stored encrypted and never returned; providerLogin is returned to SYSTEM_ADMIN only."
+						"description": "Creates a company (201), SYSTEM_ADMIN only. providerLogin (the full login with its owner prefix) and providerPassword are required (Р-93): every request to the acquirer goes with them. The login must be MultiMerchantSys/<login>, active in the provider login snapshot (provider_logins, refreshed by ecom) with at least one active merchant (Р-94) — pick one from Free Provider Logins; otherwise 400. A login already used by another company, deleted ones included — 409. An id already taken — 400. The password is stored encrypted and never returned; providerLogin is returned to SYSTEM_ADMIN only. taxId (VÖEN, Р-129) is optional, exactly 10 digits, otherwise 400; it is printed on the payer receipt."
 					},
 					"response": []
 				},
@@ -155,7 +155,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"new-provider-password\"\n}",
+							"raw": "{\n  \"name\": \"MilliKart International LLC\",\n  \"status\": \"ACTIVE\",\n  \"providerLogin\": \"MultiMerchantSys/merchant@company.com\",\n  \"providerPassword\": \"new-provider-password\",\n  \"taxId\": \"1234567890\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -174,7 +174,7 @@
 								"{{companyId}}"
 							]
 						},
-						"description": "Updates a company, SYSTEM_ADMIN only. Every field is optional; an empty value keeps the stored one, and the stored password cannot be read. A new providerLogin is checked against the provider login snapshot as on creation (400 / 409); the same login is not re-checked. status is ACTIVE or INACTIVE only, exact match, anything else is 400; DELETED is set by DELETE alone. INACTIVE stops nothing: to stop payments, block the company's terminals. The audit record names a password change without the password."
+						"description": "Updates a company, SYSTEM_ADMIN only. Every field is optional; an empty value keeps the stored one, and the stored password cannot be read. A new providerLogin is checked against the provider login snapshot as on creation (400 / 409); the same login is not re-checked. status is ACTIVE or INACTIVE only, exact match, anything else is 400; DELETED is set by DELETE alone. INACTIVE stops nothing: to stop payments, block the company's terminals. The audit record names a password change without the password. taxId (VÖEN) is exactly 10 digits; it cannot be cleared."
 					},
 					"response": []
 				},
@@ -239,7 +239,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"companyId\": \"comp-01\",\n  \"merchantRid\": \"E1120020\"\n}",
+							"raw": "{\n  \"companyId\": \"comp-01\",\n  \"merchantRid\": \"E1120020\",\n  \"dmsAllowed\": true\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -257,7 +257,7 @@
 								"terminals"
 							]
 						},
-						"description": "Creates a terminal (201) from the provider directory, SYSTEM_ADMIN only (Р-93): name, login (stored as TerminalSys/<login>) and terminal number (terminalRid) come from the directory row of merchantRid; a terminal has no password. The terminal id is issued by the database (Р-81) and saved to `terminalId`. The merchant must be active at the provider and linked to the company multimerchant login (Р-96) — pick one from Provider Terminals for a Company."
+						"description": "Creates a terminal (201) from the provider directory, SYSTEM_ADMIN only (Р-93): name, login (stored as TerminalSys/<login>) and terminal number (terminalRid) come from the directory row of merchantRid; a terminal has no password. The terminal id is issued by the database (Р-81) and saved to `terminalId`. The merchant must be active at the provider and linked to the company multimerchant login (Р-96) — pick one from Provider Terminals for a Company. dmsAllowed — are DMS links allowed on the terminal (Р-132), absent means true."
 					},
 					"response": []
 				},
@@ -298,7 +298,7 @@
 								}
 							]
 						},
-						"description": "Retrieves one page of terminals (P2-1): a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by name, then id; BLOCKED terminals included. SYSTEM_ADMIN and AUDITOR see every terminal, company users only their own company's; a company user without a company — 403."
+						"description": "Retrieves one page of terminals (P2-1): a PagedResponse — {content, totalElements, totalPages, size, number}. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped, not rejected. Ordered by name, then id; BLOCKED terminals included. A COMPANY_EMPLOYEE sees only the terminals assigned to it (Р-131). SYSTEM_ADMIN and AUDITOR see every terminal, company users only their own company's; a company user without a company — 403."
 					},
 					"response": []
 				},
@@ -324,7 +324,7 @@
 								"options"
 							]
 						},
-						"description": "Lightweight terminal feed for selectors and labels (Р-45). Returns a bare array of {id, name, login, terminalRid, status}, ordered by name, then id, without pagination; a terminal has no password (Р-93). BLOCKED terminals are included on purpose: the link form takes only ACTIVE ones, while old payments keep the label of their terminal. Access rules are the same as List Terminals."
+						"description": "Lightweight terminal feed for selectors and labels (Р-45); a COMPANY_EMPLOYEE gets only its assigned terminals (Р-131). Returns a bare array of {id, name, login, terminalRid, status, companyId}, ordered by name, then id, without pagination; a terminal has no password (Р-93). BLOCKED terminals are included on purpose: the link form takes only ACTIVE ones, while old payments keep the label of their terminal. Access rules are the same as List Terminals."
 					},
 					"response": []
 				},
@@ -381,7 +381,7 @@
 								"{{terminalId}}"
 							]
 						},
-						"description": "Retrieves the terminal in `terminalId`. SYSTEM_ADMIN, AUDITOR, or any role of the terminal's company. An unknown terminal — 400 \"Terminal not found\"; another company's — 403."
+						"description": "Retrieves the terminal in `terminalId`. SYSTEM_ADMIN, AUDITOR, or the head and managers of the terminal's company; a COMPANY_EMPLOYEE — only a terminal assigned to it (Р-131). An unknown terminal — 400 \"Terminal not found\"; another company's or an unassigned one — 403."
 					},
 					"response": []
 				},
@@ -420,7 +420,7 @@
 								"{{terminalId}}"
 							]
 						},
-						"description": "Updates the terminal name, company or status: SYSTEM_ADMIN, or COMPANY_HEAD / COMPANY_MANAGER of the terminal's company (COMPANY_EMPLOYEE and AUDITOR — 403). Every field is optional. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93). The name of a terminal linked to the provider directory (providerLinked: true) is the provider's (Р-67): a different name is 400 — this sample renames only a terminal registered without the directory. Only SYSTEM_ADMIN moves a terminal to another company, and only to one whose multimerchant login has an active link with the terminal's provider merchant, as on creation (Р-96, Р-97); otherwise 400, and a terminal without a provider merchant cannot be moved at all. For status see Block Terminal."
+						"description": "Updates the terminal name, company or status: SYSTEM_ADMIN, or COMPANY_HEAD / COMPANY_MANAGER of the terminal's company (COMPANY_EMPLOYEE and AUDITOR — 403). Every field is optional. The login changes only through the provider directory reconciliation; a terminal has no password (Р-93). The name of a terminal linked to the provider directory (providerLinked: true) is the provider's (Р-67): a different name is 400 — this sample renames only a terminal registered without the directory. Only SYSTEM_ADMIN moves a terminal to another company, and only to one whose multimerchant login has an active link with the terminal's provider merchant, as on creation (Р-96, Р-97); otherwise 400, and a terminal without a provider merchant cannot be moved at all. dmsAllowed (are DMS links allowed, Р-132) — SYSTEM_ADMIN only, 403 \"Only a system administrator can allow or forbid DMS links on a terminal\" for others; existing DMS links are not affected. For status see Block Terminal."
 					},
 					"response": []
 				},
@@ -524,6 +524,30 @@
 									"description": "P3-1: верхняя граница createdAt — ISO-instant или дата (весь день по UTC)"
 								},
 								{
+									"key": "action",
+									"value": "UPDATE",
+									"disabled": true,
+									"description": "Exact action code from the dictionary (AuditAction), case-insensitive"
+								},
+								{
+									"key": "performedBy",
+									"value": "head@",
+									"disabled": true,
+									"description": "Part of the actor login, case-insensitive; % and _ are literal"
+								},
+								{
+									"key": "companyId",
+									"value": "comp-01",
+									"disabled": true,
+									"description": "SYSTEM_ADMIN and AUDITOR only; ignored for company roles, whose scope is their company"
+								},
+								{
+									"key": "attention",
+									"value": "true",
+									"disabled": true,
+									"description": "Р-137: only records that require attention — UNRESOLVED or TOKEN_REUSE / LOCKOUT / RATE_LIMIT"
+								},
+								{
 									"key": "page",
 									"value": "0"
 								},
@@ -533,9 +557,108 @@
 								}
 							]
 						},
-						"description": "Audit log of all four services (P2-1, P3-1), newest first (createdAt DESC, then id DESC): a PagedResponse — {content, totalElements, totalPages, size, number}. SYSTEM_ADMIN and AUDITOR see every company; COMPANY_HEAD and COMPANY_MANAGER only records of their own company; other roles — 403. Filters are optional and independent: entityType, entityId, search (performedBy, action, entityId, details), outcome, from / to. page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped. The event dictionary is in project_docs/guides/technical_handover.md §4.4."
+						"description": "Audit log of all four services (P2-1, P3-1), newest first (createdAt DESC, then id DESC): a PagedResponse — {content, totalElements, totalPages, size, number}. SYSTEM_ADMIN and AUDITOR see every company; COMPANY_HEAD and COMPANY_MANAGER only records of their own company; other roles — 403. Filters are optional and independent: entityType, entityId, search (performedBy, action, entityId, details), outcome (SUCCESS, DENIED, UNRESOLVED, DECLINED), from / to, action (exact code), performedBy (part of the login), companyId (SYSTEM_ADMIN and AUDITOR only). page defaults to 0, size to 20, ceiling 200; out-of-range values are clamped. The event dictionary is in project_docs/guides/technical_handover.md §4.4."
 					},
 					"response": []
+				},
+				{
+					"name": "Export Audit Logs (CSV)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/audit-logs/export?attention=true",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"audit-logs",
+								"export"
+							],
+							"query": [
+								{
+									"key": "attention",
+									"value": "true",
+									"description": "Р-137: only records that require attention — UNRESOLVED or TOKEN_REUSE / LOCKOUT / RATE_LIMIT"
+								},
+								{
+									"key": "search",
+									"value": "admin@millikart.az",
+									"disabled": true,
+									"description": "P3-1: подстрока без учёта регистра по performedBy, action, entityId и details; % и _ ищутся буквально"
+								},
+								{
+									"key": "outcome",
+									"value": "DENIED",
+									"disabled": true,
+									"description": "P3-1: SUCCESS / DENIED / UNRESOLVED; неизвестное значение = нет фильтра"
+								},
+								{
+									"key": "from",
+									"value": "2026-08-24",
+									"disabled": true,
+									"description": "P3-1: нижняя граница createdAt — ISO-instant или дата (весь день по UTC); мусор = нет фильтра"
+								},
+								{
+									"key": "to",
+									"value": "2026-08-24T23:59:59Z",
+									"disabled": true,
+									"description": "P3-1: верхняя граница createdAt — ISO-instant или дата (весь день по UTC)"
+								},
+								{
+									"key": "action",
+									"value": "UPDATE",
+									"disabled": true,
+									"description": "Exact action code from the dictionary (AuditAction), case-insensitive"
+								},
+								{
+									"key": "performedBy",
+									"value": "head@",
+									"disabled": true,
+									"description": "Part of the actor login, case-insensitive; % and _ are literal"
+								},
+								{
+									"key": "companyId",
+									"value": "comp-01",
+									"disabled": true,
+									"description": "SYSTEM_ADMIN and AUDITOR only; ignored for company roles, whose scope is their company"
+								}
+							]
+						},
+						"description": "CSV of the audit log (Р-137): the same filters and access as List Audit Logs, no paging; records oldest first, at most 100000 (400 otherwise, before any byte). UTF-8 with BOM, ';' as the separator, columns createdAt;action;outcome;performedBy;clientIp;entityType;entityId;companyId;details;traceId;id. Values starting with = + - @ get a leading apostrophe (CSV injection). The export itself is journaled as AUDIT_LOG / EXPORT."
+					}
+				},
+				{
+					"name": "Verify Audit Chain",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/audit-logs/integrity-checks",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"audit-logs",
+								"integrity-checks"
+							]
+						},
+						"description": "Checks the audit chain (Р-138): every link in order, its record, the HMAC over the previous link and the record, and the record time next to the link time. SYSTEM_ADMIN and AUDITOR only (403 otherwise). intact=false lists up to 20 problems: RECORD_CHANGED, RECORD_DELETED, LINKS_MISSING, TIME_CHANGED, HEAD_MISMATCH, RECORDS_OUTSIDE_CHAIN. The check itself is journaled as AUDIT_LOG / VERIFY - UNRESOLVED when broken."
+					}
 				}
 			]
 		}

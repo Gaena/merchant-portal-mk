@@ -20,27 +20,36 @@ import {
   Stack,
   InputAdornment,
   CircularProgress,
-  TablePagination
+  TablePagination,
+  Alert,
+  Tooltip,
 } from '@mui/material';
 import {
   History as HistoryIcon,
   Search as SearchIcon,
-  Refresh as RefreshIcon
+  Refresh as RefreshIcon,
+  Download as DownloadIcon,
+  VerifiedUser as IntegrityIcon,
+  WarningAmber as AttentionIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useNavigate } from 'react-router';
 import { apiClient } from '../api/client';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import { useDebounced } from '../hooks/useDebounced';
+import { AUDIT_ACTIONS, AUDIT_ENTITIES, type AuditIntegrityReport } from '../types/audit';
 
-import type { AuditLogDto } from '../types/dto';
+import type { AuditLogDto, CompanyDto } from '../types/dto';
 
-// Неподтверждённая эквайером операция не должна выглядеть обычным успехом (P3-2).
-const outcomeColor = (outcome?: string): 'success' | 'error' | 'warning' | 'default' => {
+// Неподтверждённая эквайером операция не должна выглядеть обычным успехом (P3-2); отказ эквайера (Р-134) —
+// не отказ портала в доступе.
+const outcomeColor = (outcome?: string): 'success' | 'error' | 'warning' | 'info' | 'default' => {
   switch (outcome) {
     case 'SUCCESS': return 'success';
     case 'DENIED': return 'error';
     case 'UNRESOLVED': return 'warning';
+    case 'DECLINED': return 'info';
     default: return 'default';
   }
 };
@@ -76,6 +85,17 @@ export const AuditLogsPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [entityTypeFilter, setEntityTypeFilter] = useState('all');
   const [outcomeFilter, setOutcomeFilter] = useState('all');
+  const [actionFilter, setActionFilter] = useState('all');
+  const [userQuery, setUserQuery] = useState('');
+  const [companyFilter, setCompanyFilter] = useState('all');
+  const [companies, setCompanies] = useState<CompanyDto[]>([]);
+  // «Требует внимания» (Р-137): неподтверждённое и признаки атаки на вход — набор держит сервер.
+  const [attention, setAttention] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  // Проверка цепочки (Р-138) — SYSTEM_ADMIN и AUDITOR: цепочка общая для всех компаний.
+  const [integrity, setIntegrity] = useState<AuditIntegrityReport | null>(null);
+  const [integrityBusy, setIntegrityBusy] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   // Поиск и фильтры — серверные: клиентский фильтр видел бы только загруженную страницу (P3-1).
@@ -89,12 +109,41 @@ export const AuditLogsPage: React.FC = () => {
     SUCCESS: tObj.auditLogs.outcomeSuccess,
     DENIED: tObj.auditLogs.outcomeDenied,
     UNRESOLVED: tObj.auditLogs.outcomeUnresolved,
+    DECLINED: tObj.auditLogs.outcomeDeclined,
   };
 
-  // Своя карточка есть только у операции и платёжной ссылки (entityId — UUID).
+  // Компанию в фильтре выбирают администратор и аудитор (их скоуп — все компании); список им открыт.
+  const { user } = useAuth();
+  const globalReader = user?.role === 'SYSTEM_ADMIN' || user?.role === 'AUDITOR';
+  const debouncedUser = useDebounced(userQuery, 300);
+  useEffect(() => {
+    if (!globalReader) return;
+    const controller = new AbortController();
+    apiClient.get('/api/v1/companies', { params: { page: 0, size: 200 }, signal: controller.signal })
+      .then(res => setCompanies(Array.isArray(res.data?.content) ? res.data.content : []))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [globalReader]);
+
+  // Коды словаря — словами; незнакомый код (новый в common, не дошедший сюда) — как есть.
+  const actionLabel = (code?: string): string =>
+    (code && (tObj.auditLogs.actions as Record<string, string>)[code]) || code || '—';
+  const entityLabel = (code?: string): string =>
+    (code && (tObj.auditLogs.entities as Record<string, string>)[code]) || code || '—';
+  const companyLabel = (companyId?: string): string => {
+    if (!companyId) return '—';
+    const name = companies.find(company => company.id === companyId)?.name;
+    return name ? `${name} (${companyId})` : companyId;
+  };
+
+  // Своя карточка есть у операции и платёжной ссылки (entityId — UUID) и у заказа выписки (номер у провайдера).
   const selectedTarget = (() => {
     const entityId = selectedLog?.entityId;
-    if (!entityId || !UUID_PATTERN.test(entityId)) return null;
+    if (!entityId) return null;
+    if (selectedLog?.entityType === 'PROVIDER_ORDER') {
+      return { path: `/transactions/ecommerce/${encodeURIComponent(entityId)}`, label: tObj.auditLogs.openEcomOrder };
+    }
+    if (!UUID_PATTERN.test(entityId)) return null;
     if (selectedLog?.entityType === 'TRANSACTION') {
       return { path: `/transactions/${entityId}`, label: tObj.auditLogs.openTransaction };
     }
@@ -104,17 +153,27 @@ export const AuditLogsPage: React.FC = () => {
     return null;
   })();
 
-  const fetchAuditLogs = useCallback((signal?: AbortSignal) => {
-    setLoading(true);
-    const params: Record<string, unknown> = { page, size: rowsPerPage };
+  // Фильтры — одни для страницы и для выгрузки (Р-137): файл — ровно то, что отобрано на экране.
+  const filterParams = useCallback((): Record<string, unknown> => {
+    const params: Record<string, unknown> = {};
     if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
     if (entityTypeFilter !== 'all') params.entityType = entityTypeFilter;
     if (outcomeFilter !== 'all') params.outcome = outcomeFilter;
+    if (actionFilter !== 'all') params.action = actionFilter;
+    if (debouncedUser.trim()) params.performedBy = debouncedUser.trim();
+    if (globalReader && companyFilter !== 'all') params.companyId = companyFilter;
     // Дата из пикера — локальный день пользователя; границы дня переводятся в instant, чтобы
     // событие в 01:00 по Баку не выпало из «своего» дня из-за UTC.
     if (fromDate) params.from = new Date(`${fromDate}T00:00:00`).toISOString();
     if (toDate) params.to = new Date(`${toDate}T23:59:59.999`).toISOString();
-    apiClient.get('/api/v1/audit-logs', { params, signal })
+    if (attention) params.attention = true;
+    return params;
+  }, [debouncedSearch, entityTypeFilter, outcomeFilter, actionFilter, debouncedUser, globalReader, companyFilter,
+    fromDate, toDate, attention]);
+
+  const fetchAuditLogs = useCallback((signal?: AbortSignal) => {
+    setLoading(true);
+    apiClient.get('/api/v1/audit-logs', { params: { ...filterParams(), page, size: rowsPerPage }, signal })
       .then(res => {
         setAuditLogsList(Array.isArray(res.data?.content) ? res.data.content : []);
         setTotalElements(res.data?.totalElements ?? 0);
@@ -127,7 +186,60 @@ export const AuditLogsPage: React.FC = () => {
       .finally(() => {
         if (!signal?.aborted) setLoading(false);
       });
-  }, [page, rowsPerPage, debouncedSearch, entityTypeFilter, outcomeFilter, fromDate, toDate]);
+  }, [page, rowsPerPage, filterParams]);
+
+  const handleIntegrityCheck = async () => {
+    if (integrityBusy) return;
+    setIntegrityBusy(true);
+    setExportError('');
+    try {
+      const res = await apiClient.post<AuditIntegrityReport>('/api/v1/audit-logs/integrity-checks');
+      setIntegrity(res.data);
+      // Проверка пишет свою запись — список перечитывается, чтобы её было видно.
+      setReloadKey(k => k + 1);
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.message : undefined;
+      setExportError(typeof message === 'string' && message ? message : tObj.auditLogs.integrityFailed);
+    } finally {
+      setIntegrityBusy(false);
+    }
+  };
+
+  const problemLabel = (kind: string): string =>
+    (tObj.auditLogs.integrityProblems as Record<string, string>)[kind] || kind;
+
+  // CSV собирает сервер (Р-137): потолок строк и права — там же; отказ приходит JSON внутри Blob.
+  const handleExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setExportError('');
+    try {
+      const res = await apiClient.get<Blob>('/api/v1/audit-logs/export', { params: filterParams(), responseType: 'blob' });
+      const disposition = String(res.headers['content-disposition'] ?? '');
+      const fileName = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'audit-log.csv';
+      const url = URL.createObjectURL(res.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      let message: string | null = null;
+      if (axios.isAxiosError(err) && err.response?.data instanceof Blob) {
+        try {
+          const parsed: unknown = JSON.parse(await err.response.data.text());
+          if (parsed && typeof parsed === 'object' && typeof (parsed as { message?: unknown }).message === 'string') {
+            message = (parsed as { message: string }).message;
+          }
+        } catch {
+          message = null;
+        }
+      }
+      setExportError(message ?? tObj.auditLogs.exportFailed);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // Отмена предыдущего запроса при каждом изменении параметров: без неё ответ на «ив» может
   // прийти позже ответа на «ива» и перезаписать более точный результат. «Обновить» идёт тем же
@@ -151,10 +263,27 @@ export const AuditLogsPage: React.FC = () => {
             {tObj.auditLogs.subtitle}
           </Typography>
         </Box>
-        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => setReloadKey(k => k + 1)}>
-          {tObj.common.refresh}
-        </Button>
+        <Stack direction="row" spacing={1.5}>
+          {globalReader && (
+            <Button variant="outlined" startIcon={<IntegrityIcon />} onClick={handleIntegrityCheck} disabled={integrityBusy}>
+              {integrityBusy ? tObj.common.loading : tObj.auditLogs.integrityAction}
+            </Button>
+          )}
+          <Tooltip title={tObj.auditLogs.exportHint}>
+            <span>
+              <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExport} disabled={exporting}>
+                {exporting ? tObj.common.loading : tObj.auditLogs.exportAction}
+              </Button>
+            </span>
+          </Tooltip>
+          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => setReloadKey(k => k + 1)}>
+            {tObj.common.refresh}
+          </Button>
+        </Stack>
       </Box>
+      {exportError && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setExportError('')}>{exportError}</Alert>
+      )}
 
       <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         <TextField
@@ -180,15 +309,40 @@ export const AuditLogsPage: React.FC = () => {
           sx={{ minWidth: 200 }}
         >
           <MenuItem value="all">{tObj.common.all}</MenuItem>
-          <MenuItem value="COMPANY">{tObj.companies.title}</MenuItem>
-          <MenuItem value="TERMINAL">{tObj.terminals.title}</MenuItem>
-          <MenuItem value="USER">{tObj.users.title}</MenuItem>
           {/* AUTH — входы, блокировки, лимит по IP, кража refresh-токена; AUDIT_LOG — отказы в чтении журнала. */}
-          <MenuItem value="AUTH">{tObj.auditLogs.entityAuth}</MenuItem>
-          <MenuItem value="PAYMENT_LINK">{tObj.payByLink.title}</MenuItem>
-          <MenuItem value="TRANSACTION">{tObj.transactions.title}</MenuItem>
-          <MenuItem value="AUDIT_LOG">{tObj.auditLogs.entityAuditLog}</MenuItem>
+          {AUDIT_ENTITIES.map(code => <MenuItem key={code} value={code}>{tObj.auditLogs.entities[code]}</MenuItem>)}
         </TextField>
+        <TextField
+          select
+          size="small"
+          label={tObj.auditLogs.filterAction}
+          value={actionFilter}
+          onChange={e => { setActionFilter(e.target.value); setPage(0); }}
+          sx={{ minWidth: 180 }}
+        >
+          <MenuItem value="all">{tObj.common.all}</MenuItem>
+          {AUDIT_ACTIONS.map(code => <MenuItem key={code} value={code}>{tObj.auditLogs.actions[code]}</MenuItem>)}
+        </TextField>
+        <TextField
+          size="small"
+          label={tObj.auditLogs.filterUser}
+          value={userQuery}
+          onChange={e => { setUserQuery(e.target.value); setPage(0); }}
+          sx={{ minWidth: 200 }}
+        />
+        {globalReader && (
+          <TextField
+            select
+            size="small"
+            label={tObj.auditLogs.filterCompany}
+            value={companyFilter}
+            onChange={e => { setCompanyFilter(e.target.value); setPage(0); }}
+            sx={{ minWidth: 200 }}
+          >
+            <MenuItem value="all">{tObj.common.all}</MenuItem>
+            {companies.map(company => <MenuItem key={company.id} value={company.id}>{company.name}</MenuItem>)}
+          </TextField>
+        )}
         <TextField
           select
           size="small"
@@ -201,6 +355,7 @@ export const AuditLogsPage: React.FC = () => {
           <MenuItem value="SUCCESS">{tObj.auditLogs.outcomeSuccess}</MenuItem>
           <MenuItem value="DENIED">{tObj.auditLogs.outcomeDenied}</MenuItem>
           <MenuItem value="UNRESOLVED">{tObj.auditLogs.outcomeUnresolved}</MenuItem>
+          <MenuItem value="DECLINED">{tObj.auditLogs.outcomeDeclined}</MenuItem>
         </TextField>
         <TextField
           size="small"
@@ -220,6 +375,16 @@ export const AuditLogsPage: React.FC = () => {
           InputLabelProps={{ shrink: true }}
           sx={{ minWidth: 170 }}
         />
+        <Tooltip title={tObj.auditLogs.attentionHint}>
+          <Chip
+            icon={<AttentionIcon />}
+            label={tObj.auditLogs.attention}
+            color={attention ? 'warning' : 'default'}
+            variant={attention ? 'filled' : 'outlined'}
+            onClick={() => { setAttention(value => !value); setPage(0); }}
+            sx={{ alignSelf: 'center' }}
+          />
+        </Tooltip>
       </Paper>
 
       <TableContainer component={Paper} variant="outlined">
@@ -260,7 +425,7 @@ export const AuditLogsPage: React.FC = () => {
                     {log.createdAt ? new Date(log.createdAt).toLocaleString() : 'N/A'}
                   </TableCell>
                   <TableCell>
-                    <Chip label={log.action} size="small" color="info" variant="outlined" />
+                    <Chip label={actionLabel(log.action)} size="small" color="info" variant="outlined" />
                   </TableCell>
                   <TableCell>
                     <Chip
@@ -272,7 +437,7 @@ export const AuditLogsPage: React.FC = () => {
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{log.performedBy || 'System'}</TableCell>
                   <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{log.clientIp || '—'}</TableCell>
-                  <TableCell>{log.entityType || '—'}</TableCell>
+                  <TableCell>{entityLabel(log.entityType)}</TableCell>
                   <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{log.entityId || '—'}</TableCell>
                   <TableCell sx={{ fontSize: '0.8rem', color: 'text.secondary' }}>{log.details || '—'}</TableCell>
                 </TableRow>
@@ -280,7 +445,7 @@ export const AuditLogsPage: React.FC = () => {
               {auditLogsList.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
-                    <Typography color="text.secondary">No audit logs recorded yet.</Typography>
+                    <Typography color="text.secondary">{tObj.auditLogs.empty}</Typography>
                   </TableCell>
                 </TableRow>
               )}
@@ -298,13 +463,57 @@ export const AuditLogsPage: React.FC = () => {
         />
       </TableContainer>
 
+      <Dialog open={integrity !== null} onClose={() => setIntegrity(null)} maxWidth="sm" fullWidth>
+        {integrity && (
+          <>
+            <DialogTitle sx={{ fontWeight: 700 }}>{tObj.auditLogs.integrityTitle}</DialogTitle>
+            <DialogContent dividers>
+              <Alert severity={integrity.intact ? 'success' : 'error'} sx={{ mb: 2 }}>
+                {integrity.intact ? tObj.auditLogs.integrityIntact : tObj.auditLogs.integrityBroken}
+              </Alert>
+              <DetailRow label={tObj.auditLogs.integrityChecked}>{integrity.checkedRecords}</DetailRow>
+              <DetailRow label={tObj.auditLogs.integrityHead} mono>{integrity.headSeq}</DetailRow>
+              <DetailRow label={tObj.auditLogs.integrityStartedAt}>
+                {integrity.chainStartedAt ? new Date(integrity.chainStartedAt).toLocaleString() : '—'}
+              </DetailRow>
+              <DetailRow label={tObj.auditLogs.integrityNotCovered}>{integrity.notCovered}</DetailRow>
+              <DetailRow label={tObj.auditLogs.integrityUnsealed}>{integrity.unsealedRecords}</DetailRow>
+              {integrity.problems.length > 0 && (
+                <Stack spacing={1} sx={{ mt: 2 }}>
+                  {integrity.problems.map((problem, index) => (
+                    <Box key={`${problem.kind}-${problem.seq ?? index}`}
+                         sx={{ p: 1.5, borderRadius: 1, border: '1px solid', borderColor: 'error.light' }}>
+                      <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                        {problemLabel(problem.kind)}{problem.seq !== null ? ` · #${problem.seq}` : ''}
+                      </Typography>
+                      {problem.auditId && (
+                        <Typography variant="caption" sx={{ fontFamily: 'monospace', display: 'block' }}>
+                          {problem.auditId}
+                        </Typography>
+                      )}
+                      <Typography variant="caption" color="text.secondary">{problem.detail}</Typography>
+                    </Box>
+                  ))}
+                  {integrity.problemsTruncated && (
+                    <Typography variant="caption" color="text.secondary">{tObj.auditLogs.integrityMore}</Typography>
+                  )}
+                </Stack>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button variant="contained" onClick={() => setIntegrity(null)}>{tObj.common.close}</Button>
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
+
       <Dialog open={selectedLog !== null} onClose={() => setSelectedLog(null)} maxWidth="sm" fullWidth>
         {selectedLog && (
           <>
             <DialogTitle sx={{ fontWeight: 700 }}>{tObj.auditLogs.detailsTitle}</DialogTitle>
             <DialogContent dividers>
               <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
-                <Chip label={selectedLog.action} size="small" color="info" variant="outlined" />
+                <Chip label={actionLabel(selectedLog.action)} size="small" color="info" variant="outlined" />
                 <Chip
                   label={outcomeLabels[selectedLog.outcome as string] || selectedLog.outcome || '—'}
                   size="small"
@@ -324,10 +533,12 @@ export const AuditLogsPage: React.FC = () => {
               </DetailRow>
               <DetailRow label={tObj.auditLogs.user}>{selectedLog.performedBy || 'System'}</DetailRow>
               <DetailRow label={tObj.auditLogs.ip} mono>{selectedLog.clientIp || '—'}</DetailRow>
-              <DetailRow label={tObj.auditLogs.company} mono>{selectedLog.companyId || '—'}</DetailRow>
-              <DetailRow label={tObj.auditLogs.resource}>{selectedLog.entityType || '—'}</DetailRow>
+              <DetailRow label={tObj.auditLogs.company} mono>{companyLabel(selectedLog.companyId)}</DetailRow>
+              <DetailRow label={tObj.auditLogs.resource}>{entityLabel(selectedLog.entityType)}</DetailRow>
               <DetailRow label={tObj.auditLogs.entityId} mono>{selectedLog.entityId || '—'}</DetailRow>
               <DetailRow label={tObj.auditLogs.recordId} mono>{selectedLog.id ?? '—'}</DetailRow>
+              {/* По traceId — строки логов сервиса за этот запрос или прогон планировщика (этап 2). */}
+              <DetailRow label={tObj.auditLogs.traceId} mono>{selectedLog.traceId || '—'}</DetailRow>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
                 {tObj.common.details}
               </Typography>

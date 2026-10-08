@@ -92,11 +92,17 @@ public class PaymentLinkService {
     private static final int NOTICED_STATUSES_CEILING = 10_000;
     private final Map<UUID, String> noticedProviderStatuses = new ConcurrentHashMap<>();
 
+    // entityId отказа в создании ссылки: номера у неё ещё нет (как у терминала в directory).
+    private static final String NEW_LINK = "NEW";
+
     private final PaymentLinkRepository paymentLinkRepository;
     private final TransactionRepository transactionRepository;
     private final TransactionRefundRepository transactionRefundRepository;
     private final MoneyOperationAttemptRepository attemptRepository;
     private final TerminalRepository terminalRepository;
+    private final PaymentReceipts paymentReceipts;
+    private final TerminalScope terminalScope;
+    private final StatusChangeAudit statusChanges;
     private final AcquiringClient acquiringClient;
     private final ProviderCredentialsService providerCredentials;
     private final PaymentLinkMapper mapper;
@@ -118,6 +124,9 @@ public class PaymentLinkService {
                                AuditLogService auditLogService,
                                ApplicationEventPublisher eventPublisher,
                                PlatformTransactionManager transactionManager,
+                               PaymentReceipts paymentReceipts,
+                               TerminalScope terminalScope,
+                               StatusChangeAudit statusChanges,
                                @Value("${pbl.base-url}") String baseUrl,
                                @Value("${pbl.link.default-ttl}") Duration defaultLinkTtl,
                                @Value("${pbl.link.max-ttl}") Duration maxLinkTtl) {
@@ -132,6 +141,9 @@ public class PaymentLinkService {
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
         this.txTemplate = new TransactionTemplate(transactionManager);
+        this.paymentReceipts = paymentReceipts;
+        this.terminalScope = terminalScope;
+        this.statusChanges = statusChanges;
         this.baseUrl = baseUrl;
         this.defaultLinkTtl = defaultLinkTtl;
         this.maxLinkTtl = maxLinkTtl;
@@ -150,6 +162,23 @@ public class PaymentLinkService {
             log.warn("Refusing to create a payment link on blocked terminal {}", request.terminal());
             throw new BusinessException("terminal " + request.terminal()
                     + " is blocked and cannot take new payments; unblock it or use another terminal");
+        }
+        // Р-132: DMS-ссылку создаёт пользователь с правом на неё (claim токена, у администратора не проверяется) и
+        // только на терминале, где DMS разрешён. Уже созданные DMS-ссылки запрет не трогает: открытие и списание
+        // холда идут как прежде, как у заблокированного терминала (Р-38).
+        if (request.paymentType() == PaymentType.DMS) {
+            if (UserPrincipal.getRole(principal) != Role.SYSTEM_ADMIN && !UserPrincipal.isDmsLinksAllowed(principal)) {
+                log.warn("Refusing a DMS link on terminal {}: the user may not create DMS links", request.terminal());
+                auditLogService.logDenied(AuditEntity.PAYMENT_LINK, NEW_LINK, AuditAction.CREATE,
+                        UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                        "Denied: user may not create DMS links, attempted one on terminal " + request.terminal());
+                throw new InvalidStateException("You are not allowed to create DMS links");
+            }
+            if (!terminal.isDmsAllowed()) {
+                log.warn("Refusing a DMS link on terminal {}: DMS links are forbidden on it", request.terminal());
+                throw new BusinessException("DMS links are not allowed on terminal " + request.terminal()
+                        + "; create an SMS link or ask the system administrator to allow DMS on the terminal");
+            }
         }
         // Без кредов компании и номера терминала ссылка тоже родилась бы нерабочей (Р-93, Р-96).
         providerCredentials.forTerminal(terminal);
@@ -478,9 +507,8 @@ public class PaymentLinkService {
                 Page<PaymentLink> emptyPage = new PageImpl<>(Collections.emptyList(), pageable, 0);
                 return PagedResponse.of(emptyPage, Collections.emptyList());
             }
-            allowedTerminals = terminalRepository.findAllByCompanyId(companyId).stream()
-                    .map(Terminal::getId)
-                    .toList();
+            // Сотруднику — только назначенные терминалы (Р-131).
+            allowedTerminals = terminalScope.companyTerminalIds(principal);
 
             log.debug("Found allowed terminals for company {}: {}", companyId, allowedTerminals);
             if (allowedTerminals.isEmpty()) {
@@ -597,6 +625,7 @@ public class PaymentLinkService {
         transaction.setCapturedAmount(amount);
         transaction.setStatus(TransactionStatus.SUCCESS);
         transactionRepository.save(transaction);
+        PaymentLinkStatus linkBefore = link.getStatus();
 
         // Использования, а не строки SUCCESS (P2-16): возвращённый платёж держит свой слот. В колонку —
         // то же число, что в API.
@@ -608,6 +637,10 @@ public class PaymentLinkService {
         } else if (link.getUsageType() == UsageType.MULTIPLE && link.getMaxPayments() != null && usedCount >= link.getMaxPayments()) {
             log.info("Multi-use link {} reached max payments limit. Transitioned to COMPLETED.", link.getId());
             link.setStatus(PaymentLinkStatus.COMPLETED);
+        }
+        if (link.getStatus() != linkBefore) {
+            statusChanges.link(link.getId(), companyOfTerminal(link.getTerminalId()), linkBefore, link.getStatus(),
+                    "payment limit reached by the capture of transaction " + transaction.getId());
         }
         return paymentLinkRepository.save(link);
     }
@@ -789,6 +822,15 @@ public class PaymentLinkService {
         } catch (RuntimeException e) {
             // Отказ эквайера или разомкнутый breaker: деньги не двигались, запрет снимается.
             releaseAttempt(operation.transactionId());
+            // Отказ шлюза — BusinessException классификатора; в журнал, чтобы попытка не пропала (Р-134).
+            // Разомкнутый breaker вызова не делал — записи нет.
+            if (e instanceof BusinessException) {
+                auditLogService.logDeclined(AuditEntity.TRANSACTION, operation.transactionId().toString(),
+                        auditActionOf(operation.kind()), operation.actor(), operation.terminalCompanyId(),
+                        capitalized(operation.kind()) + " of " + operation.amount() + " " + operation.currency()
+                                + " declined by the acquirer (providerOrderId " + operation.providerOrderId() + "): "
+                                + e.getMessage() + operation.reasonSuffix());
+            }
             throw e;
         }
     }
@@ -949,9 +991,8 @@ public class PaymentLinkService {
             return;
         }
         String companyId = UserPrincipal.getCompanyId(principal);
-        boolean ownTerminal = companyId != null && terminalRepository.findById(terminalId)
-                .map(terminal -> companyId.equals(terminal.getCompanyId()))
-                .orElse(false);
+        Terminal terminal = terminalRepository.findById(terminalId).orElse(null);
+        boolean ownTerminal = companyId != null && terminal != null && companyId.equals(terminal.getCompanyId());
         if (!ownTerminal) {
             log.warn("Status of transaction {} refused to company {}: terminal {} belongs to another company; "
                     + "answered as not found", identifier, companyId, terminalId);
@@ -961,10 +1002,21 @@ public class PaymentLinkService {
                             + identifier + " on terminal " + terminalId + " of another company");
             throw new ResourceNotFoundException("Transaction not found: " + identifier);
         }
+        // Свой терминал, не назначенный сотруднику (Р-131), — тот же 404; отказ с компанией: перебора чужих
+        // номеров здесь нет, а руководитель должен видеть, куда заглядывает сотрудник.
+        if (!terminalScope.allows(principal, terminal)) {
+            log.warn("Status of transaction {} refused: terminal {} is not assigned to the employee; answered as "
+                    + "not found", identifier, terminalId);
+            auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(terminalId), AuditAction.READ,
+                    UserPrincipal.getUsername(principal), companyId,
+                    "Denied: employee of company " + companyId + " asked for the status of transaction "
+                            + identifier + " on terminal " + terminalId + " not assigned to it");
+            throw new ResourceNotFoundException("Transaction not found: " + identifier);
+        }
     }
 
     // Страница возврата плательщика: владение не проверяется — ключ случайный ridByMerchant, его не
-    // перебрать. Ответ беден на персональные данные; пусто вместо ошибки — не выдать, есть ли операция.
+    // перебрать. Ответ — чек по закону (Р-130), без лишнего; пусто вместо ошибки — не выдать, есть ли операция.
     // Опрос — в своей транзакции под замком ссылки: занятый замок или недоступный эквайер не должны
     // портить страницу, тогда она рисуется последним известным состоянием.
     public Optional<PaymentReceiptView> refreshByRidByMerchant(UUID ridByMerchant) {
@@ -977,7 +1029,7 @@ public class PaymentLinkService {
         UUID transactionId = found.get();
         try {
             return Optional.of(txTemplate.execute(status ->
-                    toReceiptView(refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction())));
+                    paymentReceipts.of(refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction())));
         } catch (OptimisticLockingFailureException e) {
             // Версию ссылки поднял запрос без её замка: повторяет контроллер — свежий опрос лучше старого состояния.
             throw e;
@@ -987,7 +1039,7 @@ public class PaymentLinkService {
         } catch (RuntimeException e) {
             log.warn("Status refresh failed for transaction {}: {}; rendering the last known state", transactionId, e.getMessage());
         }
-        return txTemplate.execute(status -> transactionRepository.findById(transactionId).map(this::toReceiptView));
+        return txTemplate.execute(status -> transactionRepository.findById(transactionId).map(paymentReceipts::of));
     }
 
     // Метка в providerResponse: платёж закончил этот сервис, а не эквайер.
@@ -1077,6 +1129,8 @@ public class PaymentLinkService {
         tx.setProviderResponse(mergedResponse);
         tx.setStatus(TransactionStatus.FAILED);
         transactionRepository.save(tx);
+        statusChanges.transaction(tx.getId(), companyOfTerminal(tx.getLink().getTerminalId()), TransactionStatus.PENDING,
+                TransactionStatus.FAILED, "abandoned by the payer: the acquirer order is still non-final after " + maxAge);
 
         // Ссылку не трогать: одноразовая остаётся ACTIVE для новой попытки.
         log.info("Transaction {} abandoned by the payer (older than {}, acquirer still non-final); marked FAILED",
@@ -1133,6 +1187,7 @@ public class PaymentLinkService {
                 transactionId, raw, outcome);
 
         boolean holdReleased = false;
+        PaymentLinkStatus linkBefore = link.getStatus();
         switch (outcome) {
             case PAID -> {
                 tx.setStatus(TransactionStatus.SUCCESS);
@@ -1210,16 +1265,32 @@ public class PaymentLinkService {
         if (holdReleased) {
             stored.put(DECLINE_REASON_KEY, "Authorization released by the acquirer without capture");
         }
+        // Только ставится: опрос без ответа или с урезанным payload не отменяет уже увиденную карту (Р-128).
+        if (ProviderOrderDetails.hasCardOperation(orderDetails)) {
+            tx.setCardSubmitted(true);
+        }
         tx.setProviderResponse(stored);
         tx = transactionRepository.save(tx);
         // Опрос без перемены — не событие: сверка делает их сотнями в день.
         if (tx.getStatus() != before) {
             log.info("Transaction {} is now {} (was {}), acquirer status \"{}\"", tx.getId(), tx.getStatus(), before, raw);
+            statusChanges.transaction(tx.getId(), terminal.getCompanyId(), before, tx.getStatus(),
+                    (holdReleased ? "authorization released by the acquirer without capture"
+                            : "acquirer reports \"" + raw + "\"") + " (providerOrderId " + tx.getProviderOrderId() + ")");
+            if (link.getStatus() != linkBefore) {
+                statusChanges.link(link.getId(), terminal.getCompanyId(), linkBefore, link.getStatus(),
+                        "payment limit reached by transaction " + tx.getId());
+            }
         } else {
             log.debug("Transaction {} stays {}, acquirer status \"{}\"", tx.getId(), tx.getStatus(), raw);
         }
 
         return new StatusRefresh(tx, outcome);
+    }
+
+    // Компания записи журнала — компания терминала ссылки (Р-104); терминала нет — запись без компании.
+    private String companyOfTerminal(Integer terminalId) {
+        return terminalRepository.findById(terminalId).map(Terminal::getCompanyId).orElse(null);
     }
 
     // Потолок — чтобы память не росла без конца, если такие строки никто не разбирает.
@@ -1251,9 +1322,8 @@ public class PaymentLinkService {
                 log.warn("Missing companyId claim for non-admin user: {}", userId);
                 return PagedResponse.of(new PageImpl<>(Collections.emptyList(), pageable, 0), Collections.emptyList());
             }
-            List<Integer> allowedTerminals = terminalRepository.findAllByCompanyId(companyId).stream()
-                    .map(Terminal::getId)
-                    .toList();
+            // Сотруднику — только назначенные терминалы (Р-131).
+            List<Integer> allowedTerminals = terminalScope.companyTerminalIds(principal);
 
             log.debug("Found allowed terminals for company {}: {}", companyId, allowedTerminals);
             if (allowedTerminals.isEmpty()) {
@@ -1288,31 +1358,6 @@ public class PaymentLinkService {
                 });
         validateAccess(tx.getLink().getTerminalId(), principal, READ_ROLES);
         return mapToTransactionResponse(tx, actionsOf(tx, principal));
-    }
-
-    // Узкая проекция для страницы плательщика: только то, что плательщик и так знает.
-    private PaymentReceiptView toReceiptView(Transaction tx) {
-        PaymentLink link = tx.getLink();
-        return new PaymentReceiptView(
-                receiptState(tx.getStatus()),
-                tx.getId(),
-                tx.getAmount(),
-                link != null ? link.getCurrency() : "AZN",
-                link != null ? link.getMerchantOrderId() : null,
-                link != null ? link.getDescription() : null,
-                link != null ? link.getCustomerName() : null,
-                link != null ? link.getCustomerEmail() : null,
-                tx.getCreatedAt()
-        );
-    }
-
-    private static String receiptState(TransactionStatus status) {
-        return switch (status) {
-            case SUCCESS, REFUNDED, PARTIALLY_REFUNDED -> "PAID";
-            case AUTHORIZED -> "AUTHORIZED";
-            case FAILED -> "FAILED";
-            case PENDING -> "PENDING";
-        };
     }
 
     // Маска карты, RRN и код авторизации — на лету из providerResponse через ProviderOrderDetails (P1-16).
@@ -1509,6 +1554,15 @@ public class PaymentLinkService {
                     UserPrincipal.getUsername(principal), companyId,
                     "Denied: role " + rawRole + " of company " + companyId
                             + " attempted to act on terminal " + terminalId + " of another company");
+            throw new InvalidStateException("Access denied to terminal: " + terminalId);
+        }
+        if (!terminalScope.allows(principal, terminal)) {
+            // Свой терминал, но не назначенный сотруднику (Р-131): отказ с его компанией — руководитель увидит.
+            log.warn("Access denied. Terminal {} is not assigned to the employee", terminalId);
+            auditLogService.logDenied(AuditEntity.TERMINAL, String.valueOf(terminalId), AuditAction.READ,
+                    UserPrincipal.getUsername(principal), companyId,
+                    "Denied: employee of company " + companyId + " attempted to act on terminal " + terminalId
+                            + " not assigned to it");
             throw new InvalidStateException("Access denied to terminal: " + terminalId);
         }
         log.debug("Access granted for company: {}", companyId);

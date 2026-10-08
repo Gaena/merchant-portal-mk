@@ -41,6 +41,10 @@ public class Company {
     @Column(name = "provider_password")
     private String providerPassword;
 
+    // VÖEN — реквизит продавца на чеке плательщика (Р-129); 10 цифр или пусто.
+    @Column(name = "tax_id")
+    private String taxId;
+
     @Column(name = "created_by")
     private String createdBy;
 

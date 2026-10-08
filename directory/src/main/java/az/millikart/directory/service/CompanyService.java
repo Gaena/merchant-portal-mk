@@ -99,6 +99,7 @@ public class CompanyService {
                 .name(request.name())
                 .providerLogin(request.providerLogin())
                 .providerPassword(credentialCipher.encrypt(request.providerPassword()))
+                .taxId(request.taxId())
                 .status(STATUS_ACTIVE)
                 .createdBy(actorUsername)
                 .updatedBy(actorUsername)
@@ -114,6 +115,7 @@ public class CompanyService {
                 actorUsername,
                 company.getId(),
                 "Created company: " + company.getName() + ", provider login " + company.getProviderLogin()
+                        + (company.getTaxId() != null ? ", tax ID " + company.getTaxId() : "")
         ));
 
         return mapToResponse(company, actorRole);
@@ -218,6 +220,11 @@ public class CompanyService {
             requireLoginCoversTerminals(providerLogin, company);
             changes.append("Provider login changed from '").append(company.getProviderLogin()).append("' to '").append(providerLogin).append("'. ");
             company.setProviderLogin(providerLogin);
+        }
+        // Пустой VÖEN — «не менять», как у остальных полей: стирать реквизит чека правкой незачем.
+        if (request.taxId() != null && !request.taxId().isBlank() && !request.taxId().equals(company.getTaxId())) {
+            changes.append("Tax ID changed from '").append(company.getTaxId()).append("' to '").append(request.taxId()).append("'. ");
+            company.setTaxId(request.taxId());
         }
         // Сам пароль в журнал не пишется — только факт смены (Р-93).
         if (request.providerPassword() != null && !request.providerPassword().isBlank()) {
@@ -366,6 +373,7 @@ public class CompanyService {
                 company.getName(),
                 company.getStatus(),
                 actorRole == Role.SYSTEM_ADMIN ? company.getProviderLogin() : null,
+                company.getTaxId(),
                 company.getCreatedBy(),
                 company.getCreatedAt(),
                 company.getUpdatedBy(),

@@ -32,6 +32,7 @@ import az.millikart.txpg.AcquiringClient;
 import az.millikart.txpg.ProviderCredentials;
 import az.millikart.pbl.provider.StubAcquirerConfig;
 import az.millikart.pbl.repository.PaymentLinkRepository;
+import az.millikart.pbl.service.StatusChangeAudit;
 import az.millikart.pbl.scheduler.PaymentLinkScheduler;
 import az.millikart.pbl.repository.TerminalRepository;
 import az.millikart.pbl.repository.TransactionRepository;
@@ -46,6 +47,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,6 +107,9 @@ class PaymentLinkIntegrationTest {
     private TerminalRepository terminalRepository;
 
     @Autowired
+    private StatusChangeAudit statusChangeAudit;
+
+    @Autowired
     private CredentialCipher credentialCipher;
 
     @Autowired
@@ -117,6 +122,9 @@ class PaymentLinkIntegrationTest {
     private AcquiringClient acquiringClient;
 
     private static final int TERMINAL_ID = 123456789;
+    // Р-131: сотрудник видит только назначенные терминалы, назначения ищутся по UUID пользователя из токена.
+    private static final String EMPLOYEE_ID = "55555555-5555-5555-5555-555555555555";
+    private static final int SIBLING_TERMINAL_ID = 123456790;
     private static final int FOREIGN_TERMINAL_ID = 987654321;
 
     // Повторяет pbl.link.default-ttl тестового профиля, который повторяет продакшн.
@@ -140,6 +148,7 @@ class PaymentLinkIntegrationTest {
         transactionRepository.deleteAll();
         paymentLinkRepository.deleteAll();
         terminalRepository.deleteAll();
+        jdbcTemplate.update("DELETE FROM user_terminals");
         CompanyCredentialsFixture.seed(jdbcTemplate, credentialCipher, "test-company", "other-company");
 
         Terminal terminal = Terminal.builder()
@@ -160,7 +169,9 @@ class PaymentLinkIntegrationTest {
 
         adminToken = createMockJwtToken("admin-user", "SYSTEM_ADMIN", null);
         headToken = createMockJwtToken("head-user", "COMPANY_HEAD", "test-company");
-        employeeToken = createMockJwtToken("emp-user", "COMPANY_EMPLOYEE", "test-company");
+        employeeToken = createMockJwtToken(EMPLOYEE_ID, "COMPANY_EMPLOYEE", "test-company");
+        jdbcTemplate.update("INSERT INTO user_terminals (user_id, terminal_id, assigned_by, assigned_at) VALUES (?, ?, ?, ?)",
+                UUID.fromString(EMPLOYEE_ID), TERMINAL_ID, "head-user@test.com", java.sql.Timestamp.from(Instant.now()));
         auditorToken = createMockJwtToken("aud-user", "AUDITOR", "test-company");
         globalAuditorToken = createMockJwtToken("aud2", "AUDITOR", null);
         foreignToken = createMockJwtToken("other-user", "COMPANY_HEAD", "other-company");
@@ -168,8 +179,9 @@ class PaymentLinkIntegrationTest {
         unknownRoleToken = createMockJwtToken("hacker-user", "HACKER", "test-company");
     }
 
+    // С правом на DMS-ссылки (Р-132): validCreateRequest — DMS, а тесты здесь не про это право.
     private String createMockJwtToken(String userId, String role, String companyId) {
-        return "Bearer " + jwtProvider.generateToken(userId, userId + "@test.com", role, companyId);
+        return "Bearer " + jwtProvider.generateToken(userId, userId + "@test.com", role, companyId, true);
     }
 
     private MockHttpServletRequestBuilder authed(MockHttpServletRequestBuilder builder, String token) {
@@ -217,6 +229,117 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.link", containsString("/open")))
                 // P1-9: созданная ссылка всегда несёт момент, когда перестаёт быть оплачиваемой.
                 .andExpect(jsonPath("$.expiresAt", notNullValue()));
+    }
+
+    // Р-131: сотрудник видит и трогает только назначенные терминалы своей компании — список ссылок и операций,
+    // ссылку и операцию по номеру, создание ссылки, статус и списание. Соседний терминал той же компании
+    // ему чужой: 403 (статус — 404, как у чужой компании) и отказ в журнале с его компанией. Руководитель
+    // видит всё.
+    @Test
+    void employee_seesAndActsOnlyOnAssignedTerminals() throws Exception {
+        terminalRepository.save(Terminal.builder()
+                .id(SIBLING_TERMINAL_ID)
+                .name("Sibling Terminal")
+                .login("TerminalSys/Sibling").terminalRid("TID-Sibling")
+                .companyId("test-company")
+                .build());
+        UUID ownLink = createLinkAndGetId(headToken);
+        ObjectNode siblingRequest = validCreateRequest();
+        siblingRequest.put("terminal", SIBLING_TERMINAL_ID);
+        UUID siblingLink = UUID.fromString(objectMapper.readTree(mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(siblingRequest)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asText());
+        createTransaction(TERMINAL_ID, "TX-OWN");
+        Transaction sibling = createTransaction(SIBLING_TERMINAL_ID, "TX-SIBLING");
+
+        mockMvc.perform(authed(get("/api/v1/payment-links"), employeeToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(2)))
+                .andExpect(jsonPath("$.content[0].terminal", is(TERMINAL_ID)))
+                .andExpect(jsonPath("$.content[1].terminal", is(TERMINAL_ID)));
+        mockMvc.perform(authed(get("/api/v1/payment-links"), headToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(4)));
+        mockMvc.perform(authed(get("/api/v1/payment-links"), employeeToken).param("terminal", String.valueOf(SIBLING_TERMINAL_ID)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(authed(get("/api/v1/payment-links/{id}", ownLink), employeeToken))
+                .andExpect(status().isOk());
+        mockMvc.perform(authed(get("/api/v1/payment-links/{id}", siblingLink), employeeToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(authed(post("/api/v1/payment-links"), employeeToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(siblingRequest)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(authed(get("/api/v1/transactions"), employeeToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.content[0].terminalId", is(TERMINAL_ID)));
+        mockMvc.perform(authed(get("/api/v1/transactions/{id}", sibling.getId()), employeeToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", sibling.getId()), employeeToken))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(authed(post("/api/v1/transactions/{id}/complete", sibling.getId()), employeeToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\": 10.00}"))
+                .andExpect(status().isForbidden());
+
+        Integer denials = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE outcome = 'DENIED' AND company_id = 'test-company' "
+                        + "AND details LIKE '%not assigned to it%'", Integer.class);
+        Assertions.assertTrue(denials != null && denials >= 1, "the head sees the employee's refused attempts");
+    }
+
+    // Р-132: DMS-ссылку создаёт только пользователь с правом на неё (claim dmsLinks) и только на терминале, где
+    // DMS разрешён. Пользователю без права — 403 с отказом в журнале под его компанией, терминалу без DMS — 400.
+    // SMS запрет не трогает; администратор правом пользователя не ограничен, запретом терминала — ограничен.
+    @Test
+    void dmsLinks_needTheUsersRightAndATerminalThatAllowsDms() throws Exception {
+        String withoutRight = "Bearer " + jwtProvider.generateToken("head-no-dms", "head-no-dms@test.com",
+                "COMPANY_HEAD", "test-company", false);
+        String adminWithoutClaim = "Bearer " + jwtProvider.generateToken("admin-no-claim", "admin2@test.com",
+                "SYSTEM_ADMIN", null);
+        int deniedBefore = dmsDenials();
+
+        mockMvc.perform(authed(post("/api/v1/payment-links"), withoutRight)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validCreateRequest())))
+                .andExpect(status().isForbidden());
+        Assertions.assertEquals(deniedBefore + 1, dmsDenials(), "the head sees the refused DMS link in the journal");
+        mockMvc.perform(authed(post("/api/v1/payment-links"), withoutRight)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(smsSingleCreateRequest())))
+                .andExpect(status().isCreated());
+        mockMvc.perform(authed(post("/api/v1/payment-links"), adminWithoutClaim)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validCreateRequest())))
+                .andExpect(status().isCreated());
+
+        Terminal terminal = terminalRepository.findById(TERMINAL_ID).orElseThrow();
+        terminal.setDmsAllowed(false);
+        terminalRepository.save(terminal);
+        for (String token : new String[] {headToken, adminToken}) {
+            mockMvc.perform(authed(post("/api/v1/payment-links"), token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(validCreateRequest())))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", containsString("DMS links are not allowed on terminal " + TERMINAL_ID)));
+        }
+        mockMvc.perform(authed(post("/api/v1/payment-links"), headToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(smsSingleCreateRequest())))
+                .andExpect(status().isCreated());
+    }
+
+    private int dmsDenials() {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE outcome = 'DENIED' AND entity_type = 'PAYMENT_LINK' "
+                        + "AND entity_id = 'NEW' AND action = 'CREATE' AND company_id = 'test-company' "
+                        + "AND details LIKE '%may not create DMS links%'", Integer.class);
+        return count == null ? 0 : count;
     }
 
     @Test
@@ -385,6 +508,25 @@ class PaymentLinkIntegrationTest {
                         .param("size", "20"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements", is(1)));
+    }
+
+    // Параметры страницы приводятся, а не отвергаются (P2-1): size=0 и page=-1 давали 500 из
+    // PageRequest.of, а размер без потолка вытягивал таблицу одним запросом.
+    @Test
+    void listPaymentLinks_outOfRangePageParameters_areClamped() throws Exception {
+        createLinkAndGetId(headToken);
+
+        mockMvc.perform(authed(get("/api/v1/payment-links"), headToken)
+                        .param("page", "-1")
+                        .param("size", "0"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.number", is(0)))
+                .andExpect(jsonPath("$.size", is(1)))
+                .andExpect(jsonPath("$.content.length()", is(1)));
+        mockMvc.perform(authed(get("/api/v1/payment-links"), headToken)
+                        .param("size", "100000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.size", is(200)));
     }
 
     @Test
@@ -998,6 +1140,24 @@ class PaymentLinkIntegrationTest {
                 .andExpect(jsonPath("$.content.length()", is(0)));
     }
 
+    // То же приведение, что у списка ссылок (P2-1).
+    @Test
+    void listTransactions_outOfRangePageParameters_areClamped() throws Exception {
+        createTransaction(TERMINAL_ID, "TX-OWN");
+
+        mockMvc.perform(authed(get("/api/v1/transactions"), headToken)
+                        .param("page", "-1")
+                        .param("size", "0"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.number", is(0)))
+                .andExpect(jsonPath("$.size", is(1)))
+                .andExpect(jsonPath("$.content.length()", is(1)));
+        mockMvc.perform(authed(get("/api/v1/transactions"), headToken)
+                        .param("size", "100000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.size", is(200)));
+    }
+
     @Test
     void listTransactions_withUnknownRole_returns403() throws Exception {
         createTransaction(TERMINAL_ID, "TX-OWN");
@@ -1225,6 +1385,56 @@ class PaymentLinkIntegrationTest {
                 // Никакого клиентского кода: страница не должна сама никуда ходить.
                 .andExpect(content().string(not(containsString("<script"))))
                 .andExpect(content().string(not(containsString("/api/v1/transactions"))));
+    }
+
+    // Р-130: чек по закону о платёжных услугах (ст. 17.1) и правилам ЦБ АР № 12/3 (п. 14.1, 15.5) —
+    // провайдер с VÖEN, продавец с VÖEN, терминал, номер чека, RRN, код авторизации, платёжная система и
+    // карта, данные ссылки и клиента. Страница открывается без входа: первых шести цифр карты, пароля
+    // заказа и внутреннего id операции на ней нет.
+    @Test
+    void redirectPage_rendersTheLawfulReceiptRequisites() throws Exception {
+        jdbcTemplate.update("UPDATE companies SET tax_id = '2000000002' WHERE id = 'test-company'");
+        doReturn(contractOrderPayload())
+                .when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+        Transaction tx = createTransaction(TERMINAL_ID, "ORDER-LAWFUL", TransactionStatus.PENDING);
+        PaymentLink link = paymentLinkRepository.findById(tx.getLink().getId()).orElseThrow();
+        link.setCustomerName("Aysel Mammadova");
+        link.setCustomerEmail("aysel@example.az");
+        link.setCustomerPhone("+994501234567");
+        paymentLinkRepository.save(link);
+
+        String page = mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", tx.getRidByMerchant()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+
+        for (String expected : List.of(
+                "Ödəniş çeki", "Test Payment Provider LLC", "1700000001",
+                "Company test-company", "2000000002", "Test Terminal", "TID-Admin",
+                "ORD-ORDER-LAWFUL", "629677123123123123", "629677", "Visa", "**** 3689",
+                "14.03.2023 10:30:39", "100.00 AZN", "RID-ORDER-LAWFUL", "ORDER-LAWFUL",
+                "Fixture for ORDER-LAWFUL", "Aysel Mammadova", "aysel@example.az", "+994501234567")) {
+            Assertions.assertTrue(page.contains(expected), "the receipt must show " + expected);
+        }
+        for (String leaked : List.of("426863", "1h1pq153fk8xk", "provider-password", tx.getId().toString())) {
+            Assertions.assertFalse(page.contains(leaked), "the receipt must not show " + leaked);
+        }
+        Assertions.assertTrue(page.contains("name=\"referrer\" content=\"no-referrer\""));
+    }
+
+    // Р-129: у компании, заведённой без VÖEN, строки VÖEN продавца нет — выдумывать реквизит нельзя (Р-48).
+    // VÖEN провайдера на месте: он из настроек и обязателен.
+    @Test
+    void redirectPage_companyWithoutTaxId_omitsOnlyTheMerchantTaxIdLine() throws Exception {
+        Transaction tx = createTransaction(TERMINAL_ID, "ORDER-NO-VOEN", TransactionStatus.SUCCESS);
+
+        String page = mockMvc.perform(get("/api/v1/payment-links/redirect/{tx}", tx.getRidByMerchant()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+
+        Assertions.assertTrue(page.contains("Company test-company"));
+        Assertions.assertTrue(page.contains("1700000001"));
+        Assertions.assertEquals(1, page.split("VÖEN<span", -1).length - 1,
+                "only the provider's VÖEN line is expected");
     }
 
     @Test
@@ -1652,12 +1862,65 @@ class PaymentLinkIntegrationTest {
         // Сам планировщик, а не его запрос: ловит и сломанный планировщик, и сломанный запрос. Бин в тестах
         // выключен (pbl.link-expiry.enabled), поэтому метод зовётся на своём экземпляре в транзакции, как у прокси.
         new TransactionTemplate(transactionManager).executeWithoutResult(status ->
-                new PaymentLinkScheduler(paymentLinkRepository).cleanupExpiredLinksAndSessions());
+                new PaymentLinkScheduler(paymentLinkRepository, statusChangeAudit).cleanupExpiredLinksAndSessions());
 
         Assertions.assertEquals(PaymentLinkStatus.EXPIRED,
                 paymentLinkRepository.findById(overdue.getId()).orElseThrow().getStatus());
         Assertions.assertEquals(PaymentLinkStatus.ACTIVE,
                 paymentLinkRepository.findById(live.getId()).orElseThrow().getStatus());
+    }
+
+    // Журнал аудита, этап 2: каждая ссылка, переведённая планировщиком в EXPIRED, — своя запись STATUS_CHANGE от
+    // system с traceId прогона; живая ссылка записи не получает.
+    @Test
+    void expiredLinks_areJournaledOneByOne_bySystem() {
+        PaymentLink overdue = linkFixture(UsageType.SINGLE, null, Instant.now().minus(Duration.ofMinutes(1)));
+        PaymentLink live = linkFixture(UsageType.SINGLE, null, Instant.now().plus(DEFAULT_TTL));
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                new PaymentLinkScheduler(paymentLinkRepository, statusChangeAudit).cleanupExpiredLinksAndSessions());
+
+        List<Map<String, Object>> records = jdbcTemplate.queryForList(
+                "SELECT performed_by, company_id, details, trace_id FROM audit_logs WHERE entity_type = 'PAYMENT_LINK' "
+                        + "AND entity_id = ? AND action = 'STATUS_CHANGE'", overdue.getId().toString());
+        Assertions.assertEquals(1, records.size(), records.toString());
+        Assertions.assertEquals("system", records.getFirst().get("performed_by"));
+        Assertions.assertEquals("test-company", records.getFirst().get("company_id"));
+        Assertions.assertEquals("Status ACTIVE -> EXPIRED: the expiry time has passed", records.getFirst().get("details"));
+        Assertions.assertTrue(String.valueOf(records.getFirst().get("trace_id")).startsWith("link-expiry-"),
+                records.toString());
+        Assertions.assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE entity_id = ?", Integer.class, live.getId().toString()));
+    }
+
+    // Журнал аудита, этап 2: смена статуса по ответу эквайера — запись STATUS_CHANGE под компанией терминала;
+    // исполнитель — вошедший, нажавший «Проверить статус», traceId — его запроса. Одноразовая ссылка, закрытая
+    // оплатой, — своя запись. Повторный опрос без перемены записей не добавляет.
+    @Test
+    void aStatusChangeFromTheAcquirer_isJournaledUnderWhoeverAskedForIt() throws Exception {
+        Transaction pending = createTransaction(TERMINAL_ID, "TX-JOURNAL", TransactionStatus.PENDING);
+        doReturn(Map.of("status", "FullyPaid")).when(acquiringClient).getOrderStatus(anyString(), anyString(), any());
+
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken)
+                        .header("X-Trace-Id", "trace-status-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("SUCCESS")));
+        mockMvc.perform(authed(get("/api/v1/transactions/{identifier}/status", pending.getId()), headToken))
+                .andExpect(status().isOk());
+
+        List<Map<String, Object>> records = jdbcTemplate.queryForList(
+                "SELECT performed_by, company_id, details, trace_id FROM audit_logs WHERE entity_type = 'TRANSACTION' "
+                        + "AND entity_id = ? AND action = 'STATUS_CHANGE'", pending.getId().toString());
+        Assertions.assertEquals(1, records.size(), records.toString());
+        Map<String, Object> record = records.getFirst();
+        Assertions.assertEquals("head-user@test.com", record.get("performed_by"));
+        Assertions.assertEquals("test-company", record.get("company_id"));
+        Assertions.assertEquals("trace-status-1", record.get("trace_id"));
+        Assertions.assertEquals("Status PENDING -> SUCCESS: acquirer reports \"FullyPaid\" (providerOrderId ORD-TX-JOURNAL)",
+                record.get("details"));
+        Assertions.assertEquals("Status ACTIVE -> COMPLETED: payment limit reached by transaction " + pending.getId(),
+                jdbcTemplate.queryForObject("SELECT details FROM audit_logs WHERE entity_type = 'PAYMENT_LINK' "
+                        + "AND entity_id = ? AND action = 'STATUS_CHANGE'", String.class, pending.getLink().getId().toString()));
     }
 
     // Истечение поднимает версию: ссылка, прочитанная до него, при сохранении получает конфликт, а не
@@ -1668,7 +1931,7 @@ class PaymentLinkIntegrationTest {
         PaymentLink stale = paymentLinkRepository.findById(overdue.getId()).orElseThrow();
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status ->
-                new PaymentLinkScheduler(paymentLinkRepository).cleanupExpiredLinksAndSessions());
+                new PaymentLinkScheduler(paymentLinkRepository, statusChangeAudit).cleanupExpiredLinksAndSessions());
 
         stale.setDescription("Edited from a copy read before the expiry");
         Assertions.assertThrows(OptimisticLockingFailureException.class, () -> paymentLinkRepository.save(stale));
