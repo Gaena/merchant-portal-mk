@@ -191,8 +191,9 @@ export JWT_SECRET="$(openssl rand -base64 48)"   # одно значение н�
    `companyId`, `dmsLinks` (право создавать DMS-ссылки, Р-132; без claim — нет права). Access-токен проверяется **stateless** во всех сервисах; чёрного списка нет и заводить
    его нельзя — запрос в базу на каждый вызов убьёт модель. Отзыв делается через refresh-токены
    (`auth`, P1-12): в базе только SHA-256, ротация с окном снисхождения, гашение цепочки при
-   logout, краже и блокировке. Access-токен живёт **15 минут** — это и есть верхняя граница доступа
-   после logout, блокировки или удаления.
+   logout, краже и блокировке. Сессия — не дольше `auth.refresh.max-session` (12 ч) от входа: обновления
+   её не продлевают (Р-140). Access-токен живёт **15 минут** — это и есть верхняя граница доступа
+   после logout, блокировки, удаления или конца сессии.
 5. **Все ответы об ошибках** идут через `common.exception.GlobalExceptionHandler` в формате
    `ErrorResponse { timestamp, status, error, message, path }`. Новые исключения — наследники
    из `common.exception`, не `ResponseStatusException`.
@@ -523,7 +524,7 @@ axios-клиент, shadcn/Radix, Tailwind, страницы на моках, с
 
 | Файл | Что делает |
 |:---|:---|
-| `src/app/auth/session.ts` | хранилище: access-токен — модульная переменная (**только память**), refresh — `localStorage['mp_refresh_token']`, момент последнего действия пользователя — `localStorage['mp_last_activity']` (общий для вкладок), профиль `{ email, role, companyId?, dmsLinksAllowed }` (email, companyId и право на DMS-ссылки — из claims JWT, роль — из поля `role` ответа через `parseRole`); `applyLoginResponse` fail-closed, `clearSession`, подписка для `useSyncExternalStore`; событие `storage` гасит сессию в других вкладках при выходе |
+| `src/app/auth/session.ts` | хранилище: access-токен — модульная переменная (**только память**), refresh — `localStorage['mp_refresh_token']`, момент последнего действия пользователя — `localStorage['mp_last_activity']` (общий для вкладок), профиль `{ email, role, companyId?, dmsLinksAllowed }` (email, companyId и право на DMS-ссылки — из claims JWT, роль — из поля `role` ответа через `parseRole`); `applyLoginResponse` fail-closed, `clearSession`, подписка для `useSyncExternalStore`; событие `storage` гасит сессию в других вкладках при выходе; конец сессии из `sessionExpiresIn` (Р-140) — только в памяти: 401 от `/refresh` после него `client.ts` отмечает, и форма входа пишет о предельном сроке |
 | `src/app/auth/idle.ts` | выход по простою (PCI DSS 8.2.8, Р-99): 15 минут без ввода — `logout` и сообщение на форме входа. Действием считается только ввод пользователя, не запросы к API. Пока пользователь работает, пара обновляется, если старше 5 минут: сервер гасит refresh-токен через 20 минут без обновления (`AUTH_REFRESH_TTL`) |
 | `src/app/api/client.ts` | request-интерсептор берёт токен из памяти (к `/api/v1/auth/*` не прикладывает); response-интерсептор на 401: `/login`, `/refresh`, `/logout` — не трогать; уже повторяли — `clearSession`; иначе `refreshSession()` (**single-flight**, один промис на все параллельные 401) и повтор запроса. 401 от `/refresh` и нераспознанная роль сбрасывают сессию, сетевая ошибка — нет |
 | `src/app/context/AuthContext.tsx` | `AuthProvider`: при загрузке с refresh-токеном показывает загрузку и зовёт `/refresh` (сессия восстанавливается без формы логина) — только если последнее действие было меньше 15 минут назад, иначе гасит токен (`POST /logout`) и показывает форму входа; `login` → `applyLoginResponse` (пароль, заданный не владельцем, — `AuthError('PASSWORD_CHANGE_REQUIRED')`, и форма входа просит сменить его: `changePassword`, Р-100); `logout` — сброс состояния сразу, `POST /logout` вдогонку (ошибка логируется). `isAuthenticated` — по access-токену в памяти |

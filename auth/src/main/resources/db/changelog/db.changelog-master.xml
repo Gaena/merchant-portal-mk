@@ -15,5 +15,6 @@
     <include file="changes/009-user-dms-links.xml" relativeToChangelogFile="true"/>
     <include file="changes/010-audit-log-trace-id.xml" relativeToChangelogFile="true"/>
     <include file="changes/011-audit-chain.xml" relativeToChangelogFile="true"/>
+    <include file="changes/012-refresh-session-start.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

@@ -289,7 +289,8 @@ erDiagram
         varchar token_hash UK "SHA-256 токена, сам токен не хранится"
         uuid family_id "Цепочка ротации одной сессии"
         timestamp issued_at
-        timestamp expires_at
+        timestamp expires_at "Не позже конца сессии"
+        timestamp session_started_at "Вход; переходит к наследнику, от него предельный срок (Р-140)"
         timestamp rotated_at "Заменён следующим"
         timestamp revoked_at "Отозван"
     }
@@ -470,6 +471,7 @@ erDiagram
 | `auth` | `009-user-dms-links.xml` | `users.dms_links_allowed`, по умолчанию `true` — и у существующих строк (Р-132) |
 | `auth` | `010-audit-log-trace-id.xml` | `audit_logs.trace_id`, если её ещё нет (Р-135) |
 | `auth` | `011-audit-chain.xml` | `audit_chain` и `audit_chain_head` с первой строкой (`last_seq = 0`, хеш из нулей), если их ещё нет (Р-138) |
+| `auth` | `012-refresh-session-start.xml` | `refresh_tokens.session_started_at`, `NOT NULL`; существующим строкам — их `issued_at` (Р-140) |
 | `directory` | `003-directory-schema.xml` | `companies` и `terminals` (с колонкой `password`, её удаляет `008`), если их ещё нет; недостающие аудит-колонки (`created_by`, `created_at`, `updated_by`, `updated_at`) к таблицам, созданным другим сервисом; `audit_logs` в исходном виде, без `client_ip` и `outcome` |
 | `directory` | `004-audit-log-ip-and-indexes.xml` | `audit_logs.client_ip`, `outcome` (по умолчанию `SUCCESS`) и индексы `(company_id, created_at desc)`, `(entity_type, entity_id)`, `(created_at desc)` |
 | `directory` | `005-terminal-status.xml` | `terminals.status`, по умолчанию `ACTIVE` |

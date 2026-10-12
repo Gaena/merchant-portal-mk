@@ -2,7 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { AuthError, clearIdleNotice, hasIdleNotice } from '../auth/session';
+import {
+  AuthError,
+  clearIdleNotice,
+  clearSessionLimitNotice,
+  hasIdleNotice,
+  hasSessionLimitNotice,
+} from '../auth/session';
 import { returnPathFrom } from '../auth/guards';
 import { meetsPasswordPolicy } from '../utils/password';
 import {
@@ -44,8 +50,11 @@ export const LoginPage: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   // Выход по простою (PCI DSS 8.2.8, Р-99) — сказать один раз, почему снова форма входа.
   const [idleNotice, setIdleNotice] = useState(hasIdleNotice);
+  // Предельный срок сессии от входа (Р-140) — тоже сказать, почему снова форма входа.
+  const [sessionLimitNotice, setSessionLimitNotice] = useState(hasSessionLimitNotice);
   useEffect(() => {
     clearIdleNotice();
+    clearSessionLimitNotice();
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -168,6 +177,12 @@ export const LoginPage: React.FC = () => {
         {idleNotice && !error && (
           <Alert severity="info" sx={{ mb: 3 }} onClose={() => setIdleNotice(false)}>
             {tObj.auth.idleSignedOut}
+          </Alert>
+        )}
+
+        {sessionLimitNotice && !idleNotice && !error && (
+          <Alert severity="info" sx={{ mb: 3 }} onClose={() => setSessionLimitNotice(false)}>
+            {tObj.auth.sessionLimitSignedOut}
           </Alert>
         )}
 

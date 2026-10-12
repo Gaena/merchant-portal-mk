@@ -6,6 +6,8 @@ import {
   getAccessToken,
   getRefreshToken,
   getSessionGeneration,
+  isSessionLimitReached,
+  markEndedBySessionLimit,
   type LoginResponse,
   type UserProfile,
 } from '../auth/session';
@@ -87,6 +89,10 @@ const doRefresh = async (): Promise<UserProfile> => {
     response = await apiClient.post<LoginResponse>(REFRESH_PATH, { refreshToken });
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 401) {
+      // Причину сервер не называет (один текст на любой отказ); срок сессии вкладка знает сама (Р-140).
+      if (isSessionLimitReached(Date.now())) {
+        markEndedBySessionLimit();
+      }
       clearSession();
     }
     throw error;

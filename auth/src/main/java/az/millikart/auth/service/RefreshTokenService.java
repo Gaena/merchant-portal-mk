@@ -36,30 +36,47 @@ public class RefreshTokenService {
     private final Duration ttl;
     @Getter
     private final Duration rotationGrace;
+    @Getter
+    private final Duration maxSession;
 
     public RefreshTokenService(RefreshTokenRepository repository,
                                @Value("${auth.refresh.ttl}") Duration ttl,
-                               @Value("${auth.refresh.rotation-grace}") Duration rotationGrace) {
+                               @Value("${auth.refresh.rotation-grace}") Duration rotationGrace,
+                               @Value("${auth.refresh.max-session}") Duration maxSession) {
         if (ttl == null || ttl.isZero() || ttl.isNegative()) {
             throw new IllegalStateException("auth.refresh.ttl must be a positive duration, got " + ttl);
         }
         if (rotationGrace == null || rotationGrace.isNegative()) {
             throw new IllegalStateException("auth.refresh.rotation-grace must not be negative, got " + rotationGrace);
         }
+        if (maxSession == null || maxSession.isZero() || maxSession.isNegative()) {
+            throw new IllegalStateException("auth.refresh.max-session must be a positive duration, got " + maxSession);
+        }
         this.repository = repository;
         this.ttl = ttl;
         this.rotationGrace = rotationGrace;
+        this.maxSession = maxSession;
     }
 
     // Уходит клиенту; сам токен в базе не хранится.
-    public record IssuedRefreshToken(String token, Instant expiresAt) {
+    public record IssuedRefreshToken(String token, Instant expiresAt, Instant sessionEndsAt) {
+    }
+
+    // Предельный срок сессии от входа (Р-140).
+    public Instant sessionEndOf(Instant sessionStartedAt) {
+        return sessionStartedAt.plus(maxSession);
     }
 
     // familyId: у входа — новый, у refresh — семейство ротируемого токена, чтобы цепочка отзывалась целиком.
+    // sessionStartedAt — момент входа: токен не живёт дольше сессии (Р-140).
     @Transactional
-    public IssuedRefreshToken issue(UUID userId, UUID familyId, Instant now) {
+    public IssuedRefreshToken issue(UUID userId, UUID familyId, Instant sessionStartedAt, Instant now) {
         String token = newToken();
+        Instant sessionEndsAt = sessionEndOf(sessionStartedAt);
         Instant expiresAt = now.plus(ttl);
+        if (expiresAt.isAfter(sessionEndsAt)) {
+            expiresAt = sessionEndsAt;
+        }
         // issued_at здесь, а не @CreationTimestamp: он и expires_at — одно мгновение, а тест старит
         // токен, задавая now.
         repository.save(RefreshToken.builder()
@@ -68,8 +85,9 @@ public class RefreshTokenService {
                 .familyId(familyId)
                 .issuedAt(now)
                 .expiresAt(expiresAt)
+                .sessionStartedAt(sessionStartedAt)
                 .build());
-        return new IssuedRefreshToken(token, expiresAt);
+        return new IssuedRefreshToken(token, expiresAt, sessionEndsAt);
     }
 
     // Без блокировки: результат — снимок и обратно не сохраняется; строку меняет только markRotated.

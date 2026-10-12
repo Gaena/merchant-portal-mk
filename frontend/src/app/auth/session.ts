@@ -22,6 +22,8 @@ export interface LoginResponse {
   role: string;
   refreshToken: string;
   refreshExpiresIn: number;
+  /** Секунд до конца сессии (Р-140): после него `/refresh` отвечает 401, нужен новый вход. */
+  sessionExpiresIn: number;
   /** Пароль задан не владельцем: токенов нет, сессию даёт только `/change-password` (Р-100). */
   passwordChangeRequired?: boolean;
 }
@@ -65,6 +67,9 @@ let lastTokenAt = 0;
 let lastActivityInMemory = 0;
 // Сессию закрыл простой — форма входа скажет об этом один раз.
 let endedByIdle = false;
+// Конец сессии по часам вкладки (Р-140): 401 от `/refresh` после него — предельный срок, а не отказ.
+let sessionEndsAt = 0;
+let endedBySessionLimit = false;
 // Растёт при каждом сбросе: ответ `/refresh`, ушедшего до выхода, не воскресит сессию
 // (`client.ts:doRefresh`).
 let sessionGeneration = 0;
@@ -137,6 +142,19 @@ export const clearIdleNotice = (): void => {
   endedByIdle = false;
 };
 
+/** Сессия этой вкладки дошла до предельного срока (Р-140); неизвестный срок — не дошла. */
+export const isSessionLimitReached = (now: number): boolean => sessionEndsAt > 0 && now >= sessionEndsAt;
+
+export const markEndedBySessionLimit = (): void => {
+  endedBySessionLimit = true;
+};
+
+export const hasSessionLimitNotice = (): boolean => endedBySessionLimit;
+
+export const clearSessionLimitNotice = (): void => {
+  endedBySessionLimit = false;
+};
+
 export const getUser = (): UserProfile | null => currentUser;
 
 export const subscribe = (listener: () => void): (() => void) => {
@@ -151,6 +169,7 @@ export const clearSession = (): void => {
   sessionGeneration += 1;
   accessToken = null;
   currentUser = null;
+  sessionEndsAt = 0;
   writeRefreshToken(null);
   if (hadSession) {
     notify();
@@ -163,6 +182,7 @@ const dropInMemorySession = (): void => {
   const had = accessToken !== null || currentUser !== null;
   accessToken = null;
   currentUser = null;
+  sessionEndsAt = 0;
   if (had) {
     notify();
   }
@@ -200,6 +220,10 @@ export const applyLoginResponse = (data: LoginResponse, emailHint?: string): Use
   accessToken = data.token;
   writeRefreshToken(data.refreshToken);
   lastTokenAt = Date.now();
+  // Без поля срок неизвестен: сообщение о нём не покажется, сессию по-прежнему гасит сервер.
+  sessionEndsAt = typeof data.sessionExpiresIn === 'number' && data.sessionExpiresIn > 0
+    ? lastTokenAt + data.sessionExpiresIn * 1000
+    : 0;
   currentUser = { email, role, companyId, dmsLinksAllowed: claims?.dmsLinks === true };
   notify();
   return currentUser;
@@ -239,9 +263,11 @@ if (typeof window !== 'undefined') {
       ? getRefreshToken() === null
       : (event.key === REFRESH_TOKEN_KEY && event.newValue === null);
     if (refreshGone) {
-      // Другая вкладка вышла по простою — форма входа скажет об этом и здесь.
+      // Другая вкладка вышла по простою или по предельному сроку — форма входа скажет об этом и здесь.
       if (isIdleExpired(Date.now())) {
         endedByIdle = true;
+      } else if (isSessionLimitReached(Date.now())) {
+        endedBySessionLimit = true;
       }
       dropInMemorySession();
     }

@@ -1,5 +1,6 @@
 package az.millikart.auth;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -9,6 +10,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.util.Locale;
 import liquibase.Contexts;
 import liquibase.LabelExpression;
@@ -87,6 +89,35 @@ public class MigrationOrderTest {
         assertTrue(indexExists("refresh_tokens", "idx_refresh_tokens_user"));
         assertTrue(indexExists("refresh_tokens", "idx_refresh_tokens_family"));
         assertTrue(foreignKeyExists("refresh_tokens", "fk_refresh_tokens_user"));
+        assertTrue(columnExists("refresh_tokens", "session_started_at"), "12-auth (Р-140) must run too");
+    }
+
+    // Р-140: живой до миграции токен получает время входа из issued_at — без него NOT NULL уронил бы миграцию на
+    // любой базе с открытыми сессиями, а сессия без начала не имела бы предела.
+    @Test
+    @DisplayName("refresh tokens issued before the session start existed get their issue time as the session start")
+    void sessionStart_ofTokensFromBeforeIt_isTheirIssueTime() throws Exception {
+        runAuthChangelog();
+        execute("ALTER TABLE refresh_tokens DROP COLUMN session_started_at");
+        execute("DELETE FROM databasechangelog WHERE id = '12-auth-refresh-tokens-session-started-at'");
+        // Ключ на users снят: проверяется перенос данных, а не пользователь токена.
+        execute("ALTER TABLE refresh_tokens DROP CONSTRAINT fk_refresh_tokens_user");
+        execute("""
+                INSERT INTO refresh_tokens (id, user_id, token_hash, family_id, issued_at, expires_at)
+                VALUES (RANDOM_UUID(), RANDOM_UUID(), 'hash', RANDOM_UUID(),
+                        TIMESTAMP '2026-10-12 09:00:00', TIMESTAMP '2026-10-12 09:20:00')""");
+
+        runAuthChangelog();
+
+        try (Statement statement = keepAlive.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT session_started_at FROM refresh_tokens")) {
+            assertTrue(rs.next());
+            assertEquals(Timestamp.valueOf("2026-10-12 09:00:00"), rs.getTimestamp(1));
+        }
+        try (ResultSet rs = metaData().getColumns(null, null, upper("refresh_tokens"), upper("session_started_at"))) {
+            assertTrue(rs.next());
+            assertEquals(DatabaseMetaData.columnNoNulls, rs.getInt("NULLABLE"));
+        }
     }
 
     @Test
@@ -166,6 +197,8 @@ public class MigrationOrderTest {
         assertTrue(tableExists("password_history"));
         assertTrue(indexExists("password_history", "idx_password_history_user"));
         assertTrue(foreignKeyExists("password_history", "fk_password_history_user"));
+        // 012 (Р-140): колонка уже есть — precondition, а не повторный ADD COLUMN.
+        assertTrue(columnExists("refresh_tokens", "session_started_at"));
     }
 
     // Хелперы

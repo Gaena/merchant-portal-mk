@@ -730,6 +730,8 @@ export interface TranslationDictionary {
     malformedResponse: string;
     /** Выход после 15 минут без действий (PCI DSS 8.2.8, Р-99). */
     idleSignedOut: string;
+    /** Выход по предельному сроку сессии от входа (Р-140); срок задаёт сервер, поэтому без числа. */
+    sessionLimitSignedOut: string;
     /** Смена пароля, заданного не владельцем, при входе (PCI DSS 8.3.5, Р-100). */
     passwordChangeRequired: string;
     newPasswordLabel: string;
@@ -1456,6 +1458,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       authFailed: 'Sign-in failed',
       malformedResponse: 'The server answered without a session. Sign-in was refused — try again or contact your administrator.',
       idleSignedOut: 'You were signed out after 15 minutes of inactivity. Sign in again.',
+      sessionLimitSignedOut: 'Your session reached its maximum length. Sign in again.',
       passwordChangeRequired: 'Your password was set by an administrator. Choose your own password to sign in.',
       newPasswordLabel: 'New password',
       confirmPasswordLabel: 'Repeat the new password',
@@ -2149,6 +2152,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       authFailed: 'Giriş alınmadı',
       malformedResponse: 'Server sessiyasız cavab verdi. Giriş rədd edildi — yenidən cəhd edin və ya administratorla əlaqə saxlayın.',
       idleSignedOut: '15 dəqiqə fəaliyyət olmadığı üçün sistemdən çıxdınız. Yenidən daxil olun.',
+      sessionLimitSignedOut: 'Sessiyanın maksimum müddəti bitdi. Yenidən daxil olun.',
       passwordChangeRequired: 'Parolunuzu administrator təyin edib. Daxil olmaq üçün öz parolunuzu seçin.',
       newPasswordLabel: 'Yeni parol',
       confirmPasswordLabel: 'Yeni parolu təkrarlayın',
@@ -2842,6 +2846,7 @@ export const translations: Record<Language, TranslationDictionary> = {
       authFailed: 'Вход не выполнен',
       malformedResponse: 'Сервер ответил без сессии. Вход отклонён — попробуйте ещё раз или обратитесь к администратору.',
       idleSignedOut: 'Сессия завершена: 15 минут без действий. Войдите снова.',
+      sessionLimitSignedOut: 'Сессия завершена: истёк её предельный срок. Войдите снова.',
       passwordChangeRequired: 'Пароль вам задал администратор. Чтобы войти, придумайте свой.',
       newPasswordLabel: 'Новый пароль',
       confirmPasswordLabel: 'Повторите новый пароль',
