@@ -593,6 +593,82 @@ class MoneyOperationsIntegrationTest {
         Assertions.assertEquals(TransactionStatus.REFUNDED, statusOf(settled));
     }
 
+    // --- DMS, списанный мимо портала (Р-139) ----------------------------------------------
+
+    // Холд списали мимо портала, и опрос застал заказ оплаченным. Раньше capturedAmount оставался пустым, потолок
+    // возврата брался от авторизации (1500 вместо 500), а полный возврат списанного давал PARTIALLY_REFUNDED.
+    @Test
+    void aHoldCapturedOutsideThePortal_takesTheCapturedAmountFromTheOrderHistory() throws Exception {
+        Transaction held = dmsTransaction("OUTSIDE", TransactionStatus.AUTHORIZED, AUTHORIZED_AMOUNT, null);
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
+                .thenReturn(capturedOutsideThePortal(CAPTURED_AMOUNT));
+        when(acquiringClient.refund(anyString(), any(), any())).thenReturn(confirmed("OUTSIDE"));
+
+        mockMvc.perform(statusCheck(held))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("SUCCESS")))
+                .andExpect(jsonPath("$.actions.refund.enabled", is(true)));
+        Assertions.assertEquals(0, CAPTURED_AMOUNT.compareTo(reload(held).getCapturedAmount()));
+
+        mockMvc.perform(refund(held, new BigDecimal("500.01")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("exceeds the captured amount")));
+        mockMvc.perform(refund(held, CAPTURED_AMOUNT))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("REFUNDED")));
+        verify(acquiringClient, times(1)).refund(anyString(), any(), any());
+    }
+
+    // Историю заказа прочесть не удалось — возврат закрыт до эквайера, кнопка говорит почему. «Проверить статус»
+    // дописывает сумму, когда история читается, и статус не трогает: Authorized после списания при
+    // мультиклиринге (Р-76) не откатывает SUCCESS в холд.
+    @Test
+    void aSettledDmsPaymentWithAnUnreadableCapture_isNotRefundableUntilAStatusCheckReadsIt() throws Exception {
+        Transaction held = dmsTransaction("UNREADABLE", TransactionStatus.AUTHORIZED, AUTHORIZED_AMOUNT, null);
+        when(acquiringClient.getOrderStatus(anyString(), anyString(), any()))
+                .thenReturn(Map.of("status", "FullyPaid"))
+                .thenReturn(Map.of("status", "Authorized"))
+                .thenReturn(capturedOutsideThePortal(CAPTURED_AMOUNT));
+
+        mockMvc.perform(statusCheck(held))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("SUCCESS")))
+                .andExpect(jsonPath("$.actions.refund.enabled", is(false)))
+                .andExpect(jsonPath("$.actions.refund.reason", is("CAPTURED_UNKNOWN")));
+        Assertions.assertNull(reload(held).getCapturedAmount());
+        mockMvc.perform(refund(held, new BigDecimal("100.00")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("captured amount of this DMS payment is unknown")));
+        verify(acquiringClient, never()).refund(anyString(), any(), any());
+
+        mockMvc.perform(statusCheck(held))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("SUCCESS")))
+                .andExpect(jsonPath("$.actions.refund.reason", is("CAPTURED_UNKNOWN")));
+
+        mockMvc.perform(statusCheck(held))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("SUCCESS")))
+                .andExpect(jsonPath("$.actions.refund.enabled", is(true)));
+        Transaction recovered = reload(held);
+        Assertions.assertEquals(TransactionStatus.SUCCESS, recovered.getStatus());
+        Assertions.assertEquals(0, CAPTURED_AMOUNT.compareTo(recovered.getCapturedAmount()));
+        verify(acquiringClient, times(3)).getOrderStatus(anyString(), anyString(), any());
+    }
+
+    // Ответ эквайера по DMS, списанному мимо портала: холд и списание в order.trans[], итог заказа (§5.8.3, §5.8.8).
+    private static Map<String, Object> capturedOutsideThePortal(BigDecimal captured) {
+        return Map.of(
+                "status", "FullyPaid",
+                "clearedChargeAmount", captured,
+                "trans", List.of(charge("Auth", BigDecimal.ZERO), charge("Clearing", captured)));
+    }
+
+    private static Map<String, Object> charge(String phase, BigDecimal clearAmount) {
+        return Map.of("billingStatus", "Normal", "isReversal", false, "ridByPmo", "PMO-" + phase,
+                "clearAmount", clearAmount, "phase", phase, "type", "Purchase", "description", "Purchase");
+    }
+
     // --- P0-7: никаких повторов на денежных операциях ---------------------------------------
 
     // Неудавшийся capture уходит ровно один раз. С @Retry это было бы три попытки и до трёх
@@ -1184,8 +1260,10 @@ class MoneyOperationsIntegrationTest {
                 .content(objectMapper.writeValueAsString(body));
     }
 
+    // Оплаченный DMS — со списанной суммой, как его оставляет списание: без неё возврат закрыт (Р-139).
     private Transaction transaction(String key, TransactionStatus status) {
-        return transaction(key, status, AMOUNT, null, PaymentType.DMS);
+        BigDecimal captured = TransactionStatus.PAID_STATUSES.contains(status) ? AMOUNT : null;
+        return transaction(key, status, AMOUNT, captured, PaymentType.DMS);
     }
 
     // Фикстура DMS с явной парой авторизовано/снято; capturedAmount может быть null.

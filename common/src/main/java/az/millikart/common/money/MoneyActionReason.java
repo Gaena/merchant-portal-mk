@@ -9,6 +9,8 @@ public enum MoneyActionReason {
     FULLY_REFUNDED,
     CAPTURE_FIRST,
     ALREADY_CAPTURED,
+    // Оплаченный DMS без списанной суммы (Р-139), только pbl.
+    CAPTURED_UNKNOWN,
     OUTCOME_UNKNOWN,
     IN_PROGRESS
 }

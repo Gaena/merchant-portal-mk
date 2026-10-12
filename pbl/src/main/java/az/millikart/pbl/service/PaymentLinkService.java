@@ -666,6 +666,11 @@ public class PaymentLinkService {
             log.warn("Cannot refund transaction. Current status: {}", transaction.getStatus());
             throw new BusinessException("Only successful or partially refunded transactions can be refunded");
         }
+        if (capturedAmountUnknown(transaction)) {
+            log.warn("Refusing refund of transaction {}: the captured amount of this DMS payment is unknown", transactionId);
+            throw new BusinessException("The captured amount of this DMS payment is unknown; check the transaction "
+                    + "status to read it from the acquirer before a refund");
+        }
 
         assertCapturableScale(request.amount(), "Refund");
 
@@ -957,6 +962,28 @@ public class PaymentLinkService {
         return tx.getCapturedAmount() != null ? tx.getCapturedAmount() : tx.getAmount();
     }
 
+    // Оплаченный DMS без списанной суммы: списан мимо портала, а история заказа не прочлась (Р-139). Возврат
+    // закрыт — потолок от авторизованной суммы против P0-8. То же правило — в MoneyActions.
+    private static boolean capturedAmountUnknown(Transaction tx) {
+        return tx.getLink() != null && tx.getLink().getPaymentType() == PaymentType.DMS
+                && tx.getCapturedAmount() == null && TransactionStatus.PAID_STATUSES.contains(tx.getStatus());
+    }
+
+    // Сумма списания DMS из истории заказа (Р-139); больше авторизации — «не знаем», а не потолок возврата.
+    private static Optional<BigDecimal> capturedAmountOf(Transaction tx, Map<String, Object> orderDetails) {
+        Optional<BigDecimal> captured = ProviderOrderDetails.capturedAmount(orderDetails)
+                .filter(amount -> amount.compareTo(tx.getAmount()) <= 0);
+        if (captured.isPresent()) {
+            log.info("Transaction {} (providerOrderId {}): the acquirer's order history shows {} captured of the "
+                    + "authorized {}", tx.getId(), tx.getProviderOrderId(), captured.get(), tx.getAmount());
+        } else {
+            log.warn("Transaction {} (providerOrderId {}): the captured amount of this DMS payment cannot be read from "
+                    + "the acquirer's order history; refunds stay closed until a status check reads it (Р-139)",
+                    tx.getId(), tx.getProviderOrderId());
+        }
+        return captured;
+    }
+
     // TxpgAcquiringClient форматирует сумму с UNNECESSARY, чтобы ничего не округлилось за спиной
     // мерчанта: третий знак — 400 здесь, а не исключение в клиенте.
     private static void assertCapturableScale(BigDecimal amount, String operation) {
@@ -977,8 +1004,44 @@ public class PaymentLinkService {
         Integer terminalId = transactionRepository.findTerminalIdById(transactionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + identifier));
         requireStatusReadable(identifier, terminalId, principal);
-        Transaction refreshed = refreshStatus(lockLinkAndLoadTransaction(transactionId)).transaction();
+        Transaction tx = lockLinkAndLoadTransaction(transactionId);
+        Transaction refreshed = tx.getStatus() == TransactionStatus.SUCCESS && capturedAmountUnknown(tx)
+                ? recoverCapturedAmount(tx)
+                : refreshStatus(tx).transaction();
         return mapToTransactionResponse(refreshed, actionsOf(refreshed, principal));
+    }
+
+    // Опрос оплаченного DMS без списанной суммы (Р-139) только дописывает её и статус не трогает: при
+    // мультиклиринге эквайер и после списания отвечает Authorized (Р-76), и refreshStatus откатил бы SUCCESS в
+    // холд. mpCapture и mpRefunds у такой строки нет — свежий payload заменяет прежний без потерь.
+    private Transaction recoverCapturedAmount(Transaction tx) {
+        Map<String, Object> orderDetails = acquiringClient.getOrderStatus(tx.getProviderOrderId(), tx.getProviderPassword(),
+                providerCredentials.forTerminal(statusCheckTerminal(tx)));
+        Object raw = orderDetails != null ? orderDetails.get("status") : null;
+        ProviderOrderOutcome outcome = ProviderOrderStatus.classify(raw);
+        if (outcome != ProviderOrderOutcome.PAID) {
+            log.warn("The captured amount of transaction {} stays unknown: the acquirer reports \"{}\" for a settled "
+                    + "DMS payment", tx.getId(), raw);
+            return tx;
+        }
+        Optional<BigDecimal> captured = capturedAmountOf(tx, orderDetails);
+        if (captured.isEmpty()) {
+            return tx;
+        }
+        Map<String, Object> stored = new HashMap<>(ProviderPayloads.withoutSecrets(orderDetails));
+        stored.put(STATUS_OUTCOME_KEY, outcome.name());
+        tx.setProviderResponse(stored);
+        tx.setCapturedAmount(captured.get());
+        return transactionRepository.save(tx);
+    }
+
+    private Terminal statusCheckTerminal(Transaction tx) {
+        Integer terminalId = tx.getLink().getTerminalId();
+        return terminalRepository.findById(terminalId)
+                .orElseThrow(() -> {
+                    log.error("Terminal {} configuration missing for transaction status check {}", terminalId, tx.getId());
+                    return new BusinessException("Terminal configuration not found");
+                });
     }
 
     // Номера заказов провайдера идут подряд: 403 на чужой при 404 на несуществующий выдавал перебором
@@ -1166,11 +1229,7 @@ public class PaymentLinkService {
         UUID transactionId = tx.getId();
         TransactionStatus before = tx.getStatus();
         PaymentLink link = tx.getLink();
-        Terminal terminal = terminalRepository.findById(link.getTerminalId())
-                .orElseThrow(() -> {
-                    log.error("Terminal {} configuration missing for transaction status check {}", link.getTerminalId(), transactionId);
-                    return new BusinessException("Terminal configuration not found");
-                });
+        Terminal terminal = statusCheckTerminal(tx);
 
         Map<String, Object> orderDetails = acquiringClient.getOrderStatus(tx.getProviderOrderId(), tx.getProviderPassword(),
                 providerCredentials.forTerminal(terminal));
@@ -1191,6 +1250,10 @@ public class PaymentLinkService {
         switch (outcome) {
             case PAID -> {
                 tx.setStatus(TransactionStatus.SUCCESS);
+                if (link.getPaymentType() == PaymentType.DMS && tx.getCapturedAmount() == null) {
+                    // Списан мимо портала или до первого опроса: сумма — из истории заказа (Р-139).
+                    capturedAmountOf(tx, orderDetails).ifPresent(tx::setCapturedAmount);
+                }
                 // Эта транзакция уже в счёте: auto-flush перед JPQL. «+ 1» здесь посчитает её дважды и
                 // закроет двухплатёжную ссылку после первого платежа (P1-7). Счёт по PAID_STATUSES (P2-16).
                 long usedCount = usedCount(link.getId());

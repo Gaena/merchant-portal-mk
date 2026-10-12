@@ -184,6 +184,8 @@ public class EcomMoneyOperationService {
             case FULLY_REFUNDED -> throw new BusinessException("The order is fully refunded");
             case CAPTURE_FIRST -> throw new BusinessException("The hold of this order must be captured before a refund");
             case ALREADY_CAPTURED -> throw new BusinessException("The hold of this order is already captured");
+            // EcomMoneyActions такой причины не даёт; ветка — чтобы отказ не прошёл молча.
+            case CAPTURED_UNKNOWN -> throw new BusinessException("The captured amount of this order is unknown");
         }
     }
 

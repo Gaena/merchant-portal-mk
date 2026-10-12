@@ -2,9 +2,11 @@ package az.millikart.pbl.provider;
 
 import az.millikart.txpg.ProviderPayloads;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -110,6 +112,43 @@ public final class ProviderOrderDetails {
             }
         }
         return true;
+    }
+
+    // Списанное по заказу (Р-139): сумма положительных clearAmount успешных операций order.trans[] (§5.8.8:
+    // billingStatus Normal и ridByPmo). Пусто — «не знаем»: нет списаний, нечитаемая сумма, реверсал или
+    // возврат в истории, итог заказа clearedChargeAmount с ней не совпал. DMS контракт не описывает.
+    public static Optional<BigDecimal> capturedAmount(Map<String, Object> orderPayload) {
+        if (orderPayload == null || !(orderPayload.get("trans") instanceof List<?> trans)) {
+            return Optional.empty();
+        }
+        BigDecimal captured = BigDecimal.ZERO;
+        for (Object element : trans) {
+            Map<String, Object> record = asMap(element);
+            if (record == null) {
+                return Optional.empty();
+            }
+            if (!"Normal".equals(ProviderPayloads.scalarText(record.get("billingStatus")))
+                    || ProviderPayloads.scalarText(record.get("ridByPmo")) == null) {
+                // Неуспешная операция денег не двигала.
+                continue;
+            }
+            BigDecimal cleared = decimal(record.get("clearAmount"));
+            if (cleared == null || cleared.signum() < 0 || isTrue(record.get("isReversal"))) {
+                return Optional.empty();
+            }
+            captured = captured.add(cleared);
+        }
+        if (captured.signum() <= 0 || captured.stripTrailingZeros().scale() > 2) {
+            return Optional.empty();
+        }
+        Object total = orderPayload.get("clearedChargeAmount");
+        if (total != null) {
+            BigDecimal cleared = decimal(total);
+            if (cleared == null || cleared.compareTo(captured) != 0) {
+                return Optional.empty();
+            }
+        }
+        return Optional.of(captured.setScale(2, RoundingMode.UNNECESSARY));
     }
 
     private static BigDecimal decimal(Object value) {

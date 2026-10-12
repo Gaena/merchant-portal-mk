@@ -1,6 +1,7 @@
 package az.millikart.pbl.service;
 
 import static az.millikart.common.money.MoneyActionReason.ALREADY_CAPTURED;
+import static az.millikart.common.money.MoneyActionReason.CAPTURED_UNKNOWN;
 import static az.millikart.common.money.MoneyActionReason.CAPTURE_FIRST;
 import static az.millikart.common.money.MoneyActionReason.FULLY_REFUNDED;
 import static az.millikart.common.money.MoneyActionReason.IN_PROGRESS;
@@ -65,6 +66,10 @@ final class MoneyActions {
         BigDecimal left = base.subtract(facts.refundedAmount() != null ? facts.refundedAmount() : BigDecimal.ZERO);
         if (left.signum() <= 0) {
             return Action.disabled(FULLY_REFUNDED);
+        }
+        // Оплаченный DMS без списанной суммы (Р-139): потолок от авторизованной — против P0-8.
+        if (facts.dms() && facts.capturedAmount() == null) {
+            return Action.disabled(CAPTURED_UNKNOWN);
         }
         Action unreachable = providerUnreachable(facts);
         return unreachable != null ? unreachable : Action.enabled(left);

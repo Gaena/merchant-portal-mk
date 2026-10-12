@@ -481,12 +481,16 @@ and `noindex`.
         `orderDetailLevel`, `tokenDetailLevel` and `tranDetailLevel` = 2; retried, through the circuit
         breaker), the answer is classified and stored. The dictionary of acquirer statuses —
         `../../AGENTS.md` §7. A paid transaction updates `currentPaymentsCount` of the link and completes a
-        single-use link or a multi-use link that reached `maxPayments`.
+        single-use link or a multi-use link that reached `maxPayments`. A paid DMS transaction takes
+        `capturedAmount` from the order history (Р-139, see the payload below).
     -   `Closed` after `Authorized` with no capture in `order.trans[]` — the bank released the hold: the
         transaction becomes `FAILED` with `failureReason` `Authorization released by the acquirer without capture`.
     -   Any other `SETTLED_OTHER` or unknown status leaves the transaction as it was, for a person to check.
     -   `SUCCESS`, `FAILED`, `REFUNDED`, `PARTIALLY_REFUNDED` — returned from the database, the acquirer is
         not asked. A refund or reversal made outside the portal is therefore not seen (`../../AGENTS.md` §10).
+    -   The exception is a DMS `SUCCESS` without `capturedAmount` (Р-139): the acquirer is polled only to read
+        the captured amount. The status is never changed by this poll — a multi-cleared order still answers
+        `Authorized` after a capture (Р-76); an answer other than paid, or an unreadable history, changes nothing.
     -   The poll takes the link lock, like a capture or a refund (Р-109): while one of them holds it, the
         answer is `409` at once and the acquirer is not asked. A capture or a refund holds it only to check
         and to record its outcome, not during the acquirer call (Р-123).
@@ -539,7 +543,11 @@ The same payload is returned by §5.7, §5.11 and §5.12; `actions` only by §5.
 
 -   `status` — `PENDING`, `AUTHORIZED`, `SUCCESS`, `FAILED`, `REFUNDED` or `PARTIALLY_REFUNDED`.
 -   `amount` — the authorised amount, never changed by a capture; `capturedAmount` — what a DMS capture
-    cleared, `null` for SMS and uncaptured holds; `refundedAmount` — refunded so far (P0-8).
+    cleared, `null` for SMS and uncaptured holds; `refundedAmount` — refunded so far (P0-8). A DMS payment
+    captured outside the portal takes `capturedAmount` at the poll that finds it paid (Р-139): the sum of the
+    positive `clearAmount` of the successful `order.trans[]` records (`billingStatus` `Normal`, `ridByPmo` set),
+    checked against the order's `clearedChargeAmount`. A reversal or refund in the history, an unreadable amount,
+    a disagreeing total or a sum above `amount` leave it `null`, and the payment cannot be refunded.
 -   `currency`, `description`, `merchantOrderId`, `paymentType`, `terminalId` and the customer fields come
     from the link.
 -   `ridByMerchant` — this service's reference of the payment attempt, sent to the acquirer as
@@ -566,7 +574,8 @@ The same payload is returned by §5.7, §5.11 and §5.12; `actions` only by §5.
     `AUTHORIZED`, a capture for DMS in `PENDING`, `AUTHORIZED`, `SUCCESS`, `PARTIALLY_REFUNDED` and
     `REFUNDED`. Otherwise `enabled`; a disabled one names the first reason, in this order: `NO_RIGHTS` (the
     role may not do it: refund — §5.10, capture — §5.9), `OUTCOME_UNKNOWN` or `IN_PROGRESS` (see `unresolved`),
-    `CAPTURE_FIRST` (a refund of a hold), `FULLY_REFUNDED`, `ALREADY_CAPTURED`, `TERMINAL_NOT_IN_PORTAL`,
+    `CAPTURE_FIRST` (a refund of a hold), `FULLY_REFUNDED`, `CAPTURED_UNKNOWN` (a paid DMS payment without
+    `capturedAmount`, Р-139), `ALREADY_CAPTURED`, `TERMINAL_NOT_IN_PORTAL`,
     `NO_PROVIDER_CREDENTIALS` (the terminal's company has no provider credentials, Р-93). `maxAmount` — only
     when enabled: what is left to refund, or the authorised amount for a capture.
 -   `actions.unresolved` — a capture or refund whose outcome is not recorded: `kind` (`CAPTURE`, `REFUND`),
@@ -659,7 +668,8 @@ decline (`400`) — with outcome `DECLINED` and the gateway's text (Р-134).
 
 -   Only `SUCCESS` and `PARTIALLY_REFUNDED` transactions are refunded. The ceiling is the **captured**
     amount — `captured_amount` after a DMS capture, `amount` when there was none (every SMS payment) —
-    minus what was already refunded (P0-8).
+    minus what was already refunded (P0-8). A DMS payment whose captured amount is unknown is not refunded
+    at all (Р-139): a status check (§5.8) reads it from the acquirer.
 -   Three steps, as in §5.9 (Р-123). `exec-tran` with
     `{"tran": {"phase": "Single", "type": "Refund", "amount": "500.00"}}`; success is confirmed only by
     `tran.match.ridByPmo` (P1-8b). The call is **never retried**: a repeated refund pays twice (P0-7).
@@ -701,6 +711,7 @@ The identifiers are the acquirer's own, from its `exec-tran` answer
 | 403, 404 | §4.1 |
 | 409 | `Another money operation on this transaction is in progress`; the unknown-outcome text of §5.9 |
 | 400 | `Only successful or partially refunded transactions can be refunded` |
+| 400 | `The captured amount of this DMS payment is unknown; check the transaction status to read it from the acquirer before a refund` |
 | 400 | `Refund amount must not have more than two decimal places` |
 | 400 | `reason must be at most 255 characters` |
 | 400 | `Refund amount exceeds the captured amount of the transaction` |

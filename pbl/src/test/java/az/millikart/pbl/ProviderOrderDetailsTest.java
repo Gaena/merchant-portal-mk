@@ -12,6 +12,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -108,6 +109,73 @@ class ProviderOrderDetailsTest {
         malformed.put("trans", "not-a-list");
         assertFalse(ProviderOrderDetails.hasCardOperation(malformed));
         assertFalse(ProviderOrderDetails.hasCardOperation(null));
+    }
+
+    // Р-139: списанное по заказу — то, что DMS, списанный мимо портала, кладёт в capturedAmount, а значит потолок
+    // возврата. Холд (clearAmount 0) и неуспешные операции денег не двигали; мультиклиринг — сумма списаний.
+    @Test
+    void capturedAmount_isTheSumOfSuccessfulCharges() {
+        assertEquals(new BigDecimal("5.00"), ProviderOrderDetails.capturedAmount(fullOrder()).orElseThrow());
+        assertEquals(new BigDecimal("500.00"), ProviderOrderDetails.capturedAmount(
+                dmsOrder(500, charge("Auth", 0), charge("Clearing", 500))).orElseThrow());
+        assertEquals(new BigDecimal("500.00"), ProviderOrderDetails.capturedAmount(
+                dmsOrder(null, charge("Auth", "0.00"), charge("Clearing", "300.00"), charge("Clearing", "200.00")))
+                .orElseThrow(), "multi-clearing: every capture counts");
+
+        Map<String, Object> declined = charge("Clearing", 700);
+        declined.put("billingStatus", "Declined");
+        Map<String, Object> unconfirmed = charge("Clearing", 700);
+        unconfirmed.remove("ridByPmo");
+        assertEquals(new BigDecimal("500.00"), ProviderOrderDetails.capturedAmount(
+                dmsOrder(500, charge("Auth", 0), declined, unconfirmed, charge("Clearing", 500))).orElseThrow(),
+                "an operation that did not go through moved no money");
+    }
+
+    // Ложная сумма — неверный потолок возврата, поэтому любое сомнение — «не знаем», и возврат закрыт: нет
+    // списаний, нечитаемая сумма, реверсал или возврат в истории, итог заказа не сходится, больше двух знаков.
+    @Test
+    void capturedAmount_anyDoubtIsUnknown() {
+        assertTrue(ProviderOrderDetails.capturedAmount(null).isEmpty());
+        assertTrue(ProviderOrderDetails.capturedAmount(orderDetailLevel2()).isEmpty(), "no trans[] at all");
+        assertTrue(ProviderOrderDetails.capturedAmount(dmsOrder(null)).isEmpty());
+        assertTrue(ProviderOrderDetails.capturedAmount(dmsOrder(null, charge("Auth", 0))).isEmpty(),
+                "a hold alone captured nothing");
+
+        assertTrue(ProviderOrderDetails.capturedAmount(dmsOrder(null, charge("Clearing", 500), charge("Clearing", -100)))
+                .isEmpty(), "a refund or reversal in the history");
+        Map<String, Object> reversal = charge("Auth", 0);
+        reversal.put("isReversal", true);
+        assertTrue(ProviderOrderDetails.capturedAmount(dmsOrder(null, reversal, charge("Clearing", 500))).isEmpty());
+
+        Map<String, Object> noAmount = charge("Clearing", 500);
+        noAmount.remove("clearAmount");
+        assertTrue(ProviderOrderDetails.capturedAmount(dmsOrder(null, noAmount)).isEmpty());
+        assertTrue(ProviderOrderDetails.capturedAmount(dmsOrder(null, charge("Clearing", "n/a"))).isEmpty());
+        assertTrue(ProviderOrderDetails.capturedAmount(orderWithTrans(contractPurchase(), "garbage")).isEmpty());
+        assertTrue(ProviderOrderDetails.capturedAmount(dmsOrder(null, charge("Clearing", "500.005"))).isEmpty());
+
+        assertTrue(ProviderOrderDetails.capturedAmount(dmsOrder(1500, charge("Clearing", 500))).isEmpty(),
+                "the order total disagrees with the history");
+        assertTrue(ProviderOrderDetails.capturedAmount(dmsOrder("n/a", charge("Clearing", 500))).isEmpty());
+    }
+
+    // DMS-заказ после списания: trans[] — переданные записи, clearedChargeAmount — итог заказа (null — без него).
+    private static Map<String, Object> dmsOrder(Object clearedChargeAmount, Map<?, ?>... trans) {
+        Map<String, Object> order = fullOrder();
+        order.put("trans", Arrays.asList((Object[]) trans));
+        order.remove("clearedChargeAmount");
+        if (clearedChargeAmount != null) {
+            order.put("clearedChargeAmount", clearedChargeAmount);
+        }
+        return order;
+    }
+
+    // Успешная операция по образцу contractPurchase() со своими phase и clearAmount.
+    private static Map<String, Object> charge(String phase, Object clearAmount) {
+        Map<String, Object> tran = contractPurchase();
+        tran.put("phase", phase);
+        tran.put("clearAmount", clearAmount);
+        return tran;
     }
 
     private static Map<String, Object> order(String status, String prevStatus, List<Map<String, Object>> trans) {

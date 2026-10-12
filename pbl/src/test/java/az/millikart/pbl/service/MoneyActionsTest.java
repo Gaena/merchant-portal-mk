@@ -41,6 +41,18 @@ class MoneyActionsTest {
         assertEquals("ALREADY_CAPTURED", actions.capture().reason());
     }
 
+    // Р-139: оплаченный DMS без списанной суммы — списан мимо портала, история заказа не прочлась. Потолок от
+    // авторизованной суммы вернул бы P0-8, поэтому кнопка выключена; у SMS списанной суммы нет по природе.
+    @Test
+    void aSettledDmsPaymentWithoutTheCapturedAmount_isNotRefundable() {
+        assertEquals("CAPTURED_UNKNOWN", decide(facts(TransactionStatus.SUCCESS, true)).refund().reason());
+        assertEquals("CAPTURED_UNKNOWN",
+                decide(facts(TransactionStatus.PARTIALLY_REFUNDED, true).refunded("30.00")).refund().reason());
+        assertEquals("FULLY_REFUNDED",
+                decide(facts(TransactionStatus.REFUNDED, true).refunded("100.00")).refund().reason());
+        assertTrue(decide(facts(TransactionStatus.SUCCESS, false)).refund().enabled());
+    }
+
     @Test
     void aHold_isCapturable_andItsRefundWaitsForTheCapture() {
         OperationActions actions = decide(facts(TransactionStatus.AUTHORIZED, true));
