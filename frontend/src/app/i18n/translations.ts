@@ -362,6 +362,7 @@ export interface TranslationDictionary {
         FULLY_REFUNDED: string;
         CAPTURE_FIRST: string;
         ALREADY_CAPTURED: string;
+        CAPTURED_UNKNOWN: string;
         OUTCOME_UNKNOWN: string;
         IN_PROGRESS: string;
         other: string;
@@ -1109,6 +1110,7 @@ export const translations: Record<Language, TranslationDictionary> = {
           FULLY_REFUNDED: 'Fully refunded',
           CAPTURE_FIRST: 'Capture the hold first',
           ALREADY_CAPTURED: 'The hold is already captured',
+          CAPTURED_UNKNOWN: 'The captured amount is unknown — check the status',
           OUTCOME_UNKNOWN: 'The outcome of the previous operation is unknown',
           IN_PROGRESS: 'Another operation on this payment is in progress',
           other: 'This action is not available',
@@ -1801,6 +1803,7 @@ export const translations: Record<Language, TranslationDictionary> = {
           FULLY_REFUNDED: 'Tam qaytarılıb',
           CAPTURE_FIRST: 'Əvvəlcə holdu silin',
           ALREADY_CAPTURED: 'Hold artıq silinib',
+          CAPTURED_UNKNOWN: 'Silinmiş məbləğ məlum deyil — statusu yoxlayın',
           OUTCOME_UNKNOWN: 'Əvvəlki əməliyyatın nəticəsi məlum deyil',
           IN_PROGRESS: 'Bu ödəniş üzrə başqa əməliyyat gedir',
           other: 'Bu əməliyyat əlçatan deyil',
@@ -2493,6 +2496,7 @@ export const translations: Record<Language, TranslationDictionary> = {
           FULLY_REFUNDED: 'Возвращена полностью',
           CAPTURE_FIRST: 'Сначала спишите холд',
           ALREADY_CAPTURED: 'Холд уже списан',
+          CAPTURED_UNKNOWN: 'Списанная сумма неизвестна — проверьте статус',
           OUTCOME_UNKNOWN: 'Исход прошлой операции неизвестен',
           IN_PROGRESS: 'По этому платежу уже идёт операция',
           other: 'Действие недоступно',
