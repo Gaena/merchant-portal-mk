@@ -69,6 +69,8 @@ public class RefreshTokenIntegrationTest {
     private static final long TEST_ACCESS_TTL_SECONDS = 3600;
     // auth.refresh.ttl = PT20M в тестовом профиле, как в production (Р-99).
     private static final long REFRESH_TTL_SECONDS = Duration.ofMinutes(20).toSeconds();
+    // auth.refresh.max-session = PT12H в тестовом профиле, как в production (Р-140).
+    private static final Duration MAX_SESSION = Duration.ofHours(12);
 
     @Autowired
     private MockMvc mockMvc;
@@ -412,6 +414,65 @@ public class RefreshTokenIntegrationTest {
         assertEquals(sha256Hex(live), refreshTokenRepository.findAll().get(0).getTokenHash());
         refresh(stale).andExpect(status().isUnauthorized());
         refresh(live).andExpect(status().isOk());
+    }
+
+    // Предельный срок сессии (Р-140)
+
+    @Test
+    @DisplayName("12. a session lasts auth.refresh.max-session from sign-in: refresh carries the sign-in time to the successor")
+    void refresh_carriesTheSessionStartToTheSuccessor() throws Exception {
+        JsonNode first = login(HEAD_EMAIL, HEAD_PASSWORD);
+        assertEquals(MAX_SESSION.toSeconds(), first.get("sessionExpiresIn").asLong(),
+                "sessionExpiresIn must come from auth.refresh.max-session");
+
+        JsonNode second = refresh(first.get("refreshToken").asText()).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString().transform(this::readTree);
+        assertTrue(second.get("sessionExpiresIn").asLong() <= MAX_SESSION.toSeconds());
+
+        List<RefreshToken> tokens = refreshTokenRepository.findAllByUserId(headId);
+        assertEquals(2, tokens.size());
+        assertEquals(1, tokens.stream().map(RefreshToken::getSessionStartedAt).distinct().count(),
+                "a refresh must not restart the session");
+    }
+
+    // Работающий пользователь обновлял пару каждые 5 минут и продлевал сессию бесконечно: у конца сессии
+    // refresh-токен короче своих 20 минут.
+    @Test
+    @DisplayName("13. near the end of the session the refresh token is cut to it")
+    void refresh_nearTheSessionEnd_cutsTheTokenToIt() throws Exception {
+        String token = login(HEAD_EMAIL, HEAD_PASSWORD).get("refreshToken").asText();
+        // session_started_at на сущности updatable = false — старим SQL-ом, как expires_at выше.
+        jdbcTemplate.update("UPDATE refresh_tokens SET session_started_at = ? WHERE user_id = ?",
+                Timestamp.from(Instant.now().minus(MAX_SESSION).plus(Duration.ofMinutes(5))), headId);
+
+        JsonNode body = refresh(token).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString().transform(this::readTree);
+
+        long left = body.get("sessionExpiresIn").asLong();
+        assertTrue(left > 240 && left <= 300, "five minutes of the session are left, got " + left);
+        assertEquals(left, body.get("refreshExpiresIn").asLong(), "the refresh token must not outlive the session");
+        String successorHash = sha256Hex(body.get("refreshToken").asText());
+        RefreshToken successor = refreshTokenRepository.findAllByUserId(headId).stream()
+                .filter(t -> t.getTokenHash().equals(successorHash))
+                .findFirst().orElseThrow();
+        assertEquals(successor.getSessionStartedAt().plus(MAX_SESSION), successor.getExpiresAt());
+    }
+
+    // Токен ещё жив по своим 20 минутам, а сессия кончилась — так бывает после уменьшения max-session.
+    @Test
+    @DisplayName("14. after the end of the session refresh returns 401, and a new sign-in starts a new session")
+    void refresh_afterTheSessionEnd_returns401(CapturedOutput output) throws Exception {
+        String token = login(HEAD_EMAIL, HEAD_PASSWORD).get("refreshToken").asText();
+        jdbcTemplate.update("UPDATE refresh_tokens SET session_started_at = ? WHERE user_id = ?",
+                Timestamp.from(Instant.now().minus(MAX_SESSION).minusSeconds(60)), headId);
+
+        refresh(token).andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message", is("Invalid refresh token")));
+        assertTrue(output.getOut().contains("reached its maximum length"), "the log must say why the refresh was refused");
+
+        JsonNode again = login(HEAD_EMAIL, HEAD_PASSWORD);
+        assertEquals(MAX_SESSION.toSeconds(), again.get("sessionExpiresIn").asLong());
+        refresh(again.get("refreshToken").asText()).andExpect(status().isOk());
     }
 
     // Обнаружение переиспользования

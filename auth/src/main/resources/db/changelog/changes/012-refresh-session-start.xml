@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Р-140: момент входа, с которого считается предельный срок сессии (auth.refresh.max-session). Ротация
+         переносит его в наследника. У живых до Р-140 токенов входа не узнать — им пишется issued_at: их сессия
+         получает полный срок от последнего обновления. Одним changeset'ом: на PostgreSQL DDL транзакционен. -->
+    <changeSet id="12-auth-refresh-tokens-session-started-at" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="refresh_tokens"/>
+            <not>
+                <columnExists tableName="refresh_tokens" columnName="session_started_at"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="refresh_tokens">
+            <column name="session_started_at" type="timestamp"/>
+        </addColumn>
+        <update tableName="refresh_tokens">
+            <column name="session_started_at" valueComputed="issued_at"/>
+        </update>
+        <addNotNullConstraint tableName="refresh_tokens" columnName="session_started_at" columnDataType="timestamp"/>
+    </changeSet>
+
+</databaseChangeLog>

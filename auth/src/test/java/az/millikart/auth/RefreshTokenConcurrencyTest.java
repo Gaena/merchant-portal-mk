@@ -163,7 +163,7 @@ class RefreshTokenConcurrencyTest {
             rowLocked.countDown();
             assertTrue(release.await(5, TimeUnit.SECONDS), "refresh was not released in time");
             return invocation.callRealMethod();
-        }).when(refreshTokenService).issue(any(), any(), any());
+        }).when(refreshTokenService).issue(any(), any(), any(), any());
 
         Future<LoginResponse> refreshOutcome = pool.submit(() -> authService.refresh(new RefreshRequest(token)));
         assertTrue(rowLocked.await(5, TimeUnit.SECONDS), "refresh did not reach issue() in time");
@@ -239,7 +239,7 @@ class RefreshTokenConcurrencyTest {
             rowLocked.countDown();
             assertTrue(release.await(5, TimeUnit.SECONDS), "refresh was not released in time");
             return invocation.callRealMethod();
-        }).when(refreshTokenService).issue(any(), any(), any());
+        }).when(refreshTokenService).issue(any(), any(), any(), any());
 
         Future<LoginResponse> refreshOutcome = pool.submit(() -> authService.refresh(new RefreshRequest(token)));
         assertTrue(rowLocked.await(5, TimeUnit.SECONDS), "refresh did not reach issue() in time");

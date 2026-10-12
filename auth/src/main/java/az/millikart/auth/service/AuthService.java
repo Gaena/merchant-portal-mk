@@ -180,8 +180,8 @@ public class AuthService {
         // Вход — активность учётки: отсчёт 90 дней до автоблокировки начинается заново (Р-101).
         user.setLastActivityAt(now);
         userRepository.save(user);
-        // Вход начинает новое семейство ротации.
-        LoginResponse response = issuePair(user, UUID.randomUUID(), now);
+        // Вход начинает новое семейство ротации и отсчёт предельного срока сессии (Р-140).
+        LoginResponse response = issuePair(user, UUID.randomUUID(), now, now);
         // Успех пишется наравне с отказами (PCI DSS 10.2). entityId — логин, как у всех AUTH-записей:
         // успех и отказы одного аккаунта находит один фильтр (P3-2).
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.AUTH, user.getUsername(), AuditAction.LOGIN,
@@ -244,6 +244,16 @@ public class AuthService {
                     log.warn("Refresh refused: unknown token");
                     return new UnauthorizedException(INVALID_REFRESH_TOKEN);
                 });
+
+        // Предельный срок сессии от входа (Р-140): работающий пользователь не продлевает её бесконечно. Срок
+        // токена и так урезан к концу сессии; проверка — на случай уменьшенного auth.refresh.max-session.
+        Instant sessionEndsAt = refreshTokenService.sessionEndOf(stored.getSessionStartedAt());
+        if (!now.isBefore(sessionEndsAt)) {
+            log.info("Refresh refused: the session of user {} (family {}) started at {} reached its maximum length {}",
+                    stored.getUserId(), stored.getFamilyId(), stored.getSessionStartedAt(),
+                    refreshTokenService.getMaxSession());
+            throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
+        }
 
         if (stored.isExpiredAt(now)) {
             log.warn("Refresh refused: token of user {} expired at {}", stored.getUserId(), stored.getExpiresAt());
@@ -317,7 +327,7 @@ public class AuthService {
             user.setLastActivityAt(now);
             userRepository.save(user);
         }
-        LoginResponse response = issuePair(user, stored.getFamilyId(), now);
+        LoginResponse response = issuePair(user, stored.getFamilyId(), stored.getSessionStartedAt(), now);
         log.info("Refresh successful for user ID: {}, family {}", user.getId(), stored.getFamilyId());
         return response;
     }
@@ -353,7 +363,8 @@ public class AuthService {
         return Duration.between(stored.getRotatedAt(), now).compareTo(refreshTokenService.getRotationGrace()) > 0;
     }
 
-    private LoginResponse issuePair(User user, UUID familyId, Instant now) {
+    // Последний access-токен сессии живёт свои 15 минут и после её конца: чёрного списка нет (AGENTS.md §5.4).
+    private LoginResponse issuePair(User user, UUID familyId, Instant sessionStartedAt, Instant now) {
         String accessToken = jwtProvider.generateToken(
                 user.getId().toString(),
                 user.getUsername(),
@@ -361,13 +372,15 @@ public class AuthService {
                 user.getCompanyId(),
                 user.isDmsLinksAllowed()
         );
-        RefreshTokenService.IssuedRefreshToken refresh = refreshTokenService.issue(user.getId(), familyId, now);
+        RefreshTokenService.IssuedRefreshToken refresh = refreshTokenService.issue(user.getId(), familyId,
+                sessionStartedAt, now);
         return new LoginResponse(
                 accessToken,
                 jwtProvider.getExpirationMs() / 1000,
                 user.getRole(),
                 refresh.token(),
-                refreshTokenService.getTtl().toSeconds(),
+                Duration.between(now, refresh.expiresAt()).toSeconds(),
+                Duration.between(now, refresh.sessionEndsAt()).toSeconds(),
                 false
         );
     }

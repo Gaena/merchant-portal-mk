@@ -27,6 +27,7 @@ auth:
     # Same values as production, so the tests judge the configuration that actually runs.
     # Scenarios that need a different grace window set it via @SpringBootTest(properties = ...).
     ttl: PT20M
+    max-session: PT12H
     rotation-grace: PT10S
     # Off: the sweep would race the fixtures of the other tests. RefreshTokenIntegrationTest
     # calls RefreshTokenService.deleteExpired() directly instead of waiting for a cron.

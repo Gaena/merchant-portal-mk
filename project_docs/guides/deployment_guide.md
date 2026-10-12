@@ -1702,6 +1702,7 @@ sudo systemctl restart mp-auth
 | `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD` | **обяз.** при включённом bootstrap | — | — | — | нет — логин (адрес почты) и пароль первого администратора |
 | `LOGIN_RATE_LIMIT_ENABLED`, `LOGIN_RATE_LIMIT_MAX_FAILURES`, `LOGIN_RATE_LIMIT_WINDOW` | + | — | — | — | `true`, `10`, `PT15M` — лимит неудачных попыток входа с одного адреса |
 | `AUTH_REFRESH_TTL` | + | — | — | — | `PT20M` — срок refresh-токена, скользящий: граница простоя на сервере (PCI DSS 8.2.8, Р-99). **Не меньше 20 минут:** фронтенд выходит после 15 минут простоя и, пока пользователь работает, обновляет токены не чаще раза в 5 минут (`frontend/src/app/auth/idle.ts`), — меньший срок обрывает живую сессию |
+| `AUTH_REFRESH_MAX_SESSION` | + | — | — | — | `PT12H` — предельный срок сессии от входа (Р-140): обновления его не продлевают, после него нужен новый вход. Последний access-токен живёт свои 15 минут и после него |
 | `AUTH_REFRESH_ROTATION_GRACE` | + | — | — | — | `PT10S` — окно, в котором повтор заменённого refresh-токена — гонка вкладок, а не кража |
 | `AUTH_REFRESH_CLEANUP_ENABLED`, `AUTH_REFRESH_CLEANUP_CRON` | + | — | — | — | `true`, `0 30 3 * * *` — уборка просроченных refresh-токенов |
 | `AUTH_INACTIVITY_ENABLED`, `AUTH_INACTIVITY_MAX_IDLE`, `AUTH_INACTIVITY_CRON` | + | — | — | — | `true`, `P90D`, `0 45 3 * * *` — блокировка учёток без активности (PCI DSS 8.2.6, Р-101); больше 90 дней стандарт не разрешает |

@@ -36,6 +36,9 @@ auth:
     # Server-side idle bound of PCI DSS 8.2.8 (Р-99): each refresh rotates the token; the frontend
     # refreshes at most every 5 minutes, so 20 minutes never cuts off a live session.
     ttl: ${AUTH_REFRESH_TTL:PT20M}
+    # Maximum session length from sign-in (Р-140): refreshes do not extend a session past it, the refresh
+    # token is cut to its end. The last access token lives its own lifetime past it.
+    max-session: ${AUTH_REFRESH_MAX_SESSION:PT12H}
     # Two tabs refreshing with one token within this window are a race, both are served; reuse of a
     # retired token outside it is theft and revokes the whole family.
     rotation-grace: ${AUTH_REFRESH_ROTATION_GRACE:PT10S}

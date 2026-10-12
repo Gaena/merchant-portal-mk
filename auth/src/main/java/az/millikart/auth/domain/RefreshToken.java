@@ -44,6 +44,10 @@ public class RefreshToken {
     @Column(name = "expires_at", nullable = false, updatable = false)
     private Instant expiresAt;
 
+    // Момент входа: ротация переносит его в наследника, от него считается предельный срок сессии (Р-140).
+    @Column(name = "session_started_at", nullable = false, updatable = false)
+    private Instant sessionStartedAt;
+
     // Выпуск наследника; от него отсчитывается грейс ротации.
     @Column(name = "rotated_at")
     private Instant rotatedAt;
