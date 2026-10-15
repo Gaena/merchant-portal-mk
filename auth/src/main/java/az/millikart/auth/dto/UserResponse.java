@@ -16,6 +16,8 @@ public record UserResponse(
         boolean passwordChangeRequired,
         // Р-132: может ли создавать DMS-ссылки; у ролей вне компании всегда true.
         boolean dmsLinksAllowed,
+        // Р-141: второй фактор подключён — подтверждён первым кодом.
+        boolean mfaEnabled,
         // Р-131: терминалы сотрудника по возрастанию номера; у остальных ролей — пусто.
         List<Integer> terminalIds
 ) {

@@ -160,13 +160,13 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 
 | Пакет | Что внутри |
 |:---|:---|
-| `controller` | `AuthController` (вход, смена пароля при входе, обновление пары токенов, выход), `UserController` |
-| `service` | `AuthService` (вход, смена пароля при входе — Р-100, ротация и отзыв refresh-токенов), `RefreshTokenService` (хранилище refresh-токенов: выпуск, поиск, отзыв, уборка), `UserService` (пользователи; отзыв сессий при блокировке, сбросе пароля и удалении), `InactiveAccountService` (блокировка учёток без активности 90 дней, Р-101), `PasswordHistoryService` (запрет четырёх последних паролей, Р-102) |
-| `security` | `LoginRateLimiter` — лимит неудачных входов с одного адреса, счётчики в памяти |
+| `controller` | `AuthController` (вход, смена пароля при входе, второй фактор, обновление пары токенов, выход), `UserController` |
+| `service` | `AuthService` (вход, смена пароля при входе — Р-100, код второго фактора — Р-141, ротация и отзыв refresh-токенов), `MfaService` (второй фактор: шаги входа, секрет TOTP, проверка кода — Р-141), `RefreshTokenService` (хранилище refresh-токенов: выпуск, поиск, отзыв, уборка), `UserService` (пользователи; отзыв сессий при блокировке, сбросе пароля, сбросе второго фактора и удалении), `InactiveAccountService` (блокировка учёток без активности 90 дней, Р-101), `PasswordHistoryService` (запрет четырёх последних паролей, Р-102) |
+| `security` | `LoginRateLimiter` — лимит неудачных входов с одного адреса, счётчики в памяти; `Totp` — коды по RFC 6238 и base32 (Р-141) |
 | `bootstrap` | `AdminBootstrapRunner` — разовое создание первого `SYSTEM_ADMIN` |
 | `scheduler` | `RefreshTokenCleanupScheduler`, `InactiveAccountScheduler` (Р-101) |
-| `domain` | `User`, `RefreshToken`, `PasswordHistory`, `Company` (только проверка существования компании) |
-| `repository` | `UserRepository` (поиск пользователей с названием компании — нативным запросом), `RefreshTokenRepository`, `PasswordHistoryRepository`, `CompanyRepository` |
+| `domain` | `User`, `RefreshToken`, `MfaChallenge`, `PasswordHistory`, `Company` (только проверка существования компании) |
+| `repository` | `UserRepository` (поиск пользователей с названием компании — нативным запросом), `RefreshTokenRepository`, `MfaChallengeRepository`, `PasswordHistoryRepository`, `CompanyRepository` |
 
 Контракты — [`auth.md`](../modules/auth.md).
 
@@ -226,6 +226,7 @@ PostgreSQL         ← схема из Liquibase, ddl-auto: validate
 erDiagram
     companies |o--o{ users : "company_id"
     users ||--o{ refresh_tokens : "user_id, каскад на удаление"
+    users ||--o{ mfa_challenges : "user_id, каскад на удаление"
     users ||--o{ password_history : "user_id, каскад на удаление"
     users ||--o{ user_terminals : "user_id, каскад на удаление"
     terminals ||--o{ user_terminals : "terminal_id, без внешнего ключа"
@@ -266,6 +267,9 @@ erDiagram
         boolean password_change_required "Пароль задал не владелец — сменить при входе (Р-100)"
         timestamp last_activity_at "Последняя активность; 90 дней без неё — блокировка (Р-101)"
         boolean dms_links_allowed "Может создавать DMS-ссылки; уходит в access-токен (Р-132)"
+        varchar mfa_secret "Секрет TOTP, шифротекст AES-256-GCM ключом MFA_ENCRYPTION_KEY (Р-141)"
+        timestamp mfa_enabled_at "Второй фактор подтверждён первым кодом; пусто — не подключён"
+        bigint mfa_last_step "Шаг времени последнего принятого кода — повтор не проходит"
         timestamp created_at
     }
 
@@ -293,6 +297,15 @@ erDiagram
         timestamp session_started_at "Вход; переходит к наследнику, от него предельный срок (Р-140)"
         timestamp rotated_at "Заменён следующим"
         timestamp revoked_at "Отозван"
+    }
+
+    mfa_challenges {
+        uuid id PK
+        uuid user_id FK "→ users.id"
+        varchar token_hash UK "SHA-256 шага входа между паролем и кодом (Р-141)"
+        timestamp created_at
+        timestamp expires_at "5 минут от верного пароля"
+        timestamp used_at "Израсходован принятым кодом"
     }
 
     terminals {
@@ -472,6 +485,8 @@ erDiagram
 | `auth` | `010-audit-log-trace-id.xml` | `audit_logs.trace_id`, если её ещё нет (Р-135) |
 | `auth` | `011-audit-chain.xml` | `audit_chain` и `audit_chain_head` с первой строкой (`last_seq = 0`, хеш из нулей), если их ещё нет (Р-138) |
 | `auth` | `012-refresh-session-start.xml` | `refresh_tokens.session_started_at`, `NOT NULL`; существующим строкам — их `issued_at` (Р-140) |
+| `auth` | `013-user-mfa.xml` | `users.mfa_secret`, `mfa_enabled_at`, `mfa_last_step`; у существующих пусто — фактор подключают при следующем входе (Р-141) |
+| `auth` | `014-mfa-challenges.xml` | `mfa_challenges`, индекс по `user_id`, внешний ключ на `users` с каскадом (Р-141) |
 | `directory` | `003-directory-schema.xml` | `companies` и `terminals` (с колонкой `password`, её удаляет `008`), если их ещё нет; недостающие аудит-колонки (`created_by`, `created_at`, `updated_by`, `updated_at`) к таблицам, созданным другим сервисом; `audit_logs` в исходном виде, без `client_ip` и `outcome` |
 | `directory` | `004-audit-log-ip-and-indexes.xml` | `audit_logs.client_ip`, `outcome` (по умолчанию `SUCCESS`) и индексы `(company_id, created_at desc)`, `(entity_type, entity_id)`, `(created_at desc)` |
 | `directory` | `005-terminal-status.xml` | `terminals.status`, по умолчанию `ACTIVE` |
@@ -720,7 +735,7 @@ sequenceDiagram
 |:---|:---|:---|:---|:---|
 | `pbl` | `PaymentLinkScheduler` | `0 */5 * * * *` | активные ссылки с истёкшим сроком → `EXPIRED` | `pbl.link-expiry.enabled` |
 | `pbl` | `TransactionReconciliationScheduler` | `0 */2 * * * *` | сверка зависших `PENDING` со шлюзом | `pbl.reconciliation.enabled` |
-| `auth` | `RefreshTokenCleanupScheduler` | `0 30 3 * * *` | удаление истёкших refresh-токенов | `auth.refresh.cleanup-enabled` |
+| `auth` | `RefreshTokenCleanupScheduler` | `0 30 3 * * *` | удаление истёкших refresh-токенов и шагов входа второго фактора | `auth.refresh.cleanup-enabled` |
 | `auth` | `InactiveAccountScheduler` | `0 45 3 * * *` | блокировка учёток без активности дольше 90 дней (PCI DSS 8.2.6, Р-101) | `auth.inactivity.enabled` |
 | `ecom` | `ProviderTerminalSyncScheduler` | `0 */15 * * * *` | обновление справочника терминалов провайдера и слепка логинов мультимерчантов (Р-94) | `ecom.terminal-sync.enabled` |
 | `directory` | `TerminalStatusReconciliationScheduler` | `0 */15 * * * *` | статусы, названия, логины и номера наших терминалов по справочнику провайдера | `directory.terminal-reconciliation.enabled` |

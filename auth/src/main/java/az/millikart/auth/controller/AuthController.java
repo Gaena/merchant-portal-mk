@@ -4,6 +4,9 @@ import az.millikart.auth.dto.ChangePasswordRequest;
 import az.millikart.auth.dto.LoginRequest;
 import az.millikart.auth.dto.LoginResponse;
 import az.millikart.auth.dto.LogoutRequest;
+import az.millikart.auth.dto.MfaSetupRequest;
+import az.millikart.auth.dto.MfaSetupResponse;
+import az.millikart.auth.dto.MfaVerifyRequest;
 import az.millikart.auth.dto.RefreshRequest;
 import az.millikart.auth.service.AuthService;
 import az.millikart.common.web.ClientIp;
@@ -42,6 +45,18 @@ public class AuthController {
     @PostMapping("/change-password")
     public LoginResponse changePassword(@Valid @RequestBody ChangePasswordRequest request, HttpServletRequest httpRequest) {
         return authService.changePassword(request, ClientIp.resolve(httpRequest, trustedProxies.addresses()));
+    }
+
+    // Второй фактор (Р-141): шаг входа выдают /login и /change-password после верного пароля.
+    @PostMapping("/mfa/setup")
+    public MfaSetupResponse setupMfa(@Valid @RequestBody MfaSetupRequest request) {
+        return authService.setupMfa(request);
+    }
+
+    // Лимит и локаут — как у входа: неверный код считается неудачей.
+    @PostMapping("/mfa/verify")
+    public LoginResponse verifyMfa(@Valid @RequestBody MfaVerifyRequest request, HttpServletRequest httpRequest) {
+        return authService.verifyMfa(request, ClientIp.resolve(httpRequest, trustedProxies.addresses()));
     }
 
     @PostMapping("/refresh")

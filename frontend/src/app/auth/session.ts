@@ -26,6 +26,11 @@ export interface LoginResponse {
   sessionExpiresIn: number;
   /** Пароль задан не владельцем: токенов нет, сессию даёт только `/change-password` (Р-100). */
   passwordChangeRequired?: boolean;
+  /** Пароль верен, токенов нет: сессию даёт код второго фактора по `mfaToken` (Р-141). */
+  mfaRequired?: boolean;
+  /** Второй фактор ещё не подключён: сначала `/mfa/setup`. */
+  mfaSetupRequired?: boolean;
+  mfaToken?: string | null;
 }
 
 export type AuthErrorCode =

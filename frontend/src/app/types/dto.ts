@@ -100,6 +100,8 @@ export interface UserDto {
   terminalIds?: number[];
   /** Может ли создавать DMS-ссылки (Р-132); у ролей вне компании всегда `true`. */
   dmsLinksAllowed?: boolean;
+  /** Второй фактор подключён — подтверждён первым кодом (Р-141). */
+  mfaEnabled?: boolean;
 }
 
 export interface AuditLogDto {

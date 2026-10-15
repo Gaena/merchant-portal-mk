@@ -138,10 +138,15 @@ graph TB
 ## 4. Сводка реализованной функциональности
 
 ### 4.1. Авторизация и защита данных
-- Вход по логину и паролю; access-токен JWT живёт 15 минут, refresh-токен обновляется с ротацией.
-  Выход, блокировка, удаление учётной записи и сброс её пароля сразу отзывают refresh-токены;
-  открытая сессия после этого работает не дольше срока access-токена — 15 минут.
-- Второго фактора аутентификации нет: вход — по логину и паролю.
+- Вход по логину, паролю и коду второго фактора; access-токен JWT живёт 15 минут, refresh-токен обновляется с
+  ротацией. Выход, блокировка, удаление учётной записи, сброс её пароля и сброс второго фактора сразу отзывают
+  refresh-токены; открытая сессия после этого работает не дольше срока access-токена — 15 минут.
+- Второй фактор (PCI DSS 8.4.2, 8.5.1, Р-141) — у всех ролей: 6-значный код приложения-аутентификатора (TOTP,
+  RFC 6238; Google Authenticator, Microsoft Authenticator и совместимые). Подключается при первом входе по
+  QR-коду, код проходит один раз, неверные коды считаются вместе с неверными паролями — шесть подряд блокируют
+  учётку на 30 минут. Секрет хранится зашифрованным отдельным ключом. Потерянный телефон — сброс
+  администратором или руководителем компании с записью в журнал; себе фактор не сбросить. «Запомнить
+  устройство» нет. Резервных кодов пока нет.
 - Пароль, заданный не владельцем, — при создании пользователя, сбросе администратором или
   руководителем компании, первом запуске — пользователь меняет при первом входе, до смены сессии нет
   (PCI DSS 8.3.5, Р-100).
@@ -304,13 +309,15 @@ graph TB
 
 | Событие | entityType | action | outcome | entityId | performedBy | companyId | Кто пишет | details |
 |---|---|---|---|---|---|---|---|---|
-| Вход в систему | `AUTH` | `LOGIN` | SUCCESS / DENIED | введённый логин (без пробелов, в нижнем регистре) | логин | компания аккаунта; пусто, если аккаунт не найден | `auth`, `AuthService.login`, `AuthService.changePassword` | успех: `Login successful, role …`; отказ: `Login refused: <категория>` — `no such account`, `wrong password`, `account locked until …`, `account status …`; верный пароль, заданный не владельцем, — `Login held: the password must be changed first` (Р-100). Пароля нет ни в каком виде |
+| Вход в систему | `AUTH` | `LOGIN` | SUCCESS / DENIED | введённый логин (без пробелов, в нижнем регистре) | логин | компания аккаунта; пусто, если аккаунт не найден | `auth`, `AuthService.login`, `AuthService.changePassword` | успех: `Login successful, role …` — со вторым фактором пишется после принятого кода и с `, second factor verified` (Р-141); отказ: `Login refused: <категория>` — `no such account`, `wrong password`, `wrong second-factor code`, `account locked until …`, `account status …`; верный пароль, заданный не владельцем, — `Login held: the password must be changed first` (Р-100). Ни пароля, ни кода нет ни в каком виде |
 | Выход из системы | `AUTH` | `LOGOUT` | SUCCESS | логин | логин | компания пользователя | `auth`, `AuthService.logout` | `Logout: revoked N token(s) of family …`; пишется **только** если токен нашёлся и был отозван — 204 на незнакомый токен записи не оставляет |
 | Блокировка аккаунта после 6 неудач | `AUTH` | `LOCKOUT` | DENIED | логин | логин | компания аккаунта | `auth`, `AuthService.registerFailedAttempt` | `Account locked until … after N failed attempts` (PCI-DSS 8.3.4) |
 | IP исчерпал лимит попыток входа | `AUTH` | `RATE_LIMIT` | DENIED | логин последней попытки | логин последней попытки | пусто | `auth`, `AuthService.recordAddressFailure` | `Address reached the failed-login limit; further attempts refused for the window`; одна запись на окно, не на попытку; сам адрес — в `client_ip` |
 | Повторное использование refresh-токена | `AUTH` | `TOKEN_REUSE` | DENIED | логин владельца токена | логин владельца | пусто | `auth`, `AuthService.refresh` | `Rotated refresh token reused … revoked N token(s) of family …`; самого токена в записи нет |
 | Создание пользователя | `USER` | `CREATE` | SUCCESS / DENIED | успех: UUID пользователя; отказ: логин создаваемого | логин актора; `system` у первого администратора | успех: компания созданного (у первого администратора пусто); отказ: компания актора | `auth`, `UserService.createUser`; `AdminBootstrapRunner.run` | `Created user … with role …[ in company …][ with terminals [<id>, …]][, DMS links forbidden]` (терминалы — у сотрудника, Р-131; запрет DMS-ссылок — Р-132); первый администратор — `Admin bootstrap created the first SYSTEM_ADMIN …`; отказы: `Denied: role … attempted to create a user with role …` (руководитель выдаёт роль выше менеджера и сотрудника), `Denied: role … attempted to create a user in company …` (руководитель заводит в чужую компанию), `Denied: role … attempted to create a user` (роль без права заводить), `Denied: actor account is …` (учётная запись актора уже не `ACTIVE`) |
 | Изменение пользователя | `USER` | `UPDATE` | SUCCESS / DENIED | UUID пользователя | логин актора | успех: компания цели; отказ: компания актора | `auth`, `UserService.updateUser` | `Changed fullName, password…, role X -> Y, companyId A -> B, status S -> T, terminals [..] -> [..], dmsLinksAllowed true -> false` — только изменённое, или `No fields changed`; отказы: `… attempted to change its own DMS link permission` (руководитель меняет себе право на DMS-ссылки, Р-132), `… attempted to grant role …` (не администратор выдаёт роль выше менеджера и сотрудника), `… attempted to move user … to company …` (перевод в другую компанию не администратором), `… attempted UPDATE of user … with role …` (руководитель правит пользователя роли выше), `Denied: role … of company … attempted UPDATE of user … outside its company` (пользователь чужой компании; компания цели не называется), `Denied: actor account is …` |
+| Подключение второго фактора | `USER` | `MFA_ENROLL` | SUCCESS | UUID пользователя | логин владельца | компания пользователя | `auth`, `AuthService.verifyMfa` | `Second factor set up by its owner at sign-in` — первый принятый код подтвердил подключение (Р-141); ни секрета, ни кода в записи нет |
+| Сброс второго фактора | `USER` | `MFA_RESET` | SUCCESS / DENIED | UUID пользователя | логин актора | компания цели; у отказа — компания актора | `auth`, `UserService.resetMfa` | `Second factor reset for <логин>[ (it was not set up)]; it is set up again at the next sign-in`; отказ: `Denied: attempted to reset its own second factor`, `Denied: actor account is …` и отказы правки чужой роли (Р-141) |
 | Смена пароля пользователя | `USER` | `PASSWORD_CHANGE` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.updateUser`, `AuthService.changePassword` | `Password changed for …` — сброс администратором или руководителем и смена своего пароля в правке учётной записи; `Password changed by its owner at sign-in` — смена на входе (Р-100); без пароля |
 | Блокировка аккаунта администратором | `USER` | `BLOCK` | SUCCESS | UUID пользователя | логин актора | компания цели | `auth`, `UserService.updateUser` | `Account set to BLOCKED for … (was ACTIVE)` |
 | Блокировка аккаунта без активности 90 дней (Р-101) | `USER` | `BLOCK` | SUCCESS | UUID пользователя | `system` | компания цели | `auth`, `InactiveAccountService.blockInactive` | `Account … blocked: no activity for more than 90 days (PCI DSS 8.2.6), last activity …` |

@@ -24,6 +24,10 @@
 									"  console.log(\"authToken and refreshToken saved\");",
 									"} else if (jsonData.passwordChangeRequired) {",
 									"  console.log(\"Password change required: call Change Password\");",
+									"} else if (jsonData.mfaRequired) {",
+									"  // Второй фактор (Р-141): шаг входа — для MFA Setup и MFA Verify.",
+									"  pm.collectionVariables.set(\"mfaToken\", jsonData.mfaToken);",
+									"  console.log(jsonData.mfaSetupRequired ? \"Second factor not set up: call MFA Setup, then MFA Verify\" : \"Call MFA Verify with the code from the app\");",
 									"}"
 								],
 								"type": "text/javascript"
@@ -59,7 +63,7 @@
 								"login"
 							]
 						},
-						"description": "Authenticates a user and returns a signed JWT access token plus an opaque refresh token; the `test` script saves them to `authToken` and `refreshToken`. `expiresIn` (seconds) mirrors JWT_EXPIRATION_MS (15 minutes by default); `refreshExpiresIn` mirrors AUTH_REFRESH_TTL (20 minutes, sliding). If the password was set by someone else (user creation, a reset by another user, the bootstrap) the answer is 200 with passwordChangeRequired=true and no tokens (PCI DSS 8.3.5, Р-100): call Change Password to get a session. Refusals: 400 \"Invalid username or password\" (unknown login and wrong password answer the same); with the right password, 400 \"Account is locked due to multiple failed login attempts. Please try again in N minutes.\" (6 wrong passwords in a row lock the account for 30 minutes) or 400 \"Account is not active. Please contact your administrator.\"; 429 \"Too many login attempts. Please try again later.\" with Retry-After after 10 failures from one address within 15 minutes."
+						"description": "Authenticates a user and returns a signed JWT access token plus an opaque refresh token; the `test` script saves them to `authToken` and `refreshToken`. `expiresIn` (seconds) mirrors JWT_EXPIRATION_MS (15 minutes by default); `refreshExpiresIn` mirrors AUTH_REFRESH_TTL (20 minutes, sliding). If the password was set by someone else (user creation, a reset by another user, the bootstrap) the answer is 200 with passwordChangeRequired=true and no tokens (PCI DSS 8.3.5, Р-100): call Change Password to get a session. Refusals: 400 \"Invalid username or password\" (unknown login and wrong password answer the same); with the right password, 400 \"Account is locked due to multiple failed login attempts. Please try again in N minutes.\" (6 wrong passwords in a row lock the account for 30 minutes) or 400 \"Account is not active. Please contact your administrator.\"; 429 \"Too many login attempts. Please try again later.\" with Retry-After after 10 failures from one address within 15 minutes. With the second factor on (Р-141) a correct password returns no tokens but mfaRequired=true and mfaToken (saved to the collection): finish with MFA Setup (only when mfaSetupRequired=true) and MFA Verify."
 					},
 					"response": []
 				},
@@ -78,6 +82,10 @@
 									"  console.log(\"authToken and refreshToken saved\");",
 									"} else if (jsonData.passwordChangeRequired) {",
 									"  console.log(\"Password change required: call Change Password\");",
+									"} else if (jsonData.mfaRequired) {",
+									"  // Второй фактор (Р-141): шаг входа — для MFA Setup и MFA Verify.",
+									"  pm.collectionVariables.set(\"mfaToken\", jsonData.mfaToken);",
+									"  console.log(jsonData.mfaSetupRequired ? \"Second factor not set up: call MFA Setup, then MFA Verify\" : \"Call MFA Verify with the code from the app\");",
 									"}"
 								],
 								"type": "text/javascript"
@@ -113,7 +121,95 @@
 								"change-password"
 							]
 						},
-						"description": "Changes the password by the current one and signs in with the new one (PCI DSS 8.3.5, Р-100). Public, like Login: the same address limit, account lockout and status checks apply; a wrong current password is 400 and counts as a failed attempt. The new password follows the same policy as on user creation and must not repeat any of the last 4 passwords (PCI DSS 8.3.7, Р-102). Returns the same body as Login, with passwordChangeRequired=false; the other sessions of the user are revoked."
+						"description": "Changes the password by the current one and signs in with the new one (PCI DSS 8.3.5, Р-100). Public, like Login: the same address limit, account lockout and status checks apply; a wrong current password is 400 and counts as a failed attempt. The new password follows the same policy as on user creation and must not repeat any of the last 4 passwords (PCI DSS 8.3.7, Р-102). Returns the same body as Login, with passwordChangeRequired=false — with the second factor on, a sign-in step (mfaRequired=true, mfaToken) instead of tokens; the other sessions of the user are revoked."
+					},
+					"response": []
+				},
+				{
+					"name": "MFA Setup",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"mfaToken\": \"{{mfaToken}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/mfa/setup",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"mfa",
+								"setup"
+							]
+						},
+						"description": "Starts setting up the second factor (PCI DSS 8.4.2, Р-141) when Login answered mfaSetupRequired=true. Returns the TOTP secret (base32) and an otpauth:// address: add it to an authenticator app (Google Authenticator, Microsoft Authenticator…) and send the code it shows to MFA Verify. A second call before the first accepted code returns a new secret. 401 — the sign-in step is unknown, used or expired (5 minutes): log in again; 409 — the factor is already set up."
+					},
+					"response": []
+				},
+				{
+					"name": "MFA Verify",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = JSON.parse(responseBody);",
+									"if (jsonData.token) {",
+									"  pm.collectionVariables.set(\"authToken\", jsonData.token);",
+									"  pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
+									"  console.log(\"authToken and refreshToken saved\");",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"mfaToken\": \"{{mfaToken}}\",\n  \"code\": \"<6 digits from the authenticator app>\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/mfa/verify",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"mfa",
+								"verify"
+							]
+						},
+						"description": "Finishes the sign-in with the second-factor code (Р-141): returns the same body as Login with tokens. The first accepted code completes the set-up. A code is accepted once only (PCI DSS 8.5.1); a wrong code is 400 \"Invalid code\" and counts as a failed sign-in attempt, together with wrong passwords (6 in a row lock the account for 30 minutes)."
 					},
 					"response": []
 				},
@@ -413,6 +509,33 @@
 					"response": []
 				},
 				{
+					"name": "Reset User MFA",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/users/{{userId}}/mfa-reset",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"users",
+								"{{userId}}",
+								"mfa-reset"
+							]
+						},
+						"description": "Resets the second factor of a user who lost the phone (Р-141): the secret is erased, every session of the user ends, and the factor is set up again at the next sign-in. Same access rules as Update User; nobody resets their own — 403 \"Cannot reset your own second factor\". Returns the user with mfaEnabled=false."
+					},
+					"response": []
+				},
+				{
 					"name": "Delete User",
 					"request": {
 						"method": "DELETE",
@@ -452,7 +575,7 @@
 			"key": "authToken",
 			"value": "",
 			"type": "string",
-			"description": "The access token (15 minutes) saved by Login, Change Password and Refresh; paste it into `authToken` of the Directory collection as well."
+			"description": "The access token (15 minutes) saved by Login, Change Password, MFA Verify and Refresh; paste it into `authToken` of the Directory collection as well."
 		},
 		{
 			"key": "userId",
@@ -464,7 +587,13 @@
 			"key": "refreshToken",
 			"value": "",
 			"type": "string",
-			"description": "The refresh token saved by Login, Change Password and Refresh; used by Refresh and Logout."
+			"description": "The refresh token saved by Login, Change Password, MFA Verify and Refresh; used by Refresh and Logout."
+		},
+		{
+			"key": "mfaToken",
+			"value": "",
+			"type": "string",
+			"description": "The sign-in step saved by Login and Change Password when the second factor is on (Р-141); used by MFA Setup and MFA Verify, lives 5 minutes."
 		}
 	]
 }

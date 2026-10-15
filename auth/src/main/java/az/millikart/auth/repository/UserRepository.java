@@ -27,6 +27,11 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Query("SELECT u FROM User u WHERE u.username = :username")
     Optional<User> findForLoginByUsername(@Param("username") String username);
 
+    // Логин без загрузки сущности: код второго фактора читает строку только под замком findForLoginByUsername,
+    // иначе счётчик неудач брался бы из снимка до него (Р-141).
+    @Query("SELECT u.username FROM User u WHERE u.id = :id")
+    Optional<String> findUsernameById(@Param("id") UUID id);
+
     // Нативный SQL: у User нет связи с Company (долг общей базы, AGENTS.md §10). LEFT JOIN — иначе
     // выпадет админ без компании. id в ORDER BY — уникальный тайбрейкер (P2-1). Каждый LIKE — с
     // ESCAPE, иначе введённый % вернёт всю таблицу (P3-1).

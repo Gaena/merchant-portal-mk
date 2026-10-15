@@ -88,6 +88,9 @@ export const UsersPage: React.FC = () => {
   // Удаление мягкое, но необратимое из портала и сразу гасит все сессии — только через подтверждение.
   const [pendingDelete, setPendingDelete] = useState<UserDto | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  // Сброс второго фактора (Р-141) гасит все сессии пользователя — тоже только через подтверждение.
+  const [pendingMfaReset, setPendingMfaReset] = useState<UserDto | null>(null);
+  const [mfaResetBusy, setMfaResetBusy] = useState(false);
   const [snackbar, setSnackbar] = useState('');
   const [companiesList, setCompaniesList] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -293,6 +296,22 @@ export const UsersPage: React.FC = () => {
     } finally {
       setDeleteBusy(false);
       setPendingDelete(null);
+    }
+  };
+
+  // Сбрасывают из окна правки: правила те же (`UserService.resetMfa`), отказ — там же, где его ждут.
+  const handleMfaReset = async () => {
+    if (!pendingMfaReset || mfaResetBusy) return;
+    setMfaResetBusy(true);
+    try {
+      const res = await apiClient.post<UserDto>(`/api/v1/users/${pendingMfaReset.id}/mfa-reset`);
+      setEditing(current => (current && current.id === res.data.id ? { ...current, mfaEnabled: res.data.mfaEnabled } : current));
+      fetchUsers();
+    } catch (err: any) {
+      setEditError(err.response?.data?.message || tObj.users.mfaResetFailed);
+    } finally {
+      setMfaResetBusy(false);
+      setPendingMfaReset(null);
     }
   };
 
@@ -575,6 +594,9 @@ export const UsersPage: React.FC = () => {
                     {u.passwordChangeRequired === true && (
                       <Chip label={tObj.users.passwordChangePending} size="small" variant="outlined" sx={{ ml: 1 }} />
                     )}
+                    {u.mfaEnabled === false && (
+                      <Chip label={tObj.users.mfaNotSetUp} size="small" variant="outlined" sx={{ ml: 1 }} />
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -790,6 +812,12 @@ export const UsersPage: React.FC = () => {
               {tObj.common.delete}
             </Button>
           )}
+          {/* Себе второй фактор не сбросить (Р-141); неподключённый сбрасывать нечего. */}
+          {editing && !isSelf(editing) && editing.mfaEnabled === true && (
+            <Button color="warning" onClick={() => setPendingMfaReset(editing)} disabled={editBusy}>
+              {tObj.users.mfaReset}
+            </Button>
+          )}
           <Button onClick={() => setEditing(null)} disabled={editBusy}>{tObj.common.cancel}</Button>
           <Button variant="contained" onClick={handleAskUpdate} disabled={editBusy}>{tObj.common.save}</Button>
         </DialogActions>
@@ -835,6 +863,27 @@ export const UsersPage: React.FC = () => {
           </Box>
         )}
         <Alert severity="warning" sx={{ mt: 2 }}>{tObj.users.deleteIrreversible}</Alert>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={pendingMfaReset !== null}
+        title={tObj.users.mfaResetTitle}
+        question={tObj.users.mfaResetQuestion}
+        confirmLabel={tObj.users.mfaReset}
+        busy={mfaResetBusy}
+        onConfirm={handleMfaReset}
+        onCancel={() => setPendingMfaReset(null)}
+      >
+        {pendingMfaReset && (
+          <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+              {pendingMfaReset.fullName || pendingMfaReset.username}
+            </Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>
+              {pendingMfaReset.username}
+            </Typography>
+          </Box>
+        )}
       </ConfirmDialog>
     </Box>
   );

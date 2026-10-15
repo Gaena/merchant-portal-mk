@@ -84,6 +84,13 @@ public class UserController {
         return userService.updateUser(id, request, principal);
     }
 
+    // Сброс второго фактора (Р-141): потерянный телефон; подключают заново при следующем входе.
+    @PostMapping("/{id}/mfa-reset")
+    public UserResponse resetMfa(@PathVariable UUID id,
+                                 @AuthenticationPrincipal UserPrincipal principal) {
+        return userService.resetMfa(id, principal);
+    }
+
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID id,

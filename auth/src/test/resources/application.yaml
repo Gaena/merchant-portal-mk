@@ -33,6 +33,13 @@ auth:
     # calls RefreshTokenService.deleteExpired() directly instead of waiting for a cron.
     cleanup-enabled: false
     cleanup-cron: "0 30 3 * * *"
+  mfa:
+    # Off: the tests sign in with a password alone. MfaIntegrationTest switches it on for its own context.
+    enabled: false
+    challenge-ttl: PT5M
+    issuer: MilliKart Merchant Portal
+    # Test-only key; never used by a running service.
+    encryption-key: dGVzdC1vbmx5LW1mYS1rZXktbm90LXVzZWQtYW55d2g=
   inactivity:
     # Off, like the cleanup: InactiveAccountIntegrationTest calls the service with its own clock.
     enabled: false

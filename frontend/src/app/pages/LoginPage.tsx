@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import axios from 'axios';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, type MfaSetup, type MfaStep } from '../context/AuthContext';
 import {
   AuthError,
   clearIdleNotice,
@@ -11,6 +11,7 @@ import {
 } from '../auth/session';
 import { returnPathFrom } from '../auth/guards';
 import { meetsPasswordPolicy } from '../utils/password';
+import { QrCodeSvg, buildQrMatrix } from '../components/QrCodeSvg';
 import {
   Box,
   Paper,
@@ -33,11 +34,11 @@ import {
 import { useLanguage } from '../context/LanguageContext';
 import logoUrl from '../assets/millikart-logo.png';
 
-// Без «Forgot password» и 2FA: бэкенд их не умеет, а выдуманного на экранах не бывает (Р-48).
+// Без «Forgot password»: бэкенд его не умеет, а выдуманного на экранах не бывает (Р-48).
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, changePassword } = useAuth();
+  const { login, changePassword, setupMfa, verifyMfa } = useAuth();
   const { tObj } = useLanguage();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -45,7 +46,13 @@ export const LoginPage: React.FC = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   // Пароль задал не владелец (PCI DSS 8.3.5, Р-100): после верного пароля — форма смены, сессия после неё.
-  const [mode, setMode] = useState<'signIn' | 'changePassword'>('signIn');
+  // Второй фактор (PCI DSS 8.4.2, Р-141): после пароля — подключение по QR-коду или ввод кода, сессия после кода.
+  const [mode, setMode] = useState<'signIn' | 'changePassword' | 'mfaSetup' | 'mfaCode'>('signIn');
+  const [mfaStep, setMfaStep] = useState<MfaStep | null>(null);
+  // Секрет живёт только в состоянии формы, пока идёт подключение.
+  const [mfaSetup, setMfaSetup] = useState<MfaSetup | null>(null);
+  const [code, setCode] = useState('');
+  const qrMatrix = useMemo(() => (mfaSetup ? buildQrMatrix(mfaSetup.otpauthUri) : null), [mfaSetup]);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   // Выход по простою (PCI DSS 8.2.8, Р-99) — сказать один раз, почему снова форма входа.
@@ -73,7 +80,11 @@ export const LoginPage: React.FC = () => {
 
     setIsLoading(true);
     try {
-      await login(email.trim(), password);
+      const step = await login(email.trim(), password);
+      if (step !== null) {
+        await enterSecondFactor(step);
+        return;
+      }
       // replace: «назад» не должен возвращать на форму входа.
       navigate(returnPathFrom(location.state), { replace: true });
     } catch (err: unknown) {
@@ -116,7 +127,11 @@ export const LoginPage: React.FC = () => {
 
     setIsLoading(true);
     try {
-      await changePassword(email.trim(), password, newPassword);
+      const step = await changePassword(email.trim(), password, newPassword);
+      if (step !== null) {
+        await enterSecondFactor(step);
+        return;
+      }
       navigate(returnPathFrom(location.state), { replace: true });
     } catch (err: unknown) {
       setIsLoading(false);
@@ -128,13 +143,79 @@ export const LoginPage: React.FC = () => {
     }
   };
 
+  // Фактор не подключён — сразу просим секрет: без него нечего сканировать.
+  const enterSecondFactor = async (step: MfaStep) => {
+    setMfaStep(step);
+    setCode('');
+    try {
+      if (step.setupRequired) {
+        setMfaSetup(await setupMfa(step.mfaToken));
+        setMode('mfaSetup');
+      } else {
+        setMode('mfaCode');
+      }
+    } catch (err: unknown) {
+      backToSignIn();
+      setError(axios.isAxiosError(err) && err.response?.status === 401 ? tObj.auth.mfaStepExpired : tObj.auth.mfaLoadFailed);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isLoading || mfaStep === null) return;
+    setError('');
+    if (!/^\d{6}$/.test(code)) {
+      setError(tObj.auth.mfaCodeFormat);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await verifyMfa(mfaStep.mfaToken, code, email.trim());
+      navigate(returnPathFrom(location.state), { replace: true });
+    } catch (err: unknown) {
+      setIsLoading(false);
+      if (axios.isAxiosError(err) && err.response?.status === 401) {
+        // Шаг входа истёк или израсходован: начинать с пароля.
+        backToSignIn();
+        setError(tObj.auth.mfaStepExpired);
+        return;
+      }
+      if (axios.isAxiosError(err) && !err.response) {
+        setError(tObj.auth.networkError);
+        return;
+      }
+      setCode('');
+      setError(serverMessageOf(err) ?? tObj.auth.authFailed);
+    }
+  };
+
   const backToSignIn = () => {
     setMode('signIn');
     setError('');
     setPassword('');
     setNewPassword('');
     setConfirmPassword('');
+    setMfaStep(null);
+    setMfaSetup(null);
+    setCode('');
   };
+
+  const codeField = (
+    <TextField
+      fullWidth
+      label={tObj.auth.mfaCodeLabel}
+      name="one-time-code"
+      autoComplete="one-time-code"
+      autoFocus
+      value={code}
+      onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+      disabled={isLoading}
+      inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 6 }}
+    />
+  );
 
   return (
     <Box
@@ -237,6 +318,56 @@ export const LoginPage: React.FC = () => {
                 sx={{ py: 1.75, fontWeight: 600, fontSize: '1rem' }}
               >
                 {isLoading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : tObj.auth.changePasswordAndSignIn}
+              </Button>
+              <Button onClick={backToSignIn} disabled={isLoading}>{tObj.common.back}</Button>
+            </Stack>
+          </form>
+        )}
+
+        {mode === 'mfaSetup' && mfaSetup !== null && qrMatrix !== null && (
+          <form onSubmit={handleVerify} noValidate>
+            <Stack spacing={3}>
+              <Alert severity="info">{tObj.auth.mfaSetupIntro}</Alert>
+              <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                <QrCodeSvg matrix={qrMatrix} size={200} ariaLabel={tObj.auth.mfaQrLabel} />
+              </Box>
+              <Box>
+                <Typography variant="body2" color="text.secondary">{tObj.auth.mfaManualKey}</Typography>
+                <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 600, wordBreak: 'break-all' }}>
+                  {mfaSetup.secret.match(/.{1,4}/g)?.join(' ')}
+                </Typography>
+              </Box>
+              {codeField}
+              <Button
+                type="submit"
+                variant="contained"
+                size="large"
+                fullWidth
+                disabled={isLoading}
+                sx={{ py: 1.75, fontWeight: 600, fontSize: '1rem' }}
+              >
+                {isLoading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : tObj.auth.mfaConfirmAndSignIn}
+              </Button>
+              <Button onClick={backToSignIn} disabled={isLoading}>{tObj.common.back}</Button>
+            </Stack>
+          </form>
+        )}
+
+        {mode === 'mfaCode' && (
+          <form onSubmit={handleVerify} noValidate>
+            <Stack spacing={3}>
+              <Alert severity="info">{tObj.auth.mfaCodeIntro}</Alert>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{email.trim()}</Typography>
+              {codeField}
+              <Button
+                type="submit"
+                variant="contained"
+                size="large"
+                fullWidth
+                disabled={isLoading}
+                sx={{ py: 1.75, fontWeight: 600, fontSize: '1rem' }}
+              >
+                {isLoading ? <CircularProgress size={24} sx={{ color: 'white' }} /> : tObj.auth.signIn}
               </Button>
               <Button onClick={backToSignIn} disabled={isLoading}>{tObj.common.back}</Button>
             </Stack>

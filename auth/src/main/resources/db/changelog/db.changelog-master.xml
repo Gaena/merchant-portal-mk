@@ -16,5 +16,7 @@
     <include file="changes/010-audit-log-trace-id.xml" relativeToChangelogFile="true"/>
     <include file="changes/011-audit-chain.xml" relativeToChangelogFile="true"/>
     <include file="changes/012-refresh-session-start.xml" relativeToChangelogFile="true"/>
+    <include file="changes/013-user-mfa.xml" relativeToChangelogFile="true"/>
+    <include file="changes/014-mfa-challenges.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

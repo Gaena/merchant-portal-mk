@@ -652,6 +652,12 @@ export interface TranslationDictionary {
     dmsLinksSwitch: string;
     dmsLinksHint: string;
     noDmsLinks: string;
+    /** Второй фактор (Р-141): не подключён — отметка в списке; сброс — потерянный телефон, через подтверждение. */
+    mfaNotSetUp: string;
+    mfaReset: string;
+    mfaResetTitle: string;
+    mfaResetQuestion: string;
+    mfaResetFailed: string;
     updated: string;
     updateFailed: string;
     statuses: {
@@ -732,6 +738,17 @@ export interface TranslationDictionary {
     idleSignedOut: string;
     /** Выход по предельному сроку сессии от входа (Р-140); срок задаёт сервер, поэтому без числа. */
     sessionLimitSignedOut: string;
+    /** Второй фактор при входе (PCI DSS 8.4.2, Р-141): подключение по QR-коду и ввод кода. */
+    mfaSetupIntro: string;
+    mfaManualKey: string;
+    mfaQrLabel: string;
+    mfaCodeIntro: string;
+    mfaCodeLabel: string;
+    mfaCodeFormat: string;
+    mfaConfirmAndSignIn: string;
+    /** Шаг входа между паролем и кодом живёт 5 минут; истёк — вход заново. */
+    mfaStepExpired: string;
+    mfaLoadFailed: string;
     /** Смена пароля, заданного не владельцем, при входе (PCI DSS 8.3.5, Р-100). */
     passwordChangeRequired: string;
     newPasswordLabel: string;
@@ -1379,6 +1396,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       dmsLinksSwitch: 'May create DMS links',
       dmsLinksHint: 'Without it the user creates SMS links only. A change takes effect within 15 minutes.',
       noDmsLinks: 'No DMS',
+      mfaNotSetUp: '2FA not set up',
+      mfaReset: 'Reset 2FA',
+      mfaResetTitle: 'Reset the second factor',
+      mfaResetQuestion: 'The user sets the second factor up again at the next sign-in, for example on a new phone. All their open sessions end.',
+      mfaResetFailed: 'Could not reset the second factor',
       updated: 'User updated',
       updateFailed: 'Could not update the user',
       statuses: { ACTIVE: 'Active', BLOCKED: 'Blocked' },
@@ -1408,6 +1430,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         CAPTURE: 'Capture', REFUND: 'Refund', CANCEL: 'Cancellation', RESOLVE: 'Outcome resolution',
         STATUS_CHANGE: 'Status change', START: 'Service start', STOP: 'Service stop',
         EXPORT: 'Export', VERIFY: 'Integrity check',
+        MFA_ENROLL: 'Second factor set-up', MFA_RESET: 'Second factor reset',
       },
       entities: {
         COMPANY: 'Company', TERMINAL: 'Terminal', USER: 'User', AUTH: 'Authentication', PAYMENT_LINK: 'Payment link',
@@ -1459,6 +1482,15 @@ export const translations: Record<Language, TranslationDictionary> = {
       malformedResponse: 'The server answered without a session. Sign-in was refused — try again or contact your administrator.',
       idleSignedOut: 'You were signed out after 15 minutes of inactivity. Sign in again.',
       sessionLimitSignedOut: 'Your session reached its maximum length. Sign in again.',
+      mfaSetupIntro: 'Your account needs a second factor. Scan the QR code with an authenticator app (Google Authenticator, Microsoft Authenticator or similar) and enter the 6-digit code it shows.',
+      mfaManualKey: 'Or enter this key in the app by hand:',
+      mfaQrLabel: 'QR code for the authenticator app',
+      mfaCodeIntro: 'Enter the 6-digit code from your authenticator app.',
+      mfaCodeLabel: 'Code',
+      mfaCodeFormat: 'The code is 6 digits.',
+      mfaConfirmAndSignIn: 'Confirm and sign in',
+      mfaStepExpired: 'Sign-in took too long. Sign in again.',
+      mfaLoadFailed: 'Could not start the second-factor set-up. Sign in again.',
       passwordChangeRequired: 'Your password was set by an administrator. Choose your own password to sign in.',
       newPasswordLabel: 'New password',
       confirmPasswordLabel: 'Repeat the new password',
@@ -2073,6 +2105,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       dmsLinksSwitch: 'DMS linkləri yarada bilər',
       dmsLinksHint: 'İcazə olmadan istifadəçi yalnız SMS linkləri yaradır. Dəyişiklik 15 dəqiqə ərzində qüvvəyə minir.',
       noDmsLinks: 'DMS yoxdur',
+      mfaNotSetUp: '2FA qoşulmayıb',
+      mfaReset: '2FA-nı sıfırla',
+      mfaResetTitle: 'İkinci faktoru sıfırlamaq',
+      mfaResetQuestion: 'İstifadəçi növbəti girişdə ikinci faktoru yenidən qoşacaq, məsələn, yeni telefonda. Onun bütün açıq sessiyaları bitəcək.',
+      mfaResetFailed: 'İkinci faktoru sıfırlamaq alınmadı',
       updated: 'İstifadəçi yeniləndi',
       updateFailed: 'İstifadəçini yeniləmək mümkün olmadı',
       statuses: { ACTIVE: 'Aktiv', BLOCKED: 'Bloklanıb' },
@@ -2102,6 +2139,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         CAPTURE: 'Vəsaitin silinməsi', REFUND: 'Geri qaytarma', CANCEL: 'Ləğv', RESOLVE: 'Əməliyyatın nəticəsi',
         STATUS_CHANGE: 'Statusun dəyişməsi', START: 'Servisin işə salınması', STOP: 'Servisin dayandırılması',
         EXPORT: 'İxrac', VERIFY: 'Bütövlük yoxlaması',
+        MFA_ENROLL: 'İkinci faktorun qoşulması', MFA_RESET: 'İkinci faktorun sıfırlanması',
       },
       entities: {
         COMPANY: 'Şirkət', TERMINAL: 'Terminal', USER: 'İstifadəçi', AUTH: 'Autentifikasiya', PAYMENT_LINK: 'Ödəniş linki',
@@ -2153,6 +2191,15 @@ export const translations: Record<Language, TranslationDictionary> = {
       malformedResponse: 'Server sessiyasız cavab verdi. Giriş rədd edildi — yenidən cəhd edin və ya administratorla əlaqə saxlayın.',
       idleSignedOut: '15 dəqiqə fəaliyyət olmadığı üçün sistemdən çıxdınız. Yenidən daxil olun.',
       sessionLimitSignedOut: 'Sessiyanın maksimum müddəti bitdi. Yenidən daxil olun.',
+      mfaSetupIntro: 'Hesabınız üçün ikinci faktor lazımdır. QR kodu autentifikator tətbiqi (Google Authenticator, Microsoft Authenticator və ya oxşar) ilə skan edin və onun göstərdiyi 6 rəqəmli kodu daxil edin.',
+      mfaManualKey: 'Və ya bu açarı tətbiqə əl ilə daxil edin:',
+      mfaQrLabel: 'Autentifikator tətbiqi üçün QR kod',
+      mfaCodeIntro: 'Autentifikator tətbiqindən 6 rəqəmli kodu daxil edin.',
+      mfaCodeLabel: 'Kod',
+      mfaCodeFormat: 'Kod 6 rəqəmdən ibarətdir.',
+      mfaConfirmAndSignIn: 'Təsdiqlə və daxil ol',
+      mfaStepExpired: 'Giriş çox uzun çəkdi. Yenidən daxil olun.',
+      mfaLoadFailed: 'İkinci faktorun qoşulmasına başlamaq alınmadı. Yenidən daxil olun.',
       passwordChangeRequired: 'Parolunuzu administrator təyin edib. Daxil olmaq üçün öz parolunuzu seçin.',
       newPasswordLabel: 'Yeni parol',
       confirmPasswordLabel: 'Yeni parolu təkrarlayın',
@@ -2767,6 +2814,11 @@ export const translations: Record<Language, TranslationDictionary> = {
       dmsLinksSwitch: 'Может создавать DMS-ссылки',
       dmsLinksHint: 'Без права пользователь создаёт только SMS-ссылки. Изменение действует в течение 15 минут.',
       noDmsLinks: 'Без DMS',
+      mfaNotSetUp: '2FA не подключён',
+      mfaReset: 'Сбросить 2FA',
+      mfaResetTitle: 'Сброс второго фактора',
+      mfaResetQuestion: 'Пользователь подключит второй фактор заново при следующем входе — например, на новом телефоне. Все его открытые сессии завершатся.',
+      mfaResetFailed: 'Не удалось сбросить второй фактор',
       updated: 'Пользователь обновлён',
       updateFailed: 'Не удалось обновить пользователя',
       statuses: { ACTIVE: 'Активен', BLOCKED: 'Заблокирован' },
@@ -2796,6 +2848,7 @@ export const translations: Record<Language, TranslationDictionary> = {
         CAPTURE: 'Списание', REFUND: 'Возврат', CANCEL: 'Отмена', RESOLVE: 'Итог операции',
         STATUS_CHANGE: 'Смена статуса', START: 'Запуск сервиса', STOP: 'Остановка сервиса',
         EXPORT: 'Выгрузка', VERIFY: 'Проверка целостности',
+        MFA_ENROLL: 'Подключение второго фактора', MFA_RESET: 'Сброс второго фактора',
       },
       entities: {
         COMPANY: 'Компания', TERMINAL: 'Терминал', USER: 'Пользователь', AUTH: 'Вход в систему', PAYMENT_LINK: 'Платёжная ссылка',
@@ -2847,6 +2900,15 @@ export const translations: Record<Language, TranslationDictionary> = {
       malformedResponse: 'Сервер ответил без сессии. Вход отклонён — попробуйте ещё раз или обратитесь к администратору.',
       idleSignedOut: 'Сессия завершена: 15 минут без действий. Войдите снова.',
       sessionLimitSignedOut: 'Сессия завершена: истёк её предельный срок. Войдите снова.',
+      mfaSetupIntro: 'Для входа нужен второй фактор. Отсканируйте QR-код приложением-аутентификатором (Google Authenticator, Microsoft Authenticator или похожим) и введите 6-значный код, который оно покажет.',
+      mfaManualKey: 'Или введите этот ключ в приложение вручную:',
+      mfaQrLabel: 'QR-код для приложения-аутентификатора',
+      mfaCodeIntro: 'Введите 6-значный код из приложения-аутентификатора.',
+      mfaCodeLabel: 'Код',
+      mfaCodeFormat: 'Код — 6 цифр.',
+      mfaConfirmAndSignIn: 'Подтвердить и войти',
+      mfaStepExpired: 'Вход занял слишком много времени. Войдите снова.',
+      mfaLoadFailed: 'Не удалось начать подключение второго фактора. Войдите снова.',
       passwordChangeRequired: 'Пароль вам задал администратор. Чтобы войти, придумайте свой.',
       newPasswordLabel: 'Новый пароль',
       confirmPasswordLabel: 'Повторите новый пароль',
