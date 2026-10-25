@@ -654,6 +654,11 @@ export interface TranslationDictionary {
     noDmsLinks: string;
     /** Второй фактор (Р-141): не подключён — отметка в списке; сброс — потерянный телефон, через подтверждение. */
     mfaNotSetUp: string;
+    /** Строка второго фактора в окне правки: статус и короткая кнопка сброса. */
+    mfaTitle: string;
+    mfaStatusSetUp: string;
+    mfaStatusNotSetUp: string;
+    mfaResetShort: string;
     mfaReset: string;
     mfaResetTitle: string;
     mfaResetQuestion: string;
@@ -1397,6 +1402,10 @@ export const translations: Record<Language, TranslationDictionary> = {
       dmsLinksHint: 'Without it the user creates SMS links only. A change takes effect within 15 minutes.',
       noDmsLinks: 'No DMS',
       mfaNotSetUp: '2FA not set up',
+      mfaTitle: 'Second factor',
+      mfaStatusSetUp: 'Set up',
+      mfaStatusNotSetUp: 'Not set up — the user sets it up at the next sign-in',
+      mfaResetShort: 'Reset',
       mfaReset: 'Reset 2FA',
       mfaResetTitle: 'Reset the second factor',
       mfaResetQuestion: 'The user sets the second factor up again at the next sign-in, for example on a new phone. All their open sessions end.',
@@ -2106,6 +2115,10 @@ export const translations: Record<Language, TranslationDictionary> = {
       dmsLinksHint: 'İcazə olmadan istifadəçi yalnız SMS linkləri yaradır. Dəyişiklik 15 dəqiqə ərzində qüvvəyə minir.',
       noDmsLinks: 'DMS yoxdur',
       mfaNotSetUp: '2FA qoşulmayıb',
+      mfaTitle: 'İkinci faktor',
+      mfaStatusSetUp: 'Qoşulub',
+      mfaStatusNotSetUp: 'Qoşulmayıb — istifadəçi növbəti girişdə qoşacaq',
+      mfaResetShort: 'Sıfırla',
       mfaReset: '2FA-nı sıfırla',
       mfaResetTitle: 'İkinci faktoru sıfırlamaq',
       mfaResetQuestion: 'İstifadəçi növbəti girişdə ikinci faktoru yenidən qoşacaq, məsələn, yeni telefonda. Onun bütün açıq sessiyaları bitəcək.',
@@ -2815,6 +2828,10 @@ export const translations: Record<Language, TranslationDictionary> = {
       dmsLinksHint: 'Без права пользователь создаёт только SMS-ссылки. Изменение действует в течение 15 минут.',
       noDmsLinks: 'Без DMS',
       mfaNotSetUp: '2FA не подключён',
+      mfaTitle: 'Второй фактор',
+      mfaStatusSetUp: 'Подключён',
+      mfaStatusNotSetUp: 'Не подключён — пользователь подключит при следующем входе',
+      mfaResetShort: 'Сбросить',
       mfaReset: 'Сбросить 2FA',
       mfaResetTitle: 'Сброс второго фактора',
       mfaResetQuestion: 'Пользователь подключит второй фактор заново при следующем входе — например, на новом телефоне. Все его открытые сессии завершатся.',

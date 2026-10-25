@@ -801,6 +801,22 @@ export const UsersPage: React.FC = () => {
                   : `${tObj.users.newPasswordHint} ${tObj.users.issuedPasswordHint}`}
                 fullWidth
               />
+              {/* Второй фактор (Р-141) — рядом с паролем, а не в ряду кнопок окна: сброс не сохраняет форму и идёт
+                  своим подтверждением. Себе не сбросить, неподключённый сбрасывать нечего. */}
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+                <Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{tObj.users.mfaTitle}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {editing.mfaEnabled === true ? tObj.users.mfaStatusSetUp : tObj.users.mfaStatusNotSetUp}
+                  </Typography>
+                </Box>
+                {!isSelf(editing) && editing.mfaEnabled === true && (
+                  <Button size="small" variant="outlined" color="warning" onClick={() => setPendingMfaReset(editing)}
+                          disabled={editBusy} sx={{ flexShrink: 0 }}>
+                    {tObj.users.mfaResetShort}
+                  </Button>
+                )}
+              </Box>
             </Stack>
           )}
         </DialogContent>
@@ -810,12 +826,6 @@ export const UsersPage: React.FC = () => {
             <Button color="error" startIcon={<DeleteIcon />} onClick={() => setPendingDelete(editing)}
                     disabled={editBusy} sx={{ mr: 'auto' }}>
               {tObj.common.delete}
-            </Button>
-          )}
-          {/* Себе второй фактор не сбросить (Р-141); неподключённый сбрасывать нечего. */}
-          {editing && !isSelf(editing) && editing.mfaEnabled === true && (
-            <Button color="warning" onClick={() => setPendingMfaReset(editing)} disabled={editBusy}>
-              {tObj.users.mfaReset}
             </Button>
           )}
           <Button onClick={() => setEditing(null)} disabled={editBusy}>{tObj.common.cancel}</Button>
