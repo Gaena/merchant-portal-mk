@@ -88,6 +88,9 @@ export const UsersPage: React.FC = () => {
   // Удаление мягкое, но необратимое из портала и сразу гасит все сессии — только через подтверждение.
   const [pendingDelete, setPendingDelete] = useState<UserDto | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  // Сброс второго фактора (Р-141) гасит все сессии пользователя — тоже только через подтверждение.
+  const [pendingMfaReset, setPendingMfaReset] = useState<UserDto | null>(null);
+  const [mfaResetBusy, setMfaResetBusy] = useState(false);
   const [snackbar, setSnackbar] = useState('');
   const [companiesList, setCompaniesList] = useState<CompanyDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -293,6 +296,22 @@ export const UsersPage: React.FC = () => {
     } finally {
       setDeleteBusy(false);
       setPendingDelete(null);
+    }
+  };
+
+  // Сбрасывают из окна правки: правила те же (`UserService.resetMfa`), отказ — там же, где его ждут.
+  const handleMfaReset = async () => {
+    if (!pendingMfaReset || mfaResetBusy) return;
+    setMfaResetBusy(true);
+    try {
+      const res = await apiClient.post<UserDto>(`/api/v1/users/${pendingMfaReset.id}/mfa-reset`);
+      setEditing(current => (current && current.id === res.data.id ? { ...current, mfaEnabled: res.data.mfaEnabled } : current));
+      fetchUsers();
+    } catch (err: any) {
+      setEditError(err.response?.data?.message || tObj.users.mfaResetFailed);
+    } finally {
+      setMfaResetBusy(false);
+      setPendingMfaReset(null);
     }
   };
 
@@ -575,6 +594,9 @@ export const UsersPage: React.FC = () => {
                     {u.passwordChangeRequired === true && (
                       <Chip label={tObj.users.passwordChangePending} size="small" variant="outlined" sx={{ ml: 1 }} />
                     )}
+                    {u.mfaEnabled === false && (
+                      <Chip label={tObj.users.mfaNotSetUp} size="small" variant="outlined" sx={{ ml: 1 }} />
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -779,6 +801,22 @@ export const UsersPage: React.FC = () => {
                   : `${tObj.users.newPasswordHint} ${tObj.users.issuedPasswordHint}`}
                 fullWidth
               />
+              {/* Второй фактор (Р-141) — рядом с паролем, а не в ряду кнопок окна: сброс не сохраняет форму и идёт
+                  своим подтверждением. Себе не сбросить, неподключённый сбрасывать нечего. */}
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+                <Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{tObj.users.mfaTitle}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {editing.mfaEnabled === true ? tObj.users.mfaStatusSetUp : tObj.users.mfaStatusNotSetUp}
+                  </Typography>
+                </Box>
+                {!isSelf(editing) && editing.mfaEnabled === true && (
+                  <Button size="small" variant="outlined" color="warning" onClick={() => setPendingMfaReset(editing)}
+                          disabled={editBusy} sx={{ flexShrink: 0 }}>
+                    {tObj.users.mfaResetShort}
+                  </Button>
+                )}
+              </Box>
             </Stack>
           )}
         </DialogContent>
@@ -835,6 +873,27 @@ export const UsersPage: React.FC = () => {
           </Box>
         )}
         <Alert severity="warning" sx={{ mt: 2 }}>{tObj.users.deleteIrreversible}</Alert>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={pendingMfaReset !== null}
+        title={tObj.users.mfaResetTitle}
+        question={tObj.users.mfaResetQuestion}
+        confirmLabel={tObj.users.mfaReset}
+        busy={mfaResetBusy}
+        onConfirm={handleMfaReset}
+        onCancel={() => setPendingMfaReset(null)}
+      >
+        {pendingMfaReset && (
+          <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+              {pendingMfaReset.fullName || pendingMfaReset.username}
+            </Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>
+              {pendingMfaReset.username}
+            </Typography>
+          </Box>
+        )}
       </ConfirmDialog>
     </Box>
   );

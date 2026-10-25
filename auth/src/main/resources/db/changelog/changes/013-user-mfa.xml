@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Р-141: второй фактор входа (TOTP). mfa_secret — шифротекст секрета (AES-256-GCM, MFA_ENCRYPTION_KEY),
+         mfa_enabled_at — подключение подтверждено первым кодом (пусто при секрете — подключение начато),
+         mfa_last_step — шаг последнего принятого кода: код того же шага и раньше не принимается (PCI DSS 8.5.1).
+         У существующих пользователей всё пусто: фактор подключают при следующем входе. -->
+    <changeSet id="13-auth-users-mfa" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="users" columnName="mfa_secret"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="users">
+            <column name="mfa_secret" type="varchar(255)"/>
+            <column name="mfa_enabled_at" type="timestamp"/>
+            <column name="mfa_last_step" type="bigint"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

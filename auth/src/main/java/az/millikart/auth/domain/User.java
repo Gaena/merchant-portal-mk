@@ -74,6 +74,17 @@ public class User {
     @Builder.Default
     private boolean dmsLinksAllowed = true;
 
+    // Второй фактор (Р-141): секрет TOTP шифротекстом MfaService, наружу не выходит; подключён — когда
+    // подтверждён первым кодом (mfaEnabledAt). mfaLastStep — шаг последнего принятого кода (PCI DSS 8.5.1).
+    @Column(name = "mfa_secret")
+    private String mfaSecret;
+
+    @Column(name = "mfa_enabled_at")
+    private Instant mfaEnabledAt;
+
+    @Column(name = "mfa_last_step")
+    private Long mfaLastStep;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

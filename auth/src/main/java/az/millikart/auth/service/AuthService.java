@@ -1,11 +1,15 @@
 package az.millikart.auth.service;
 
+import az.millikart.auth.domain.MfaChallenge;
 import az.millikart.auth.domain.RefreshToken;
 import az.millikart.auth.domain.User;
 import az.millikart.auth.dto.ChangePasswordRequest;
 import az.millikart.auth.dto.LoginRequest;
 import az.millikart.auth.dto.LoginResponse;
 import az.millikart.auth.dto.LogoutRequest;
+import az.millikart.auth.dto.MfaSetupRequest;
+import az.millikart.auth.dto.MfaSetupResponse;
+import az.millikart.auth.dto.MfaVerifyRequest;
 import az.millikart.auth.dto.RefreshRequest;
 import az.millikart.auth.repository.UserRepository;
 import az.millikart.auth.security.LoginRateLimiter;
@@ -14,12 +18,14 @@ import az.millikart.common.audit.AuditEntity;
 import az.millikart.common.audit.AuditEvent;
 import az.millikart.common.audit.AuditLogService;
 import az.millikart.common.exception.BusinessException;
+import az.millikart.common.exception.ConflictException;
 import az.millikart.common.exception.UnauthorizedException;
 import az.millikart.common.security.JwtProvider;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.OptionalLong;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,6 +56,10 @@ public class AuthService {
     // Статус не называется намеренно: «заблокирован» или «удалён» — сведения для администратора.
     private static final String ACCOUNT_NOT_ACTIVE = "Account is not active. Please contact your administrator.";
 
+    // Шаг входа неизвестен, истёк или израсходован (Р-141): клиент начинает вход заново, с пароля.
+    private static final String INVALID_SIGN_IN_STEP = "Sign-in step is invalid or expired. Sign in again.";
+    private static final String INVALID_CODE = "Invalid code";
+
     // Хэш случайной строки, которую никто не знает: на несуществующем логине matches тратит столько же, сколько
     // на настоящем, иначе неизвестный логин выдают часы. Считается при старте тем же кодировщиком, поэтому
     // стоимость всегда совпадает с настоящими хэшами — константа разошлась бы с mp.security.bcrypt-strength.
@@ -63,6 +73,7 @@ public class AuthService {
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
     private final PasswordHistoryService passwordHistory;
+    private final MfaService mfaService;
 
     public AuthService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
@@ -71,7 +82,8 @@ public class AuthService {
                        LoginRateLimiter rateLimiter,
                        AuditLogService auditLogService,
                        ApplicationEventPublisher eventPublisher,
-                       PasswordHistoryService passwordHistory) {
+                       PasswordHistoryService passwordHistory,
+                       MfaService mfaService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtProvider = jwtProvider;
@@ -80,6 +92,7 @@ public class AuthService {
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
         this.passwordHistory = passwordHistory;
+        this.mfaService = mfaService;
         this.absentUserPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
@@ -95,11 +108,11 @@ public class AuthService {
             log.info("Login held for user ID {}: the password must be changed first", user.getId());
             return LoginResponse.passwordChangeRequired(user.getRole());
         }
-        return startSession(user, now);
+        return afterPassword(user, now);
     }
 
     // Смена пароля без сессии: вход по текущему паролю (лимит, локаут, статус), затем новый пароль и
-    // сессия (Р-100).
+    // сессия (Р-100) — или шаг второго фактора (Р-141).
     @Transactional(noRollbackFor = BusinessException.class)
     public LoginResponse changePassword(ChangePasswordRequest request, String clientIp) {
         Instant now = Instant.now();
@@ -111,10 +124,123 @@ public class AuthService {
         user.setPasswordChangeRequired(false);
         userRepository.save(user);
         int revoked = refreshTokenService.revokeAllForUser(user.getId(), now);
+        mfaService.forgetChallengesOf(user.getId());
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(), AuditAction.PASSWORD_CHANGE,
                 user.getUsername(), user.getCompanyId(), "Password changed by its owner at sign-in"));
         log.info("User ID {} changed the password at sign-in: {} refresh token(s) revoked", user.getId(), revoked);
-        return startSession(user, now);
+        return afterPassword(user, now);
+    }
+
+    // Пароль доказан: сессия — сразу или после кода второго фактора (PCI DSS 8.4.2, Р-141).
+    private LoginResponse afterPassword(User user, Instant now) {
+        if (!mfaService.isEnabled()) {
+            return startSession(user, now, false);
+        }
+        String mfaToken = mfaService.issueChallenge(user.getId(), now);
+        boolean setupRequired = user.getMfaEnabledAt() == null;
+        log.info("Password accepted for user ID {}; second factor {}", user.getId(),
+                setupRequired ? "set-up required" : "code required");
+        return LoginResponse.secondFactorRequired(user.getRole(), mfaToken, setupRequired);
+    }
+
+    // Подключение при входе (Р-141): новый неподтверждённый секрет. Подключённый фактор заново не выдаётся —
+    // знающий пароль не подменил бы телефон владельца; новый секрет — только после сброса администратором.
+    @Transactional
+    public MfaSetupResponse setupMfa(MfaSetupRequest request) {
+        requireMfaEnabled();
+        Instant now = Instant.now();
+        MfaChallenge challenge = liveChallenge(request.mfaToken(), now);
+        User user = userRepository.findById(challenge.getUserId())
+                .filter(found -> STATUS_ACTIVE.equals(found.getStatus()) && !found.isPasswordChangeRequired())
+                .orElseThrow(() -> {
+                    log.warn("Second-factor set-up refused: user {} is not active or must change the password",
+                            challenge.getUserId());
+                    return new UnauthorizedException(INVALID_SIGN_IN_STEP);
+                });
+        if (user.getMfaEnabledAt() != null) {
+            log.warn("Second-factor set-up refused: user ID {} has it set up already", user.getId());
+            throw new ConflictException("The second factor is already set up");
+        }
+        MfaService.Enrollment enrollment = mfaService.startEnrollment(user);
+        userRepository.save(user);
+        log.info("Second-factor set-up started for user ID {}", user.getId());
+        return new MfaSetupResponse(enrollment.secret(), enrollment.otpauthUri());
+    }
+
+    // Код второго фактора (Р-141). Неверный — в тот же счётчик и лимит адреса, что пароль; принятый снимает
+    // неудачи, первый принятый подтверждает подключение. Лимит и замок строки — как у пароля (Р-118).
+    @Transactional(noRollbackFor = BusinessException.class)
+    public LoginResponse verifyMfa(MfaVerifyRequest request, String clientIp) {
+        requireMfaEnabled();
+        Instant now = Instant.now();
+        MfaChallenge challenge = liveChallenge(request.mfaToken(), now);
+        String login = userRepository.findUsernameById(challenge.getUserId())
+                .orElseThrow(() -> new UnauthorizedException(INVALID_SIGN_IN_STEP));
+
+        try (LoginRateLimiter.Attempt ignored = rateLimiter.begin(clientIp, login)) {
+            User user = userRepository.findForLoginByUsername(login)
+                    .orElseThrow(() -> new UnauthorizedException(INVALID_SIGN_IN_STEP));
+            // Пароль сбросили после шага: его вход принадлежит старому паролю.
+            if (user.isPasswordChangeRequired()) {
+                log.warn("Second-factor code refused: user ID {} must change the password", user.getId());
+                throw new UnauthorizedException(INVALID_SIGN_IN_STEP);
+            }
+            if (!STATUS_ACTIVE.equals(user.getStatus())) {
+                auditLogService.logDenied(AuditEntity.AUTH, login, AuditAction.LOGIN, login, user.getCompanyId(),
+                        "Login refused: account status " + user.getStatus());
+                throw new BusinessException(ACCOUNT_NOT_ACTIVE);
+            }
+            if (user.getLockoutUntil() != null && user.getLockoutUntil().isAfter(now)) {
+                auditLogService.logDenied(AuditEntity.AUTH, login, AuditAction.LOGIN, login, user.getCompanyId(),
+                        "Login refused: account locked until " + user.getLockoutUntil());
+                throw new BusinessException(ACCOUNT_LOCKED_PREFIX + tryAgainIn(user.getLockoutUntil(), now));
+            }
+            if (user.getLockoutUntil() != null) {
+                // Локаут истёк: попытка ниже считается с нуля, как у пароля.
+                user.setLockoutUntil(null);
+                user.setFailedLoginAttempts(0);
+            }
+            if (user.getMfaSecret() == null) {
+                throw new BusinessException("Set up the second factor first");
+            }
+
+            OptionalLong step = mfaService.acceptedStep(user, request.code(), now);
+            if (step.isEmpty()) {
+                registerFailedAttempt(user, login, clientIp, false, now, "second-factor code");
+                auditLogService.logDenied(AuditEntity.AUTH, login, AuditAction.LOGIN, login, user.getCompanyId(),
+                        "Login refused: wrong second-factor code");
+                throw new BusinessException(INVALID_CODE);
+            }
+            if (!mfaService.consumeChallenge(challenge.getId(), now)) {
+                log.warn("Second-factor code of user ID {} accepted, but its sign-in step is already used or expired",
+                        user.getId());
+                throw new UnauthorizedException(INVALID_SIGN_IN_STEP);
+            }
+
+            user.setMfaLastStep(step.getAsLong());
+            boolean enrolled = user.getMfaEnabledAt() == null;
+            if (enrolled) {
+                user.setMfaEnabledAt(now);
+                eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(),
+                        AuditAction.MFA_ENROLL, login, user.getCompanyId(), "Second factor set up by its owner at sign-in"));
+                log.info("User ID {} set up the second factor", user.getId());
+            }
+            clearFailures(user, clientIp, login);
+            return startSession(user, now, true);
+        }
+    }
+
+    private void requireMfaEnabled() {
+        if (!mfaService.isEnabled()) {
+            throw new BusinessException("The second factor is not enabled");
+        }
+    }
+
+    private MfaChallenge liveChallenge(String rawToken, Instant now) {
+        return mfaService.findLiveChallenge(rawToken, now).orElseThrow(() -> {
+            log.warn("Second-factor step refused: unknown, used or expired sign-in step");
+            return new UnauthorizedException(INVALID_SIGN_IN_STEP);
+        });
     }
 
     // Порядок проверок — свойство безопасности: лимит адреса до базы и BCrypt, затем пользователь
@@ -146,7 +272,7 @@ public class AuthService {
             }
 
             if (!passwordEncoder.matches(password, user.getPasswordHash())) {
-                registerFailedAttempt(user, cleanEmail, clientIp, lockedOut, now);
+                registerFailedAttempt(user, cleanEmail, clientIp, lockedOut, now, "password");
                 auditLogService.logDenied(AuditEntity.AUTH, cleanEmail, AuditAction.LOGIN, cleanEmail, user.getCompanyId(),
                         "Login refused: wrong password");
                 throw new BusinessException(INVALID_CREDENTIALS);
@@ -166,17 +292,25 @@ public class AuthService {
                 throw new BusinessException(ACCOUNT_NOT_ACTIVE);
             }
 
-            if ((user.getFailedLoginAttempts() != null && user.getFailedLoginAttempts() > 0) || user.getLockoutUntil() != null) {
-                user.setFailedLoginAttempts(0);
-                user.setLockoutUntil(null);
-                userRepository.save(user);
+            // Со вторым фактором неудачи снимает только принятый код: иначе верный пароль между неверными кодами
+            // обнулял бы счётчик, и коды перебирались бы без конца (Р-141).
+            if (!mfaService.isEnabled()) {
+                clearFailures(user, clientIp, cleanEmail);
             }
-            rateLimiter.clearFailuresOf(clientIp, cleanEmail);
             return user;
         }
     }
 
-    private LoginResponse startSession(User user, Instant now) {
+    private void clearFailures(User user, String clientIp, String cleanEmail) {
+        if ((user.getFailedLoginAttempts() != null && user.getFailedLoginAttempts() > 0) || user.getLockoutUntil() != null) {
+            user.setFailedLoginAttempts(0);
+            user.setLockoutUntil(null);
+            userRepository.save(user);
+        }
+        rateLimiter.clearFailuresOf(clientIp, cleanEmail);
+    }
+
+    private LoginResponse startSession(User user, Instant now, boolean secondFactor) {
         // Вход — активность учётки: отсчёт 90 дней до автоблокировки начинается заново (Р-101).
         user.setLastActivityAt(now);
         userRepository.save(user);
@@ -185,7 +319,8 @@ public class AuthService {
         // Успех пишется наравне с отказами (PCI DSS 10.2). entityId — логин, как у всех AUTH-записей:
         // успех и отказы одного аккаунта находит один фильтр (P3-2).
         eventPublisher.publishEvent(AuditEvent.of(AuditEntity.AUTH, user.getUsername(), AuditAction.LOGIN,
-                user.getUsername(), user.getCompanyId(), "Login successful, role " + user.getRole()));
+                user.getUsername(), user.getCompanyId(), "Login successful, role " + user.getRole()
+                        + (secondFactor ? ", second factor verified" : "")));
         log.info("Login successful for user ID: {}, role: {}, companyId: {}",
                 user.getId(), user.getRole(), user.getCompanyId());
         return response;
@@ -193,12 +328,13 @@ public class AuthService {
 
     // Неудача считается против адреса всегда, против аккаунта — только вне локаута: иначе любой
     // стучащий держит чужой аккаунт заблокированным, а 30 минут идут не от шестой неудачи (Р-28).
-    private void registerFailedAttempt(User user, String cleanEmail, String clientIp, boolean lockedOut, Instant now) {
+    private void registerFailedAttempt(User user, String cleanEmail, String clientIp, boolean lockedOut, Instant now,
+                                       String what) {
         recordAddressFailure(clientIp, cleanEmail);
 
         if (lockedOut) {
-            log.warn("Login failed: incorrect password for username {}, already locked until {}",
-                    cleanEmail, user.getLockoutUntil());
+            log.warn("Login failed: incorrect {} for username {}, already locked until {}",
+                    what, cleanEmail, user.getLockoutUntil());
             return;
         }
 
@@ -212,7 +348,7 @@ public class AuthService {
                     "Account locked until " + user.getLockoutUntil() + " after " + attempts + " failed attempts");
             log.warn("Account {} locked for 30 minutes due to 6 failed login attempts (PCI-DSS 8.3.4)", cleanEmail);
         } else {
-            log.warn("Login failed: incorrect password for username {}. Failed attempts: {}/6", cleanEmail, attempts);
+            log.warn("Login failed: incorrect {} for username {}. Failed attempts: {}/6", what, cleanEmail, attempts);
         }
 
         userRepository.save(user);
@@ -381,7 +517,10 @@ public class AuthService {
                 refresh.token(),
                 Duration.between(now, refresh.expiresAt()).toSeconds(),
                 Duration.between(now, refresh.sessionEndsAt()).toSeconds(),
-                false
+                false,
+                false,
+                false,
+                null
         );
     }
 }

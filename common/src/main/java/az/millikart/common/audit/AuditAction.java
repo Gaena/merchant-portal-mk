@@ -35,11 +35,14 @@ public final class AuditAction {
     public static final String EXPORT = "EXPORT";
     // Проверка цепочки журнала (Р-138): разрыв — исходом UNRESOLVED.
     public static final String VERIFY = "VERIFY";
+    // Второй фактор входа (PCI DSS 8.4.2, Р-141): подключён владельцем при входе, сброшен администратором.
+    public static final String MFA_ENROLL = "MFA_ENROLL";
+    public static final String MFA_RESET = "MFA_RESET";
 
     private static final Set<String> KNOWN = Set.of(
             CREATE, READ, UPDATE, DELETE, LIST, BLOCK, UNBLOCK,
             LOGIN, LOGOUT, LOCKOUT, RATE_LIMIT, TOKEN_REUSE, PASSWORD_CHANGE,
-            CAPTURE, REFUND, CANCEL, RESOLVE, STATUS_CHANGE, START, STOP, EXPORT, VERIFY);
+            CAPTURE, REFUND, CANCEL, RESOLVE, STATUS_CHANGE, START, STOP, EXPORT, VERIFY, MFA_ENROLL, MFA_RESET);
 
     private AuditAction() {
     }

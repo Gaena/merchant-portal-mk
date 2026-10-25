@@ -45,7 +45,7 @@ class UnknownLoginTimingTest {
         when(users.findForLoginByUsername("nobody@millikart.az")).thenReturn(Optional.empty());
         AuthService authService = new AuthService(users, encoder, mock(JwtProvider.class),
                 mock(RefreshTokenService.class), mock(LoginRateLimiter.class), mock(AuditLogService.class),
-                mock(ApplicationEventPublisher.class), mock(PasswordHistoryService.class));
+                mock(ApplicationEventPublisher.class), mock(PasswordHistoryService.class), mock(MfaService.class));
 
         assertThrows(BusinessException.class,
                 () -> authService.login(new LoginRequest("nobody@millikart.az", "WrongPass123!"), "203.0.113.1"));

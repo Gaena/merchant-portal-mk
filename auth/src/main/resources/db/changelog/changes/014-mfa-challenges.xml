@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Р-141: шаг входа между паролем и кодом. Клиент получает случайный токен, в базе — только его SHA-256,
+         как у refresh-токенов (003). Одноразовый: used_at ставит принятый код. Таблицей владеет только auth;
+         преконтроли — по конвенции P1-2, для базы, восстановленной без DATABASECHANGELOG. -->
+    <changeSet id="14-auth-mfa-challenges" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="mfa_challenges"/>
+            </not>
+        </preConditions>
+        <createTable tableName="mfa_challenges">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="user_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="token_hash" type="varchar(64)">
+                <constraints nullable="false" unique="true" uniqueConstraintName="uq_mfa_challenges_token_hash"/>
+            </column>
+            <column name="created_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="expires_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="used_at" type="timestamp"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="14-auth-mfa-challenges-index-user" author="millikart">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="mfa_challenges"/>
+            <not>
+                <indexExists tableName="mfa_challenges" indexName="idx_mfa_challenges_user"/>
+            </not>
+        </preConditions>
+        <createIndex tableName="mfa_challenges" indexName="idx_mfa_challenges_user">
+            <column name="user_id"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- Каскад, как у refresh_tokens: без пользователя вызов ничего не значит. -->
+    <changeSet id="14-auth-mfa-challenges-user-fk" author="millikart">
+        <preConditions onFail="CONTINUE">
+            <tableExists tableName="mfa_challenges"/>
+            <tableExists tableName="users"/>
+            <not>
+                <foreignKeyConstraintExists foreignKeyName="fk_mfa_challenges_user" foreignKeyTableName="mfa_challenges"/>
+            </not>
+        </preConditions>
+        <addForeignKeyConstraint baseTableName="mfa_challenges" baseColumnNames="user_id"
+                                 constraintName="fk_mfa_challenges_user"
+                                 referencedTableName="users" referencedColumnNames="id"
+                                 onDelete="CASCADE"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -45,6 +45,17 @@ auth:
     # Housekeeping only: expired tokens are refused anyway.
     cleanup-enabled: ${AUTH_REFRESH_CLEANUP_ENABLED:true}
     cleanup-cron: "${AUTH_REFRESH_CLEANUP_CRON:0 30 3 * * *}"
+  mfa:
+    # Second factor at sign-in, TOTP (PCI DSS 8.4.2, Р-141): every role, after the password. Off only for an
+    # emergency (the last administrator lost the phone) — a password alone then opens a session.
+    enabled: ${AUTH_MFA_ENABLED:true}
+    # A sign-in step lives this long between the password and the code.
+    challenge-ttl: PT5M
+    # Shown by the authenticator app next to the code.
+    issuer: MilliKart Merchant Portal
+    # AES-256 key of the stored TOTP secrets (MFA_ENCRYPTION_KEY). No default on purpose: a known key decrypts
+    # every second factor from a database dump.
+    encryption-key: ${MFA_ENCRYPTION_KEY}
   inactivity:
     # PCI DSS 8.2.6 (Р-101): an ACTIVE account with no sign-in (or session refresh) for this long is
     # BLOCKED once a day. Administrators are not exempt; unblocking restarts the clock.

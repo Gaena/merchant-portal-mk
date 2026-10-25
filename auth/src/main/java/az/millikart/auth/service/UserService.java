@@ -5,6 +5,7 @@ import az.millikart.auth.dto.CreateUserRequest;
 import az.millikart.auth.dto.UpdateUserRequest;
 import az.millikart.auth.dto.UserResponse;
 import az.millikart.auth.repository.CompanyRepository;
+import az.millikart.auth.repository.MfaChallengeRepository;
 import az.millikart.auth.repository.UserRepository;
 import az.millikart.auth.repository.UserTerminalRepository;
 import az.millikart.common.audit.AuditAction;
@@ -65,6 +66,7 @@ public class UserService {
     private final ApplicationEventPublisher eventPublisher;
     private final PasswordHistoryService passwordHistory;
     private final UserTerminalRepository userTerminals;
+    private final MfaChallengeRepository mfaChallenges;
 
     public UserService(UserRepository userRepository,
                        CompanyRepository companyRepository,
@@ -73,7 +75,8 @@ public class UserService {
                        AuditLogService auditLogService,
                        ApplicationEventPublisher eventPublisher,
                        PasswordHistoryService passwordHistory,
-                       UserTerminalRepository userTerminals) {
+                       UserTerminalRepository userTerminals,
+                       MfaChallengeRepository mfaChallenges) {
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.passwordEncoder = passwordEncoder;
@@ -82,6 +85,7 @@ public class UserService {
         this.eventPublisher = eventPublisher;
         this.passwordHistory = passwordHistory;
         this.userTerminals = userTerminals;
+        this.mfaChallenges = mfaChallenges;
     }
 
     @Transactional
@@ -391,6 +395,10 @@ public class UserService {
 
         // Сессии не-ACTIVE пользователя гасятся здесь, access-токены живут до срока. При любом
         // не-ACTIVE, а не только на переходе: массовый UPDATE идемпотентен.
+        // Начатый паролем вход (шаг второго фактора, Р-141) гаснет вместе с сессиями.
+        if (nonActiveStatusSet || passwordChanged) {
+            mfaChallenges.deleteAllByUserId(user.getId());
+        }
         if (nonActiveStatusSet) {
             int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
             log.info("User {} changed status to {}: {} refresh token(s) revoked",
@@ -403,6 +411,40 @@ public class UserService {
                     passwordResetByOther ? "reset by another user" : "changed by its owner", revoked);
         }
         return mapToResponse(user, targetTerminals);
+    }
+
+    // Сброс второго фактора (Р-141) — по правилам правки пользователя, себе нельзя: потерявший телефон без
+    // сброса не войдёт, а сброс себе позволил бы знающему пароль снять фактор. Сессии гасятся: их открывал
+    // прежний фактор. Подключение заново — при следующем входе.
+    @Transactional
+    public UserResponse resetMfa(UUID id, UserPrincipal principal) {
+        User user = userRepository.findById(id)
+                .filter(found -> !STATUS_DELETED.equals(found.getStatus()))
+                .orElseThrow(() -> new BusinessException("User not found"));
+
+        requireActiveActor(principal, AuditAction.MFA_RESET, id.toString());
+        validateWriteAccess(user, principal, AuditAction.MFA_RESET);
+        if (user.getId().toString().equals(UserPrincipal.getUserId(principal))) {
+            auditLogService.logDenied(AuditEntity.USER, id.toString(), AuditAction.MFA_RESET,
+                    UserPrincipal.getUsername(principal), UserPrincipal.getCompanyId(principal),
+                    "Denied: attempted to reset its own second factor");
+            throw new InvalidStateException("Cannot reset your own second factor");
+        }
+
+        boolean wasEnabled = user.getMfaEnabledAt() != null;
+        user.setMfaSecret(null);
+        user.setMfaEnabledAt(null);
+        user.setMfaLastStep(null);
+        user = userRepository.save(user);
+        mfaChallenges.deleteAllByUserId(user.getId());
+        int revoked = refreshTokenService.revokeAllForUser(user.getId(), Instant.now());
+
+        eventPublisher.publishEvent(AuditEvent.of(AuditEntity.USER, user.getId().toString(), AuditAction.MFA_RESET,
+                UserPrincipal.getUsername(principal), user.getCompanyId(),
+                "Second factor reset for " + user.getUsername() + (wasEnabled ? "" : " (it was not set up)")
+                        + "; it is set up again at the next sign-in"));
+        log.info("Second factor of user {} reset: {} refresh token(s) revoked", user.getId(), revoked);
+        return mapToResponse(user, userTerminals.terminalIdsOf(user.getId()));
     }
 
     @Transactional
@@ -530,6 +572,7 @@ public class UserService {
                 user.getCreatedAt(),
                 user.isPasswordChangeRequired(),
                 user.isDmsLinksAllowed(),
+                user.getMfaEnabledAt() != null,
                 terminalIds
         );
     }

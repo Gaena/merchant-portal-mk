@@ -90,6 +90,12 @@ public class MigrationOrderTest {
         assertTrue(indexExists("refresh_tokens", "idx_refresh_tokens_family"));
         assertTrue(foreignKeyExists("refresh_tokens", "fk_refresh_tokens_user"));
         assertTrue(columnExists("refresh_tokens", "session_started_at"), "12-auth (Р-140) must run too");
+        // Р-141: второй фактор — колонки пользователя и шаги входа.
+        assertTrue(columnExists("users", "mfa_secret"), "13-auth must run too");
+        assertTrue(columnExists("users", "mfa_last_step"));
+        assertTrue(tableExists("mfa_challenges"), "14-auth must run too");
+        assertTrue(indexExists("mfa_challenges", "idx_mfa_challenges_user"));
+        assertTrue(foreignKeyExists("mfa_challenges", "fk_mfa_challenges_user"));
     }
 
     // Р-140: живой до миграции токен получает время входа из issued_at — без него NOT NULL уронил бы миграцию на
@@ -199,6 +205,11 @@ public class MigrationOrderTest {
         assertTrue(foreignKeyExists("password_history", "fk_password_history_user"));
         // 012 (Р-140): колонка уже есть — precondition, а не повторный ADD COLUMN.
         assertTrue(columnExists("refresh_tokens", "session_started_at"));
+        // 013, 014 (Р-141): колонки, таблица, индекс и FK — каждый под своим precondition.
+        assertTrue(columnExists("users", "mfa_enabled_at"));
+        assertTrue(tableExists("mfa_challenges"));
+        assertTrue(indexExists("mfa_challenges", "idx_mfa_challenges_user"));
+        assertTrue(foreignKeyExists("mfa_challenges", "fk_mfa_challenges_user"));
     }
 
     // Хелперы

@@ -38,10 +38,14 @@ const LOGIN_PATH = '/api/v1/auth/login';
 const REFRESH_PATH = '/api/v1/auth/refresh';
 const LOGOUT_PATH = '/api/v1/auth/logout';
 const CHANGE_PASSWORD_PATH = '/api/v1/auth/change-password';
+export const MFA_SETUP_PATH = '/api/v1/auth/mfa/setup';
+export const MFA_VERIFY_PATH = '/api/v1/auth/mfa/verify';
 
 // Публичные пути (`PublicEndpoints.PUBLIC_API`): токен не прикладывается, а 401 — ответ по
 // существу, не повод обновляться. Иначе 401 от `/refresh` запускал бы `/refresh` по кругу.
-const AUTH_PATHS: ReadonlySet<string> = new Set([LOGIN_PATH, REFRESH_PATH, LOGOUT_PATH, CHANGE_PASSWORD_PATH]);
+const AUTH_PATHS: ReadonlySet<string> = new Set([
+  LOGIN_PATH, REFRESH_PATH, LOGOUT_PATH, CHANGE_PASSWORD_PATH, MFA_SETUP_PATH, MFA_VERIFY_PATH,
+]);
 
 const isAuthEndpoint = (url: string | undefined): boolean => {
   if (!url) {

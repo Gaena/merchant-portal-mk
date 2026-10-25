@@ -15,7 +15,7 @@
 
 ## 2. База данных
 
-Таблицы `auth` — `users` (в том числе право на DMS-ссылки, Р-132), `refresh_tokens`, `password_history`, `user_terminals` (терминалы сотрудника, Р-131); схема — `../guides/application_description.md`
+Таблицы `auth` — `users` (в том числе право на DMS-ссылки, Р-132, и второй фактор, Р-141), `refresh_tokens`, `password_history`, `user_terminals` (терминалы сотрудника, Р-131), `mfa_challenges` (шаги входа между паролем и кодом, Р-141); схема — `../guides/application_description.md`
 §4 (ER — §4.1, миграции — §4.3). Таблицу `companies` `auth` создаёт, если её ещё нет, и читает: существование
 компании при создании и переводе пользователя, название — для поиска в списке пользователей. Таблицу
 `terminals` (directory) читает: терминал сотрудника должен принадлежать его компании. Журнал пишется
@@ -92,7 +92,10 @@
       "refreshToken": "Q2FuJ3QgZ3Vlc3MgbWUsIEknbSByYW5kb20hISEh",
       "refreshExpiresIn": 1200,
       "sessionExpiresIn": 43200,
-      "passwordChangeRequired": false
+      "passwordChangeRequired": false,
+      "mfaRequired": false,
+      "mfaSetupRequired": false,
+      "mfaToken": null
     }
     ```
     -   `expiresIn` — срок access-токена в секундах, из `pbl.security.jwt.expiration-ms` (`JWT_EXPIRATION_MS`),
@@ -117,6 +120,10 @@
     сессии: `{"token": null, "expiresIn": 0, "role": "COMPANY_EMPLOYEE", "refreshToken": null,
     "refreshExpiresIn": 0, "sessionExpiresIn": 0, "passwordChangeRequired": true}`, в журнале — `AUTH` / `LOGIN` / `DENIED`
     `Login held: the password must be changed first`. Сессию даёт только смена пароля (§4.1.3).
+-   **Второй фактор** (PCI DSS 8.4.2, Р-141; `auth.mfa.enabled`, по умолчанию включён, — у всех ролей). Верный
+    пароль даёт `200` без сессии: `"token": null`, `"refreshToken": null`, `"mfaRequired": true`, `"mfaToken"` — шаг
+    входа на 5 минут, `"mfaSetupRequired": true`, если фактор ещё не подключён. Сессию даёт код по этому шагу
+    (§4.1.7); `AUTH` / `LOGIN` / `SUCCESS` пишется после кода. С выключенным фактором — сразу сессия, как выше.
 -   **Отказы** — в порядке проверки:
 
     | Код | `message` | Когда | Журнал |
@@ -130,9 +137,10 @@
 
     Неизвестный логин и неверный пароль считаются в лимит адреса; успешный вход снимает с адреса только
     неудачи своего логина (Р-117): опечатки сотрудника не запирают офис за одним адресом, а перебор чужих
-    логинов своим входом не обнулить.
-    Шесть неверных паролей подряд — локаут учётки на 30 минут (PCI DSS 8.3.4, Р-28) и запись `AUTH` /
-    `LOCKOUT`; неверный пароль во время локаута его не продлевает. Лимит адреса и локаут действуют и на
+    логинов своим входом не обнулить. Со вторым фактором успешный вход — принятый код (§4.1.7): верный пароль
+    неудач не снимает.
+    Шесть неудач подряд — неверных паролей и кодов второго фактора вместе — локаут учётки на 30 минут (PCI DSS
+    8.3.4, Р-28) и запись `AUTH` / `LOCKOUT`; неверный пароль во время локаута его не продлевает. Лимит адреса и локаут действуют и на
     смену пароля (§4.1.3). Журнал успеха — `AUTH` / `LOGIN` / `SUCCESS` `Login successful, role …`.
 
 ### 4.1.1. Обновление пары токенов
@@ -192,16 +200,18 @@
     Прежний пароль уходит в `password_history`.
 -   Валидация тела: `Username is required`, `Username must be a valid email address`, `Current password is
     required`, `New password is required` — `400`.
--   **Ответ `200`** — как у входа (§4.1): пара токенов, `passwordChangeRequired: false`. Флаг обязательной
-    смены снимается, прочие сессии пользователя гасятся. Журнал: `USER` / `PASSWORD_CHANGE`
-    `Password changed by its owner at sign-in` и `AUTH` / `LOGIN` / `SUCCESS`.
+-   **Ответ `200`** — как у входа (§4.1): пара токенов или, со вторым фактором, шаг входа (`mfaRequired: true`);
+    `passwordChangeRequired: false`. Флаг обязательной смены снимается, прочие сессии и начатые входы пользователя
+    гасятся. Журнал: `USER` / `PASSWORD_CHANGE` `Password changed by its owner at sign-in` и `AUTH` / `LOGIN` /
+    `SUCCESS` — без второго фактора сразу, с ним после кода.
 -   Работает и без обязательной смены — как смена своего пароля по текущему.
 -   `/refresh` пользователя с обязательной сменой отказывает (`401`) и гасит цепочку (§4.1.1).
 
 ### 4.1.4. Отзыв при блокировке, удалении и смене пароля
 Все refresh-токены пользователя во всех его сессиях (`RefreshTokenService.revokeAllForUser`) гасят:
 `PATCH /api/v1/users/{id}` со `status: BLOCKED`, сброс чужого пароля через `PATCH`, `DELETE /api/v1/users/{id}`,
-смена пароля при входе (§4.1.3; кроме новой сессии) и автоблокировка (§4.1.6). С этого момента `/refresh`
+смена пароля при входе (§4.1.3; кроме новой сессии), сброс второго фактора (§4.2) и автоблокировка (§4.1.6).
+Блокировка, смена пароля и сброс фактора гасят и начатые входы — шаги второго фактора. С этого момента `/refresh`
 для него отвечает 401; фактически доступ он теряет, когда истечёт его текущий access-токен (§4.1.2).
 
 ### 4.1.4a. Гонка «refresh против отзыва»
@@ -214,8 +224,8 @@ Refresh и отзыв одной цепочки могут идти одновр
 
 ### 4.1.5. Уборка
 `RefreshTokenCleanupScheduler` (cron `auth.refresh.cleanup-cron`, по умолчанию `0 30 3 * * *`)
-удаляет строки с `expires_at` в прошлом. Это только гигиена: просроченный токен и так отклоняется
-на шаге 3. Выключается `auth.refresh.cleanup-enabled=false` (в тестовом профиле выключен).
+удаляет строки с `expires_at` в прошлом — refresh-токены и шаги входа второго фактора. Это только гигиена:
+просроченный токен и шаг и так отклоняются. Выключается `auth.refresh.cleanup-enabled=false` (в тестовом профиле выключен).
 
 ### 4.1.6. Блокировка неактивных учёток (PCI DSS 8.2.6, Р-101)
 `InactiveAccountScheduler` (cron `auth.inactivity.cron`, по умолчанию `0 45 3 * * *`) раз в сутки
@@ -227,6 +237,38 @@ Refresh и отзыв одной цепочки могут идти одновр
 администратора возвращают в базе (`../guides/deployment_guide.md` §20.3). Вернуть учётку — `PATCH /users/{id}`
 со `status: ACTIVE`: разблокировка сбрасывает отсчёт. Выключается `auth.inactivity.enabled=false` (в тестовом
 профиле выключен).
+
+### 4.1.7. Второй фактор (PCI DSS 8.4.2, 8.5.1, Р-141)
+TOTP по RFC 6238 — 6 цифр, шаг 30 секунд, HMAC-SHA1: Google Authenticator, Microsoft Authenticator и совместимые.
+Оба эндпоинта публичны, как `/login`; шаг входа (`mfaToken`) выдают `/login` и `/change-password` после верного
+пароля. Шаг живёт `auth.mfa.challenge-ttl` (5 минут), в базе — только его SHA-256, принятый код его гасит. С
+выключенным фактором оба отвечают `400 The second factor is not enabled`.
+
+1.  **Подключение** (`POST /api/v1/auth/mfa/setup`, тело `{ "mfaToken": "…" }`) — когда `mfaSetupRequired: true`.
+    -   *Ответ `200`*: `{ "secret": "<32 символа base32>", "otpauthUri": "otpauth://totp/MilliKart%20Merchant%20Portal:<логин>?secret=…&issuer=…&algorithm=SHA1&digits=6&period=30" }`.
+        Секрет — 160 случайных бит; хранится зашифрованным (AES-256-GCM, `MFA_ENCRYPTION_KEY`) и наружу больше не
+        выходит. Подключение не завершено, пока не принят первый код; повторный вызов до этого выдаёт новый секрет.
+    -   *Отказы*: `401 Sign-in step is invalid or expired. Sign in again.` — шаг неизвестен, истёк или израсходован,
+        либо пользователь уже не `ACTIVE` или должен сменить пароль; `409 The second factor is already set up` —
+        подключённый фактор заново не выдаётся, нужен сброс (§4.2): знающий пароль не подменит телефон владельца.
+2.  **Код** (`POST /api/v1/auth/mfa/verify`, тело `{ "mfaToken": "…", "code": "123456" }`).
+    -   *Проверка*: код текущего шага времени или соседнего (±30 секунд расхождения часов). Код шага не позже
+        последнего принятого не проходит — один код дважды не входит (8.5.1). Лимит адреса и локаут — общие с паролем
+        (§4.1): неверный код — неудача в обоих счётчиках, шесть неудач подряд, вместе с паролями, — локаут.
+    -   *Ответ `200`* — пара токенов, как у входа (§4.1). Шаг гаснет, неудачи пользователя и его доля в лимите
+        адреса снимаются; первый принятый код подтверждает подключение — `USER` / `MFA_ENROLL`. Журнал входа —
+        `AUTH` / `LOGIN` / `SUCCESS` `Login successful, role …, second factor verified`.
+    -   *Отказы* — в порядке проверки:
+
+        | Код | `message` | Когда | Журнал |
+        |:---|:---|:---|:---|
+        | `400` | `Sign-in step token is required`, `Code is required`, `Code must be 6 digits` | не прошла валидация тела; неудачей не считается | — |
+        | `401` | `Sign-in step is invalid or expired. Sign in again.` | шаг неизвестен, истёк или израсходован; пароль сбросили после шага | — |
+        | `429` | `Too many login attempts. Please try again later.` | лимит адреса или идущая попытка в тот же логин, как у входа | как у входа |
+        | `400` | `Account is not active. Please contact your administrator.` | статус не `ACTIVE` | `AUTH` / `LOGIN` / `DENIED` |
+        | `400` | `Account is locked due to multiple failed login attempts. Please try again in N minutes.` | учётка в локауте | `AUTH` / `LOGIN` / `DENIED` |
+        | `400` | `Set up the second factor first` | секрета нет — не вызван `/mfa/setup` | — |
+        | `400` | `Invalid code` | код неверный, вне окна или уже принятый; считается неудачей | `AUTH` / `LOGIN` / `DENIED` `Login refused: wrong second-factor code` |
 
 ### 4.2. Управление Пользователями (CRUD)
 Доступно ролям `SYSTEM_ADMIN` и `COMPANY_HEAD`. **Руководитель выдаёт и правит только роли ниже своей** —
@@ -296,7 +338,7 @@ Refresh и отзыв одной цепочки могут идти одновр
               "id": "…", "username": "head@comp01.com", "fullName": "…",
               "role": "COMPANY_HEAD", "companyId": "comp-01",
               "status": "ACTIVE", "createdAt": "…", "passwordChangeRequired": false, "dmsLinksAllowed": true,
-              "terminalIds": []
+              "mfaEnabled": true, "terminalIds": []
             }
           ],
           "totalElements": 1, "totalPages": 1, "size": 20, "number": 0
@@ -304,7 +346,8 @@ Refresh и отзыв одной цепочки могут идти одновр
         ```
         Мягко удалённые учётные записи (`status = DELETED`) не входят ни в `content`, ни
         в `totalElements` — фильтр выполняется в запросе, а не после чтения страницы. `terminalIds` — терминалы
-        сотрудника по возрастанию номера, у остальных ролей пусто; для страницы — одним запросом.
+        сотрудника по возрастанию номера, у остальных ролей пусто; для страницы — одним запросом. `mfaEnabled` —
+        второй фактор подключён, то есть подтверждён первым кодом (Р-141).
 3.  **Получить пользователя** (`GET /api/v1/users/{id}`) — `UserResponse`.
     -   *Кто*: *админ* — любого; *руководитель* — пользователя своей компании.
     -   *Отказы*: `400 User not found` — нет такого или он удалён (`DELETED`); `403 Access denied` — чужая
@@ -379,18 +422,30 @@ Refresh и отзыв одной цепочки могут идти одновр
     -   *Отказы*: `400 User not found` — нет такого пользователя; `403 Access denied` — на тех же основаниях, что
         у правки (неактивный актор и руководитель на чужой роли — с записью `USER` / `DELETE` / `DENIED`).
     -   *Журнал*: `USER` / `DELETE` `Soft deleted user <логин> (role <роль>)`.
+6.  **Сбросить второй фактор** (`POST /api/v1/users/{id}/mfa-reset`, без тела, Р-141) — потерянный телефон.
+    -   *Кто*: как у правки — *админ* любого, *руководитель* `COMPANY_MANAGER`/`COMPANY_EMPLOYEE` своей компании.
+        **Себе — никто**: иначе знающий пароль и захвативший сессию снял бы фактор с себя.
+    -   *Ответ `200`*: `UserResponse` с `mfaEnabled: false`. Секрет стирается, все refresh-токены и начатые входы
+        пользователя гасятся (§4.1.4); при следующем входе фактор подключают заново (§4.1.7). Неподключённый фактор
+        сбрасывается так же.
+    -   *Отказы*: `400 User not found` — нет такого или он удалён; `403 Access denied` — на тех же основаниях, что у
+        правки (с записью `USER` / `MFA_RESET` / `DENIED` у неактивного актора и руководителя на чужой роли);
+        `403 Cannot reset your own second factor` — `USER` / `MFA_RESET` / `DENIED`.
+    -   *Журнал*: `USER` / `MFA_RESET` `Second factor reset for <логин>[ (it was not set up)]; it is set up again at the next sign-in`.
 
 ---
 
 ## 5. Коллекция Postman
 - **[Auth.postman_collection.json](../../auth/Auth.postman_collection.json)** — все эндпоинты сервиса.
-  Запросы `Login`, `Change Password` и `Refresh` сохраняют access-токен в переменную коллекции `authToken`
-  и refresh-токен в `refreshToken`, только если ответ их содержит; `Refresh` и `Logout` берут `{{refreshToken}}`
+  Запросы `Login`, `Change Password`, `MFA Verify` и `Refresh` сохраняют access-токен в переменную коллекции
+  `authToken` и refresh-токен в `refreshToken`, только если ответ их содержит; `Login` и `Change Password` со
+  вторым фактором сохраняют шаг входа в `mfaToken`, его берут `MFA Setup` и `MFA Verify` (код — из приложения); `Refresh` и `Logout` берут `{{refreshToken}}`
   оттуда. `Create User` сохраняет id созданного пользователя в `userId`. Токен из `Login` подставляют и в
   переменную `authToken` коллекции `directory`.
 
 ## 6. Конфигурация
-Переменные `auth` (срок токенов, окно ротации, уборка, неактивность, лимит входа, bootstrap, доверенные прокси) —
+Переменные `auth` (срок токенов, окно ротации, уборка, неактивность, лимит входа, второй фактор и его ключ, bootstrap,
+доверенные прокси) —
 таблица в `../guides/deployment_guide.md` §20.1.
 
 > ⚠ `AUTH_REFRESH_TTL` (`auth.refresh.ttl`, по умолчанию `PT20M`) не ставить меньше 20 минут: фронтенд

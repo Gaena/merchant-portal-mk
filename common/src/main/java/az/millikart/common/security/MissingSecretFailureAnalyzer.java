@@ -68,6 +68,13 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
                     + "to the acquirer, pbl and ecom decrypt them. A new key makes stored passwords unreadable.\n"
                     + "See .env.example and project_docs/guides/deployment_guide.md, section 8.3.";
 
+    private static final String MFA_ENCRYPTION_KEY_ACTION =
+            "Generate an AES-256 key and export it before starting auth:\n"
+                    + "\texport MFA_ENCRYPTION_KEY=\"$(openssl rand -base64 32)\"\n"
+                    + "It encrypts the second-factor secrets of the users. Keep it apart from CREDENTIALS_ENCRYPTION_KEY: "
+                    + "a new key makes stored secrets unreadable, and every user sets the second factor up again.\n"
+                    + "See .env.example and project_docs/guides/deployment_guide.md, section 8.3.";
+
     private static final Map<String, String> ACTIONS_BY_VARIABLE = new LinkedHashMap<>();
 
     // Адреса, а не секреты: механизм тот же, причина другая — description() объясняет их отдельно.
@@ -82,6 +89,7 @@ public class MissingSecretFailureAnalyzer implements FailureAnalyzer, Environmen
         ACTIONS_BY_VARIABLE.put("PROVIDER_GATEWAY_BASE_URL", PROVIDER_GATEWAY_BASE_URL_ACTION);
         ACTIONS_BY_VARIABLE.put("PROVIDER_API_BASE_URL", PROVIDER_API_BASE_URL_ACTION);
         ACTIONS_BY_VARIABLE.put("CREDENTIALS_ENCRYPTION_KEY", CREDENTIALS_ENCRYPTION_KEY_ACTION);
+        ACTIONS_BY_VARIABLE.put("MFA_ENCRYPTION_KEY", MFA_ENCRYPTION_KEY_ACTION);
     }
 
     private Environment environment;

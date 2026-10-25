@@ -9,9 +9,9 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-// Шифрование пароля компании к провайдеру (Р-93): AES-256-GCM, свой случайный IV у каждого значения,
-// в базе — base64(IV ‖ шифротекст с тегом). Не @Component намеренно: бин объявляют только directory и
-// pbl, иначе auth и ecom не стартовали бы без ключа, который им не нужен.
+// Шифрование пароля компании к провайдеру (Р-93) и секрета второго фактора (Р-141): AES-256-GCM, свой
+// случайный IV у каждого значения, в базе — base64(IV ‖ шифротекст с тегом). Не @Component намеренно: экземпляр
+// со своим ключом объявляет каждый сервис, которому он нужен, — иначе сервис без ключа не стартовал бы.
 public final class CredentialCipher {
 
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";
@@ -32,24 +32,29 @@ public final class CredentialCipher {
     private final SecureRandom random = new SecureRandom();
 
     public CredentialCipher(String base64Key) {
-        this.key = new SecretKeySpec(decodeKey(base64Key), "AES");
+        this(base64Key, "Credentials encryption key", HOW_TO_FIX);
+    }
+
+    // Другой ключ со своей подсказкой, как его задать: keyName и howToFix попадают только в отказ на старте.
+    public CredentialCipher(String base64Key, String keyName, String howToFix) {
+        this.key = new SecretKeySpec(decodeKey(base64Key, keyName, howToFix), "AES");
     }
 
     // Ключ не логируется и в сообщения не попадает — только его длина.
-    private static byte[] decodeKey(String base64Key) {
+    private static byte[] decodeKey(String base64Key, String keyName, String howToFix) {
         if (base64Key == null || base64Key.isBlank()) {
             throw new IllegalStateException(
-                    "Credentials encryption key is not set. The service cannot start without it.\n" + HOW_TO_FIX);
+                    keyName + " is not set. The service cannot start without it.\n" + howToFix);
         }
         byte[] bytes;
         try {
             bytes = Base64.getDecoder().decode(base64Key.trim());
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("Credentials encryption key is not valid base64.\n" + HOW_TO_FIX);
+            throw new IllegalStateException(keyName + " is not valid base64.\n" + howToFix);
         }
         if (bytes.length != KEY_BYTES) {
-            throw new IllegalStateException("Credentials encryption key is " + bytes.length
-                    + " bytes, AES-256 requires exactly " + KEY_BYTES + ".\n" + HOW_TO_FIX);
+            throw new IllegalStateException(keyName + " is " + bytes.length
+                    + " bytes, AES-256 requires exactly " + KEY_BYTES + ".\n" + howToFix);
         }
         return bytes;
     }
